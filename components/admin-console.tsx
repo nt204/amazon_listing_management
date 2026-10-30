@@ -27,7 +27,7 @@ import { AccountMenu } from "@/components/account-menu";
 import { PpcStoreAccessPanel } from "@/components/admin/ppc-store-access-panel";
 import { AdminHelium10SyncPanel } from "@/components/admin/admin-helium10-sync-panel";
 import { Helium10SettingsModal } from "@/components/helium10-settings-modal";
-import type { RequestActor } from "@/lib/auth";
+import type { RequestActor, TeamRole } from "@/lib/auth";
 import type { AppUserStatus, AppUserSummary, ImageStorageStats, SystemGuideSummary } from "@/lib/db";
 
 type UserAction = "approve" | "reject" | "disable" | "restore";
@@ -96,7 +96,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
-  const [newRole, setNewRole] = useState<"editor" | "reviewer" | "admin">("editor");
+  const [newRole, setNewRole] = useState<TeamRole>("editor");
   const [newFeatures, setNewFeatures] = useState<string[]>([...defaultFeatureIds]);
   const [addingUser, setAddingUser] = useState(false);
 
@@ -217,7 +217,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
     }
   };
 
-  const handleRoleChange = async (user: AppUserSummary, role: "editor" | "reviewer" | "admin") => {
+  const handleRoleChange = async (user: AppUserSummary, role: TeamRole) => {
     if (user.role === role) return;
     setActionKey(`${user.userId}:role`);
     setError("");
@@ -460,12 +460,13 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
                         ) : (
                           <select
                             value={user.role}
-                            onChange={(e) => void handleRoleChange(user, e.target.value as "editor" | "reviewer" | "admin")}
+                            onChange={(e) => void handleRoleChange(user, e.target.value as TeamRole)}
                             disabled={Boolean(actionKey)}
                             className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:border-slate-300 focus:outline-hidden cursor-pointer"
                           >
                             <option value="editor">Editor (Thành viên)</option>
                             <option value="reviewer">Reviewer (Kiểm duyệt)</option>
+                            <option value="accountant">Kế toán (Phân quyền kế toán)</option>
                             <option value="admin">Admin (Quản trị)</option>
                           </select>
                         )}
@@ -606,11 +607,12 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
                   <label className="block text-[11px] font-extrabold text-slate-700">Vai trò hệ thống</label>
                   <select
                     value={newRole}
-                    onChange={(e) => setNewRole(e.target.value as "editor" | "reviewer" | "admin")}
+                    onChange={(e) => setNewRole(e.target.value as TeamRole)}
                     className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:outline-hidden"
                   >
                     <option value="editor">Editor (Thành viên - thao tác dữ liệu thông thường)</option>
                     <option value="reviewer">Reviewer (Kiểm duyệt - xem và xuất báo cáo)</option>
+                    <option value="accountant">Kế toán (Thấy mọi store kế toán, phân quyền xem / sửa theo team)</option>
                     <option value="admin">Admin (Toàn quyền quản trị tài khoản và lưu trữ)</option>
                   </select>
                 </div>

@@ -67,7 +67,7 @@ import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
 import { PpcSearchVolumeCell, PpcOrganicRankCell, PpcSponsoredRankCell } from "./ppc-search-volume";
 import { PpcKeywordGroupRows, PpcSummaryTableHead, usePpcSummarySort, useKeywordGroupSelection, type KeywordGroupRow } from "./ppc-keyword-group-rows";
-import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
+import { PpcSkuTrendModal, SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcSearchTermLaunchPanel } from "./ppc-search-term-launch-panel";
 import type {
   PpcAlert,
@@ -260,74 +260,6 @@ export function getTargetDisplayType(target: {
   }
 
   return { label, badgeColor, matchType: match || "Unknown" };
-}
-
-function SkuTrendSparkline({
-  dailyTrend,
-  sku,
-  storeName,
-  mockupUrl,
-  onOpenDetail,
-}: {
-  dailyTrend?: PpcSkuDailyTrendPoint[];
-  sku: string;
-  storeName: string;
-  mockupUrl?: string | null;
-  onOpenDetail?: (data: {
-    sku: string;
-    storeName: string;
-    mockupUrl?: string | null;
-    dailyTrend: PpcSkuDailyTrendPoint[];
-  }) => void;
-}) {
-  if (!dailyTrend || dailyTrend.length === 0) {
-    return <span className="text-[10px] text-slate-300 font-mono">-</span>;
-  }
-
-  // The sparkline shows the last 7 days
-  const last7 = dailyTrend.slice(-7);
-  const maxVal = Math.max(...last7.map((d) => Math.max(d.spend || 0, d.sales || 0)), 1);
-  const totSpend = last7.reduce((s, d) => s + (d.spend || 0), 0);
-  const totSales = last7.reduce((s, d) => s + (d.sales || 0), 0);
-  const totOrders = last7.reduce((s, d) => s + (d.orders || 0), 0);
-
-  return (
-    <div
-      onClick={(e) => {
-        e.stopPropagation();
-        onOpenDetail?.({ sku, storeName, mockupUrl, dailyTrend });
-      }}
-      className="group/spark inline-flex items-end gap-[3px] h-6 px-1.5 py-0.5 rounded hover:bg-indigo-50/70 cursor-pointer transition select-none"
-      title={`7D: Spend $${totSpend.toFixed(1)} • Sales $${totSales.toFixed(1)} (${totOrders} orders) - Click to view 30D trend`}
-    >
-      {last7.map((d, idx) => {
-        const hasSales = (d.sales || 0) > 0;
-        const hasSpend = (d.spend || 0) > 0;
-        const val = hasSales ? d.sales : d.spend;
-        const heightPx = Math.max(3, Math.min(18, Math.round((val / maxVal) * 18)));
-
-        let bgClass = "bg-slate-200";
-        if (hasSales) {
-          bgClass = "bg-emerald-500 group-hover/spark:bg-emerald-600";
-        } else if (hasSpend) {
-          bgClass = "bg-rose-400 group-hover/spark:bg-rose-500";
-        }
-
-        return (
-          <div
-            key={idx}
-            className="flex flex-col items-center justify-end h-full"
-            style={{ width: "6px" }}
-          >
-            <div
-              style={{ height: `${heightPx}px` }}
-              className={`w-full rounded-xs ${bgClass} transition-all`}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 export function PpcDashboard({
@@ -655,7 +587,8 @@ export function PpcDashboard({
   const campaignFrozen = usePpcFrozenColumns("campaigns", actor, 1);
   const targetFrozen = usePpcFrozenColumns("targets", actor, 2);
   const searchTermFrozen = usePpcFrozenColumns("search_terms", actor, 2);
-  const skuFrozen = usePpcFrozenColumns("skus", actor, 2);
+  // Key "skus_v2": bỏ các lựa chọn khóa cột cũ đã lưu, quay về mặc định chỉ khóa Ảnh + SKU
+  const skuFrozen = usePpcFrozenColumns("skus", actor, 2, "skus_v2");
   // Sắp xếp bảng tổng (SKU + keyword) phía trên tab Target / Search Term
   const targetSummarySort = usePpcSummarySort();
   const searchTermSummarySort = usePpcSummarySort();
@@ -1799,6 +1732,10 @@ export function PpcDashboard({
         void loadSkuEconomics();
       }
     } else if (activeTab === "recommendations") {
+      // Bảng SKU đầy đủ (overview chỉ trả top 10) để có dailyTrend cho cột Trend (7D)
+      if (selectedStore !== "ALL" && (!loadedSectionsRef.current.has("skus") || (skuPerformance.length <= 10 && (detailCounts?.skus ?? 0) > 10))) {
+        void loadSection("skus", { force: loadedSectionsRef.current.has("skus") }).catch(() => undefined);
+      }
       void loadGroupedRecommendations();
       void loadActionQueue(selectedStore);
       void loadActionQueueCount(selectedStore);
@@ -2449,6 +2386,12 @@ export function PpcDashboard({
       ? skuPerformance.filter((s) => s.impressions > 0 || s.clicks > 0 || s.spend > 0)
       : skuPerformance;
   }, [skuPerformance, hidePausedSkus]);
+
+  // Cột Trend (7D) của tab Đề xuất & Auto Bid dùng chung dailyTrend của bảng SKU
+  const skuTrendBySku = useMemo(
+    () => new Map(skuPerformance.filter((s) => s.dailyTrend?.length).map((s) => [s.sku, s.dailyTrend!])),
+    [skuPerformance],
+  );
 
   const skuMockupBySku = useMemo(
     () => new Map(activeSkuPerformance.filter((s) => s.mockupUrl).map((s) => [s.sku, s.mockupUrl as string])),
@@ -5574,6 +5517,8 @@ export function PpcDashboard({
               isStoreSwitching={isStoreSwitching}
               targetSkuToOpen={targetSkuToOpen}
               onClearTargetSkuToOpen={() => setTargetSkuToOpen(null)}
+              skuTrends={skuTrendBySku}
+              onOpenSkuTrend={setSelectedSkuTrendModal}
             />
           )}
         </div>

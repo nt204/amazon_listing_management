@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import {
   applyMonthlyBaseCostToSkuMaster,
   deleteMonthlyBaseCostItem,
@@ -34,12 +35,13 @@ const upsertSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     if (!storeId) {
       return Response.json({ error: "store_id is required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, "FBA");
 
     const action = searchParams.get("action");
     if (action === "periods") {
@@ -88,6 +90,7 @@ export async function POST(request: Request) {
     const body = (await readJsonBody(request, 50_000)) as any;
     const actorName = actor.email || actor.displayName || actor.userId || "system";
 
+    if (body?.store_id) await requireStoreAccess(actor, body.store_id, "FBA", "write");
     if (body?.action === "sync_year") {
       if (!body?.store_id) {
         return Response.json({ error: "store_id is required" }, { status: 400 });
@@ -178,6 +181,7 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "store_id, id, and field are required" }, { status: 400 });
     }
 
+    await requireStoreAccess(actor, body.store_id, "FBA", "write");
     const updated = await updateMonthlyBaseCostField(
       body.store_id,
       body.id,
@@ -203,6 +207,7 @@ export async function DELETE(request: Request) {
       return Response.json({ error: "store_id and id are required" }, { status: 400 });
     }
 
+    await requireStoreAccess(actor, storeId, "FBA", "write");
     const success = await deleteMonthlyBaseCostItem(storeId, id, actorName);
     return Response.json({ success });
   } catch (error) {

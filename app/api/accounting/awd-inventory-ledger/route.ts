@@ -1,4 +1,5 @@
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import {
   parseAwdInventoryLedgerContent,
   ingestAwdInventoryLedgerRows,
@@ -8,7 +9,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const contentType = request.headers.get("content-type") || "";
 
     if (contentType.includes("multipart/form-data")) {
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
         (formData.get("snapshot_date") as string | null) ||
         rows[0].date ||
         new Date().toISOString().slice(0, 10);
+      await requireStoreAccess(actor, storeId, "FBA", "write");
       const result = await ingestAwdInventoryLedgerRows(storeId, rows, snapshotDate, file.name);
 
       return Response.json({
@@ -55,6 +57,7 @@ export async function POST(request: Request) {
     }
     const effectiveDate =
       snapshotDate || rows[0].date || new Date().toISOString().slice(0, 10);
+    await requireStoreAccess(actor, storeId, "FBA", "write");
     const result = await ingestAwdInventoryLedgerRows(storeId, rows, effectiveDate, fileName);
 
     return Response.json({

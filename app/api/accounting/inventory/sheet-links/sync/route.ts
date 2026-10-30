@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess, sheetLinkChannel } from "@/lib/accounting/access";
 import {
   LINK_TYPES,
   SHEET_TYPES,
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
     const part = isSheetType(input.sheet_type) ? input.sheet_type : undefined;
     const linkType = part ? linkTypeOfPart(part) : isLinkType(input.link_type) ? input.link_type : null;
     if (!linkType) return Response.json({ error: "Tham số không hợp lệ" }, { status: 400 });
+    await requireStoreAccess(actor, input.store_id, sheetLinkChannel(linkType), "write");
     const outcome = await syncStoreLink(input.store_id, { linkType, part }, input.trigger, actorName, input.force);
     return Response.json(outcome, { status: outcome.ok || outcome.skipped ? 200 : 422 });
   } catch (error) {

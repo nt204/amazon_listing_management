@@ -129,12 +129,12 @@ async function main() {
 
   const statusBefore = await getSearchVolumeStatus(TEAM_ID, STORE_NAME);
   console.log(`\n📈 Tỷ lệ phủ Search Volume hiện tại:`);
-  console.log(`   - Tổng từ khóa cần tra: ${statusBefore.coverage.keywords.toLocaleString()}`);
-  console.log(`   - Đã có Search Volume:  ${statusBefore.coverage.withVolume.toLocaleString()}`);
-  console.log(`   - Còn thiếu:            ${statusBefore.coverage.missing.toLocaleString()}`);
+  console.log(`   - Tổng từ khóa cần tra: ${statusBefore.coverage.keywords?.toLocaleString() ?? "—"}`);
+  console.log(`   - Đã có Search Volume:  ${statusBefore.coverage.withVolume?.toLocaleString() ?? "—"}`);
+  console.log(`   - Còn thiếu:            ${statusBefore.coverage.missing?.toLocaleString() ?? "—"}`);
   console.log(`   - Hạn mức tháng đã dùng: Cerebro ${statusBefore.budget.cerebroUsed}/${statusBefore.budget.cerebroLimit}, Magnet ${statusBefore.budget.magnetUsed}/${statusBefore.budget.magnetLimit}`);
 
-  if (statusBefore.coverage.missing === 0) {
+  if (statusBefore.coverage.missing === 0 && statusBefore.asins?.pending === 0) {
     console.log("\n✨ Tất cả từ khóa của LIMIMA đều đã có Search Volume còn hạn (dưới 30 ngày).");
     console.log("   Hệ thống không cần gọi thêm API Helium 10.");
     process.exit(0);
@@ -158,7 +158,7 @@ async function main() {
   console.log("\n=================================================================");
   console.log("🏁 HOÀN TẤT ĐỒNG BỘ SEARCH VOLUME CHO LIMIMA");
   console.log("=================================================================");
-  console.log(`   - Đã có Search Volume: ${statusAfter.coverage.withVolume.toLocaleString()} / ${statusAfter.coverage.keywords.toLocaleString()} từ khóa`);
+  console.log(`   - Đã có Search Volume: ${statusAfter.coverage.withVolume?.toLocaleString() ?? "—"} / ${statusAfter.coverage.keywords?.toLocaleString() ?? "—"} từ khóa`);
   console.log(`   - Trạng thái Run:      ${statusAfter.latestRun?.status}`);
   console.log(`   - Chi tiết:            ${statusAfter.latestRun?.message || "Không có thông báo"}`);
   console.log("=================================================================\n");

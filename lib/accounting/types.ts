@@ -19,6 +19,13 @@ export interface Store {
   status: "active" | "inactive";
   created_at: string;
   updated_at: string;
+  /** Phân quyền kế toán của người đang xem (GET /api/accounting/stores; xem lib/accounting/access.ts). */
+  access?: StoreAccessInfo;
+}
+
+export interface StoreAccessInfo {
+  channels: ("FBA" | "FBM")[];
+  editChannels: ("FBA" | "FBM")[];
 }
 
 export interface CreateStoreInput {

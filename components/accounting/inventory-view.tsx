@@ -43,7 +43,7 @@ import {
 } from "@phosphor-icons/react";
 import type { SkuMasterItem, InboundShipmentItem, CheckShipmentItem, SkuChannel } from "@/lib/accounting/inventory-db";
 import { channelTabActiveClass, channelTabBadgeActiveClass } from "./channel-tab-colors";
-import { storeHasTeam } from "@/lib/accounting/store-teams";
+import { storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
 import type { Store } from "@/lib/accounting/types";
 
 const DEFAULT_PRODUCT_TYPES = [
@@ -1484,12 +1484,16 @@ function InventoryViewInner() {
 
   // Store có team FBM có thêm tab BẢNG MÃ FBM: cùng giao diện/chức năng BẢNG MÃ nhưng dữ liệu
   // và import tách riêng (bảng accounting_sku_master_fbm).
-  const storeHasFbm = storeHasTeam(selectedStore?.team, "FBM");
+  // Phân quyền kế toán: chỉ hiện kênh người dùng được xem (team FBA x → FBA; team FBM → FBM)
+  const storeHasFbm = storeHasTeam(selectedStore?.team, "FBM") && storeCanView(selectedStore, "FBM");
+  const storeCanFba = loadingStores || storeCanView(selectedStore, "FBA");
+  // Không xem được FBA: tab Đi Hàng / Check Shipment (chỉ có FBA) quay về Bảng Mã FBM
+  if (!storeCanFba && (activeTab === "inbound" || activeTab === "check_shipment")) handleTabChange("sku");
   const [skuChannelState, setSkuChannelState] = useState<SkuChannel>(() => {
     if (typeof window === "undefined") return "fba";
     return window.sessionStorage.getItem("accounting_inventory_sku_channel") === "fbm" ? "fbm" : "fba";
   });
-  const skuChannel: SkuChannel = loadingStores || storeHasFbm ? skuChannelState : "fba";
+  const skuChannel: SkuChannel = !storeCanFba ? "fbm" : loadingStores || storeHasFbm ? skuChannelState : "fba";
   const isFbmSheet = activeTab === "sku" && skuChannel === "fbm";
   const skuEntityType = skuChannel === "fbm" ? "sku_fbm" : "sku";
   const skuSheetLabel = skuChannel === "fbm" ? "Bảng Mã FBM" : "Bảng Mã";
@@ -1501,7 +1505,7 @@ function InventoryViewInner() {
     if (typeof window === "undefined") return "fba";
     return window.sessionStorage.getItem("accounting_inventory_basecost_channel") === "fbm" ? "fbm" : "fba";
   });
-  const baseCostChannel: SkuChannel = loadingStores || storeHasFbm ? baseCostChannelState : "fba";
+  const baseCostChannel: SkuChannel = !storeCanFba ? "fbm" : loadingStores || storeHasFbm ? baseCostChannelState : "fba";
   const isFbmBaseCost = activeTab === "monthly_base_cost" && baseCostChannel === "fbm";
   const fbmPwCostRef = useRef<FbmPwCostViewRef>(null);
   const handleBaseCostChannelChange = useCallback((channel: SkuChannel) => {
@@ -5341,6 +5345,8 @@ function InventoryViewInner() {
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-slate-200/70 p-1.5 rounded-xl border border-slate-300 min-h-[46px]">
         {/* Sheet Tabs like Excel */}
         <div className="flex items-center gap-1 min-w-0 max-w-full overflow-x-auto">
+          {storeCanFba && (
+          <>
           {renderSkuSheetTab({ channel: "fba", label: "Bảng Mã", count: fbaSkuCount })}
 
           <button
@@ -5384,11 +5390,13 @@ function InventoryViewInner() {
           </button>
 
           {renderBaseCostTab({ channel: "fba", label: "Basecost Tháng" })}
+          </>
+          )}
 
           {/* Vạch ngăn nhóm tab FBA với nhóm tab FBM cho đỡ lẫn */}
           {storeHasFbm && (
             <>
-              <span className="mx-1.5 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />
+              {storeCanFba && <span className="mx-1.5 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />}
               {renderSkuSheetTab({ channel: "fbm", label: "Bảng Mã FBM", count: fbmSkuCount })}
               {renderBaseCostTab({ channel: "fbm", label: "Basecost FBM" })}
             </>

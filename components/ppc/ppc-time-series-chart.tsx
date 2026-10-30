@@ -679,7 +679,8 @@ export function PpcTimeSeriesChart({
                 {totals.revenue > 0 ? `${totals.acos.toFixed(1)}%` : totals.spend > 0 ? "N/A" : "-"}
               </div>
               <div className="text-[10px] font-medium text-slate-500 mt-0.5 whitespace-nowrap truncate">
-                {totals.revenue > 0 ? (totals.acos <= targetAcos ? `Mục tiêu: ≤${targetAcos}%` : `Vượt mục tiêu (≤${targetAcos}%)`) : "Chưa có sales"}
+                {/* Không ghi chú mục tiêu: màu số ACOS đã cho biết đạt / vượt (giữ dòng trống để thẻ cao đều) */}
+                {totals.revenue > 0 ? " " : "Chưa có sales"}
               </div>
             </div>
 

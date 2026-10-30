@@ -1,14 +1,16 @@
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import { listSkuTest, updateSkuTestCustomFields } from "@/lib/accounting/sku-win-db";
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     if (!storeId) {
       return Response.json({ error: "store_id is required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, "FBA");
 
     const startDate = searchParams.get("start_date") || undefined;
     const endDate = searchParams.get("end_date") || undefined;
@@ -46,7 +48,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const body = await readJsonBody(request, 10_000) as {
       store_id?: string;
       id?: string;
@@ -62,6 +64,7 @@ export async function PATCH(request: Request) {
     if (!body?.store_id || !body?.id) {
       return Response.json({ error: "store_id and id are required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, body.store_id, "FBA", "write");
 
     const customFields = await updateSkuTestCustomFields(body.store_id, body.id, {
       price: body.price,

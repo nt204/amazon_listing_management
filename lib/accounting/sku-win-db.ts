@@ -92,6 +92,8 @@ export interface ListSkuWinOptions {
   compareEndDate?: string;
   sortField?: string;
   sortDirection?: "asc" | "desc";
+  /** false: bỏ qua Lượng bán tổng (all_time_quantity = 0) — quét mọi đơn của store, Dashboard không dùng. */
+  includeAllTime?: boolean;
 }
 
 export async function listSkuWin(
@@ -146,7 +148,7 @@ export async function listSkuWin(
         MAX(amazon_fee) as amazon_fee,
         MAX(referral_fee_pct) as referral_fee_pct
       FROM accounting_sku_master
-      WHERE asin IS NOT NULL AND asin != ''
+      WHERE store_id = ${storeId} AND asin IS NOT NULL AND asin != ''
       GROUP BY store_id, asin
     ),
     orders_filtered AS (
@@ -202,6 +204,7 @@ export async function listSkuWin(
       FROM accounting_orders
       WHERE store_id = ${storeId}
         AND fulfillment_channel = 'Amazon'
+        ${options.includeAllTime === false ? sql`AND FALSE` : sql``}
       GROUP BY sku
     ),
     -- Workbook: SUMIFS(ADS!L, ADS!B, "*"&SKU&"*") — portfolio chứa SKU, không lọc Loại

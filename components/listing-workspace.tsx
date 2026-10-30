@@ -4,6 +4,7 @@ import {
   EyeIcon,
   FilePdfIcon,
   GearIcon,
+  ShieldCheckIcon,
   ImageSquareIcon,
   KanbanIcon,
   LightningIcon,
@@ -91,6 +92,7 @@ type AccountingSection =
   | "financials"
   | "reports"
   | "admin"
+  | "access"
   | "dashboard"
   | "revenue"
   | "costs"
@@ -798,6 +800,29 @@ function WorkspaceSidebar({
                       <span className="text-xs font-bold text-slate-800">System Admin</span>
                     </div>
                   </button>
+
+                  {/* 7.1 Phân quyền kế toán (Admin / Kế toán) */}
+                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectAccountingSection("access");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2.5 rounded-xl py-2 pl-7 pr-2.5 text-left transition-all cursor-pointer ${
+                        accountingSection === "access"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      }`}
+                    >
+                      <ShieldCheckIcon
+                        size={16}
+                        weight={accountingSection === "access" ? "fill" : "duotone"}
+                        className={`shrink-0 ${accountingSection === "access" ? "text-indigo-600" : "text-slate-400"}`}
+                      />
+                      <span className="text-xs font-bold text-slate-800">Phân quyền</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1080,6 +1105,7 @@ export function ListingWorkspace({
         "financials",
         "reports",
         "admin",
+        "access",
         "dashboard",
         "revenue",
         "costs",

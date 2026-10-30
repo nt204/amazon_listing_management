@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import { listInventoryFieldSettings, saveInventoryFieldSetting } from "@/lib/accounting/inventory-db";
 
 const schema = z.object({
@@ -14,17 +15,19 @@ const schema = z.object({
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const storeId = new URL(request.url).searchParams.get("store_id");
     if (!storeId) return Response.json({ error: "store_id is required" }, { status: 400 });
+    await requireStoreAccess(actor, storeId);
     return Response.json({ settings: await listInventoryFieldSettings(storeId) });
   } catch (error) { return routeErrorResponse(error, "Failed to load field settings.", 500); }
 }
 
 export async function PUT(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const input = schema.parse(await readJsonBody(request, 30_000));
+    await requireStoreAccess(actor, input.store_id, undefined, "write");
     await saveInventoryFieldSetting(input.store_id, input);
     return Response.json({ success: true });
   } catch (error) { return routeErrorResponse(error, "Failed to save field settings."); }

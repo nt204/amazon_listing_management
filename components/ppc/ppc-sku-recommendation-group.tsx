@@ -8,6 +8,7 @@ import {
   CheckCircle,
   X,
   CaretRight,
+  ArrowRight,
   ArrowUpRight,
   ArrowDownRight,
   Pause,
@@ -39,9 +40,10 @@ import {
   type SkuRecommendationGroup,
   type PpcAction,
 } from "@/lib/ppc/sku-architecture-types";
-import type { PpcRecommendation } from "@/lib/ppc/types";
+import type { PpcRecommendation, PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
 import type { AiReviewerExecutionResult } from "@/lib/ppc/ai-reviewer";
 import { PpcPagination } from "./ppc-pagination";
+import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
 import {
@@ -75,6 +77,9 @@ interface PpcSkuRecommendationGroupProps {
   targetSkuToOpen?: string | null;
   onClearTargetSkuToOpen?: () => void;
   actor?: RequestActor;
+  /** dailyTrend theo SKU (từ bảng SKU) cho cột Trend (7D); bấm mở PpcSkuTrendModal như tab SKU. */
+  skuTrends?: Map<string, PpcSkuDailyTrendPoint[]>;
+  onOpenSkuTrend?: (data: { sku: string; storeName: string; mockupUrl?: string | null; dailyTrend: PpcSkuDailyTrendPoint[] }) => void;
 }
 
 export type QuickFilterType =
@@ -119,13 +124,39 @@ function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): strin
   return trimmed;
 }
 
+// Dạng chạy của campaign: ưu tiên ruleProfile, sau đó đoán theo tên campaign.
+function getRecCampaignType(rec: PpcRecommendation): string {
+  const camp = (rec.campaignName || "").toUpperCase();
+  const ruleProf = (rec.ruleProfile || "").toUpperCase();
+  if (ruleProf.startsWith("SB05") || /SB05|\bVIDEO\b/.test(camp)) return "SB05";
+  if (ruleProf.startsWith("SB01") || /SB01/.test(camp)) return "SB01";
+  if (ruleProf.startsWith("SP03") || /SP03/.test(camp)) return "SP03";
+  if (rec.adType === "SB") return "SB";
+  return "SP03";
+}
+
+function AcosValue({ spend, sales, breakEvenAcos, className = "" }: {
+  spend: number;
+  sales: number;
+  breakEvenAcos: number;
+  className?: string;
+}) {
+  if (sales <= 0) {
+    return <span className={`${spend > 0 ? "text-rose-600" : "text-slate-400"} ${className}`}>—</span>;
+  }
+  const acos = (spend / sales) * 100;
+  const tone = breakEvenAcos > 0 && acos > breakEvenAcos ? "text-rose-600" : "text-emerald-600";
+  return <span className={`${tone} ${className}`}>{acos.toFixed(1)}%</span>;
+}
+
 interface RecFinalBidInputProps {
   initialValue: number;
   onCommit: (val: number) => void;
   disabled?: boolean;
+  large?: boolean;
 }
 
-function RecFinalBidInput({ initialValue, onCommit, disabled }: RecFinalBidInputProps) {
+function RecFinalBidInput({ initialValue, onCommit, disabled, large = false }: RecFinalBidInputProps) {
   const [val, setVal] = useState<string>(initialValue ? initialValue.toFixed(2) : "0.00");
   const [isFocused, setIsFocused] = useState(false);
 
@@ -149,14 +180,16 @@ function RecFinalBidInput({ initialValue, onCommit, disabled }: RecFinalBidInput
 
   return (
     <div
-      className={`inline-flex items-center justify-end rounded border px-1.5 py-0.5 transition ${
+      className={`inline-flex items-center border transition ${
+        large ? "w-full rounded-lg px-3 py-2" : "justify-end rounded-md px-2 py-1"
+      } ${
         isFocused
           ? "border-indigo-600 bg-white ring-1 ring-indigo-500 shadow-2xs"
           : "border-slate-300 bg-white hover:border-indigo-400"
       } ${disabled ? "opacity-50 pointer-events-none" : ""}`}
       onClick={(e) => e.stopPropagation()}
     >
-      <span className="text-[10px] font-bold text-slate-400 select-none mr-0.5">$</span>
+      <span className={`font-bold text-slate-400 select-none mr-1 ${large ? "text-sm" : "text-[10px]"}`}>$</span>
       <input
         type="text"
         inputMode="decimal"
@@ -176,7 +209,9 @@ function RecFinalBidInput({ initialValue, onCommit, disabled }: RecFinalBidInput
             e.currentTarget.blur();
           }
         }}
-        className="w-14 text-right font-mono font-bold text-slate-900 text-xs bg-transparent border-0 p-0 focus:outline-none focus:ring-0"
+        className={`font-mono font-bold text-slate-900 bg-transparent border-0 p-0 focus:outline-none focus:ring-0 ${
+          large ? "flex-1 min-w-0 text-base" : "w-14 text-right text-xs"
+        }`}
         title="Nhập mức Final Bid và bấm Enter hoặc click ra ngoài để lưu"
       />
     </div>
@@ -203,6 +238,8 @@ export function PpcSkuRecommendationGroupView({
   targetSkuToOpen,
   onClearTargetSkuToOpen,
   actor,
+  skuTrends,
+  onOpenSkuTrend,
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [recTable, setRecTable] = useState<HTMLTableElement | null>(null);
@@ -236,6 +273,10 @@ export function PpcSkuRecommendationGroupView({
   const [modalSearch, setModalSearch] = useState("");
   const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
   const [modalCampTypeFilter, setModalCampTypeFilter] = useState<"ALL" | "SP03" | "SB05" | "SB01">("ALL");
+  const [modalCampaignFilter, setModalCampaignFilter] = useState("ALL");
+  // Target đang xem ở panel chi tiết bên phải; null = target đầu tiên
+  const [focusedRecId, setFocusedRecId] = useState<string | null>(null);
+  const autoExpandedSkuRef = useRef<string | null>(null);
   const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
   const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
@@ -263,6 +304,8 @@ export function PpcSkuRecommendationGroupView({
       setQuickFilter("ALL");
       setSelectedCampType("ALL");
       setModalCampTypeFilter("ALL");
+      setModalCampaignFilter("ALL");
+      setFocusedRecId(null);
       setExpandedCampaigns(new Set());
     }
   }, [selectedStore]);
@@ -497,6 +540,9 @@ export function PpcSkuRecommendationGroupView({
     // Mặc định lọc dạng chạy theo selectedCampType hiện tại
     const initialCampType = overrideCampType || (selectedCampType !== "ALL" ? selectedCampType : "ALL");
     setModalCampTypeFilter(initialCampType);
+    setModalCampaignFilter("ALL");
+    setModalSearch("");
+    setFocusedRecId(null);
 
     setRecentlyApprovedIds(new Set());
     setSelectedRecIds(new Set());
@@ -746,31 +792,50 @@ export function PpcSkuRecommendationGroupView({
   }, [selectedVisibleSkuCount, areAllVisibleSkusSelected]);
 
   // Recommendations for the currently selected SKU (Modal)
-  const currentSkuRecs = useMemo(() => {
+  const skuAllRecs = useMemo(() => {
     if (!selectedSkuGroup) return [];
-    return allRecommendations
-      .filter((r) => (r.sku || "").toUpperCase() === selectedSkuGroup.sku.toUpperCase())
-      .filter((r) => {
-        if (modalActionFilter !== "ALL" && r.recType !== modalActionFilter) return false;
-        if (modalCampTypeFilter !== "ALL") {
-          const camp = (r.campaignName || "").toUpperCase();
-          const ruleProf = (r.ruleProfile || "").toUpperCase();
-          let cType = "SP03";
-          if (ruleProf.startsWith("SB05") || /SB05|\bVIDEO\b/.test(camp)) cType = "SB05";
-          else if (ruleProf.startsWith("SB01") || /SB01/.test(camp)) cType = "SB01";
-          else if (ruleProf.startsWith("SP03") || /SP03/.test(camp)) cType = "SP03";
-          else if (r.adType === "SB") cType = "SB";
-          if (cType !== modalCampTypeFilter) return false;
-        }
-        if (modalSearch) {
-          const q = modalSearch.toLowerCase().trim();
-          const matchKw = (r.keyword || "").toLowerCase().includes(q);
-          const matchCamp = (r.campaignName || "").toLowerCase().includes(q);
-          if (!matchKw && !matchCamp) return false;
-        }
-        return true;
-      });
-  }, [allRecommendations, selectedSkuGroup, modalActionFilter, modalCampTypeFilter, modalSearch]);
+    const sku = selectedSkuGroup.sku.toUpperCase();
+    return allRecommendations.filter((r) => (r.sku || "").toUpperCase() === sku);
+  }, [allRecommendations, selectedSkuGroup]);
+
+  const modalCampaignOptions = useMemo(
+    () => Array.from(new Set(skuAllRecs.map((r) => r.campaignName || "Chưa xác định Campaign"))).sort(),
+    [skuAllRecs],
+  );
+
+  // Mọi bộ lọc trừ Tăng/Giảm/Pause — để đếm số trên các nút lọc hành động
+  const skuRecsBeforeActionFilter = useMemo(() => {
+    const q = modalSearch.toLowerCase().trim();
+    return skuAllRecs.filter((r) => {
+      if (modalCampTypeFilter !== "ALL" && getRecCampaignType(r) !== modalCampTypeFilter) return false;
+      if (modalCampaignFilter !== "ALL" && (r.campaignName || "Chưa xác định Campaign") !== modalCampaignFilter) return false;
+      if (q) {
+        const matchKw = (r.keyword || "").toLowerCase().includes(q);
+        const matchCamp = (r.campaignName || "").toLowerCase().includes(q);
+        if (!matchKw && !matchCamp) return false;
+      }
+      return true;
+    });
+  }, [skuAllRecs, modalCampTypeFilter, modalCampaignFilter, modalSearch]);
+
+  const modalActionCounts = useMemo(() => {
+    const counts = { ALL: skuRecsBeforeActionFilter.length, BID_INCREASE: 0, BID_DECREASE: 0, PAUSE_TARGET: 0 };
+    for (const r of skuRecsBeforeActionFilter) {
+      if (r.recType === "BID_INCREASE" || r.recType === "BID_DECREASE" || r.recType === "PAUSE_TARGET") {
+        counts[r.recType]++;
+      }
+    }
+    return counts;
+  }, [skuRecsBeforeActionFilter]);
+
+  const currentSkuRecs = useMemo(
+    () => modalActionFilter === "ALL"
+      ? skuRecsBeforeActionFilter
+      : skuRecsBeforeActionFilter.filter((r) => r.recType === modalActionFilter),
+    [skuRecsBeforeActionFilter, modalActionFilter],
+  );
+
+  const focusedRec = currentSkuRecs.find((r) => r.id === focusedRecId) ?? currentSkuRecs[0] ?? null;
 
   // Group currentSkuRecs by Campaign
   const groupedByCampaign = useMemo(() => {
@@ -787,10 +852,16 @@ export function PpcSkuRecommendationGroupView({
       let totalIncrease = 0;
       let totalDecrease = 0;
       let totalPause = 0;
+      let spend = 0;
+      let sales = 0;
+      let orders = 0;
       for (const r of recs) {
         if (r.recType === "BID_INCREASE") totalIncrease++;
         else if (r.recType === "BID_DECREASE") totalDecrease++;
         else if (r.recType === "PAUSE_TARGET") totalPause++;
+        spend += r.spend || 0;
+        sales += r.sales || 0;
+        orders += r.orders || 0;
       }
       const firstRec = recs[0];
       const campState = (firstRec?.campaignState || "enabled").toLowerCase();
@@ -817,14 +888,45 @@ export function PpcSkuRecommendationGroupView({
         totalIncrease,
         totalDecrease,
         totalPause,
+        spend,
+        sales,
+        orders,
       };
     });
   }, [currentSkuRecs]);
 
-  // Mặc định đóng tất cả các thẻ campaign khi mở SKU modal hoặc đóng modal
+  // Đóng tất cả các thẻ campaign khi đổi SKU / đóng modal; sau khi tải xong sẽ mở sẵn campaign đầu tiên
   useEffect(() => {
     setExpandedCampaigns(new Set());
+    autoExpandedSkuRef.current = null;
   }, [selectedSkuGroup?.sku]);
+
+  useEffect(() => {
+    if (!selectedSkuGroup || loadingSkuDetails || groupedByCampaign.length === 0) return;
+    if (autoExpandedSkuRef.current === selectedSkuGroup.sku) return;
+    autoExpandedSkuRef.current = selectedSkuGroup.sku;
+    setExpandedCampaigns(new Set([groupedByCampaign[0].campaignName]));
+  }, [selectedSkuGroup, loadingSkuDetails, groupedByCampaign]);
+
+  const closeSkuModal = () => {
+    setSelectedSkuGroup(null);
+    setModalSearch("");
+    setModalActionFilter("ALL");
+    setModalCampaignFilter("ALL");
+    setFocusedRecId(null);
+    setRecentlyApprovedIds(new Set());
+    setSelectedRecIds(new Set());
+    setExpandedCampaigns(new Set());
+  };
+
+  const handleCommitFinalBid = (id: string, value: number) => {
+    setUserFinalBids((prev) => ({ ...prev, [id]: value }));
+    setAiReviewApplications((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
 
   const toggleCampaignExpanded = (campName: string) => {
     setExpandedCampaigns((prev) => {
@@ -1015,38 +1117,6 @@ export function PpcSkuRecommendationGroupView({
       alert("Lỗi khi duyệt đề xuất: " + String(err));
     } finally {
       setIsApproving(false);
-    }
-  };
-
-  const renderActionBadge = (recType: string) => {
-    switch (recType) {
-      case "BID_INCREASE":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <ArrowUpRight size={13} weight="bold" />
-            Tăng
-          </span>
-        );
-      case "BID_DECREASE":
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-            <ArrowDownRight size={13} weight="bold" />
-            Giảm
-          </span>
-        );
-      case "PAUSE_TARGET":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-            <Pause size={13} weight="bold" />
-            Tạm dừng
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
-            {recType}
-          </span>
-        );
     }
   };
 
@@ -1560,7 +1630,6 @@ export function PpcSkuRecommendationGroupView({
               </th>
               <th className="w-12 py-3 px-2 text-center text-xs font-bold text-slate-500">Ảnh</th>
               {renderSortHeader("SKU", "sku", "left")}
-              <th className="py-3 px-3">ASIN</th>
               <th className="py-3 px-3">Phôi</th>
               {renderSortHeader("Spend", "spend", "right")}
               {renderSortHeader("Sales", "sales", "right")}
@@ -1571,6 +1640,7 @@ export function PpcSkuRecommendationGroupView({
               {renderSortHeader("Giảm Bid", "decreaseCount", "center")}
               {renderSortHeader("Pause", "pauseCount", "center")}
               <th className="py-3 px-3 text-center whitespace-nowrap">Chi tiết</th>
+              <th className="py-3 px-3 text-center w-24 whitespace-nowrap">Trend (7D)</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -1655,7 +1725,6 @@ export function PpcSkuRecommendationGroupView({
                     <td className="py-2.5 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition col-primary">
                       {group.sku}
                     </td>
-                    <td className="py-3 px-3 text-slate-500">{group.asin || "—"}</td>
                     <td className="py-3 px-3 text-slate-700 font-medium">
                       {group.productType || "—"}
                     </td>
@@ -1749,6 +1818,15 @@ export function PpcSkuRecommendationGroupView({
                         <CaretRight size={12} weight="bold" />
                       </button>
                     </td>
+                    <td className="py-3 px-3 text-center">
+                      <SkuTrendSparkline
+                        dailyTrend={skuTrends?.get(group.sku)}
+                        sku={group.sku}
+                        storeName={selectedStore || ""}
+                        mockupUrl={group.mockupUrl}
+                        onOpenDetail={onOpenSkuTrend}
+                      />
+                    </td>
                   </tr>
                 );
               })
@@ -1777,661 +1855,535 @@ export function PpcSkuRecommendationGroupView({
       {selectedSkuGroup && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto"
-          onClick={() => setSelectedSkuGroup(null)}
+          onClick={closeSkuModal}
         >
-          <div className={`flex flex-col lg:flex-row gap-3 w-full items-stretch justify-center ${isAiChatOpen ? "max-w-[1640px]" : "max-w-6xl"}`}>
+          <div className={`flex flex-col lg:flex-row gap-3 w-full items-stretch justify-center ${isAiChatOpen ? "max-w-[1720px]" : "max-w-[1280px]"}`}>
           <div
-            className="w-full min-w-0 max-w-6xl max-h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            className="w-full min-w-0 max-w-[1280px] h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/70">
-              <div className="flex items-center gap-3">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-slate-100">
+              <div className="flex items-center gap-4 min-w-0">
                 {selectedSkuGroup.mockupUrl && (
                   <img
-                    src={getOptimizedThumbnailUrl(selectedSkuGroup.mockupUrl, 96) || selectedSkuGroup.mockupUrl}
+                    src={getOptimizedThumbnailUrl(selectedSkuGroup.mockupUrl, 128) || selectedSkuGroup.mockupUrl}
                     alt={selectedSkuGroup.sku}
-                    className="w-12 h-12 rounded-xl object-cover border border-slate-200 shadow-xs shrink-0"
+                    className="w-14 h-14 rounded-xl object-cover border border-slate-200 shrink-0"
                     loading="lazy"
                   />
                 )}
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-base font-black text-slate-900">
-                      ĐỀ XUẤT CHO SKU:{" "}
-                      <button
-                        type="button"
-                        onClick={() => setAiChatSku(isAiChatOpen ? null : selectedSkuGroup.sku)}
-                        title="Chat với AI về SKU này"
-                        className={`inline-flex items-center gap-1 font-mono rounded-md px-1 -mx-1 cursor-pointer transition-colors ${
-                          isAiChatOpen ? "bg-indigo-100 text-indigo-700" : "text-indigo-600 hover:bg-indigo-50 hover:underline"
-                        }`}
-                      >
-                        {selectedSkuGroup.sku}
-                        <Sparkle size={14} weight="fill" className="text-violet-500" />
-                      </button>
-                    </h2>
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setAiChatSku(isAiChatOpen ? null : selectedSkuGroup.sku)}
+                      title="Chat với AI về SKU này"
+                      className={`inline-flex items-center gap-1.5 text-lg font-black rounded-md px-1 -mx-1 cursor-pointer transition-colors ${
+                        isAiChatOpen ? "bg-indigo-100 text-indigo-700" : "text-slate-900 hover:bg-indigo-50 hover:text-indigo-700"
+                      }`}
+                    >
+                      {selectedSkuGroup.sku}
+                      <Sparkle size={14} weight="fill" className="text-violet-500" />
+                    </button>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700">
                       {selectedSkuGroup.productType}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                    <span>ASIN: {selectedSkuGroup.asin}</span>
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                    <span>ASIN: {selectedSkuGroup.asin || "—"}</span>
                     {selectedSkuGroup.picMkt && <span>• PIC: <strong className="text-slate-700">{selectedSkuGroup.picMkt}</strong></span>}
                     {selectedSkuGroup.niche && <span>• Niche: <strong className="text-slate-700">{selectedSkuGroup.niche}</strong></span>}
-                    <span>•</span>
-                    {loadingSkuDetails ? (
-                      <span className="inline-flex items-center gap-1 text-indigo-600 font-semibold animate-pulse">
-                        <CircleNotch size={12} className="animate-spin" />
-                        Đang tải và tính toán chi tiết đề xuất...
-                      </span>
-                    ) : (
-                      <span>Tổng cộng {currentSkuRecs.length} đề xuất tối ưu hóa</span>
-                    )}
+                    <span>
+                      • Giá ${selectedSkuGroup.economics.sellingPrice.toFixed(2)} · Lãi trước Ads ${selectedSkuGroup.economics.profitBeforeAds.toFixed(2)} · CR {(selectedSkuGroup.economics.cr * 100).toFixed(1)}% ({selectedSkuGroup.economics.crSource})
+                    </span>
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => {
-                  setSelectedSkuGroup(null);
-                  setModalSearch("");
-                  setModalActionFilter("ALL");
-                  setRecentlyApprovedIds(new Set());
-                  setSelectedRecIds(new Set());
-                  setExpandedCampaigns(new Set());
-                }}
-                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+                onClick={closeSkuModal}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer shrink-0"
               >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-6">
-              {/* TOP BLOCKS: BLOCK A & BLOCK B */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Block A — SKU Economics */}
-                <div className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                      Block A — SKU Economics
-                    </h3>
-                    <span className="text-[10px] text-slate-500">
-                      CR Source: <strong className="text-slate-800">{selectedSkuGroup.economics.crSource}</strong>
-                    </span>
+            <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+              {/* LEFT: KPI + campaigns */}
+              <div className="flex-1 min-w-0 overflow-y-auto p-5 space-y-4">
+                {/* KPI row */}
+                <div className="grid grid-cols-3 md:grid-cols-6 gap-2.5">
+                  {[
+                    { label: "Sales", value: `$${selectedSkuGroup.sales.toFixed(2)}`, tone: "text-slate-900" },
+                    { label: "Spend", value: `$${selectedSkuGroup.spend.toFixed(2)}`, tone: "text-slate-900" },
+                    { label: "Orders", value: String(selectedSkuGroup.orders), tone: "text-slate-900" },
+                  ].map((kpi) => (
+                    <div key={kpi.label} className="rounded-xl border border-slate-200 px-3.5 py-2.5">
+                      <div className="text-[11px] font-semibold text-slate-500">{kpi.label}</div>
+                      <div className={`text-lg font-black font-mono mt-0.5 ${kpi.tone}`}>{kpi.value}</div>
+                    </div>
+                  ))}
+                  <div className="rounded-xl border border-slate-200 px-3.5 py-2.5">
+                    <div className="text-[11px] font-semibold text-slate-500">ACOS</div>
+                    <AcosValue
+                      spend={selectedSkuGroup.spend}
+                      sales={selectedSkuGroup.sales}
+                      breakEvenAcos={selectedSkuGroup.breakEvenAcos}
+                      className="block text-lg font-black font-mono mt-0.5"
+                    />
                   </div>
-
-                  <div className="grid grid-cols-5 gap-2 text-center pt-1">
-                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">Price</div>
-                      <div className="text-xs font-black text-slate-900 font-mono mt-0.5">
-                        ${selectedSkuGroup.economics.sellingPrice.toFixed(2)}
-                      </div>
+                  <div className="rounded-xl border border-slate-200 px-3.5 py-2.5">
+                    <div className="text-[11px] font-semibold text-slate-500">BE ACOS</div>
+                    <div className="text-lg font-black font-mono mt-0.5 text-slate-900">
+                      {selectedSkuGroup.breakEvenAcos.toFixed(1)}%
                     </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">Profit B. Ads</div>
-                      <div className="text-xs font-black text-emerald-700 font-mono mt-0.5">
-                        ${selectedSkuGroup.economics.profitBeforeAds.toFixed(2)}
-                      </div>
-                    </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">BE ACoS</div>
-                      <div className="text-xs font-black text-amber-700 font-mono mt-0.5">
-                        {selectedSkuGroup.breakEvenAcos.toFixed(1)}%
-                      </div>
-                    </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">CR</div>
-                      <div className="text-xs font-bold text-slate-800 font-mono mt-0.5">
-                        {(selectedSkuGroup.economics.cr * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                    {(() => {
-                      const econ = selectedSkuGroup.economics;
-                      const calculated = econ.calculatedMaxBid ?? econ.maxBid;
-                      const isOverridden = econ.maxBidOverride != null && econ.maxBidOverride > 0 && calculated > 0;
-                      // Lỗi Prefix / thiếu dữ liệu (Max Bid tự tính = 0) thì không cho đặt tay
-                      const canEdit = calculated > 0 && /^[0-9a-f-]{36}$/i.test(econ.storeId);
-                      return (
-                        <div className={`bg-white p-2.5 rounded-xl border shadow-2xs ${isOverridden ? "border-violet-300" : "border-slate-200"}`}>
-                          <div className="flex items-center justify-center gap-1 text-[10px] font-semibold text-slate-500">
-                            Max Bid
-                            {maxBidDraft === null && canEdit && (
-                              <button
-                                type="button"
-                                onClick={() => setMaxBidDraft(econ.maxBid.toFixed(2))}
-                                className="text-slate-400 hover:text-indigo-600"
-                                title="Sửa Max Bid"
-                              >
-                                <PencilSimple size={11} weight="bold" />
-                              </button>
-                            )}
-                          </div>
-                          {maxBidDraft !== null ? (
-                            <div className="mt-0.5 space-y-1">
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0.01"
-                                autoFocus
-                                value={maxBidDraft}
-                                disabled={isSavingMaxBid}
-                                onChange={(e) => setMaxBidDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") void handleSaveMaxBid(Number(maxBidDraft));
-                                  else if (e.key === "Escape") {
-                                    e.stopPropagation();
-                                    setMaxBidDraft(null);
-                                  }
-                                }}
-                                className="w-full rounded border border-indigo-300 px-1 py-0.5 text-center font-mono text-xs font-bold text-slate-900 focus:border-indigo-600 focus:outline-none"
-                              />
-                              <div className="flex justify-center gap-1">
-                                <button
-                                  type="button"
-                                  disabled={isSavingMaxBid}
-                                  onClick={() => void handleSaveMaxBid(Number(maxBidDraft))}
-                                  className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
-                                >
-                                  {isSavingMaxBid ? "..." : "Lưu"}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isSavingMaxBid}
-                                  onClick={() => setMaxBidDraft(null)}
-                                  className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 hover:bg-slate-50"
-                                >
-                                  Hủy
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <div className={`text-xs font-black font-mono mt-0.5 ${isOverridden ? "text-violet-700" : "text-indigo-600"}`}>
-                                ${econ.maxBid.toFixed(2)}
-                              </div>
-                              {isOverridden && (
-                                <div className="mt-0.5 text-[9px] text-slate-500">
-                                  Sửa tay · tự tính ${calculated.toFixed(2)}{" "}
-                                  <button
-                                    type="button"
-                                    disabled={isSavingMaxBid}
-                                    onClick={() => void handleSaveMaxBid(null)}
-                                    className="font-bold text-indigo-600 hover:underline disabled:opacity-50"
-                                    title="Bỏ số nhập tay, dùng Max Bid tự tính"
-                                  >
-                                    Bỏ
-                                  </button>
-                                </div>
-                              )}
-                            </>
+                  </div>
+                  {(() => {
+                    const econ = selectedSkuGroup.economics;
+                    const calculated = econ.calculatedMaxBid ?? econ.maxBid;
+                    const isOverridden = econ.maxBidOverride != null && econ.maxBidOverride > 0 && calculated > 0;
+                    // Lỗi Prefix / thiếu dữ liệu (Max Bid tự tính = 0) thì không cho đặt tay
+                    const canEdit = calculated > 0 && /^[0-9a-f-]{36}$/i.test(econ.storeId);
+                    return (
+                      <div className={`rounded-xl border px-3.5 py-2.5 ${isOverridden ? "border-violet-300" : "border-slate-200"}`}>
+                        <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500">
+                          Max Bid
+                          {maxBidDraft === null && canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => setMaxBidDraft(econ.maxBid.toFixed(2))}
+                              className="text-slate-400 hover:text-indigo-600"
+                              title="Sửa Max Bid"
+                            >
+                              <PencilSimple size={11} weight="bold" />
+                            </button>
                           )}
                         </div>
-                      );
-                    })()}
+                        {maxBidDraft !== null ? (
+                          <div className="mt-0.5 flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              autoFocus
+                              value={maxBidDraft}
+                              disabled={isSavingMaxBid}
+                              onChange={(e) => setMaxBidDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") void handleSaveMaxBid(Number(maxBidDraft));
+                                else if (e.key === "Escape") {
+                                  e.stopPropagation();
+                                  setMaxBidDraft(null);
+                                }
+                              }}
+                              className="w-full min-w-0 rounded border border-indigo-300 px-1 py-0.5 font-mono text-xs font-bold text-slate-900 focus:border-indigo-600 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              disabled={isSavingMaxBid}
+                              onClick={() => void handleSaveMaxBid(Number(maxBidDraft))}
+                              className="rounded bg-indigo-600 p-1 text-white hover:bg-indigo-700 disabled:opacity-50"
+                              title="Lưu"
+                            >
+                              {isSavingMaxBid ? <CircleNotch size={11} className="animate-spin" /> : <Check size={11} weight="bold" />}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSavingMaxBid}
+                              onClick={() => setMaxBidDraft(null)}
+                              className="rounded border border-slate-200 p-1 text-slate-500 hover:bg-slate-50"
+                              title="Hủy"
+                            >
+                              <X size={11} weight="bold" />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className={`text-lg font-black font-mono mt-0.5 ${isOverridden ? "text-violet-700" : "text-indigo-600"}`}>
+                              ${econ.maxBid.toFixed(2)}
+                            </div>
+                            {isOverridden && (
+                              <div className="text-[10px] text-slate-500">
+                                Sửa tay · tự tính ${calculated.toFixed(2)}{" "}
+                                <button
+                                  type="button"
+                                  disabled={isSavingMaxBid}
+                                  onClick={() => void handleSaveMaxBid(null)}
+                                  className="font-bold text-indigo-600 hover:underline disabled:opacity-50"
+                                  title="Bỏ số nhập tay, dùng Max Bid tự tính"
+                                >
+                                  Bỏ
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Filter bar */}
+                <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-slate-200 p-2.5">
+                  <select
+                    value={
+                      modalCampaignFilter !== "ALL"
+                        ? `camp:${modalCampaignFilter}`
+                        : modalCampTypeFilter !== "ALL"
+                          ? `type:${modalCampTypeFilter}`
+                          : "ALL"
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v.startsWith("camp:")) {
+                        const name = v.slice(5);
+                        setModalCampaignFilter(name);
+                        setModalCampTypeFilter("ALL");
+                        setExpandedCampaigns(new Set([name]));
+                      } else {
+                        setModalCampaignFilter("ALL");
+                        setModalCampTypeFilter(v.startsWith("type:") ? (v.slice(5) as "SP03" | "SB05" | "SB01") : "ALL");
+                      }
+                    }}
+                    className="h-9 w-56 max-w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 focus:outline-none focus:border-indigo-600 cursor-pointer"
+                  >
+                    <option value="ALL">Tất cả campaign</option>
+                    <optgroup label="Dạng chạy">
+                      <option value="type:SP03">SP03</option>
+                      <option value="type:SB05">SB05</option>
+                      <option value="type:SB01">SB01</option>
+                    </optgroup>
+                    <optgroup label="Campaign">
+                      {modalCampaignOptions.map((name) => (
+                        <option key={name} value={`camp:${name}`}>{name}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+
+                  <div className="relative flex-1 min-w-[180px]">
+                    <MagnifyingGlass size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Lọc từ khóa / target..."
+                      value={modalSearch}
+                      onChange={(e) => setModalSearch(e.target.value)}
+                      className="h-9 w-full pl-8 pr-3 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-indigo-600"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
+                    {([
+                      { key: "ALL", label: "Tất cả", active: "bg-white text-indigo-700 shadow-2xs" },
+                      { key: "BID_INCREASE", label: "Tăng", active: "bg-white text-emerald-700 shadow-2xs" },
+                      { key: "BID_DECREASE", label: "Giảm", active: "bg-white text-rose-700 shadow-2xs" },
+                      { key: "PAUSE_TARGET", label: "Pause", active: "bg-white text-amber-700 shadow-2xs" },
+                    ] as const).map((pill) => (
+                      <button
+                        key={pill.key}
+                        type="button"
+                        onClick={() => setModalActionFilter(pill.key)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition ${
+                          modalActionFilter === pill.key ? pill.active : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        {pill.label}
+                        <span className="rounded bg-slate-200/70 px-1.5 text-[10px] font-bold text-slate-600">
+                          {modalActionCounts[pill.key]}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {/* Block B — PPC Summary */}
-                <div className="bg-indigo-50/40 rounded-2xl p-4 border border-indigo-100 space-y-3">
-                  <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
-                    <h3 className="text-xs font-black text-indigo-900 uppercase tracking-wider">
-                      Block B — PPC Summary
-                    </h3>
-                    <span className="text-[10px] text-indigo-600 font-bold">Chu kỳ 30 ngày gần nhất</span>
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-2 text-center pt-1">
-                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">Spend</div>
-                      <div className="text-xs font-black text-slate-900 font-mono mt-0.5">
-                        ${selectedSkuGroup.spend.toFixed(2)}
-                      </div>
-                    </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">Sales</div>
-                      <div className="text-xs font-black text-emerald-700 font-mono mt-0.5">
-                        ${selectedSkuGroup.sales.toFixed(2)}
-                      </div>
-                    </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">Orders</div>
-                      <div className="text-xs font-black text-slate-900 font-mono mt-0.5">
-                        {selectedSkuGroup.orders}
-                      </div>
-                    </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">ACoS</div>
-                      <div className="text-xs font-black text-amber-700 font-mono mt-0.5">
-                        {selectedSkuGroup.acos.toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* BLOCK C: RECOMMENDATIONS TABLE GROUPED BY CAMPAIGN */}
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50/80 p-3 rounded-xl border border-slate-200">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                        Block C — Đề Xuất
-                      </h3>
-                      {loadingSkuDetails ? (
-                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200 inline-flex items-center gap-1.5 animate-pulse">
-                          <CircleNotch size={12} className="animate-spin text-indigo-600" />
-                          Đang tải chi tiết...
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          {currentSkuRecs.length} targets · {groupedByCampaign.length} campaigns
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Modal search */}
-                    <div className="relative">
-                      <MagnifyingGlass size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Lọc từ khóa / campaign..."
-                        value={modalSearch}
-                        onChange={(e) => setModalSearch(e.target.value)}
-                        className="pl-7 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs w-52 focus:outline-none focus:border-indigo-600"
-                      />
-                    </div>
-
-                    {/* Modal action filter pills */}
-                    <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
-                      <button
-                        onClick={() => setModalActionFilter("ALL")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "ALL" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:text-slate-900"
-                          }`}
-                      >
-                        Tất cả
-                      </button>
-                      <button
-                        onClick={() => setModalActionFilter("BID_INCREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "BID_INCREASE" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:text-emerald-600"
-                          }`}
-                      >
-                        ↑ Tăng
-                      </button>
-                      <button
-                        onClick={() => setModalActionFilter("BID_DECREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "BID_DECREASE" ? "bg-rose-50 text-rose-700" : "text-slate-600 hover:text-rose-600"
-                          }`}
-                      >
-                        ↓ Giảm
-                      </button>
-                      <button
-                        onClick={() => setModalActionFilter("PAUSE_TARGET")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "PAUSE_TARGET" ? "bg-amber-50 text-amber-800" : "text-slate-600 hover:text-amber-700"
-                          }`}
-                      >
-                        ⏸ Pause
-                      </button>
-                    </div>
-
-                    {/* Modal Campaign Type filter pills */}
-                    <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
-                      {(["SP03", "SB05", "SB01"] as const).map((type) => {
-                        const isActive = modalCampTypeFilter === type;
-                        return (
-                          <button
-                            key={type}
-                            type="button"
-                            onClick={() => setModalCampTypeFilter(modalCampTypeFilter === type ? "ALL" : type)}
-                            className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${
-                              isActive
-                                ? type === "SB05"
-                                  ? "bg-purple-600 text-white shadow-2xs"
-                                  : type === "SB01"
-                                    ? "bg-blue-600 text-white shadow-2xs"
-                                    : "bg-indigo-600 text-white shadow-2xs"
-                                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                            }`}
-                          >
-                            {type}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                      {selectedRecIds.size > 0 && (
-                        <span className="text-xs text-indigo-600 font-bold">
-                          (Đã chọn {selectedRecIds.size} mục)
-                        </span>
-                      )}
-                    </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleExpandAllCampaigns}
-                      disabled={loadingSkuDetails || groupedByCampaign.length === 0}
-                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {expandedCampaigns.size === groupedByCampaign.length && groupedByCampaign.length > 0 ? (
-                        <>
-                          <CaretUp size={14} weight="bold" className="text-indigo-600" />
-                          <span>Thu gọn tất cả</span>
-                        </>
-                      ) : (
-                        <>
-                          <CaretDown size={14} weight="bold" className="text-indigo-600" />
-                          <span>Mở tất cả ({groupedByCampaign.length})</span>
-                        </>
-                      )}
-                    </button>
-
+                {/* Selection / bulk actions */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-3 text-slate-500">
                     <button
                       type="button"
                       onClick={handleToggleSelectAll}
                       disabled={loadingSkuDetails || currentSkuRecs.length === 0}
-                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="inline-flex items-center gap-1.5 font-semibold hover:text-slate-800 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {selectedRecIds.size === currentSkuRecs.length && currentSkuRecs.length > 0 ? (
-                        <>
-                          <CheckSquare size={15} className="text-indigo-600" weight="fill" />
-                          <span>Bỏ chọn tất cả</span>
-                        </>
+                        <CheckSquare size={15} className="text-indigo-600" weight="fill" />
                       ) : (
-                        <>
-                          <Square size={15} className="text-slate-400" />
-                          <span>Chọn tất cả ({currentSkuRecs.length})</span>
-                        </>
+                        <Square size={15} />
+                      )}
+                      Chọn tất cả ({currentSkuRecs.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExpandAllCampaigns}
+                      disabled={loadingSkuDetails || groupedByCampaign.length === 0}
+                      className="inline-flex items-center gap-1 font-semibold hover:text-slate-800 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {expandedCampaigns.size === groupedByCampaign.length && groupedByCampaign.length > 0 ? (
+                        <><CaretUp size={13} weight="bold" /> Thu gọn tất cả</>
+                      ) : (
+                        <><CaretDown size={13} weight="bold" /> Mở tất cả ({groupedByCampaign.length})</>
                       )}
                     </button>
+                  </div>
 
+                  <div className="flex items-center gap-2">
                     {selectedRecIds.size > 0 && (
                       <button
                         type="button"
                         onClick={handleBatchEditRecBids}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:border-indigo-300 text-xs font-bold transition shadow-2xs cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold cursor-pointer"
                         title="Chỉnh sửa Final Bid hàng loạt cho các mục đang chọn"
                       >
                         <PencilSimple size={13} weight="bold" />
-                        <span>Sửa Bid ({selectedRecIds.size})</span>
+                        Sửa Bid ({selectedRecIds.size})
                       </button>
                     )}
-
                     {recentlyApprovedIds.size > 0 && selectedRecIds.size === 0 ? (
                       <button
                         onClick={handleOpenActionQueueModal}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition shadow-2xs cursor-pointer animate-in fade-in duration-200"
-                        title="Đã duyệt vào Action Queue. Bấm vào đây để mở Action Queue"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+                        title="Đã duyệt vào Action Queue. Bấm để mở Action Queue"
                       >
                         <Lightning size={14} weight="fill" className="text-amber-300" />
-                        <span>Action ({recentlyApprovedIds.size})</span>
+                        Action ({recentlyApprovedIds.size})
                       </button>
                     ) : (
                       <button
                         onClick={handleApproveSelected}
                         disabled={selectedRecIds.size === 0 || isApproving || isStoreSwitching}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-2xs disabled:opacity-40 cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold disabled:opacity-40 cursor-pointer"
                       >
                         <CheckCircle size={14} weight="bold" />
-                        <span>{isApproving ? "Đang xử lý..." : isStoreSwitching ? "Đang đổi Store..." : `Duyệt ${selectedRecIds.size} mục đã chọn`}</span>
+                        {isApproving ? "Đang xử lý..." : isStoreSwitching ? "Đang đổi Store..." : `Duyệt ${selectedRecIds.size} mục đã chọn`}
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* Grouped Campaign Cards */}
+                {/* Campaign cards */}
                 {loadingSkuDetails ? (
-                  <div className="py-16 text-center space-y-3 bg-slate-50/70 rounded-2xl border border-dashed border-indigo-200 animate-in fade-in duration-150">
-                    <div className="inline-flex p-3 rounded-2xl bg-indigo-50 text-indigo-600 animate-spin">
-                      <CircleNotch size={28} weight="bold" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-slate-800">
-                        Đang tải và tính toán chi tiết đề xuất cho SKU {selectedSkuGroup.sku}...
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Hệ thống đang đối chiếu dữ liệu chiến dịch và áp dụng công thức tối ưu hóa theo quy chuẩn...
-                      </p>
-                    </div>
+                  <div className="py-16 flex flex-col items-center gap-3 text-center rounded-xl border border-dashed border-slate-200">
+                    <CircleNotch size={26} weight="bold" className="animate-spin text-indigo-600" />
+                    <p className="text-sm font-semibold text-slate-600">
+                      Đang tải và tính toán đề xuất cho SKU {selectedSkuGroup.sku}...
+                    </p>
                   </div>
                 ) : groupedByCampaign.length === 0 ? (
-                  <div className="py-12 text-center text-slate-400 bg-slate-50/50 rounded-xl border border-slate-200">
-                    {modalSearch || modalActionFilter !== "ALL" || modalCampTypeFilter !== "ALL"
-                      ? "Không tìm thấy đề xuất nào phù hợp với bộ lọc tìm kiếm hiện tại."
+                  <div className="py-12 text-center text-sm text-slate-400 rounded-xl border border-slate-200">
+                    {modalSearch || modalActionFilter !== "ALL" || modalCampTypeFilter !== "ALL" || modalCampaignFilter !== "ALL"
+                      ? "Không tìm thấy đề xuất nào phù hợp với bộ lọc hiện tại."
                       : "Không có đề xuất nào cho SKU này trong kỳ dữ liệu đã chọn."}
                   </div>
                 ) : (
-                  <div className="space-y-3.5 max-h-[52vh] overflow-y-auto pr-1">
+                  <div className="space-y-3">
                     {groupedByCampaign.map((cg) => {
                       const isCampaignAllSelected = cg.recs.length > 0 && cg.recs.every((r) => selectedRecIds.has(r.id));
                       const isCampaignSomeSelected = !isCampaignAllSelected && cg.recs.some((r) => selectedRecIds.has(r.id));
                       const isExpanded = expandedCampaigns.has(cg.campaignName);
+                      const campaignCheckbox = (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleSelectCampaign(cg.recs);
+                          }}
+                          className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                          title={isCampaignAllSelected ? "Bỏ chọn campaign này" : "Chọn tất cả trong campaign này"}
+                        >
+                          {isCampaignAllSelected ? (
+                            <CheckSquare size={17} className="text-indigo-600" weight="fill" />
+                          ) : isCampaignSomeSelected ? (
+                            <div className="w-[15px] h-[15px] m-px rounded-[3px] border-2 border-indigo-600 flex items-center justify-center bg-indigo-50">
+                              <div className="w-2 h-0.5 bg-indigo-600 rounded" />
+                            </div>
+                          ) : (
+                            <Square size={17} />
+                          )}
+                        </button>
+                      );
 
                       return (
                         <div
                           key={cg.campaignName}
-                          className={`rounded-xl border transition shadow-2xs overflow-hidden ${isExpanded
-                              ? "border-indigo-200 ring-1 ring-indigo-200/50 bg-white"
-                              : "border-slate-200 hover:border-indigo-300 bg-white"
-                            }`}
+                          className={`rounded-xl border overflow-hidden transition ${isExpanded ? "border-indigo-200" : "border-slate-200 hover:border-indigo-200"}`}
                         >
-                          {/* Campaign Header Bar — Click anywhere to expand/collapse */}
+                          {/* Campaign header — click để mở / thu gọn */}
                           <div
                             onClick={() => toggleCampaignExpanded(cg.campaignName)}
-                            className={`flex flex-wrap items-center justify-between gap-2.5 px-4 py-3 border-b cursor-pointer select-none transition ${isExpanded
-                                ? "bg-indigo-50/50 border-indigo-100"
-                                : "bg-slate-50/90 hover:bg-indigo-50/30 border-slate-200"
-                              }`}
+                            className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 cursor-pointer select-none hover:bg-slate-50/70"
                           >
-                            <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
-                              {/* Checkbox wrapper with stopPropagation */}
-                              <div onClick={(e) => e.stopPropagation()}>
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleSelectCampaign(cg.recs)}
-                                  className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5 rounded"
-                                  title={isCampaignAllSelected ? "Bỏ chọn campaign này" : "Chọn tất cả trong campaign này"}
-                                >
-                                  {isCampaignAllSelected ? (
-                                    <CheckSquare size={17} className="text-indigo-600" weight="fill" />
-                                  ) : isCampaignSomeSelected ? (
-                                    <div className="w-4 h-4 rounded border-2 border-indigo-600 flex items-center justify-center bg-indigo-50">
-                                      <div className="w-2 h-0.5 bg-indigo-600 rounded" />
-                                    </div>
-                                  ) : (
-                                    <Square size={17} />
-                                  )}
-                                </button>
-                              </div>
-
+                            <div className="flex items-center gap-3 flex-1 min-w-[260px]">
+                              {campaignCheckbox}
                               <CaretRight
-                                size={15}
+                                size={14}
                                 weight="bold"
-                                className={`text-slate-400 transition-transform duration-200 ${isExpanded ? "rotate-90 text-indigo-600" : "text-slate-400"
-                                  }`}
+                                className={`shrink-0 transition-transform duration-200 ${isExpanded ? "rotate-90 text-indigo-600" : "text-slate-400"}`}
                               />
-
-                              <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200/80">
+                              <span className="shrink-0 px-2 py-1 rounded-md text-[11px] font-black bg-indigo-50 text-indigo-700">
                                 {cg.campaignType}
                               </span>
-
-                              {cg.campaignState === "paused" && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200/80">
-                                  PAUSED
-                                </span>
-                              )}
-
-                              {/* FULL CAMPAIGN NAME (NO TRUNCATION!) */}
-                              <h4
-                                className="font-semibold text-slate-900 text-xs break-all select-all flex-1 hover:text-indigo-600 transition"
-                                title="Bấm để mở / thu gọn danh sách target"
-                              >
-                                {cg.campaignName}
-                              </h4>
+                              <div className="min-w-0">
+                                <h4 className="font-bold text-slate-900 text-[13px] break-all" title={cg.campaignName}>
+                                  {cg.campaignName}
+                                </h4>
+                                <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                  <span>{cg.recs.length} target{cg.recs.length > 1 ? "s" : ""}</span>
+                                  <span>•</span>
+                                  <span className={cg.campaignState === "paused" ? "font-semibold text-amber-700" : ""}>
+                                    {cg.campaignState === "paused" ? "Paused" : "Active"}
+                                  </span>
+                                  {cg.totalIncrease > 0 && <span className="font-semibold text-emerald-600">↑{cg.totalIncrease}</span>}
+                                  {cg.totalDecrease > 0 && <span className="font-semibold text-rose-600">↓{cg.totalDecrease}</span>}
+                                  {cg.totalPause > 0 && <span className="font-semibold text-amber-700">⏸{cg.totalPause}</span>}
+                                </div>
+                              </div>
                             </div>
 
-                            <div className="flex items-center gap-2 text-[11px]">
+                            <div className="flex items-center gap-5 text-xs">
+                              {[
+                                { label: "Spend", value: `$${cg.spend.toFixed(2)}` },
+                                { label: "Sales", value: `$${cg.sales.toFixed(2)}` },
+                                { label: "Orders", value: String(cg.orders) },
+                              ].map((m) => (
+                                <div key={m.label} className="w-16">
+                                  <div className="text-[11px] text-slate-500">{m.label}</div>
+                                  <div className="font-bold font-mono text-slate-900">{m.value}</div>
+                                </div>
+                              ))}
+                              <div className="w-16">
+                                <div className="text-[11px] text-slate-500">ACOS</div>
+                                <AcosValue
+                                  spend={cg.spend}
+                                  sales={cg.sales}
+                                  breakEvenAcos={selectedSkuGroup.breakEvenAcos}
+                                  className="font-bold font-mono"
+                                />
+                              </div>
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleBatchEditCampaignRecBids(cg.recs, cg.campaignName);
                                 }}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 bg-white transition cursor-pointer"
+                                className="p-1.5 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer"
                                 title="Đặt nhanh Final Bid cho toàn bộ targets trong campaign này"
                               >
-                                <PencilSimple size={11} weight="bold" />
-                                <span>Sửa Bid</span>
+                                <PencilSimple size={14} weight="bold" />
                               </button>
-
-                              <span className="px-2 py-0.5 rounded font-bold text-slate-600 bg-white border border-slate-200">
-                                {cg.recs.length} target{cg.recs.length > 1 ? "s" : ""}
-                              </span>
-
-                              {cg.totalIncrease > 0 && (
-                                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                  ↑ {cg.totalIncrease}
-                                </span>
-                              )}
-                              {cg.totalDecrease > 0 && (
-                                <span className="text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                                  ↓ {cg.totalDecrease}
-                                </span>
-                              )}
-                              {cg.totalPause > 0 && (
-                                <span className="text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                  ⏸ {cg.totalPause}
-                                </span>
-                              )}
-
-                              <span className="text-[11px] font-bold text-indigo-600 pl-1">
-                                {isExpanded ? "Thu gọn ▲" : "Xem target ▼"}
-                              </span>
                             </div>
                           </div>
 
-                          {/* Target Table Inside Campaign (only visible when expanded) */}
+                          {/* Target table */}
                           {isExpanded && (
-                            <div className="overflow-x-auto animate-in fade-in duration-150">
+                            <div className="overflow-x-auto border-t border-slate-100">
                               <table className="w-full text-left text-xs">
-                                <thead className="bg-slate-50/60 text-slate-600 border-b border-slate-100 font-bold text-[11px]">
+                                <thead className="text-slate-500 text-[11px] font-semibold border-b border-slate-100">
                                   <tr>
-                                    <th className="py-2.5 px-3 w-8"></th>
-                                    <th className="py-2.5 px-2 w-24">Hành động</th>
+                                    <th className="py-2.5 pl-4 pr-2 w-8">{campaignCheckbox}</th>
                                     <th className="py-2.5 px-3">Target / Keyword</th>
-                                    <th className="py-2.5 px-3 text-right">Current Bid</th>
-                                    <th className="py-2.5 px-3 text-right">Suggested Bid</th>
-                                    <th className="py-2.5 px-3 text-right w-24">Final Bid</th>
-                                    <th className="py-2.5 px-3">Rule Profile</th>
-                                    <th className="sticky right-0 z-10 w-24 border-l border-slate-100 bg-slate-50/80 py-2.5 px-3 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)]">
-                                      Thao tác
+                                    <th className="py-2.5 px-3 text-right whitespace-nowrap" title="Orders · ACOS trong kỳ dữ liệu">
+                                      {recommendationWindowDays}D
                                     </th>
+                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Current Bid</th>
+                                    <th className="py-2.5 px-3 text-right">Suggested</th>
+                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Final Bid</th>
+                                    <th className="py-2.5 pl-2 pr-4 w-20"></th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-slate-700">
                                   {cg.recs.map((rec) => {
                                     const isSelected = selectedRecIds.has(rec.id);
+                                    const isFocused = focusedRec?.id === rec.id;
                                     const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
                                     const isApproved = recentlyApprovedIds.has(rec.id);
+                                    const suggestedTone = rec.recType === "BID_INCREASE"
+                                      ? "text-emerald-600"
+                                      : rec.recType === "BID_DECREASE"
+                                        ? "text-rose-600"
+                                        : "text-slate-700";
 
                                     return (
                                       <tr
                                         key={rec.id}
-                                        className={`hover:bg-indigo-50/20 transition ${isSelected ? "bg-indigo-50/40" : ""
-                                          }`}
+                                        onClick={() => setFocusedRecId(rec.id)}
+                                        className={`cursor-pointer transition ${isFocused ? "bg-indigo-50/70" : isSelected ? "bg-indigo-50/30" : "hover:bg-slate-50"}`}
                                       >
-                                        <td className="py-2.5 px-3">
+                                        <td className="py-2.5 pl-4 pr-2">
                                           <button
                                             type="button"
-                                            onClick={() => handleToggleSelectOne(rec.id)}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleToggleSelectOne(rec.id);
+                                            }}
                                             className="text-slate-400 hover:text-slate-700 cursor-pointer"
                                           >
                                             {isSelected ? (
-                                              <CheckSquare size={16} className="text-indigo-600" weight="fill" />
+                                              <CheckSquare size={17} className="text-indigo-600" weight="fill" />
                                             ) : (
-                                              <Square size={16} />
+                                              <Square size={17} />
                                             )}
                                           </button>
                                         </td>
-                                        <td className="py-2.5 px-2 whitespace-nowrap">
-                                          {renderActionBadge(rec.recType)}
-                                        </td>
                                         <td className="py-2.5 px-3 col-primary">
-                                          <div className="font-bold text-slate-900 break-words flex items-center gap-1.5" title={rec.keyword}>
-                                            <span className="font-bold text-slate-900">{rec.keyword}</span>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleExplainRule(rec)}
-                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer shrink-0"
-                                              title="Xem điều kiện rule và phép tính tạo ra mức bid này"
-                                            >
-                                              <Info size={10} weight="bold" />
-                                              <span>Explain</span>
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleOpenAiReview(rec)}
-                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-indigo-500/20 text-purple-700 border border-purple-200 transition cursor-pointer shrink-0 shadow-2xs group"
-                                              title="AI Reviewer (gpt-5.6-terra): Bấm để AI phản biện và xem bảng số liệu chứng minh"
-                                            >
-                                              <Sparkle size={10} weight="fill" className="text-purple-600 group-hover:scale-110 transition-transform" />
-                                              <span>AI</span>
-                                            </button>
-                                          </div>
+                                          <div className="font-semibold text-[13px] text-slate-900 break-words">{rec.keyword}</div>
                                           {rec.matchType && (
-                                            <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">
-                                              Match: {rec.matchType}
-                                            </div>
+                                            <div className="text-[11px] text-slate-400 capitalize">{rec.matchType.toLowerCase()}</div>
                                           )}
                                         </td>
-                                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
-                                          ${rec.currentBid ? rec.currentBid.toFixed(2) : "0.00"}
+                                        <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono">
+                                          <span className="text-slate-700 mr-2">{rec.orders || 0}</span>
+                                          <AcosValue
+                                            spend={rec.spend || 0}
+                                            sales={rec.sales || 0}
+                                            breakEvenAcos={selectedSkuGroup.breakEvenAcos}
+                                            className="inline-block w-12"
+                                          />
                                         </td>
-                                        <td className="py-2.5 px-3 text-right font-black text-indigo-700 font-mono">
-                                          {rec.recType === "PAUSE_TARGET" ? "—" : `$${(rec.recommendedBid || 0).toFixed(2)}`}
+                                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                                          ${(rec.currentBid || 0).toFixed(2)}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-right font-mono font-bold">
+                                          {rec.recType === "PAUSE_TARGET" ? (
+                                            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px]">Pause</span>
+                                          ) : (
+                                            <span className={suggestedTone}>${(rec.recommendedBid || 0).toFixed(2)}</span>
+                                          )}
                                         </td>
                                         <td className="py-2.5 px-3 text-right">
                                           {rec.recType === "PAUSE_TARGET" ? (
-                                            <span className="text-slate-400 font-mono font-bold">Pause</span>
+                                            <span className="text-slate-400 font-mono">—</span>
                                           ) : (
                                             <RecFinalBidInput
                                               initialValue={finalBid}
                                               disabled={isApproving || isStoreSwitching}
-                                              onCommit={(newVal) => {
-                                                setUserFinalBids((prev) => ({
-                                                  ...prev,
-                                                  [rec.id]: newVal,
-                                                }));
-                                                setAiReviewApplications((prev) => {
-                                                  const next = { ...prev };
-                                                  delete next[rec.id];
-                                                  return next;
-                                                });
-                                              }}
+                                              onCommit={(newVal) => handleCommitFinalBid(rec.id, newVal)}
                                             />
                                           )}
                                         </td>
-                                        <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
-                                          {rec.ruleProfile || "v1.0"}
-                                        </td>
-                                        <td
-                                          className={`sticky right-0 z-[5] border-l border-slate-100 py-2.5 px-3 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)] ${isSelected ? "bg-indigo-50" : "bg-white"
-                                            }`}
-                                        >
+                                        <td className="py-2.5 pl-2 pr-4 text-right">
                                           {isApproved ? (
                                             <button
-                                              onClick={handleOpenActionQueueModal}
-                                              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] shadow-2xs transition cursor-pointer flex items-center justify-center gap-1 mx-auto"
-                                              title="Mục này đã được duyệt vào hàng đợi. Bấm vào đây để mở Action Queue"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenActionQueueModal();
+                                              }}
+                                              className="whitespace-nowrap inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
+                                              title="Đã duyệt vào hàng đợi. Bấm để mở Action Queue"
                                             >
                                               <Lightning size={12} weight="fill" className="text-amber-300" />
-                                              <span>Action</span>
+                                              Action
                                             </button>
                                           ) : (
                                             <button
-                                              onClick={() => handleApproveSingle(rec)}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                void handleApproveSingle(rec);
+                                              }}
                                               disabled={isApproving || isStoreSwitching}
-                                              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer disabled:opacity-40"
+                                              className={`whitespace-nowrap px-3.5 py-1.5 rounded-lg font-bold text-[11px] transition cursor-pointer disabled:opacity-40 ${
+                                                isFocused
+                                                  ? "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                                  : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700"
+                                              }`}
                                             >
                                               {isStoreSwitching ? "Chờ..." : "Duyệt"}
                                             </button>
@@ -2449,25 +2401,167 @@ export function PpcSkuRecommendationGroupView({
                     })}
                   </div>
                 )}
-              </div>
-            </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between px-6 py-3.5 border-t border-slate-100 bg-slate-50/70">
-              <span className="text-xs text-slate-500">
-                Lưu ý: Hành động duyệt sẽ đẩy đề xuất vào <strong>Action Queue</strong> để kiểm tra trùng lặp trước khi xuất Amazon Bulk File.
-              </span>
-              <button
-                onClick={() => {
-                  setSelectedSkuGroup(null);
-                  setRecentlyApprovedIds(new Set());
-                  setSelectedRecIds(new Set());
-                  setExpandedCampaigns(new Set());
-                }}
-                className="px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition cursor-pointer shadow-2xs"
-              >
-                Đóng
-              </button>
+                <p className="text-[11px] text-slate-400">
+                  Duyệt sẽ đẩy đề xuất vào <strong className="text-slate-500">Action Queue</strong> để kiểm tra trùng lặp trước khi xuất Amazon Bulk File.
+                </p>
+              </div>
+
+              {/* RIGHT: target detail */}
+              <aside className="lg:w-[300px] shrink-0 overflow-y-auto border-t lg:border-t-0 lg:border-l border-slate-100 bg-slate-50/50 p-4">
+                {loadingSkuDetails ? null : !focusedRec ? (
+                  <div className="h-full flex items-center justify-center text-center text-xs text-slate-400">
+                    Chọn một target để xem chi tiết
+                  </div>
+                ) : (() => {
+                  const rec = focusedRec;
+                  const clicks = rec.clicks || 0;
+                  const orders = rec.orders || 0;
+                  const spend = rec.spend || 0;
+                  const sales = rec.sales || 0;
+                  const currentBid = rec.currentBid || 0;
+                  const suggestedBid = rec.recommendedBid || 0;
+                  const isPause = rec.recType === "PAUSE_TARGET";
+                  const changePct = currentBid > 0 && !isPause ? ((suggestedBid - currentBid) / currentBid) * 100 : null;
+                  const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
+                  const isApproved = recentlyApprovedIds.has(rec.id);
+                  const cpc = rec.cpc ?? (clicks > 0 ? spend / clicks : 0);
+                  const isPaused = (rec.campaignState || "").toLowerCase() === "paused";
+
+                  return (
+                    <div className="space-y-3">
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900 break-words leading-snug">{rec.keyword}</h3>
+                        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 flex-wrap">
+                          {rec.matchType && <span className="capitalize">{rec.matchType.toLowerCase()}</span>}
+                          {rec.matchType && <span>•</span>}
+                          <span>{getRecCampaignType(rec)}</span>
+                          <span>•</span>
+                          <span className={isPaused ? "font-semibold text-amber-700" : ""}>{isPaused ? "Paused" : "Active"}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 truncate" title={rec.campaignName}>{rec.campaignName}</div>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">{recommendationWindowDays} ngày</div>
+                        <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
+                          {[
+                            { label: "Clicks", value: String(clicks) },
+                            { label: "Orders", value: String(orders) },
+                            { label: "Spend", value: `$${spend.toFixed(2)}` },
+                            { label: "Sales", value: `$${sales.toFixed(2)}` },
+                            { label: "CPC", value: clicks > 0 || rec.cpc ? `$${cpc.toFixed(2)}` : "—" },
+                          ].map((m) => (
+                            <div key={m.label} className="min-w-0">
+                              <div className="text-[10px] text-slate-500">{m.label}</div>
+                              <div className="text-xs font-bold font-mono text-slate-900">{m.value}</div>
+                            </div>
+                          ))}
+                          <div className="min-w-0">
+                            <div className="text-[10px] text-slate-500">ACOS</div>
+                            <AcosValue
+                              spend={spend}
+                              sales={sales}
+                              breakEvenAcos={selectedSkuGroup.breakEvenAcos}
+                              className="block text-xs font-bold font-mono"
+                            />
+                          </div>
+                          {[
+                            { label: "CVR", value: clicks > 0 ? `${((orders / clicks) * 100).toFixed(1)}%` : "—" },
+                            { label: "ROAS", value: spend > 0 ? (sales / spend).toFixed(2) : "—" },
+                            { label: "BE ACOS", value: `${selectedSkuGroup.breakEvenAcos.toFixed(1)}%` },
+                          ].map((m) => (
+                            <div key={m.label} className="min-w-0">
+                              <div className="text-[10px] text-slate-500">{m.label}</div>
+                              <div className="text-xs font-bold font-mono text-slate-700">{m.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-baseline gap-1.5 font-mono">
+                            <span className="text-sm font-bold text-slate-500">${currentBid.toFixed(2)}</span>
+                            <ArrowRight size={12} className="text-slate-400 self-center" />
+                            {isPause ? (
+                              <span className="text-base font-black font-sans text-amber-700">Pause</span>
+                            ) : (
+                              <span className={`text-base font-black ${rec.recType === "BID_DECREASE" ? "text-rose-600" : "text-emerald-600"}`}>
+                                ${suggestedBid.toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                          {changePct !== null && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${changePct >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                              {changePct >= 0 ? "↑" : "↓"} {Math.abs(changePct).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
+
+                        {isApproved ? (
+                          <button
+                            onClick={handleOpenActionQueueModal}
+                            className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
+                          >
+                            <Lightning size={13} weight="fill" className="text-amber-300" />
+                            Đã duyệt · Mở Action Queue
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            {!isPause && (
+                              <div className="flex-1 min-w-0" title="Bid cuối cùng">
+                                <RecFinalBidInput
+                                  large
+                                  initialValue={finalBid}
+                                  disabled={isApproving || isStoreSwitching}
+                                  onCommit={(newVal) => handleCommitFinalBid(rec.id, newVal)}
+                                />
+                              </div>
+                            )}
+                            <button
+                              onClick={() => void handleApproveSingle(rec)}
+                              disabled={isApproving || isStoreSwitching}
+                              className={`${isPause ? "w-full" : "shrink-0"} px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer disabled:opacity-40`}
+                            >
+                              {isStoreSwitching ? "Đang đổi Store..." : isPause ? "Duyệt tạm dừng" : "Duyệt"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {rec.reason && (
+                        <div className="text-[11px] leading-relaxed">
+                          <span className="font-semibold text-slate-500">Lý do: </span>
+                          <span className="text-slate-700">{rec.reason}</span>
+                          {rec.ruleProfile && <span className="text-slate-400"> · {rec.ruleProfile}</span>}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleExplainRule(rec)}
+                          className="flex-1 inline-flex items-center justify-center gap-1 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                          title="Xem điều kiện rule và phép tính tạo ra mức bid này"
+                        >
+                          <Info size={12} weight="bold" />
+                          Giải thích
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAiReview(rec)}
+                          className="flex-1 inline-flex items-center justify-center gap-1 py-1.5 rounded-lg border border-purple-200 bg-white text-[11px] font-semibold text-purple-700 hover:bg-purple-50 cursor-pointer"
+                          title="AI phản biện đề xuất này"
+                        >
+                          <Sparkle size={12} weight="fill" />
+                          AI phản biện
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </aside>
             </div>
           </div>
           {isAiChatOpen && (

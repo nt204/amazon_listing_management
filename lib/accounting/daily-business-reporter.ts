@@ -18,6 +18,10 @@ function formatCurrency(val: number | null | undefined): string {
   return isNegative ? `-$${formatted}` : `$${formatted}`;
 }
 
+function escapeXml(value: string): string {
+  return value.replace(/[<>&"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
 function formatQuantity(val: number | null | undefined): string {
   if (val == null || isNaN(val)) return "0";
   return new Intl.NumberFormat("en-US").format(Math.round(val));
@@ -74,7 +78,7 @@ export function generateDailyReportSvg(
     const y = pad + headerHeight + idx * rowHeight;
     rowsSvg += `
       <line x1="${pad}" y1="${y}" x2="${pad + tableWidth}" y2="${y}" stroke="#e2e8f0" stroke-width="1.5"/>
-      <text x="${colX[0] + 16}" y="${y + 40}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="23" font-weight="600" fill="#1e293b">${r.storeName}</text>
+      <text x="${colX[0] + 16}" y="${y + 40}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="23" font-weight="600" fill="#1e293b">${escapeXml(r.storeName)}</text>
       <text x="${colX[1] + colWidths[1] - 16}" y="${y + 40}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="23" font-weight="500" fill="#1e293b">${formatCurrency(it.revenue)}</text>
       <text x="${colX[2] + colWidths[2] - 16}" y="${y + 40}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="23" font-weight="500" fill="#1e293b">${formatQuantity(it.quantity)}</text>
       <text x="${colX[3] + colWidths[3] - 16}" y="${y + 40}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="23" font-weight="500" fill="#1e293b">${formatCurrency(it.ads_fee)}</text>
@@ -126,30 +130,215 @@ export async function generateDailyReportImage(
   return await sharp(Buffer.from(svg), { density: 216 }).png().toBuffer();
 }
 
+
+/** Store có đơn trong N ngày gần nhất mới tính là "đang hoạt động". */
+const ACTIVE_STORE_WINDOW_DAYS = 7;
+/** Số ngày trước ngày báo cáo dùng làm mốc so sánh. */
+const BASELINE_DAYS = 7;
+const AI_COMMENTARY_TIMEOUT_MS = 20_000;
+
+type ReportRecipient = { receiveId: string; receiveIdType: string };
+
+export interface DailyBaseline {
+  days: number;
+  revenue: number;
+  quantity: number;
+  ads_fee: number;
+  return_cost: number;
+  profit: number;
+}
+
+export interface DailyStoreReport {
+  storeName: string;
+  item: FbaDailyItem;
+  baseline: DailyBaseline | null;
+}
+
+export interface DailyReportPreview {
+  card: Record<string, unknown>;
+  fallbackText: string;
+  highlights: string[];
+  commentary: string | null;
+  image: Buffer | null;
+}
+
+function shiftIsoDate(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function emptyDailyItem(date: string): FbaDailyItem {
+  return {
+    id: date, date, week: "", month: "",
+    revenue: 0, quantity: 0, orders: 0, ads_fee: 0, basecost: 0, amazon_fee: 0, thue: 0,
+    promotion: 0, return_cost: 0, profit: 0, net_profit: 0, balance: 0, roi: 0, tacos: 0,
+    acos: 0, margin: 0, margin_pre_ads: 0, profit_per_item: 0, revenue_ads: 0, quantity_ads: 0, clicks: 0,
+  };
+}
+
+function pctChange(value: number, base: number): number {
+  return ((value - base) / Math.abs(base)) * 100;
+}
+
+function tacosPct(ads: number, revenue: number): number | null {
+  return revenue > 0 ? (ads / revenue) * 100 : null;
+}
+
+/**
+ * So sánh ngày báo cáo với trung bình 7 ngày trước, chỉ giữ biến động đáng kể.
+ * Toàn bộ con số được tính ở đây; AI (nếu bật) chỉ diễn đạt lại.
+ */
+export function buildDailyHighlights(reports: DailyStoreReport[]): string[] {
+  const lines: string[] = [];
+  for (const { storeName, item, baseline } of reports) {
+    if (!baseline || baseline.days < 3) continue;
+    const revenue = Number(item.revenue || 0);
+    const ads = Number(item.ads_fee || 0);
+    const refund = Number(item.return_cost || 0);
+    const profit = Number(item.profit || 0);
+
+    // Ads = 0 trong khi các ngày trước có chạy: nhiều khả năng file Ads chưa nạp,
+    // nên không kết luận gì về profit/TACOS để tránh báo sai.
+    const adsMissing = ads === 0 && baseline.ads_fee >= 20;
+    if (adsMissing) {
+      lines.push(`${storeName}: chưa có chi phí Ads (TB ${formatCurrency(baseline.ads_fee)}/ngày) — có thể chưa nạp file Ads, Profit đang cao hơn thực tế.`);
+    }
+
+    if (baseline.revenue >= 100 && Math.abs(revenue - baseline.revenue) >= 100) {
+      const change = pctChange(revenue, baseline.revenue);
+      if (Math.abs(change) >= 30) {
+        lines.push(`${storeName}: Revenue ${formatCurrency(revenue)}, ${change > 0 ? "tăng" : "giảm"} ${Math.abs(Math.round(change))}% so với TB 7 ngày (${formatCurrency(baseline.revenue)}).`);
+      }
+    }
+
+    if (!adsMissing) {
+      if (profit < 0) {
+        // Store lỗ triền miên không cần nhắc mỗi ngày: chỉ báo khi chuyển sang lỗ hoặc lỗ sâu thêm
+        if (baseline.profit >= 0 || profit <= baseline.profit - 100) lines.push(`${storeName}: lỗ ${formatCurrency(Math.abs(profit))} (TB 7 ngày ${formatCurrency(baseline.profit)}).`);
+      } else if (Math.abs(profit - baseline.profit) >= 100 && baseline.profit !== 0) {
+        const change = pctChange(profit, baseline.profit);
+        if (Math.abs(change) >= 40) {
+          lines.push(`${storeName}: Profit ${formatCurrency(profit)}, ${change > 0 ? "tăng" : "giảm"} ${Math.abs(Math.round(change))}% so với TB 7 ngày (${formatCurrency(baseline.profit)}).`);
+        }
+      }
+
+      const tacos = tacosPct(ads, revenue);
+      const baseTacos = tacosPct(baseline.ads_fee, baseline.revenue);
+      if (tacos != null && baseTacos != null && ads >= 20 && baseline.ads_fee >= 20 && tacos - baseTacos >= 5) {
+        lines.push(`${storeName}: TACOS ${tacos.toFixed(1)}% (TB 7 ngày ${baseTacos.toFixed(1)}%), Ads ${formatCurrency(ads)}.`);
+      }
+    }
+
+    if (refund >= 50 && refund >= baseline.return_cost * 2) {
+      lines.push(`${storeName}: Refund ${formatCurrency(refund)}, gấp ${baseline.return_cost > 0 ? (refund / baseline.return_cost).toFixed(1) : "nhiều"} lần TB 7 ngày (${formatCurrency(baseline.return_cost)}).`);
+    }
+  }
+  return lines;
+}
+
+const AI_COMMENTARY_SYSTEM_PROMPT = `Bạn là trợ lý kế toán viết phần "Nhận xét" ngắn cho báo cáo kinh doanh FBA hằng ngày gửi nhóm qua Lark.
+Quy tắc:
+- Viết tiếng Việt, giọng ngắn gọn, thẳng vào việc, không chào hỏi, không kết luận chung chung.
+- Tối đa 4 gạch đầu dòng (bắt đầu bằng "- "), mỗi dòng tối đa 30 chữ. Gộp các ý cùng store.
+- Chỉ dùng con số có trong dữ liệu được cung cấp, không tự tính số mới, không dự báo.
+- Ưu tiên "DIEM_DANG_CHU_Y"; mỗi ý nêu hiện tượng rồi gợi ý việc cần kiểm tra (campaign, listing, tồn kho, file chưa nạp...).
+- Nếu store bị ghi "chưa có chi phí Ads" thì không nhận xét về Profit/TACOS của store đó.
+- Nếu DIEM_DANG_CHU_Y rỗng, chỉ trả về đúng câu: "Không có biến động đáng kể so với 7 ngày trước."
+- Không dùng tiêu đề, không dùng bảng, không in đậm.`;
+
+async function generateAiCommentary(
+  displayDate: string,
+  reports: DailyStoreReport[],
+  highlights: string[],
+): Promise<string | null> {
+  const apiKey = (process.env.LARK_AGENT_KEY || process.env.CHEAPKEYAI_API_KEY || "").trim();
+  if (!apiKey) return null;
+  const baseUrl = (process.env.LARK_AGENT_BASE_URL || "https://cheapkeyai.shop/v1").replace(/\/+$/, "");
+  const model = (process.env.LARK_AGENT_MODEL || "gemini-3.5-flash-lite").trim();
+
+  const data = {
+    NGAY: displayDate,
+    STORES: reports.map(({ storeName, item, baseline }) => ({
+      store: storeName,
+      revenue: formatCurrency(item.revenue),
+      quantity: formatQuantity(item.quantity),
+      ads_fee: formatCurrency(item.ads_fee),
+      refund: formatCurrency(item.return_cost),
+      profit: formatCurrency(item.profit),
+      tb_7_ngay: baseline
+        ? {
+            revenue: formatCurrency(baseline.revenue),
+            ads_fee: formatCurrency(baseline.ads_fee),
+            profit: formatCurrency(baseline.profit),
+          }
+        : null,
+    })),
+    DIEM_DANG_CHU_Y: highlights,
+  };
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: AI_COMMENTARY_SYSTEM_PROMPT },
+          { role: "user", content: JSON.stringify(data) },
+        ],
+      }),
+      signal: AbortSignal.timeout(AI_COMMENTARY_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`AI API lỗi (${response.status})`);
+    const body = await response.json();
+    const text = String(body?.choices?.[0]?.message?.content || "").trim();
+    return text ? text.slice(0, 1500) : null;
+  } catch (err) {
+    console.warn("[Accounting Report] Không tạo được nhận xét AI, gửi báo cáo không kèm nhận xét:", err);
+    return null;
+  }
+}
+
+function aiCommentaryEnabled(override?: boolean): boolean {
+  if (typeof override === "boolean") return override;
+  return process.env.DAILY_REPORT_AI_COMMENTARY?.trim().toLowerCase() === "true";
+}
+
 export async function reportDailyBusinessData(
   scope: DataScope,
   options: {
     force?: boolean;
     targetDate?: string;
-    recipient?: { receiveId: string; receiveIdType: string };
+    recipient?: ReportRecipient;
+    /** Ghi đè cờ DAILY_REPORT_AI_COMMENTARY. */
+    aiCommentary?: boolean;
+    /** Chỉ dựng nội dung để xem trước: không upload, không gửi, không ghi app_settings. */
+    dryRun?: boolean;
   } = {},
-): Promise<{ success: boolean; reportedDate: string | null; message: string }> {
+): Promise<{ success: boolean; reportedDate: string | null; message: string; preview?: DailyReportPreview }> {
   const sql = await getDatabaseClient();
+  const isAutomatic = !options.force && !options.recipient && !options.dryRun;
 
   let latestDate = options.targetDate?.trim();
 
-  // 1. Nếu không chỉ định targetDate, tìm ngày mới nhất mà TẤT CẢ các store hoạt động đều đã hoàn tất nạp đơn hàng (< CURRENT_DATE)
+  // 1. Không chỉ định ngày: lấy ngày mới nhất (< hôm nay) mà mọi store ĐANG HOẠT ĐỘNG
+  //    (có đơn trong 7 ngày gần nhất) đều đã có đơn. Store ngừng nạp dữ liệu không chặn báo cáo.
   if (!latestDate) {
     const completeDateRows = await sql<Array<{ latest_date: string }>>`
-      SELECT o.date::text as latest_date
+      WITH active AS (
+        SELECT DISTINCT store_id FROM accounting_orders
+        WHERE date IS NOT NULL AND date < CURRENT_DATE
+          AND date > (SELECT MAX(date) FROM accounting_orders WHERE date < CURRENT_DATE) - ${ACTIVE_STORE_WINDOW_DAYS}::int
+      )
+      SELECT o.date::text AS latest_date
       FROM accounting_orders o
-      WHERE o.date IS NOT NULL AND o.date < CURRENT_DATE
+      JOIN active a ON a.store_id = o.store_id
+      WHERE o.date < CURRENT_DATE
         AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
       GROUP BY o.date
-      HAVING COUNT(DISTINCT o.store_id) >= (
-        SELECT COUNT(*) FROM stores
-        WHERE EXISTS (SELECT 1 FROM accounting_orders ao WHERE ao.store_id = stores.id)
-      )
+      HAVING COUNT(DISTINCT o.store_id) = (SELECT COUNT(*) FROM active)
       ORDER BY o.date DESC
       LIMIT 1
     `;
@@ -160,13 +349,13 @@ export async function reportDailyBusinessData(
     return {
       success: false,
       reportedDate: null,
-      message: "Chưa có ngày nào hoàn tất đầy đủ dữ liệu cho tất cả các Store trong hệ thống.",
+      message: "Chưa có ngày nào hoàn tất đầy đủ dữ liệu cho tất cả các Store đang hoạt động.",
     };
   }
 
-  // 2. Kiểm tra xem ngày mới nhất này đã được báo cáo chưa (tránh gửi lặp lại)
+  // 2. Kiểm tra nhanh đã báo cáo ngày này (hoặc ngày mới hơn) chưa
   const settingKey = `lark_accounting_last_reported_date:${scope.teamId}`;
-  if (!options.force && !options.recipient) {
+  if (isAutomatic) {
     const settingRows = await sql<Array<{ value: string }>>`
       SELECT value FROM app_settings
       WHERE key = ${settingKey}
@@ -179,7 +368,7 @@ export async function reportDailyBusinessData(
     } catch {
       lastReportedDate = rawVal || "";
     }
-    if (lastReportedDate === latestDate) {
+    if (lastReportedDate && lastReportedDate >= latestDate) {
       return {
         success: true,
         reportedDate: latestDate,
@@ -188,76 +377,46 @@ export async function reportDailyBusinessData(
     }
   }
 
-  // 3. Lấy danh sách Store kinh doanh đang hoạt động (có phát sinh đơn hàng)
+  // 3. Store đang hoạt động tính đến ngày báo cáo
+  const activeFrom = shiftIsoDate(latestDate, -(ACTIVE_STORE_WINDOW_DAYS - 1));
   const storeRows = await sql<Array<{ id: string; name: string }>>`
     SELECT id, name FROM stores
-    WHERE EXISTS (SELECT 1 FROM accounting_orders o WHERE o.store_id = stores.id)
+    WHERE EXISTS (
+      SELECT 1 FROM accounting_orders o
+      WHERE o.store_id = stores.id AND o.date BETWEEN ${activeFrom}::date AND ${latestDate}::date
+    )
     ORDER BY name ASC
   `;
 
   if (!storeRows.length) {
-    return { success: false, reportedDate: latestDate, message: "Không tìm thấy store nào trong hệ thống." };
+    return { success: false, reportedDate: latestDate, message: `Không có store nào có đơn trong 7 ngày tính đến ${latestDate}.` };
   }
 
-  // 4. Lấy các chỉ số kinh doanh ngày hôm đó cho từng store
-  interface StoreReport {
-    storeName: string;
-    item: FbaDailyItem;
-  }
-
-  const reports: StoreReport[] = [];
-  let totalRev = 0;
-  let totalQty = 0;
-  let totalAds = 0;
-  let totalAmzFee = 0;
-  let totalRefund = 0;
-  let totalProfit = 0;
-
+  // 4. Số liệu ngày báo cáo + trung bình 7 ngày trước cho từng store
+  const baselineFrom = shiftIsoDate(latestDate, -BASELINE_DAYS);
+  const reports: DailyStoreReport[] = [];
   for (const store of storeRows) {
     try {
       const { items } = await listFbaDaily(store.id, {
-        startDate: latestDate,
+        startDate: baselineFrom,
         endDate: latestDate,
-        limit: 1,
+        limit: BASELINE_DAYS + 1,
       });
-
-      const item: FbaDailyItem = items.length > 0 && items[0]
-        ? items[0]
-        : {
-            id: latestDate,
-            date: latestDate,
-            week: "",
-            month: "",
-            revenue: 0,
-            quantity: 0,
-            orders: 0,
-            ads_fee: 0,
-            basecost: 0,
-            amazon_fee: 0,
-            thue: 0,
-            promotion: 0,
-            return_cost: 0,
-            profit: 0,
-            net_profit: 0,
-            balance: 0,
-            roi: 0,
-            tacos: 0,
-            acos: 0,
-            margin: 0,
-            margin_pre_ads: 0,
-            profit_per_item: 0,
-            revenue_ads: 0,
-            quantity_ads: 0,
-            clicks: 0,
-          };
-
-      reports.push({ storeName: store.name, item });
-      totalRev += Number(item.revenue || 0);
-      totalQty += Number(item.quantity || 0);
-      totalAds += Number(item.ads_fee || 0);
-      totalAmzFee += Number(item.amazon_fee || 0);
-      totalRefund += Number(item.return_cost || 0);
-      totalProfit += Number(item.profit || 0);
+      const item = items.find((row) => row.date === latestDate) ?? emptyDailyItem(latestDate);
+      const previous = items.filter((row) => row.date < latestDate);
+      const avg = (pick: (row: FbaDailyItem) => number) =>
+        previous.reduce((sum, row) => sum + Number(pick(row) || 0), 0) / previous.length;
+      const baseline: DailyBaseline | null = previous.length
+        ? {
+            days: previous.length,
+            revenue: avg((row) => row.revenue),
+            quantity: avg((row) => row.quantity),
+            ads_fee: avg((row) => row.ads_fee),
+            return_cost: avg((row) => row.return_cost),
+            profit: avg((row) => row.profit),
+          }
+        : null;
+      reports.push({ storeName: store.name, item, baseline });
     } catch (err) {
       console.warn(`[Accounting Report] Không thể lấy dữ liệu store ${store.name}:`, err);
     }
@@ -267,33 +426,53 @@ export async function reportDailyBusinessData(
     return { success: false, reportedDate: latestDate, message: `Không có dữ liệu kinh doanh cho ngày ${latestDate}.` };
   }
 
+  const sum = (pick: (it: FbaDailyItem) => number) => reports.reduce((total, r) => total + Number(pick(r.item) || 0), 0);
+  const totalRev = sum((it) => it.revenue);
+  const totalQty = sum((it) => it.quantity);
+  const totalAds = sum((it) => it.ads_fee);
+  const totalAmzFee = sum((it) => it.amazon_fee);
+  const totalRefund = sum((it) => it.return_cost);
+  const totalProfit = sum((it) => it.profit);
+
   const parts = latestDate.split("-");
   const displayDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : latestDate;
 
-  // KIỂM TRA CHẶT CHẼ:
-  // Nếu có bất kỳ store nào trong các store kinh doanh chưa có dữ liệu (revenue = 0 và quantity = 0),
-  // tuyệt đối không gửi báo cáo thiếu (trừ khi có chỉ định ép gửi force = true hoặc gửi test tới đích danh recipient).
-  // Đợi cho đến khi tất cả các Store đều đã hoàn tất nạp số liệu ngày đó thì mới phát hành báo cáo.
-  const incompleteStores = reports.filter(
-    (r) => Number(r.item.revenue || 0) === 0 && Number(r.item.quantity || 0) === 0,
-  );
-  if (incompleteStores.length > 0 && !options.force && !options.recipient) {
-    const missingNames = incompleteStores.map((s) => s.storeName).join(", ");
-    return {
-      success: false,
-      reportedDate: latestDate,
-      message: `Chưa gửi báo cáo ngày ${displayDate}: Còn store (${missingNames}) chưa có đủ số liệu đơn hàng. Hệ thống sẽ đợi khi tất cả Store hoàn tất nạp dữ liệu mới tự động gửi.`,
-    };
+  // 5. Nhận xét: điểm đáng chú ý do code tính; AI (nếu bật) diễn đạt lại, lỗi thì dùng bản của code
+  const highlights = buildDailyHighlights(reports);
+  const commentary = aiCommentaryEnabled(options.aiCommentary)
+    ? await generateAiCommentary(displayDate, reports, highlights)
+    : null;
+  const notesTitle = commentary ? "Nhận xét" : "Điểm đáng chú ý (so với TB 7 ngày trước)";
+  const notesBody = commentary
+    ?? (highlights.length ? highlights.map((line) => `- ${line}`).join("\n") : "Không có biến động đáng kể so với 7 ngày trước.");
+
+  // 6. Chống gửi trùng khi nhiều lần import kết thúc cùng lúc: chiếm ngày báo cáo trước khi gửi
+  if (isAutomatic) {
+    const claimed = await sql<Array<{ key: string }>>`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (${settingKey}, ${JSON.stringify({ date: latestDate })}, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+      WHERE COALESCE(
+        CASE WHEN app_settings.value ~ '^\\s*\\{' THEN app_settings.value::jsonb ->> 'date' ELSE app_settings.value END,
+        ''
+      ) < ${latestDate}
+      RETURNING key
+    `;
+    if (!claimed.length) {
+      return { success: true, reportedDate: latestDate, message: `Dữ liệu ngày ${latestDate} đã được gửi báo cáo trước đó.` };
+    }
   }
 
-  // 5. Thử render bảng ra ảnh chất lượng cao và upload lên Lark
+  // 7. Render bảng ra ảnh và upload lên Lark
+  let image: Buffer | null = null;
   let imageKey: string | null = null;
   try {
-    const imgBuffer = await generateDailyReportImage(latestDate, reports);
-    imageKey = await uploadLarkImage(imgBuffer, `fba-daily-${latestDate}.png`);
+    image = await generateDailyReportImage(latestDate, reports);
+    if (!options.dryRun) imageKey = await uploadLarkImage(image, `fba-daily-${latestDate}.png`);
   } catch (err) {
     console.warn("[Accounting Report] Không thể tạo hoặc upload ảnh bảng báo cáo:", err);
   }
+  if (options.dryRun && image) imageKey = "<preview>";
 
   // Soạn nội dung thông báo bot Lark dạng Card 2.0 (ưu tiên hiển thị bảng ảnh trực quan)
   const cardElements: Array<Record<string, unknown>> = [];
@@ -356,6 +535,9 @@ export async function reportDailyBusinessData(
     });
   }
 
+  cardElements.push({ tag: "hr" });
+  cardElements.push({ tag: "markdown", content: `**${notesTitle}**\n${notesBody}` });
+
   const card = {
     schema: "2.0",
     config: {
@@ -381,9 +563,21 @@ export async function reportDailyBusinessData(
       return `${r.storeName} | ${formatCurrency(it.revenue)} | ${formatQuantity(it.quantity)} | ${formatCurrency(it.ads_fee)} | ${formatCurrency(it.amazon_fee)} | ${formatCurrency(it.return_cost)} | ${formatCurrency(it.profit)}`;
     }),
     `TỔNG CỘNG | ${formatCurrency(totalRev)} | ${formatQuantity(totalQty)} | ${formatCurrency(totalAds)} | ${formatCurrency(totalAmzFee)} | ${formatCurrency(totalRefund)} | ${formatCurrency(totalProfit)}`,
+    "",
+    notesTitle,
+    notesBody,
   ];
 
-  // 6. Gửi thông báo Lark bot: Gửi Card 2.0 toàn màn hình chứa ảnh bảng tràn viền (kích thước lớn nhất, sắc nét nhất)
+  if (options.dryRun) {
+    return {
+      success: true,
+      reportedDate: latestDate,
+      message: `Xem trước báo cáo ngày ${displayDate} cho ${reports.length} Store (chưa gửi).`,
+      preview: { card, fallbackText: fallbackLines.join("\n"), highlights, commentary, image },
+    };
+  }
+
+  // 8. Gửi thông báo Lark bot: Gửi Card 2.0 toàn màn hình chứa ảnh bảng tràn viền (kích thước lớn nhất, sắc nét nhất)
   if (options.recipient) {
     await sendLarkCardNotification(card, options.recipient);
   } else {
@@ -397,8 +591,8 @@ export async function reportDailyBusinessData(
     );
   }
 
-  if (!options.recipient) {
-    // 7. Lưu lại ngày đã báo cáo vào app_settings
+  if (options.force && !options.recipient) {
+    // Gửi ép (force) không đi qua bước chiếm ngày ở trên nên ghi lại ngày đã báo cáo ở đây
     await sql`
       INSERT INTO app_settings (key, value, updated_at)
       VALUES (${settingKey}, ${JSON.stringify({ date: latestDate })}, NOW())

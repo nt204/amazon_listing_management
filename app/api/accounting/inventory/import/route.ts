@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import {
   importSkuMasterFromWorkbook,
   importInboundShipmentsFromWorkbook,
@@ -35,6 +36,8 @@ export async function POST(request: Request) {
     if (!storeId) {
       return Response.json({ error: "Thiếu store_id" }, { status: 400 });
     }
+    // Chỉ Bảng mã có kênh FBM; đi hàng / check shipment / base cost là FBA
+    await requireStoreAccess(actor, storeId, type === "sku" && channel === "fbm" ? "FBM" : "FBA", "write");
 
     if (!file) {
       return Response.json({ error: "Vui lòng chọn file" }, { status: 400 });

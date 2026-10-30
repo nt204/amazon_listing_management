@@ -22,9 +22,24 @@ type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
  *                  các dòng sau của cùng đơn = 0 (COUNTIFS(B, U)=1)
  *     AMZ Fee  N = Revenue × % Referal;  Promotion J = item-promotion-discount (nguyên tệ)
  *   fbm_returns — RETURN: SKU = dòng order FBM đầu tiên của Order ID, Loại theo bảng mã FBM, giá trị = Total (USD).
+ *
+ * Có range: fbm_lines / fbm_pw chỉ lấy các Order ID có dòng trong khoảng ngày (đủ mọi dòng của đơn nên
+ * "dòng đầu của Order ID" vẫn đúng). Không lọc trước thì ROW_NUMBER chặn Postgres đẩy điều kiện ngày vào,
+ * xem 1 tuần cũng phải quét mọi đơn FBM + mọi dòng PW của store. Người gọi vẫn phải lọc ngày trên fbm_lines.
  */
-function fbmBaseCtes(sql: Sql, storeId: string) {
+function fbmBaseCtes(sql: Sql, storeId: string, range?: { startDate: string; endDate: string }) {
+  const ranged = Boolean(range?.startDate && range.endDate);
+  // Khóa đơn = khóa PARTITION của ROW_NUMBER; tính 1 lần (MATERIALIZED) rồi semi-join, không dùng IN … OR …
+  // (dạng đó thành SubPlan chạy lại từng dòng, store nhiều đơn chậm hàng chục giây).
   return sql`
+    ${ranged
+      ? sql`fbm_range_keys AS MATERIALIZED (
+          SELECT DISTINCT COALESCE(amazon_order_id, id::text) AS order_key
+          FROM accounting_orders
+          WHERE store_id = ${storeId} AND fulfillment_channel = 'Merchant'
+            AND date >= ${range!.startDate}::date AND date <= ${range!.endDate}::date
+        ),`
+      : sql``}
     fbm_master AS (
       SELECT DISTINCT ON (UPPER(TRIM(sku)), UPPER(TRIM(COALESCE(asin, ''))))
         UPPER(TRIM(sku)) AS sku_key,
@@ -44,10 +59,12 @@ function fbmBaseCtes(sql: Sql, storeId: string) {
       FROM fbm_master
       ORDER BY sku_key, is_off, row_order NULLS LAST, created_at
     ),
-    fbm_pw AS (
+    -- MATERIALIZED: tính PW 1 lần; thống kê bảng cũ (ước lượng 1 dòng) khiến planner tính lại theo từng dòng đơn
+    fbm_pw AS MATERIALIZED (
       SELECT order_id, SUM(COALESCE(net_price, 0)) AS pw_cost
       FROM accounting_fbm_pw_costs
       WHERE store_id = ${storeId} AND order_id IS NOT NULL
+        ${ranged ? sql`AND order_id IN (SELECT order_key FROM fbm_range_keys)` : sql``}
       GROUP BY order_id
     ),
     fbm_lines AS (
@@ -78,6 +95,7 @@ function fbmBaseCtes(sql: Sql, storeId: string) {
       LEFT JOIN fbm_pw pw ON pw.order_id = o.amazon_order_id
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Merchant'
+        ${ranged ? sql`AND COALESCE(o.amazon_order_id, o.id::text) IN (SELECT order_key FROM fbm_range_keys)` : sql``}
     ),
     fbm_returns AS (
       SELECT r.date, fl.sku_key, COALESCE(me.asin_key, ms.asin_key) AS asin_key,
@@ -151,7 +169,7 @@ export async function listFbmDaily(
   // Sheet FBM bỏ trống ngày >= TODAY(); ADS lọc Loại (XLOOKUP từ chữ cuối Portfolio vào BẢNG MÃ FBM) = "FBM".
   const [adsTaxRate, orderRows, adsRows, orderSkus, masterSkus] = await Promise.all([
     fbmAdsTaxRate(sql, storeId),sql<Record<string, unknown>[]>`
-    WITH ${fbmBaseCtes(sql, storeId)},
+    WITH ${fbmBaseCtes(sql, storeId, { startDate, endDate })},
     daily_orders AS (
       SELECT date,
         SUM(revenue) AS revenue,
@@ -373,7 +391,7 @@ function fbmRowKey(sku: unknown, asin: unknown) {
  */
 async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, endDate: string) {
   const rows = await sql<({ sku_key: string; asin_key: string } & FbmSkuAggregate)[]>`
-    WITH ${fbmBaseCtes(sql, storeId)},
+    WITH ${fbmBaseCtes(sql, storeId, { startDate, endDate })},
     sku_orders AS (
       SELECT sku_key, COALESCE(asin_key, '') AS asin_key,
         SUM(revenue) AS revenue,
@@ -478,12 +496,14 @@ export async function listFbmSkuFixed(
     aggregateFbmSkus(sql, storeId, startDate, endDate),
     hasCompare ? aggregateFbmSkus(sql, storeId, compareStartDate, compareEndDate) : Promise.resolve(null),
     // Lượng bán tổng = SUMIFS('Orders -FBM'!P, M = SKU): mọi dòng FBM, không lọc ngày / trạng thái (theo SKU + ASIN)
-    sql<{ sku_key: string; asin_key: string; qty: number }[]>`
-      WITH ${fbmBaseCtes(sql, storeId)}
-      SELECT sku_key, COALESCE(asin_key, '') AS asin_key, SUM(qty)::float AS qty
-      FROM fbm_lines
-      GROUP BY 1, 2
-    `,
+    options.includeAllTime === false
+      ? Promise.resolve([])
+      : sql<{ sku_key: string; asin_key: string; qty: number }[]>`
+          WITH ${fbmBaseCtes(sql, storeId)}
+          SELECT sku_key, COALESCE(asin_key, '') AS asin_key, SUM(qty)::float AS qty
+          FROM fbm_lines
+          GROUP BY 1, 2
+        `,
   ]);
   const allTimeQty = new Map(allTimeRows.map((r) => [fbmRowKey(r.sku_key, r.asin_key), r.qty]));
 

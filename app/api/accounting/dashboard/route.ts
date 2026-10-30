@@ -1,4 +1,5 @@
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { getAccountingAccess, storeChannelsFor } from "@/lib/accounting/access";
 import { getAccountingDashboard } from "@/lib/accounting/dashboard-db";
 import type { DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
 
@@ -9,7 +10,10 @@ const COMPARE_MODES = new Set<DashboardCompareMode>(["prev", "week", "month", "y
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
+    // Phân quyền kế toán: chỉ tính store / kênh được xem
+    const access = await getAccountingAccess(actor);
+    const allowedChannels = access.full ? undefined : (id: string) => storeChannelsFor(access, id);
     const { searchParams } = new URL(request.url);
     const startDate = searchParams.get("start_date") || "";
     const endDate = searchParams.get("end_date") || "";
@@ -27,7 +31,7 @@ export async function GET(request: Request) {
     const fresh = searchParams.get("fresh") === "1";
     const team = searchParams.get("team") || "";
 
-    const data = await getAccountingDashboard({ startDate, endDate, storeIds, compare, fresh, team });
+    const data = await getAccountingDashboard({ startDate, endDate, storeIds, compare, fresh, team, allowedChannels });
     return Response.json(data);
   } catch (error) {
     return routeErrorResponse(error, "Không thể tải Dashboard kế toán.", 500);

@@ -42,7 +42,7 @@ import type {
 } from "@/lib/accounting/dashboard-db";
 import { previousMonthRange, resolveDashboardPeriods, type DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
 import { summarizeRange, type DashboardDay, type DashboardTotals as Totals } from "@/lib/accounting/dashboard-totals";
-import { listTeams, parseStoreTeams, storeHasTeam } from "@/lib/accounting/store-teams";
+import { listTeams, parseStoreTeams, storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 import { getAmazonLatestAvailableDate, getThisMonthDateRange } from "./financials-date-utils";
 import { TopSellingProducts } from "./top-selling-products";
@@ -876,11 +876,11 @@ function TrendChart({
                                 <>
                                   <span className="text-slate-400">{money(cmp[s.key])}</span>
                                   <span
-                                    className={`w-10 text-right text-[10.5px] font-semibold ${
+                                    className={`w-12 text-right text-[10.5px] font-semibold ${
                                       change == null ? "text-slate-300" : good ? "text-emerald-600" : "text-rose-500"
                                     }`}
                                   >
-                                    {change == null ? "—" : `${change >= 0 ? "+" : "−"}${Math.abs(change * 100).toFixed(0)}%`}
+                                    {change == null ? "—" : `${change >= 0 ? "+" : "−"}${Math.abs(change * 100).toFixed(1)}%`}
                                   </span>
                                 </>
                               )}
@@ -1031,7 +1031,7 @@ function PnlStatement({
   periodLabel,
   compareLabel,
   compareEmpty = false,
-  onResetLatest,
+  onResetRange,
   delay,
 }: {
   current: DashboardTotals;
@@ -1042,7 +1042,7 @@ function PnlStatement({
   /** Kỳ so sánh chưa có dữ liệu: hiện thông báo thay cho cột $0. */
   compareEmpty?: boolean;
   /** Có khi đang xem một ô cũ hơn ô mới nhất. */
-  onResetLatest?: () => void;
+  onResetRange?: () => void;
   delay: number;
 }) {
   const revenue = current.revenue;
@@ -1078,13 +1078,13 @@ function PnlStatement({
             </p>
           )}
         </div>
-        {onResetLatest && (
+        {onResetRange && (
           <button
             type="button"
-            onClick={onResetLatest}
+            onClick={onResetRange}
             className="shrink-0 cursor-pointer rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
           >
-            Mới nhất
+            Cả khoảng
           </button>
         )}
       </div>
@@ -1138,7 +1138,7 @@ function PnlStatement({
 
 // ---------- store table ----------
 
-type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "orders" | "units";
+type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units";
 
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
@@ -1146,7 +1146,6 @@ const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "margin", label: "Margin" },
   { key: "tacos", label: "TACOS" },
   { key: "acos", label: "ACOS" },
-  { key: "orders", label: "Orders" },
   { key: "units", label: "Units" },
   { key: "profit", label: "Profit" },
 ];
@@ -1170,25 +1169,83 @@ function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | str
       return c.revenue > 0 ? c.tacos : null;
     case "acos":
       return c.revenueAds > 0 ? c.acos : null;
-    case "orders":
-      return c.orders;
     case "units":
       return c.quantity;
   }
 }
 
+type StoreChannel = DashboardStoreRow["channels"][number];
+
+const CHANNEL_BADGE: Record<StoreChannel, string> = {
+  FBA: "bg-sky-50 text-sky-600",
+  FBM: "bg-violet-50 text-violet-600",
+};
+const CHANNEL_BAR: Record<StoreChannel, string> = { FBA: "#0284c7", FBM: "#7c3aed" };
+
+function ChannelBadge({ channel, label = channel }: { channel: StoreChannel; label?: string }) {
+  return (
+    <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-px text-[10px] font-bold ${CHANNEL_BADGE[channel]}`}>
+      {label}
+    </span>
+  );
+}
+
+/** Tên kênh theo Team của store như ở Store Management: "FBA 3" thay vì "FBA". */
+type ChannelLabelOf = (storeId: string, channel: StoreChannel) => string;
+
+/** Các ô số liệu (Revenue → Profit) dùng chung cho dòng store và dòng kênh FBA / FBM. */
+function StoreMetricCells({
+  t,
+  share,
+  barColor,
+  barTitle,
+  sub = false,
+}: {
+  t: DashboardTotals;
+  share: number;
+  barColor: string;
+  barTitle?: string;
+  sub?: boolean;
+}) {
+  const mounted = useMounted();
+  const cell = `border-b border-slate-100 px-3 text-right tabular-nums ${sub ? "py-1.5 text-[13px] text-slate-600" : "py-2.5"}`;
+  return (
+    <>
+      <td className={cell}>
+        <div>{money(t.revenue)}</div>
+        <div className="ml-auto mt-1 h-1 w-20 overflow-hidden rounded-full bg-slate-100 @min-[1100px]:w-28" title={barTitle}>
+          <div
+            className="h-full rounded-full transition-[width] duration-700 ease-out"
+            style={{ width: mounted ? `${share * 100}%` : "0%", backgroundColor: barColor }}
+          />
+        </div>
+      </td>
+      <td className={cell}>
+        {t.revenue <= 0 ? <span className="text-slate-400">—</span> : <span className={sub ? "" : "text-slate-900"}>{pct(t.margin)}</span>}
+      </td>
+      <td className={cell}>{ratioOrDash(t.tacos, t.revenue)}</td>
+      <td className={cell}>{ratioOrDash(t.acos, t.revenueAds)}</td>
+      <td className={cell}>{int.format(t.quantity)}</td>
+      <td className={`${cell} pr-4`}>
+        <span className={`${sub ? "font-semibold" : "font-bold"} ${profitTone(t.profit)}`}>{money(t.profit)}</span>
+      </td>
+    </>
+  );
+}
+
 function StoresPerformance({
   data,
   colorOf,
+  channelLabel,
   onFocusStore,
   delay,
 }: {
   data: AccountingDashboardData;
   colorOf: (storeId: string) => string;
+  channelLabel: ChannelLabelOf;
   onFocusStore: (storeId: string) => void;
   delay: number;
 }) {
-  const mounted = useMounted();
   // Mặc định store lỗ nặng nhất lên đầu
   const [sort, setSort] = useState<{ key: StoreSortKey; dir: "asc" | "desc" }>({ key: "profit", dir: "asc" });
   const rows = useMemo(() => {
@@ -1207,6 +1264,9 @@ function StoresPerformance({
   const toggleSort = (key: StoreSortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "store" ? "asc" : "desc" }));
 
+  // Nhiều store: mỗi store 1 dòng gộp (nhãn kênh cạnh tên); chỉ 1 store: tách thêm dòng FBA / FBM.
+  const channelRows = (row: DashboardStoreRow) => (data.byStore.length === 1 ? row.byChannel : undefined);
+
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
       <h2 className="text-lg font-bold text-slate-900">Stores Performance</h2>
@@ -1216,39 +1276,56 @@ function StoresPerformance({
           const c = row.current;
           const suspicious = c.adsFee > 0 && c.revenue <= 0;
           return (
-            <button
-              key={row.storeId}
-              type="button"
-              onClick={() => onFocusStore(row.storeId)}
-              className="flex w-full cursor-pointer items-start justify-between gap-3 py-3 text-left transition-colors active:bg-indigo-50/50"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colorOf(row.storeId) }} />
-                  <span className="truncate text-[15px] font-semibold text-slate-900">{row.storeName}</span>
-                  {suspicious && <WarningIcon size={14} weight="fill" className="shrink-0 text-amber-500" />}
+            <div key={row.storeId} className="py-1">
+              <button
+                type="button"
+                onClick={() => onFocusStore(row.storeId)}
+                className="flex w-full cursor-pointer items-start justify-between gap-3 py-2 text-left transition-colors active:bg-indigo-50/50"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colorOf(row.storeId) }} />
+                    <span className="truncate text-[15px] font-semibold text-slate-900">{row.storeName}</span>
+                    {!channelRows(row) && row.channels?.map((ch) => <ChannelBadge key={ch} channel={ch} label={channelLabel(row.storeId, ch)} />)}
+                    {suspicious && <WarningIcon size={14} weight="fill" className="shrink-0 text-amber-500" />}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-xs tabular-nums text-slate-500">
+                    <span>Rev {money(c.revenue)}</span>
+                    <span>TACOS {ratioOrDash(c.tacos, c.revenue)}</span>
+                    <span>ACOS {ratioOrDash(c.acos, c.revenueAds)}</span>
+                    <span>{int.format(c.quantity)} units</span>
+                  </div>
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-xs tabular-nums text-slate-500">
-                  <span>Rev {money(c.revenue)}</span>
-                  <span>TACOS {ratioOrDash(c.tacos, c.revenue)}</span>
-                  <span>ACOS {ratioOrDash(c.acos, c.revenueAds)}</span>
-                  <span>{int.format(c.orders)} orders</span>
-                  <span>{int.format(c.quantity)} units</span>
+                <div className="shrink-0 text-right">
+                  <div className={`text-[15px] font-bold tabular-nums ${profitTone(c.profit)}`}>
+                    {money(c.profit)}
+                  </div>
+                  <div className="mt-1 text-[13px]">
+                    {c.revenue <= 0 ? (
+                      <span className="text-slate-400">—</span>
+                    ) : (
+                      <span className="tabular-nums text-slate-900">{pct(c.margin)}</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className={`text-[15px] font-bold tabular-nums ${profitTone(c.profit)}`}>
-                  {money(c.profit)}
+              </button>
+              {channelRows(row)?.map(({ channel, current: t }) => (
+                <div
+                  key={channel}
+                  className="flex w-full items-center justify-between gap-3 py-1.5 pl-[18px] text-xs tabular-nums text-slate-500"
+                >
+                  <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
+                    <ChannelBadge channel={channel} label={channelLabel(row.storeId, channel)} />
+                    <span>Rev {money(t.revenue)}</span>
+                    <span>TACOS {ratioOrDash(t.tacos, t.revenue)}</span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className={`font-semibold ${profitTone(t.profit)}`}>{money(t.profit)}</span>{" "}
+                    <span className="text-slate-400">({ratioOrDash(t.margin, t.revenue)})</span>
+                  </span>
                 </div>
-                <div className="mt-1 text-[13px]">
-                  {c.revenue <= 0 ? (
-                    <span className="text-slate-400">—</span>
-                  ) : (
-                    <span className="tabular-nums text-slate-900">{pct(c.margin)}</span>
-                  )}
-                </div>
-              </div>
-            </button>
+              ))}
+            </div>
           );
         })}
         {rows.length > 1 && (
@@ -1273,7 +1350,7 @@ function StoresPerformance({
                 return (
                   <th
                     key={col.key}
-                    className={`bg-slate-50 px-3 py-2 !text-[13px] !font-medium !tracking-normal !text-slate-600 ${
+                    className={`bg-slate-50 px-3 py-2 !text-[13px] !font-bold !tracking-normal !text-slate-700 ${
                       i === 0 ? "rounded-l-lg pl-4" : "text-right"
                     } ${i === STORE_COLUMNS.length - 1 ? "rounded-r-lg pr-4" : ""}`}
                   >
@@ -1281,7 +1358,7 @@ function StoresPerformance({
                       type="button"
                       onClick={() => toggleSort(col.key)}
                       className={`inline-flex cursor-pointer items-center gap-1 !text-[13px] !tracking-normal transition-colors hover:!text-slate-900 ${
-                        active ? "!font-semibold !text-slate-900" : "!font-medium !text-slate-600"
+                        active ? "!font-bold !text-slate-900" : "!font-bold !text-slate-700"
                       }`}
                     >
                       {col.label}
@@ -1298,23 +1375,23 @@ function StoresPerformance({
               })}
             </tr>
           </thead>
-          <tbody>
-            {rows.map((row, idx) => {
-              const c = row.current;
-              const share = totalRevenue > 0 ? c.revenue / totalRevenue : 0;
-              const suspicious = c.adsFee > 0 && c.revenue <= 0;
-              return (
+          {rows.map((row, idx) => {
+            const c = row.current;
+            const share = totalRevenue > 0 ? c.revenue / totalRevenue : 0;
+            const suspicious = c.adsFee > 0 && c.revenue <= 0;
+            return (
+              // Mỗi store 1 tbody: dòng store + các dòng kênh FBA / FBM đi cùng nhau khi sắp xếp
+              <tbody key={row.storeId} className="acc-rise" style={{ animationDelay: `${delay + idx * 25}ms` }}>
                 <tr
-                  key={row.storeId}
                   onClick={() => onFocusStore(row.storeId)}
                   title={`View ${row.storeName} only`}
-                  className="acc-rise cursor-pointer transition-colors duration-150 hover:bg-indigo-50/40"
-                  style={{ animationDelay: `${delay + idx * 25}ms` }}
+                  className="cursor-pointer transition-colors duration-150 hover:bg-indigo-50/40"
                 >
                   <td className="border-b border-slate-100 py-2.5 pl-4 pr-3">
                     <div className="flex items-center gap-2.5">
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colorOf(row.storeId) }} />
                       <span className="truncate font-semibold text-slate-900">{row.storeName}</span>
+                      {!channelRows(row) && row.channels?.map((ch) => <ChannelBadge key={ch} channel={ch} label={channelLabel(row.storeId, ch)} />)}
                       {suspicious && (
                         <span title={`Ad spend ${money(c.adsFee)} with no revenue — check ads mapping`}>
                           <WarningIcon size={14} weight="fill" className="text-amber-500" />
@@ -1322,33 +1399,25 @@ function StoresPerformance({
                       )}
                     </div>
                   </td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 text-right">
-                    <div className="tabular-nums">{money(c.revenue)}</div>
-                    <div className="ml-auto mt-1 h-1 w-20 overflow-hidden rounded-full bg-slate-100 @min-[1100px]:w-28">
-                      <div
-                        className="h-full rounded-full transition-[width] duration-700 ease-out"
-                        style={{ width: mounted ? `${share * 100}%` : "0%", backgroundColor: colorOf(row.storeId) }}
-                      />
-                    </div>
-                  </td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 text-right">
-                    {c.revenue <= 0 ? (
-                      <span className="text-slate-400">—</span>
-                    ) : (
-                      <span className="tabular-nums text-slate-900">{pct(c.margin)}</span>
-                    )}
-                  </td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{ratioOrDash(c.tacos, c.revenue)}</td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{ratioOrDash(c.acos, c.revenueAds)}</td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{int.format(c.orders)}</td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{int.format(c.quantity)}</td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 pr-4 text-right tabular-nums">
-                    <span className={`font-bold ${profitTone(c.profit)}`}>{money(c.profit)}</span>
-                  </td>
+                  <StoreMetricCells t={c} share={share} barColor={colorOf(row.storeId)} />
                 </tr>
-              );
-            })}
-          </tbody>
+                {channelRows(row)?.map(({ channel: ch, current: t }) => (
+                  <tr key={ch} className="bg-slate-50/40">
+                    <td className="border-b border-slate-100 py-1.5 pl-[42px] pr-3">
+                      <ChannelBadge channel={ch} label={channelLabel(row.storeId, ch)} />
+                    </td>
+                    <StoreMetricCells
+                      t={t}
+                      share={c.revenue > 0 ? Math.max(0, t.revenue) / c.revenue : 0}
+                      barColor={CHANNEL_BAR[ch]}
+                      barTitle={c.revenue > 0 ? `${pct(t.revenue / c.revenue)} of ${row.storeName} revenue` : undefined}
+                      sub
+                    />
+                  </tr>
+                ))}
+              </tbody>
+            );
+          })}
           {rows.length > 1 && (
             <tfoot>
               {/* Dòng tổng nổi bật: xanh khi có lãi, đỏ khi lỗ */}
@@ -1362,7 +1431,6 @@ function StoresPerformance({
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.margin, total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.tacos, total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
-                <td className="px-3 py-2.5 text-right">{int.format(total.orders)}</td>
                 <td className="px-3 py-2.5 text-right">{int.format(total.quantity)}</td>
                 <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right text-[15px] !font-bold">{money(total.profit)}</td>
               </tr>
@@ -1380,9 +1448,13 @@ const PROFIT_SEGMENT = { key: "profit", label: "Profit", color: "#22c55e" } as c
 
 interface CostRow {
   id: string;
+  storeId?: string;
   name: string;
   totals: DashboardTotals;
   isTotal?: boolean;
+  /** Dòng con FBA / FBM của store chạy cả 2 kênh. */
+  channel?: StoreChannel;
+  channelLabel?: string;
 }
 
 /** 1 thanh = 100% doanh thu: các khoản chi + phần còn lại là Profit. Lỗ → chi phí vượt doanh thu, có vạch mốc doanh thu. */
@@ -1418,15 +1490,39 @@ function CostStructureBar({ totals }: { totals: DashboardTotals }) {
   );
 }
 
-function CostBreakdown({ data, delay }: { data: AccountingDashboardData; delay: number }) {
+function CostBreakdown({
+  data,
+  channelLabel,
+  onFocusStore,
+  delay,
+}: {
+  data: AccountingDashboardData;
+  channelLabel: ChannelLabelOf;
+  onFocusStore: (storeId: string) => void;
+  delay: number;
+}) {
   const [hovered, setHovered] = useState<string | null>(null);
-  const storeRows: CostRow[] = data.byStore
+  const activeStores = data.byStore
     .filter((r) => r.current.revenue > 0)
-    .sort((a, b) => b.current.revenue - a.current.revenue)
-    .map((r) => ({ id: r.storeId, name: r.storeName, totals: r.current }));
-  const idleStores = data.byStore.length - storeRows.length;
+    .sort((a, b) => b.current.revenue - a.current.revenue);
+  // Nhiều store: mỗi store 1 dòng gộp, bấm để xem riêng store đó; chỉ 1 store: tách thêm dòng FBA / FBM.
+  const single = activeStores.length === 1;
+  const storeRows: CostRow[] = activeStores.flatMap((r) => [
+    { id: r.storeId, storeId: r.storeId, name: r.storeName, totals: r.current },
+    ...(single ? r.byChannel ?? [] : [])
+      .filter((c) => c.current.revenue > 0)
+      .map((c) => ({
+        id: `${r.storeId}:${c.channel}`,
+        name: `${r.storeName} ${channelLabel(r.storeId, c.channel)}`,
+        totals: c.current,
+        channel: c.channel,
+        channelLabel: channelLabel(r.storeId, c.channel),
+      })),
+  ]);
+  const idleStores = data.byStore.length - activeStores.length;
+  const storeCount = activeStores.length;
   const rows: CostRow[] = [
-    ...(storeRows.length > 1 ? [{ id: "__total", name: "Total", totals: data.current, isTotal: true }] : []),
+    ...(storeCount > 1 ? [{ id: "__total", name: "Total", totals: data.current, isTotal: true }] : []),
     ...storeRows,
   ];
   const legend = [...COST_ITEMS, PROFIT_SEGMENT];
@@ -1461,15 +1557,34 @@ function CostBreakdown({ data, delay }: { data: AccountingDashboardData; delay: 
                 onMouseLeave={() => setHovered(null)}
                 onFocus={() => setHovered(row.id)}
                 onBlur={() => setHovered(null)}
-                className={`relative grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-lg px-1.5 py-2 outline-none transition-colors ${
-                  open ? "bg-slate-50" : ""
-                } ${row.isTotal ? "mb-1 border-b border-slate-200 pb-3" : ""}`}
+                onClick={!single && row.storeId ? () => onFocusStore(row.storeId!) : undefined}
+                onKeyDown={
+                  !single && row.storeId
+                    ? (e) => {
+                        if (e.key === "Enter") onFocusStore(row.storeId!);
+                      }
+                    : undefined
+                }
+                title={!single && row.storeId ? `Xem riêng ${row.name} (tách FBA / FBM)` : undefined}
+                className={`relative grid ${!single && row.storeId ? "cursor-pointer" : ""} grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-lg px-1.5 outline-none transition-colors ${
+                  row.channel ? "py-1" : "py-2"
+                } ${open ? "bg-slate-50" : ""} ${row.isTotal ? "mb-1 border-b border-slate-200 pb-3" : ""}`}
               >
-                <span className={`truncate text-[13px] ${row.isTotal ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>
-                  {row.name}
-                </span>
+                {row.channel ? (
+                  <span className="pl-3">
+                    <ChannelBadge channel={row.channel} label={row.channelLabel} />
+                  </span>
+                ) : (
+                  <span className={`truncate text-[13px] ${row.isTotal ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>
+                    {row.name}
+                  </span>
+                )}
                 <CostStructureBar totals={t} />
-                <span className={`text-right text-[13px] font-bold tabular-nums ${profitTone(t.margin)}`}>{pct(t.margin)}</span>
+                <span
+                  className={`text-right tabular-nums ${row.channel ? "text-xs font-semibold" : "text-[13px] font-bold"} ${profitTone(t.margin)}`}
+                >
+                  {pct(t.margin)}
+                </span>
 
                 {/* Chi tiết khi rê chuột: số tiền + % doanh thu từng khoản */}
                 {open && (
@@ -1720,6 +1835,15 @@ export function AccountingDashboardView() {
     [stores],
   );
 
+  const channelLabel = useCallback<ChannelLabelOf>(
+    (storeId, channel) => {
+      if (channel === "FBM") return "FBM";
+      const fbaTeams = parseStoreTeams(stores.find((s) => s.id === storeId)?.team).filter((t) => /^fba\b/i.test(t));
+      return fbaTeams.length ? fbaTeams.join(" / ") : "FBA";
+    },
+    [stores],
+  );
+
   const kpis: KpiDef[] = useMemo(() => {
     if (!data) return [];
     const c = data.current;
@@ -1806,8 +1930,12 @@ export function AccountingDashboardView() {
       ? `${selectedStore.name} • ${selectedTeam}`
       : selectedStore.name
     : `${validSelectedIds.length} stores`;
-  const teams = listTeams(stores);
-  // Biểu đồ và P&L dùng chung các ô đã gộp: P&L luôn tóm tắt đúng ô đang chọn trên biểu đồ.
+  // Phân quyền kế toán: chỉ team có kênh người dùng được xem (team FBM ↔ kênh FBM, team khác ↔ FBA)
+  const teams = listTeams(stores).filter((team) =>
+    stores.some((s) => storeHasTeam(s.team, team) && storeCanView(s, /^fbm$/i.test(team) ? "FBM" : "FBA")),
+  );
+  // Biểu đồ và P&L dùng chung các ô đã gộp: chưa chọn ô thì P&L tóm tắt cả khoảng ngày đã chọn (khớp KPI),
+  // bấm vào một ô trên biểu đồ thì P&L tóm tắt riêng ô đó.
   const buckets = useMemo(() => {
     if (!data) return [];
     // Theo tháng: luôn từ tháng 1 của năm (không chỉ các ngày trong khoảng đã chọn)
@@ -1817,8 +1945,7 @@ export function AccountingDashboardView() {
     }
     return aggregateTrend(data.daily, granularity);
   }, [data, granularity, compareBase]);
-  const latestBucket = buckets.at(-1) ?? null;
-  const selectedBucket = buckets.find((b) => b.key === pickedBucket) ?? latestBucket;
+  const selectedBucket = buckets.find((b) => b.key === pickedBucket) ?? null;
   const bucketPnl = useMemo(() => {
     if (!data || !selectedBucket) return null;
     const days = data.days ?? [];
@@ -1834,6 +1961,11 @@ export function AccountingDashboardView() {
           : "",
     };
   }, [data, selectedBucket, granularity, compareBase]);
+  const rangeLabel = data?.period.startDate ? bucketRangeLabel(data.period.startDate, data.period.endDate) : "";
+  const rangeCompareLabel =
+    data?.previousPeriod && compareBase
+      ? `${COMPARE_PERIOD_LABELS[compareBase][granularity]} (${bucketRangeLabel(data.previousPeriod.startDate, data.previousPeriod.endDate)})`
+      : "";
   const comparePreview = useMemo(() => {
     const period = data?.period;
     if (!period?.startDate || !period.endDate) return {};
@@ -2208,7 +2340,7 @@ export function AccountingDashboardView() {
                   data={buckets}
                   selectedKey={selectedBucket?.key ?? null}
                   compareEmpty={compareEmpty}
-                  onSelect={setPickedBucket}
+                  onSelect={(key) => setPickedBucket((prev) => (prev === key ? null : key))}
                   previousPeriod={data.previousPeriod}
                   controls={{
                     granularity,
@@ -2224,35 +2356,39 @@ export function AccountingDashboardView() {
                 current={bucketPnl?.current ?? data.current}
                 previous={compareEmpty ? null : bucketPnl ? bucketPnl.previous : data.previous}
                 compareEmpty={compareEmpty}
-                periodLabel={bucketPnl?.periodLabel ?? ""}
-                compareLabel={bucketPnl?.compareLabel ?? ""}
-                onResetLatest={
-                  selectedBucket && latestBucket && selectedBucket.key !== latestBucket.key ? () => setPickedBucket(null) : undefined
-                }
+                periodLabel={bucketPnl?.periodLabel ?? rangeLabel}
+                compareLabel={bucketPnl?.compareLabel ?? rangeCompareLabel}
+                onResetRange={selectedBucket ? () => setPickedBucket(null) : undefined}
                 delay={150}
               />
             </div>
 
-            {/* Row 3: Top Selling Products (2 cols) & Cost Breakdown (1 col) */}
+            {/* Row 3: Stores Performance (2 cols) & Cost Breakdown (1 col) */}
             <div className="grid gap-4 @min-[900px]:grid-cols-3">
               <div className="min-w-0 @min-[900px]:col-span-2">
-                <TopSellingProducts
-                  startDate={dateRange.startDate}
-                  endDate={dateRange.endDate}
-                  storeIds={validSelectedIds}
-                  team={selectedTeam}
-                  reloadKey={reloadKey}
+                <StoresPerformance
+                  data={data}
+                  colorOf={colorOf}
+                  channelLabel={channelLabel}
+                  onFocusStore={(id) => updateSelection([id])}
                   delay={160}
                 />
               </div>
-              <CostBreakdown data={data} delay={190} />
+              <CostBreakdown
+                data={data}
+                channelLabel={channelLabel}
+                onFocusStore={(id) => updateSelection([id])}
+                delay={190}
+              />
             </div>
 
-            {/* Row 4: Stores Performance Breakdown */}
-            <StoresPerformance
-              data={data}
-              colorOf={colorOf}
-              onFocusStore={(id) => updateSelection([id])}
+            {/* Row 4: Top Products FBA | FBM (chỉ kênh có trong bộ lọc), chia đôi hàng để đủ cột chỉ số */}
+            <TopSellingProducts
+              startDate={dateRange.startDate}
+              endDate={dateRange.endDate}
+              storeIds={validSelectedIds}
+              team={selectedTeam}
+              reloadKey={reloadKey}
               delay={210}
             />
           </div>

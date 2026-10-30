@@ -35,8 +35,9 @@ import {
   DEFAULT_SKU_WIN_COLUMNS,
   DEFAULT_FBM_SKU_FIXED_COLUMNS,
 } from "./column-manager-modal";
-import { storeHasTeam } from "@/lib/accounting/store-teams";
+import { storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
+import { UnitsSparkline, useSkuUnitTrends } from "./sku-units-trend";
 import {
   PpcAmazonDatePicker,
   type DateRange,
@@ -404,7 +405,10 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
           const data = await res.json();
           if (!ignore) {
             const allStores: Store[] = data.stores || [];
-            const list = fbm ? allStores.filter((s) => storeHasTeam(s.team, "FBM")) : allStores;
+            // Chỉ store được phân quyền xem kênh này (FBM: thêm điều kiện store có team FBM)
+            const list = fbm
+              ? allStores.filter((s) => storeHasTeam(s.team, "FBM") && storeCanView(s, "FBM"))
+              : allStores.filter((s) => storeCanView(s, "FBA"));
             setStores(list);
             
             if (list.length > 0) {
@@ -514,7 +518,9 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
   }, [fetchData]);
 
   // Sorting Handler
-  const handleSort = (field: string) => {
+  const handleSort = (sortKey: string) => {
+    // Cột Trend không có giá trị để sắp: sắp theo Quantity
+    const field = sortKey === "trend" ? "quantity" : sortKey;
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -795,6 +801,17 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
   };
 
   // Client-side filtering if user applies a column filter from context menu
+  // Cột Trend: units theo ngày của các SKU đang hiển thị, tải riêng sau bảng
+  const trendVisible = columns.some((c) => c.id === "trend" && c.visible !== false);
+  const unitTrend = useSkuUnitTrends({
+    storeId: selectedStoreId,
+    channel: fbm ? "fbm" : "fba",
+    startDate,
+    endDate,
+    skus: useMemo(() => items.map((i) => i.sku), [items]),
+    enabled: trendVisible,
+  });
+
   const displayItems = useMemo(() => {
     if (!Object.values(columnFilters).some(Boolean)) {
       return items;
@@ -1386,6 +1403,11 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
                                     <PencilSimpleIcon size={12} weight="bold" />
                                   </button>
                                 </div>
+                              )}
+
+                              {/* Trend: units theo ngày trong kỳ */}
+                              {col.id === "trend" && (
+                                <UnitsSparkline data={unitTrend ? unitTrend(item.sku) : undefined} />
                               )}
 
                               {/* Product Type */}

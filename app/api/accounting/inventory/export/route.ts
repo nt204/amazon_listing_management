@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import { getDatabaseClient } from "@/lib/db";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 import {
@@ -20,7 +21,7 @@ import {
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     const type = (searchParams.get("type") || "all") as "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "all";
@@ -34,6 +35,7 @@ export async function GET(request: Request) {
     if (!storeId) {
       return Response.json({ error: "store_id is required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, isFbm ? "FBM" : "FBA");
 
     const store = await getStoreById(storeId);
     const storeName = store?.name || "STORE";

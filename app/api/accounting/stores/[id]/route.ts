@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { assertStoreAccess, getAccountingAccess, hasFullAccountingAccess } from "@/lib/accounting/access";
 import { deleteStore, getStoreById, updateStore } from "@/lib/accounting/accounting-db";
 
 const updateStoreSchema = z.object({
@@ -16,8 +17,9 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, { params }: RouteContext) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { id } = await params;
+    assertStoreAccess(await getAccountingAccess(actor), id);
     const store = await getStoreById(id);
     if (!store) {
       return Response.json({ error: "Store not found." }, { status: 404 });
@@ -30,10 +32,16 @@ export async function GET(request: Request, { params }: RouteContext) {
 
 export async function PUT(request: Request, { params }: RouteContext) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const { id } = await params;
+    assertStoreAccess(await getAccountingAccess(actor), id, undefined, "write");
     const body = await readJsonBody(request, 10_000);
     const parsed = updateStoreSchema.parse(body);
+    // Team quyết định phân quyền: chỉ Admin / Kế toán được đổi để không ai tự mở rộng quyền của mình
+    if (parsed.team !== undefined && !hasFullAccountingAccess(actor)) {
+      const current = await getStoreById(id);
+      if (current && current.team !== parsed.team) throw new ApiError("Chỉ Admin hoặc Kế toán được đổi Team của store.", 403);
+    }
     const updated = await updateStore(id, parsed);
     if (!updated) {
       return Response.json({ error: "Store not found." }, { status: 404 });
@@ -46,7 +54,8 @@ export async function PUT(request: Request, { params }: RouteContext) {
 
 export async function DELETE(request: Request, { params }: RouteContext) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
+    if (!hasFullAccountingAccess(actor)) throw new ApiError("Chỉ Admin hoặc Kế toán được xoá store.", 403);
     const { id } = await params;
     const success = await deleteStore(id);
     if (!success) {

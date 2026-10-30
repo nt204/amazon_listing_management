@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import {
   CalendarBlank,
   CaretLeft,
@@ -75,6 +75,29 @@ export function PpcAmazonDatePicker({
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Popover tràn khỏi mép màn hình (nút nằm sát mép phải mà align="left"…) thì dịch ngang vào trong khung nhìn.
+  useLayoutEffect(() => {
+    const el = popoverRef.current;
+    if (!isOpen || !el) return;
+    const fit = () => {
+      const anchor = containerRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      // Đo theo nút + offsetWidth (không đo rect của popover: hiệu ứng zoom-in đang co 95% lúc mở)
+      const width = el.offsetWidth;
+      const left = align === "left" ? anchor.left : anchor.right - width;
+      const gutter = 16;
+      let shift = 0;
+      if (left + width > window.innerWidth - gutter) shift = window.innerWidth - gutter - (left + width);
+      if (left + shift < gutter) shift = gutter - left;
+      // Dùng thuộc tính translate (không phải transform) để không bị animation zoom-in ghi đè
+      el.style.translate = shift ? `${Math.round(shift)}px 0` : "";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [isOpen, align]);
 
   // Temporary selection state when modal/popover is open
   const [tempStart, setTempStart] = useState<string>(value.startDate);
@@ -355,7 +378,7 @@ export function PpcAmazonDatePicker({
 
       {/* Popover Container (Styled exactly like Amazon Ads Console) */}
       {isOpen && (
-        <div className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-1.5 z-[100] bg-white border border-slate-300 rounded-xl shadow-2xl overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]`}>
+        <div ref={popoverRef} className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-1.5 z-[100] bg-white border border-slate-300 rounded-xl shadow-2xl overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]`}>
           {/* Left Sidebar: Presets list */}
           <div className="w-full md:w-44 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50/70 p-2 flex flex-col justify-between">
             <div className="space-y-0.5">

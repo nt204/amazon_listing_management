@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import {
   listInventoryHistory,
   restoreInventoryHistory,
@@ -22,7 +23,7 @@ const restoreSchema = z
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     const entityId = searchParams.get("entity_id") || undefined;
@@ -41,6 +42,7 @@ export async function GET(request: Request) {
         { status: 400 }
       );
     }
+    await requireStoreAccess(actor, storeId);
     const history = await listInventoryHistory(storeId, entityType, entityId);
     return Response.json({ history });
   } catch (error) {
@@ -55,6 +57,7 @@ export async function POST(request: Request) {
     const actorName =
       actor.email || actor.displayName || actor.userId || "system";
 
+    await requireStoreAccess(actor, input.store_id, undefined, "write");
     if (input.history_id) {
       const result = await restoreInventoryHistory(
         input.store_id,

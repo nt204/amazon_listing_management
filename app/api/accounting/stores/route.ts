@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import { createStore, listStores } from "@/lib/accounting/accounting-db";
+import { getAccountingAccess, hasFullAccountingAccess, withStoreAccess } from "@/lib/accounting/access";
 
 const storeInputSchema = z.object({
   name: z.string().trim().min(1, "Store name is required").max(100),
@@ -14,9 +15,12 @@ const storeInputSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const stores = await listStores();
-    return Response.json({ stores });
+    // Mục Import không giới hạn theo phân quyền team: lấy đủ danh sách store
+    if (new URL(request.url).searchParams.get("scope") === "all") return Response.json({ stores });
+    const access = await getAccountingAccess(actor, stores);
+    return Response.json({ stores: withStoreAccess(access, stores), canManageAccess: access.canManage });
   } catch (error) {
     return routeErrorResponse(error, "Failed to load stores.", 500);
   }
@@ -24,7 +28,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
+    if (!hasFullAccountingAccess(actor)) throw new ApiError("Chỉ Admin hoặc Kế toán được tạo store.", 403);
     const body = await readJsonBody(request, 10_000);
     const parsed = storeInputSchema.parse(body);
     const store = await createStore(parsed);

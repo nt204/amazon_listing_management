@@ -1,4 +1,5 @@
-import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
+import { hasFullAccountingAccess } from "@/lib/accounting/access";
 import { reportDailyBusinessData } from "@/lib/accounting/daily-business-reporter";
 
 export const runtime = "nodejs";
@@ -6,6 +7,8 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const actor = await authorize(request, "write", "accounting");
+    // Báo cáo gộp mọi store: chỉ người toàn quyền kế toán được gửi
+    if (!hasFullAccountingAccess(actor)) throw new ApiError("Chỉ Admin hoặc Kế toán được gửi báo cáo ngày.", 403);
     const scope = dataScope(actor);
     const body = await request.json().catch(() => ({}));
     const force = Boolean(body?.force);

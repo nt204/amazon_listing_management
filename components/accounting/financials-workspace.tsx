@@ -10,7 +10,8 @@ import {
   TruckIcon,
   type Icon,
 } from "@phosphor-icons/react";
-import { storeHasTeam } from "@/lib/accounting/store-teams";
+import { storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
+import type { StoreAccessInfo } from "@/lib/accounting/types";
 import { channelTabActiveClass, channelTabBadgeActiveClass } from "./channel-tab-colors";
 
 function TabLoading() {
@@ -75,17 +76,17 @@ export function FinancialsWorkspace() {
   });
 
   // Tab FBM / FBM cố định chỉ dành cho store có team FBM: theo dõi store đang chọn (dùng chung giữa các tab)
-  const [storeTeams, setStoreTeams] = useState<Map<string, string> | null>(null);
+  const [storeInfo, setStoreInfo] = useState<Map<string, { id: string; team?: string; access?: StoreAccessInfo }> | null>(null);
   const [selectedStoreId, setSelectedStoreId] = useState("");
   useEffect(() => {
     let ignore = false;
     fetch("/api/accounting/stores")
       .then((res) => (res.ok ? res.json() : { stores: [] }))
-      .then((data: { stores?: { id: string; team?: string }[] }) => {
-        if (!ignore) setStoreTeams(new Map((data.stores || []).map((s) => [s.id, s.team || ""])));
+      .then((data: { stores?: { id: string; team?: string; access?: StoreAccessInfo }[] }) => {
+        if (!ignore) setStoreInfo(new Map((data.stores || []).map((s) => [s.id, s])));
       })
       .catch(() => {
-        if (!ignore) setStoreTeams(new Map());
+        if (!ignore) setStoreInfo(new Map());
       });
     const syncStore = () => setSelectedStoreId(window.localStorage.getItem("acc_selected_store_id") || "");
     syncStore();
@@ -97,9 +98,17 @@ export function FinancialsWorkspace() {
       window.removeEventListener("storage", syncStore);
     };
   }, []);
-  const showFbmTabs = storeTeams != null && storeHasTeam(storeTeams.get(selectedStoreId), "FBM");
-  // Store không có FBM (hoặc đổi sang store khác) thì quay về tab FBA
-  const visibleTab: FinancialsSubTab = storeTeams != null && !showFbmTabs && FBM_TABS.includes(activeTab) ? "fba" : activeTab;
+  const selectedStore = storeInfo?.get(selectedStoreId);
+  const showFbmTabs = storeInfo != null && storeHasTeam(selectedStore?.team, "FBM") && storeCanView(selectedStore, "FBM");
+  // Phân quyền kế toán: người chỉ được xem FBM (team FBM) không thấy nhóm tab FBA
+  const canViewFba = storeInfo == null || [...storeInfo.values()].some((s) => storeCanView(s, "FBA"));
+  // Store không có FBM (hoặc đổi sang store khác) thì quay về tab FBA; không xem được FBA thì sang FBM
+  const visibleTab: FinancialsSubTab =
+    storeInfo != null && !showFbmTabs && FBM_TABS.includes(activeTab)
+      ? "fba"
+      : !canViewFba && !FBM_TABS.includes(activeTab)
+      ? "fbm"
+      : activeTab;
 
   const handleTabChange = useCallback((tab: FinancialsSubTab) => {
     setActiveTab(tab);
@@ -145,12 +154,12 @@ export function FinancialsWorkspace() {
       {/* SUB-TABS BAR (Đồng bộ phong cách với tab Import) */}
       <div className="bg-slate-200/80 px-3 pt-2 pb-1.5 border-b border-slate-300 shrink-0">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-          {FBA_TAB_ITEMS.map(renderTab)}
+          {canViewFba && FBA_TAB_ITEMS.map(renderTab)}
 
           {/* Vạch ngăn nhóm tab FBA với nhóm tab FBM cho đỡ lẫn */}
-          {showFbmTabs && (
+          {(showFbmTabs || !canViewFba) && (
             <>
-              <span className="mx-1 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />
+              {canViewFba && <span className="mx-1 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />}
               {FBM_TAB_ITEMS.map(renderTab)}
             </>
           )}

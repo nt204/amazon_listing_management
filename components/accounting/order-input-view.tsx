@@ -335,7 +335,7 @@ export function OrderInputView() {
     async function loadStores() {
       try {
         setLoadingStores(true);
-        const res = await fetch("/api/accounting/stores");
+        const res = await fetch("/api/accounting/stores?scope=all");
         if (!res.ok) throw new Error("Failed to load stores");
         const data = await res.json();
         const list: Store[] = data.stores || [];

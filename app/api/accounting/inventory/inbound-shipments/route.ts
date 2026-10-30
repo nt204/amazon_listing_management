@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import {
   deleteInboundShipmentItem,
   listInboundShipments,
@@ -43,7 +44,7 @@ const inboundInputSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     if (!storeId) {
@@ -74,6 +75,7 @@ export async function GET(request: Request) {
       | "ngay_den";
     const sortDirection = searchParams.get("sort_dir") === "asc" ? "asc" : "desc";
 
+    await requireStoreAccess(actor, storeId, "FBA");
     const result = await listInboundShipments(storeId, {
       search,
       status,
@@ -95,6 +97,7 @@ export async function POST(request: Request) {
     const actor = await authorize(request, "write", "accounting");
     const body = await readJsonBody(request, 50_000);
     const parsed = inboundInputSchema.parse(body);
+    await requireStoreAccess(actor, parsed.store_id, "FBA", "write");
     const item = await upsertInboundShipmentItem(parsed.store_id, parsed, actor.email || actor.displayName || actor.userId);
     return Response.json({ item });
   } catch (error) {
@@ -109,6 +112,7 @@ export async function PATCH(request: Request) {
     if (!body?.id || !body?.store_id || !body?.field) {
       return Response.json({ error: "id, store_id, and field are required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, body.store_id, "FBA", "write");
     const item = await patchInboundShipmentField(body.store_id, body.id, body.field, body.value, actor.email || actor.displayName || actor.userId);
     return Response.json({ item });
   } catch (error) {
@@ -125,6 +129,7 @@ export async function DELETE(request: Request) {
     if (!id || !storeId) {
       return Response.json({ error: "id and store_id are required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, "FBA", "write");
     const success = await deleteInboundShipmentItem(id, storeId, actor.email || actor.displayName || actor.userId);
     return Response.json({ success });
   } catch (error) {

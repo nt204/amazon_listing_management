@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { channelParam, requireStoreAccess } from "@/lib/accounting/access";
 import {
   deleteSkuMasterItem,
   listSkuMaster,
@@ -46,7 +47,7 @@ const skuInputSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     if (!storeId) {
@@ -62,6 +63,7 @@ export async function GET(request: Request) {
 
     const channel = parseSkuChannel(searchParams.get("channel"));
 
+    await requireStoreAccess(actor, storeId, channelParam(searchParams.get("channel")));
     const result = await listSkuMaster(storeId, { search, status, productType, cursor, page, limit, channel });
     return Response.json(result);
   } catch (error) {
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
     const actor = await authorize(request, "write", "accounting");
     const body = await readJsonBody(request, 50_000);
     const { channel, ...parsed } = skuInputSchema.parse(body);
+    await requireStoreAccess(actor, parsed.store_id, channelParam(channel), "write");
     const item = await upsertSkuMasterItem(
       parsed.store_id,
       parsed,
@@ -93,6 +96,7 @@ export async function PATCH(request: Request) {
     if (!body?.id || !body?.store_id || !body?.field) {
       return Response.json({ error: "id, store_id, and field are required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, body.store_id, channelParam(body.channel), "write");
     const item = await patchSkuMasterField(
       body.store_id,
       body.id,
@@ -116,6 +120,7 @@ export async function DELETE(request: Request) {
     if (!id || !storeId) {
       return Response.json({ error: "id and store_id are required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, channelParam(searchParams.get("channel")), "write");
     const success = await deleteSkuMasterItem(
       id,
       storeId,

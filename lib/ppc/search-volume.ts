@@ -5,7 +5,12 @@
 // Volume được cache trong keyword_search_volumes, mỗi keyword chỉ làm mới sau SEARCH_VOLUME_TTL_DAYS.
 import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
-import { mineHelium10Keywords, type Helium10KeywordItem } from "@/lib/helium10-playwright";
+import {
+  getHelium10PlaywrightConfig,
+  mineHelium10Keywords,
+  validateHelium10Session,
+  type Helium10KeywordItem,
+} from "@/lib/helium10-playwright";
 
 type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
 type Marketplace = "US" | "UK" | "DE" | "JP" | "CA";
@@ -22,10 +27,15 @@ const CEREBRO_ROWS_PER_CALL = 1000;
 // Diamond: 300 Cerebro / 150 Magnet mỗi tháng
 const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET", 300);
 const MAGNET_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_MAGNET_MONTHLY_BUDGET", 150);
-const CEREBRO_PER_RUN = envInt("PPC_SEARCH_VOLUME_CEREBRO_PER_RUN", 50);
+// 0 = không giới hạn: chạy tới khi quét hết ASIN hoặc hết hạn mức tháng (checkpoint giữ phần còn lại)
+const CEREBRO_PER_RUN = envInt("PPC_SEARCH_VOLUME_CEREBRO_PER_RUN", 0);
 const MAGNET_PER_RUN = envInt("PPC_SEARCH_VOLUME_MAGNET_PER_RUN", 25);
 const CALL_DELAY_MS = envInt("PPC_SEARCH_VOLUME_CALL_DELAY_MS", 1500);
-const STALE_RUN_MINUTES = 120;
+// Không có heartbeat trong khoảng này → coi như process đã chết (1 lượt Cerebro chậm nhất ~4 phút)
+const STALE_RUN_MINUTES = envInt("PPC_SEARCH_VOLUME_STALE_MINUTES", 15);
+// ASIN lỗi được thử lại tối đa bấy nhiêu lần trong 1 chu kỳ TTL (lô nhỏ dần 10 → 5 → 2 → 1)
+const MAX_ASIN_ATTEMPTS = 4;
+const MAX_CONSECUTIVE_FAILURES = 5;
 
 const NON_KEYWORD_TARGETS = /^(close-match|loose-match|substitutes|complements)$|asin|category|^b0[a-z0-9]{8}$|=/;
 
@@ -156,28 +166,50 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
 // ---------------------------------------------------------------------------
 // Sync job
 // ---------------------------------------------------------------------------
+// Checkpoint theo từng ASIN (keyword_search_volume_asin_queries): mỗi lượt chỉ quét ASIN chưa xong trong TTL,
+// nên dừng / hết quota / server restart đều chạy tiếp được từ chỗ cũ mà không tốn lại lượt Cerebro.
 
 export type SearchVolumeSyncRun = {
   id: string;
   team_id: string;
   store_id: string | null;
   store_name: string | null;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "interrupted";
   cerebro_calls: number;
   magnet_calls: number;
   asins_queried: number;
+  asins_total: number | null;
+  asins_done: number | null;
   keywords_upserted: number;
+  keywords_total: number | null;
   missing_before: number;
   missing_after: number;
   message: string | null;
   started_at: string;
+  heartbeat_at: string | null;
   finished_at: string | null;
+};
+
+export type SearchVolumeCoverage = {
+  // null = chưa tính được (đang gom keyword hoặc lỗi DB) — không hiển thị số đoán
+  keywords: number | null;
+  withVolume: number | null;
+  missing: number | null;
+};
+
+export type SearchVolumeAsinCoverage = {
+  total: number;
+  done: number;
+  pending: number;
+  failed: number | null;
+  withRank: number | null;
 };
 
 export type SearchVolumeStatus = {
   latestRun: SearchVolumeSyncRun | null;
   recentRuns: SearchVolumeSyncRun[];
-  coverage: { keywords: number; withVolume: number; missing: number };
+  coverage: SearchVolumeCoverage;
+  asins: SearchVolumeAsinCoverage | null;
   budget: { cerebroUsed: number; cerebroLimit: number; magnetUsed: number; magnetLimit: number };
 };
 
@@ -205,6 +237,10 @@ async function resolveStores(sql: Sql, teamId: string, storeName: string) {
   if (stores.length === 0) throw new ApiError(`Không tìm thấy store PPC "${storeName}".`, 404);
   return stores;
 }
+
+/** store_id của run: 1 store cụ thể, hoặc null khi quét ALL. */
+const runScopeStoreId = (storeName: string, stores: Array<{ id: string }>) =>
+  storeName.toUpperCase() === "ALL" ? null : stores[0].id;
 
 /** Keyword (target dạng keyword + search term) của các store, xếp theo spend để ưu tiên lấp volume. */
 async function collectKeywordSpend(sql: Sql, storeIds: string[]) {
@@ -246,6 +282,80 @@ async function findFreshKeywords(sql: Sql, keywords: string[], marketplace: stri
     for (const row of rows) fresh.add(row.keyword_norm);
   }
   return fresh;
+}
+
+type AsinQueueRow = { asin: string; attempts: number; done: boolean; failed: boolean };
+
+/**
+ * Toàn bộ ASIN đang chạy ads (không paused/archived) của các store kèm trạng thái checkpoint, xếp theo spend.
+ * done = đã quét thành công trong TTL, hoặc đã thử đủ MAX_ASIN_ATTEMPTS lần mà vẫn lỗi (bỏ qua tới hết TTL).
+ */
+async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) {
+  return sql<AsinQueueRow[]>`
+    WITH active AS (
+      SELECT upper(p.asin) AS asin, SUM(p.spend) AS spend, MAX(p.report_end_date) AS last_date
+      FROM ppc_performance_facts p
+      WHERE p.store_id IN ${sql(storeIds)}
+        AND p.grain = 'PRODUCT'
+        AND p.asin ~* '^[A-Z0-9]{10}$'
+        AND lower(COALESCE(p.state, 'enabled')) NOT IN ('paused', 'archived')
+        AND lower(COALESCE(p.campaign_state, 'enabled')) NOT IN ('paused', 'archived')
+        AND lower(COALESCE(p.ad_group_state, 'enabled')) NOT IN ('paused', 'archived')
+      GROUP BY upper(p.asin)
+    ), checkpoint AS (
+      SELECT a.asin, a.spend, a.last_date, q.status,
+        COALESCE(q.queried_at >= NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS}), false) AS fresh,
+        COALESCE(q.attempts, 0) AS attempts
+      FROM active a
+      LEFT JOIN keyword_search_volume_asin_queries q ON q.marketplace = ${marketplace} AND q.asin = a.asin
+    )
+    SELECT asin,
+      (CASE WHEN fresh THEN attempts ELSE 0 END)::integer AS attempts,
+      (fresh AND (status = 'ok' OR attempts >= ${MAX_ASIN_ATTEMPTS})) AS done,
+      (fresh AND status = 'failed' AND attempts >= ${MAX_ASIN_ATTEMPTS}) AS failed
+    FROM checkpoint
+    ORDER BY spend DESC NULLS LAST, last_date DESC NULLS LAST
+  `;
+}
+
+/** ASIN mới gộp 10/lượt; ASIN từng lỗi chia nhỏ dần (10 → 5 → 2 → 1) để cô lập ASIN hỏng mà không đốt quota. */
+function buildAsinBatches(queue: AsinQueueRow[]) {
+  const batches: Array<{ asins: string[]; attempts: number }> = [];
+  for (let attempts = 0; attempts < MAX_ASIN_ATTEMPTS; attempts++) {
+    const group = queue.filter((row) => !row.done && row.attempts === attempts).map((row) => row.asin);
+    const size = Math.max(1, CEREBRO_ASINS_PER_CALL >> attempts);
+    for (let i = 0; i < group.length; i += size) batches.push({ asins: group.slice(i, i + size), attempts });
+  }
+  return batches;
+}
+
+async function saveAsinCheckpoint(
+  sql: Sql,
+  marketplace: string,
+  asins: string[],
+  result: { ok: true; keywordCount: number } | { ok: false; error: string },
+) {
+  const rows = asins.map((asin) => ({
+    marketplace,
+    asin,
+    keyword_count: result.ok ? result.keywordCount : 0,
+    status: result.ok ? "ok" : "failed",
+    attempts: result.ok ? 0 : 1,
+    last_error: result.ok ? null : result.error.slice(0, 500),
+  }));
+  await sql`
+    INSERT INTO keyword_search_volume_asin_queries ${sql(rows)}
+    ON CONFLICT (marketplace, asin) DO UPDATE SET
+      queried_at = NOW(),
+      keyword_count = EXCLUDED.keyword_count,
+      status = EXCLUDED.status,
+      last_error = EXCLUDED.last_error,
+      attempts = CASE
+        WHEN EXCLUDED.status = 'ok' THEN 0
+        WHEN keyword_search_volume_asin_queries.queried_at < NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS}) THEN 1
+        ELSE keyword_search_volume_asin_queries.attempts + 1
+      END
+  `;
 }
 
 async function upsertVolumes(sql: Sql, marketplace: string, source: string, items: Helium10KeywordItem[]) {
@@ -337,34 +447,73 @@ async function upsertRankings(
   }
 }
 
-async function updateRun(sql: Sql, runId: string, patch: Partial<Omit<SearchVolumeSyncRun, "id" | "team_id" | "store_id" | "store_name" | "started_at">>) {
-  const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
-  if (entries.length === 0) return;
-  await sql`UPDATE ppc_search_volume_sync_runs SET ${sql(Object.fromEntries(entries))} WHERE id = ${runId}`;
-}
-
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const isAuthError = (error: unknown) => {
   const msg = String(error).toLowerCase();
-  // Chỉ ngắt hẳn nếu thực sự bị 401 Unauthorized hoặc token bị hủy
+  // Lỗi phiên đăng nhập: các lượt sau chắc chắn cũng lỗi → dừng và giữ nguyên checkpoint, không đánh dấu ASIN lỗi
   return (
-    msg.includes("401") ||
+    /\b40[13]\b/.test(msg) ||
     msg.includes("unauthorized") ||
     msg.includes("token expired") ||
-    msg.includes("invalid token")
+    msg.includes("invalid token") ||
+    msg.includes("không thể trích xuất token") ||
+    msg.includes("cookie")
   );
 };
+
+// Lỗi đường truyền / Helium 10 quá tải: không phải lỗi của ASIN → thử lại, vẫn lỗi thì tạm dừng giữ checkpoint
+const isConnectionError = (error: unknown) => {
+  const cause = error instanceof Error && error.cause ? ` ${String(error.cause)}` : "";
+  const msg = `${error instanceof Error ? `${error.name} ${error.message}` : String(error)}${cause}`.toLowerCase();
+  return (
+    /\b50[0234]\b/.test(msg) ||
+    /fetch failed|timeout|timed out|aborted|network|socket hang up|econnreset|econnrefused|enotfound|eai_again|etimedout/.test(msg)
+  );
+};
+
+const CONNECTION_RETRY_DELAYS_MS = [10_000, 30_000];
+
+/** Gọi Helium 10, tự thử lại khi lỗi kết nối; hết lượt thử thì ném lỗi gốc ra cho vòng quét quyết định. */
+async function callHelium10<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      if (isAuthError(error) || !isConnectionError(error) || attempt >= CONNECTION_RETRY_DELAYS_MS.length) throw error;
+      console.warn(`[Search Volume] Helium 10 connection error, retry ${attempt + 1}:`, error);
+      await sleep(CONNECTION_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
+
+/** Lý do dừng khi lỗi không thuộc về ASIN (phiên đăng nhập / đường truyền); null = lỗi riêng của lượt này. */
+function helium10StopReason(error: unknown) {
+  const errMsg = (error instanceof Error ? error.message : String(error)).slice(0, 160);
+  if (isAuthError(error)) return `Cookie/phiên Helium 10 không hợp lệ (${errMsg}). Cập nhật Cookie H10 rồi bấm Chạy tiếp.`;
+  if (isConnectionError(error)) {
+    return `Mất kết nối Helium 10 (${errMsg}), đã thử lại ${CONNECTION_RETRY_DELAYS_MS.length} lần. Checkpoint giữ nguyên, bấm Chạy tiếp khi kết nối ổn định.`;
+  }
+  return null;
+}
+
+/** Run chạy lâu không ghi heartbeat (process chết / server restart) → interrupted để chạy tiếp được. */
+async function markStaleRuns(sql: Sql) {
+  await sql`
+    UPDATE ppc_search_volume_sync_runs
+    SET status = 'interrupted', finished_at = NOW(),
+      message = 'Tiến trình bị ngắt giữa chừng (server khởi động lại?). Checkpoint đã lưu, bấm Chạy tiếp để quét phần còn lại.'
+    WHERE status = 'running'
+      AND COALESCE(heartbeat_at, started_at) < NOW() - make_interval(mins => ${STALE_RUN_MINUTES})
+  `;
+}
 
 /** Tạo run (chặn chạy song song vì dùng chung 1 phiên Helium 10). Trả về hàm thực thi để chạy nền. */
 export async function startSearchVolumeSync(input: { teamId: string; storeName: string; actorId?: string }) {
   const sql = await getDatabaseClient();
   const stores = await resolveStores(sql, input.teamId, input.storeName);
+  const scopeStoreId = runScopeStoreId(input.storeName, stores);
 
-  await sql`
-    UPDATE ppc_search_volume_sync_runs
-    SET status = 'failed', finished_at = NOW(), message = 'Quá thời gian chạy, đã tự đánh dấu lỗi.'
-    WHERE status = 'running' AND started_at < NOW() - make_interval(mins => ${STALE_RUN_MINUTES})
-  `;
+  await markStaleRuns(sql);
   const [running] = await sql`SELECT id FROM ppc_search_volume_sync_runs WHERE status = 'running' LIMIT 1`;
   if (running) throw new ApiError("Đang có một lượt đồng bộ Search Volume chạy. Vui lòng đợi lượt đó xong.", 409);
 
@@ -376,9 +525,28 @@ export async function startSearchVolumeSync(input: { teamId: string; storeName: 
     );
   }
 
+  // Kiểm tra phiên Helium 10 trước (chỉ lấy token, không tốn lượt Cerebro) → báo lỗi ngay thay vì chạy nền rồi mới hỏng
+  const h10Config = await getHelium10PlaywrightConfig();
+  const session = h10Config.cookies
+    ? await validateHelium10Session(h10Config.cookies)
+    : { valid: false, error: "Chưa cấu hình Cookie Helium 10" };
+  if (!session.valid) {
+    throw new ApiError(`Không kết nối được Helium 10: ${session.error || "phiên đăng nhập không hợp lệ"}. Kiểm tra Cookie H10 rồi thử lại.`, 424);
+  }
+
+  // Lượt trước cùng phạm vi chưa xong → ghi lại để lịch sử thấy đây là lượt chạy tiếp
+  const [previous] = await sql<Array<{ id: string; status: string }>>`
+    SELECT id, status FROM ppc_search_volume_sync_runs
+    WHERE team_id = ${input.teamId} AND store_id IS NOT DISTINCT FROM ${scopeStoreId}
+    ORDER BY started_at DESC LIMIT 1
+  `;
+
   const [run] = await sql<Array<{ id: string }>>`
-    INSERT INTO ppc_search_volume_sync_runs (team_id, store_id, created_by, message)
-    VALUES (${input.teamId}, ${stores.length === 1 ? stores[0].id : null}, ${input.actorId || null}, 'Đang gom keyword cần tra...')
+    INSERT INTO ppc_search_volume_sync_runs (team_id, store_id, created_by, message, heartbeat_at, resumed_from)
+    VALUES (
+      ${input.teamId}, ${scopeStoreId}, ${input.actorId || null}, 'Đang gom keyword và ASIN cần quét...', NOW(),
+      ${previous && previous.status !== "completed" ? previous.id : null}
+    )
     RETURNING id
   `;
 
@@ -387,30 +555,32 @@ export async function startSearchVolumeSync(input: { teamId: string; storeName: 
       await runSearchVolumeSync(sql, run.id, stores, usage);
     } catch (error) {
       console.error("[Search Volume] Sync failed:", error);
-      await updateRun(sql, run.id, {
-        status: "failed",
-        finished_at: new Date().toISOString(),
-        message: error instanceof Error ? error.message : String(error),
-      }).catch(() => {});
+      await sql`
+        UPDATE ppc_search_volume_sync_runs
+        SET status = 'failed', finished_at = NOW(),
+          message = ${`${error instanceof Error ? error.message : String(error)} (checkpoint đã lưu, có thể chạy tiếp)`}
+        WHERE id = ${run.id} AND status = 'running'
+      `.catch(() => {});
     }
   };
 
   return { runId: run.id, execute };
 }
 
-/** Hủy / Dừng tiến trình quét Search Volume đang chạy */
+/** Dừng tiến trình đang chạy. Checkpoint giữ nguyên → lần chạy sau quét tiếp phần còn lại. */
 export async function stopSearchVolumeSync(input: { teamId: string; runId?: string }) {
   const sql = await getDatabaseClient();
+  const message = "Đã dừng theo yêu cầu. Checkpoint đã lưu, bấm Chạy tiếp để quét phần còn lại.";
   const res = input.runId
     ? await sql`
         UPDATE ppc_search_volume_sync_runs
-        SET status = 'failed', finished_at = NOW(), message = 'Đã dừng theo yêu cầu của người dùng.'
+        SET status = 'interrupted', finished_at = NOW(), message = ${message}
         WHERE id = ${input.runId} AND team_id = ${input.teamId} AND status = 'running'
         RETURNING id
       `
     : await sql`
         UPDATE ppc_search_volume_sync_runs
-        SET status = 'failed', finished_at = NOW(), message = 'Đã dừng theo yêu cầu của người dùng.'
+        SET status = 'interrupted', finished_at = NOW(), message = ${message}
         WHERE team_id = ${input.teamId} AND status = 'running'
         RETURNING id
       `;
@@ -430,199 +600,225 @@ async function runSearchVolumeSync(
   const fresh = await findFreshKeywords(sql, Array.from(spendByKeyword.keys()), marketplace);
   const missing = new Set(Array.from(spendByKeyword.keys()).filter((keyword) => !fresh.has(keyword)));
   const missingBefore = missing.size;
+  const keywordsTotal = spendByKeyword.size;
+
+  const queue = await loadAsinQueue(sql, storeIds, marketplace);
+  const batches = buildAsinBatches(queue);
+  const asinsTotal = queue.length;
+  let asinsDone = queue.filter((row) => row.done).length;
 
   let cerebroCalls = 0;
   let magnetCalls = 0;
   let asinsQueried = 0;
   let keywordsUpserted = 0;
   const errors: string[] = [];
-  const progress = (message: string) =>
-    updateRun(sql, runId, {
-      cerebro_calls: cerebroCalls,
-      magnet_calls: magnetCalls,
-      asins_queried: asinsQueried,
-      keywords_upserted: keywordsUpserted,
-      missing_before: missingBefore,
-      missing_after: missing.size,
-      message,
-    });
+  let stopReason: string | null = null;
 
-  // 1. Cerebro theo ASIN: Lấy toàn bộ ASIN có Ads đang hoạt động (không bị paused/archived)
-  const cerebroAllowance = Math.min(CEREBRO_PER_RUN, Math.max(0, CEREBRO_MONTHLY_BUDGET - usage.cerebro));
-  if (missing.size > 0 && cerebroAllowance > 0) {
-    const asinRows = await sql<Array<{ asin: string }>>`
-      SELECT upper(p.asin) AS asin
-      FROM ppc_performance_facts p
-      LEFT JOIN keyword_search_volume_asin_queries q
-        ON q.marketplace = ${marketplace} AND q.asin = upper(p.asin)
-      WHERE p.store_id IN ${sql(storeIds)}
-        AND p.grain = 'PRODUCT'
-        AND p.asin ~* '^[A-Z0-9]{10}$'
-        AND lower(COALESCE(p.state, 'enabled')) NOT IN ('paused', 'archived')
-        AND lower(COALESCE(p.campaign_state, 'enabled')) NOT IN ('paused', 'archived')
-        AND lower(COALESCE(p.ad_group_state, 'enabled')) NOT IN ('paused', 'archived')
-        AND (q.queried_at IS NULL OR q.queried_at < NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS}))
-      GROUP BY upper(p.asin)
-      ORDER BY SUM(p.spend) DESC, MAX(p.report_end_date) DESC
+  /** Ghi tiến độ thật + heartbeat mỗi lượt. false = run đã bị dừng (người dùng bấm dừng / bị đánh dấu ngắt). */
+  const tick = async (message: string, final?: { status: "completed" | "interrupted" }) => {
+    const rows = await sql`
+      UPDATE ppc_search_volume_sync_runs SET ${sql({
+        cerebro_calls: cerebroCalls,
+        magnet_calls: magnetCalls,
+        asins_queried: asinsQueried,
+        asins_total: asinsTotal,
+        asins_done: asinsDone,
+        keywords_upserted: keywordsUpserted,
+        keywords_total: keywordsTotal,
+        missing_before: missingBefore,
+        missing_after: missing.size,
+        message,
+        heartbeat_at: new Date(),
+        ...(final ? { status: final.status, finished_at: new Date() } : {}),
+      })}
+      WHERE id = ${runId} AND status = 'running'
+      RETURNING id
     `;
-    const asins = asinRows.map((row) => row.asin);
+    if (rows.length === 0) console.log(`[Search Volume] Run ${runId} stopped.`);
+    return rows.length > 0;
+  };
 
-    for (let i = 0; i < asins.length && cerebroCalls < cerebroAllowance && missing.size > 0; i += CEREBRO_ASINS_PER_CALL) {
-      // Kiểm tra nếu người dùng đã bấm dừng
-      const [chk] = await sql<Array<{ status: string }>>`SELECT status FROM ppc_search_volume_sync_runs WHERE id = ${runId}`;
-      if (!chk || chk.status !== "running") {
-        console.log(`[Search Volume] Run ${runId} stopped by user.`);
-        return;
-      }
+  if (!(await tick(`Cần quét ${asinsTotal - asinsDone}/${asinsTotal} ASIN, ${missingBefore.toLocaleString()}/${keywordsTotal.toLocaleString()} keyword chưa có volume...`))) return;
 
-      const batch = asins.slice(i, i + CEREBRO_ASINS_PER_CALL);
-      await progress(`Cerebro lượt ${cerebroCalls + 1}/${cerebroAllowance} (${batch.length} ASIN)...`);
+  // 1. Cerebro: quét hết ASIN đang chạy ads (kể cả khi keyword đã đủ volume, để có Organic/Sponsored Rank)
+  let consecutiveFailures = 0;
+  for (const [index, batch] of batches.entries()) {
+    if (usage.cerebro + cerebroCalls >= CEREBRO_MONTHLY_BUDGET) {
+      stopReason = `Hết hạn mức Cerebro tháng (${CEREBRO_MONTHLY_BUDGET} lượt), sẽ chạy tiếp từ checkpoint.`;
+      break;
+    }
+    if (CEREBRO_PER_RUN > 0 && cerebroCalls >= CEREBRO_PER_RUN) {
+      stopReason = `Đạt giới hạn ${CEREBRO_PER_RUN} lượt Cerebro/lần chạy, bấm Chạy tiếp để quét phần còn lại.`;
+      break;
+    }
+    if (!(await tick(`Cerebro lượt ${index + 1}/${batches.length} (${batch.asins.length} ASIN) · đã xong ${asinsDone}/${asinsTotal} ASIN`))) return;
+
+    try {
+      const result = await callHelium10(() => mineHelium10Keywords({
+        asins: batch.asins,
+        marketplace,
+        limit: CEREBRO_ROWS_PER_CALL,
+        directApiOnly: true,
+      }));
       cerebroCalls++;
+      const saved = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
+      await upsertRankings(sql, marketplace, batch.asins, result.keywords);
+      keywordsUpserted += saved.length;
+      for (const keyword of saved) missing.delete(keyword);
+      await saveAsinCheckpoint(sql, marketplace, batch.asins, { ok: true, keywordCount: saved.length });
+      asinsQueried += batch.asins.length;
+      asinsDone += batch.asins.length;
+      consecutiveFailures = 0;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      // Phiên hỏng / mất kết nối: không phải lỗi ASIN → không trừ lượt, không đánh dấu ASIN, giữ checkpoint
+      stopReason = helium10StopReason(error);
+      if (stopReason) break;
+      cerebroCalls++;
+      errors.push(`Cerebro ${batch.asins[0]}: ${errMsg}`);
+      await saveAsinCheckpoint(sql, marketplace, batch.asins, { ok: false, error: errMsg });
+      if (batch.attempts + 1 >= MAX_ASIN_ATTEMPTS) asinsDone += batch.asins.length;
+      if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        stopReason = `${MAX_CONSECUTIVE_FAILURES} lượt Cerebro lỗi liên tiếp (${errMsg.slice(0, 120)}). Đã dừng để giữ quota.`;
+        break;
+      }
+    }
+    await sleep(CALL_DELAY_MS);
+  }
+
+  // 2. Magnet lấp keyword còn thiếu có spend cao nhất — chỉ khi Cerebro đã quét hết ASIN (Cerebro có thể tự lấp)
+  if (!stopReason) {
+    const magnetAllowance = Math.min(MAGNET_PER_RUN, Math.max(0, MAGNET_MONTHLY_BUDGET - usage.magnet));
+    const gapKeywords = Array.from(missing)
+      .sort((a, b) => (spendByKeyword.get(b) || 0) - (spendByKeyword.get(a) || 0))
+      .slice(0, magnetAllowance);
+    for (const [index, keyword] of gapKeywords.entries()) {
+      if (!(await tick(`Magnet lượt ${index + 1}/${gapKeywords.length}: "${keyword}"...`))) return;
       try {
-        const result = await mineHelium10Keywords({ asins: batch, marketplace, limit: CEREBRO_ROWS_PER_CALL });
-        const saved = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
-        await upsertRankings(sql, marketplace, batch, result.keywords);
+        const result = await callHelium10(() => mineHelium10Keywords({ keyword, marketplace, limit: 200, directApiOnly: true }));
+        magnetCalls++;
+        const saved = await upsertVolumes(sql, marketplace, "helium10_magnet", result.keywords);
         keywordsUpserted += saved.length;
-        for (const keyword of saved) missing.delete(keyword);
-        await sql`
-          INSERT INTO keyword_search_volume_asin_queries ${sql(batch.map((asin) => ({ marketplace, asin, keyword_count: saved.length })))}
-          ON CONFLICT (marketplace, asin) DO UPDATE SET queried_at = NOW(), keyword_count = EXCLUDED.keyword_count
-        `;
-        asinsQueried += batch.length;
+        for (const item of saved) missing.delete(item);
+        if (missing.has(keyword)) {
+          // Helium 10 không có volume cho keyword này → lưu null để không tra lại trong TTL
+          await upsertVolumes(sql, marketplace, "helium10_magnet_miss", [{
+            keyword, search_volume: null, iq_score: null, cpc: null, organic_rank: null, sponsored_rank: null,
+            competing_products: null, cpr: null, title_density: null,
+          }]);
+          missing.delete(keyword);
+        }
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        errors.push(`Cerebro ${batch[0]}: ${errMsg}`);
-        // Cookie hết hạn: Helium 10 chưa trừ lượt, các lượt sau cũng lỗi → dừng sớm
-        if (isAuthError(error)) {
-          cerebroCalls--;
-          break;
-        }
-        // Đánh dấu batch ASIN bị lỗi (Invalid ASIN, 502 Bad Gateway...) để bỏ qua, không làm kẹt tiến trình
-        await sql`
-          INSERT INTO keyword_search_volume_asin_queries ${sql(batch.map((asin) => ({ marketplace, asin, keyword_count: 0 })))}
-          ON CONFLICT (marketplace, asin) DO UPDATE SET queried_at = NOW(), keyword_count = 0
-        `.catch(() => {});
+        stopReason = helium10StopReason(error);
+        if (stopReason) break;
+        magnetCalls++;
+        errors.push(`Magnet "${keyword}": ${errMsg}`);
       }
       await sleep(CALL_DELAY_MS);
     }
   }
 
-  // 2. Magnet lấp keyword còn thiếu có spend cao nhất
-  const magnetAllowance = Math.min(MAGNET_PER_RUN, Math.max(0, MAGNET_MONTHLY_BUDGET - usage.magnet));
-  const gapKeywords = Array.from(missing)
-    .sort((a, b) => (spendByKeyword.get(b) || 0) - (spendByKeyword.get(a) || 0))
-    .slice(0, magnetAllowance);
-  for (const keyword of gapKeywords) {
-    // Kiểm tra nếu người dùng đã bấm dừng
-    const [chk] = await sql<Array<{ status: string }>>`SELECT status FROM ppc_search_volume_sync_runs WHERE id = ${runId}`;
-    if (!chk || chk.status !== "running") {
-      console.log(`[Search Volume] Run ${runId} stopped by user.`);
-      return;
-    }
+  const asinsPending = asinsTotal - asinsDone;
+  const summary = [
+    stopReason,
+    `ASIN: đã quét ${asinsDone.toLocaleString()}/${asinsTotal.toLocaleString()}${asinsPending > 0 ? ` (còn ${asinsPending.toLocaleString()})` : ""}.`,
+    `Keyword: đã tra ${(keywordsTotal - missing.size).toLocaleString()}/${keywordsTotal.toLocaleString()} (+${keywordsUpserted.toLocaleString()} lượt này).`,
+    errors.length > 0 ? `Lỗi: ${errors.slice(-3).join(" | ")}` : null,
+  ].filter(Boolean).join(" ");
+  await tick(summary, { status: stopReason ? "interrupted" : "completed" });
+}
 
-    if (errors.length > 0 && isAuthError(errors[errors.length - 1])) break;
-    await progress(`Magnet lượt ${magnetCalls + 1}/${gapKeywords.length}: "${keyword}"...`);
-    magnetCalls++;
-    try {
-      const result = await mineHelium10Keywords({ keyword, marketplace, limit: 200 });
-      const saved = await upsertVolumes(sql, marketplace, "helium10_magnet", result.keywords);
-      keywordsUpserted += saved.length;
-      for (const item of saved) missing.delete(item);
-      if (missing.has(keyword)) {
-        // Helium 10 không có volume cho keyword này → lưu null để không tra lại trong TTL
-        await upsertVolumes(sql, marketplace, "helium10_magnet_miss", [{
-          keyword, search_volume: null, iq_score: null, cpc: null, organic_rank: null, sponsored_rank: null,
-          competing_products: null, cpr: null, title_density: null,
-        }]);
-        missing.delete(keyword);
-      }
-    } catch (error) {
-      errors.push(`Magnet "${keyword}": ${error instanceof Error ? error.message : String(error)}`);
-      if (isAuthError(error)) magnetCalls--;
-    }
-    await sleep(CALL_DELAY_MS);
+/** Số liệu thật tính từ DB (keyword còn hạn TTL + checkpoint ASIN + ASIN có rank). */
+async function computeCoverage(sql: Sql, storeIds: string[], marketplace: string) {
+  const spendByKeyword = await collectKeywordSpend(sql, storeIds);
+  const keywords = Array.from(spendByKeyword.keys());
+  const fresh = await findFreshKeywords(sql, keywords, marketplace);
+  const queue = await loadAsinQueue(sql, storeIds, marketplace);
+
+  let withRank = 0;
+  const asinList = queue.map((row) => row.asin);
+  for (let i = 0; i < asinList.length; i += 5000) {
+    const [row] = await sql<Array<{ n: number }>>`
+      SELECT COUNT(DISTINCT asin)::integer AS n FROM ppc_asin_keyword_rankings
+      WHERE marketplace = ${marketplace} AND asin IN ${sql(asinList.slice(i, i + 5000))}
+    `;
+    withRank += row?.n || 0;
   }
 
-  const allFailed = errors.length > 0 && keywordsUpserted === 0;
-  const summary = missingBefore === 0
-    ? "Tất cả keyword đã có volume còn hạn, không cần gọi Helium 10."
-    : `Đã lưu ${keywordsUpserted.toLocaleString()} keyword. Còn thiếu ${missing.size.toLocaleString()}/${missingBefore.toLocaleString()} keyword.`;
-  await updateRun(sql, runId, {
-    status: allFailed ? "failed" : "completed",
-    finished_at: new Date().toISOString(),
-    cerebro_calls: cerebroCalls,
-    magnet_calls: magnetCalls,
-    asins_queried: asinsQueried,
-    keywords_upserted: keywordsUpserted,
-    missing_before: missingBefore,
-    missing_after: missing.size,
-    message: errors.length > 0 ? `${summary} Lỗi: ${errors.slice(0, 3).join(" | ")}` : summary,
-  });
+  const done = queue.filter((row) => row.done).length;
+  return {
+    coverage: { keywords: keywords.length, withVolume: fresh.size, missing: keywords.length - fresh.size } as SearchVolumeCoverage,
+    asins: {
+      total: queue.length,
+      done,
+      pending: queue.length - done,
+      failed: queue.filter((row) => row.failed).length,
+      withRank,
+    } as SearchVolumeAsinCoverage,
+  };
 }
 
 export async function getSearchVolumeStatus(teamId: string, storeName: string): Promise<SearchVolumeStatus> {
   const sql = await getDatabaseClient();
   const stores = await resolveStores(sql, teamId, storeName);
   const marketplace = (stores[0].marketplace || "US").toUpperCase();
+  const scopeStoreId = runScopeStoreId(storeName, stores);
 
-  // 1. Luôn tìm xem có run nào đang running không (bất kể theo store hay ALL)
+  await markStaleRuns(sql);
   const runs = await sql<SearchVolumeSyncRun[]>`
     SELECT r.id, r.team_id, r.store_id, s.name AS store_name, r.status, r.cerebro_calls, r.magnet_calls,
-      r.asins_queried, r.keywords_upserted, r.missing_before, r.missing_after, r.message,
-      r.started_at::text, r.finished_at::text
+      r.asins_queried, r.asins_total, r.asins_done, r.keywords_upserted, r.keywords_total,
+      r.missing_before, r.missing_after, r.message,
+      r.started_at::text, r.heartbeat_at::text, r.finished_at::text
     FROM ppc_search_volume_sync_runs r
     LEFT JOIN ppc_stores s ON s.id = r.store_id
     WHERE r.team_id = ${teamId}
     ORDER BY (r.status = 'running') DESC, r.started_at DESC
     LIMIT 6
   `;
+  const latestRun = runs[0] ?? null;
 
-  const latestRun = runs.length > 0 ? runs[0] : null;
-  const recentRuns = runs;
+  let coverage: SearchVolumeCoverage = { keywords: null, withVolume: null, missing: null };
+  let asins: SearchVolumeAsinCoverage | null = null;
 
-  let coverage = { keywords: 0, withVolume: 0, missing: 0 };
-
-  // Nếu đang có lượt chạy hoặc vừa chạy, lấy số liệu trực tiếp từ latestRun mà không cần scan lại triệu dòng
-  if (latestRun && (latestRun.status === "running" || latestRun.missing_before > 0)) {
-    const totalKw = latestRun.missing_before || 118883;
-    const remainingMissing = Math.max(0, latestRun.missing_after ?? latestRun.missing_before);
-    coverage = {
-      keywords: totalKw,
-      withVolume: Math.max(0, totalKw - remainingMissing),
-      missing: remainingMissing,
-    };
+  if (latestRun?.status === "running" && latestRun.store_id === scopeStoreId) {
+    // Đang chạy đúng phạm vi đang xem: lấy số run vừa ghi (cập nhật mỗi lượt), null khi còn đang gom
+    if (latestRun.keywords_total !== null) {
+      coverage = {
+        keywords: latestRun.keywords_total,
+        withVolume: latestRun.keywords_total - latestRun.missing_after,
+        missing: latestRun.missing_after,
+      };
+    }
+    if (latestRun.asins_total !== null && latestRun.asins_done !== null) {
+      asins = {
+        total: latestRun.asins_total,
+        done: latestRun.asins_done,
+        pending: latestRun.asins_total - latestRun.asins_done,
+        failed: null,
+        withRank: null,
+      };
+    }
   } else {
-    // Cache coverage 60s để tránh dồn dập quét bảng PPC hàng triệu dòng
     try {
       const { getCachedOrFetch } = await import("@/lib/redis");
-      const cacheKey = `ppc:sv-coverage:${teamId}:${storeName}`;
-      coverage = await getCachedOrFetch(cacheKey, 60, async () => {
-        const spendByKeyword = await collectKeywordSpend(sql, stores.map((store) => store.id));
-        const keywords = Array.from(spendByKeyword.keys());
-        let withVol = 0;
-        let cCount = 0;
-        for (let i = 0; i < keywords.length; i += 5000) {
-          const [row] = await sql<Array<{ cached: number; with_volume: number }>>`
-            SELECT COUNT(*)::integer AS cached, COUNT(search_volume)::integer AS with_volume
-            FROM keyword_search_volumes
-            WHERE marketplace = ${marketplace} AND keyword_norm IN ${sql(keywords.slice(i, i + 5000))}
-          `;
-          cCount += row?.cached || 0;
-          withVol += row?.with_volume || 0;
-        }
-        return { keywords: keywords.length, withVolume: withVol, missing: Math.max(0, keywords.length - cCount) };
-      });
-    } catch {
-      // Fallback nếu redis lỗi
-      coverage = { keywords: 118883, withVolume: 12600, missing: 106283 };
+      // Khóa theo lượt chạy gần nhất → có lượt mới kết thúc là tính lại ngay
+      const cacheKey = `ppc:sv-coverage:v2:${teamId}:${storeName}:${latestRun?.id ?? "none"}:${latestRun?.finished_at ?? ""}`;
+      ({ coverage, asins } = await getCachedOrFetch(cacheKey, 600, () =>
+        computeCoverage(sql, stores.map((store) => store.id), marketplace),
+      ));
+    } catch (error) {
+      console.error("[Search Volume] Coverage failed:", error);
     }
   }
 
   const usage = await monthlyUsage(sql);
   return {
-    latestRun: latestRun || null,
-    recentRuns,
+    latestRun,
+    recentRuns: runs,
     coverage,
+    asins,
     budget: {
       cerebroUsed: usage.cerebro,
       cerebroLimit: CEREBRO_MONTHLY_BUDGET,

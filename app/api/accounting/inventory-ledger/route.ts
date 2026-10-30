@@ -1,4 +1,5 @@
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import {
   parseInventoryLedgerContent,
   ingestInventoryLedgerRows,
@@ -9,13 +10,14 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const url = new URL(request.url);
     const storeId = url.searchParams.get("store_id");
     if (!storeId) {
       return Response.json({ error: "Thiếu store_id." }, { status: 400 });
     }
 
+    await requireStoreAccess(actor, storeId, "FBA");
     const balances = await getLatestInventoryBalances(storeId);
     return Response.json({
       success: true,
@@ -28,7 +30,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const contentType = request.headers.get("content-type") || "";
 
     if (contentType.includes("multipart/form-data")) {
@@ -47,6 +49,7 @@ export async function POST(request: Request) {
       // Nhập tay không truyền ngày: lấy cột Date trong file (ngày chốt sổ của báo cáo)
       const snapshotDate =
         (formData.get("snapshot_date") as string | null) || rows[0].date || new Date().toISOString().slice(0, 10);
+      await requireStoreAccess(actor, storeId, "FBA", "write");
       const result = await ingestInventoryLedgerRows(storeId, rows, snapshotDate, file.name);
 
       return Response.json({
@@ -64,6 +67,7 @@ export async function POST(request: Request) {
 
     const effectiveDate = snapshotDate || new Date().toISOString().slice(0, 10);
     const rows = parseInventoryLedgerContent(content);
+    await requireStoreAccess(actor, storeId, "FBA", "write");
     const result = await ingestInventoryLedgerRows(storeId, rows, effectiveDate, fileName);
 
     return Response.json({

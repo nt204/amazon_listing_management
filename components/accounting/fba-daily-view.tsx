@@ -18,7 +18,7 @@ import {
 } from "@phosphor-icons/react";
 import type { FbaDailyItem, FbaDailyStats } from "@/lib/accounting/fba-daily-db";
 import type { FbmDailyItem, FbmDailyStats } from "@/lib/accounting/fbm-financials-db";
-import { storeHasTeam } from "@/lib/accounting/store-teams";
+import { storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
 import type { Store } from "@/lib/accounting/types";
 import {
   type ColumnConfig,
@@ -360,7 +360,10 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           const data = await res.json();
           if (ignore) return;
           const allStores: Store[] = data.stores || [];
-          const storeList = fbm ? allStores.filter((s) => storeHasTeam(s.team, "FBM")) : allStores;
+          // Chỉ store được phân quyền xem kênh này (FBM: thêm điều kiện store có team FBM)
+          const storeList = fbm
+            ? allStores.filter((s) => storeHasTeam(s.team, "FBM") && storeCanView(s, "FBM"))
+            : allStores.filter((s) => storeCanView(s, "FBA"));
           setStores(storeList);
           
           if (storeList.length > 0) {

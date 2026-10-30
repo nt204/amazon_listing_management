@@ -17,6 +17,7 @@ import {
 } from "@phosphor-icons/react";
 import { useRef } from "react";
 import { Helium10SettingsModal } from "@/components/helium10-settings-modal";
+import type { SearchVolumeStatus as SearchVolumeStatusResponse } from "@/lib/ppc/search-volume";
 
 interface StoreItem {
   id: string;
@@ -24,37 +25,13 @@ interface StoreItem {
   marketplace: string;
 }
 
-interface SearchVolumeSyncRunItem {
-  id: string;
-  store_id?: string | null;
-  store_name?: string | null;
-  status: string;
-  cerebro_calls: number;
-  magnet_calls: number;
-  asins_queried: number;
-  keywords_upserted: number;
-  missing_before: number;
-  missing_after: number;
-  message: string | null;
-  started_at: string;
-  finished_at: string | null;
-}
+const formatCount = (value: number | null | undefined) => (typeof value === "number" ? value.toLocaleString() : "—");
 
-interface SearchVolumeStatusResponse {
-  latestRun: SearchVolumeSyncRunItem | null;
-  recentRuns?: SearchVolumeSyncRunItem[];
-  coverage: {
-    keywords: number;
-    withVolume: number;
-    missing: number;
-  };
-  budget: {
-    cerebroUsed: number;
-    cerebroLimit: number;
-    magnetUsed: number;
-    magnetLimit: number;
-  };
-}
+const formatElapsed = (fromIso: string, toMs: number) => {
+  const total = Math.max(0, Math.floor((toMs - new Date(fromIso).getTime()) / 1000));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+};
 
 export function AdminHelium10SyncPanel() {
   const [stores, setStores] = useState<StoreItem[]>([]);
@@ -139,12 +116,12 @@ export function AdminHelium10SyncPanel() {
     loadStatus(selectedStore);
   }, [selectedStore, loadStatus]);
 
-  // Polling nhịp nhàng 1.5s khi sync đang chạy để nhảy số và tiến trình mượt mà
+  // Job ghi tiến độ mỗi lượt Helium 10 (5–20s/lượt) nên hỏi lại 15s/lần là đủ
   useEffect(() => {
     if (status?.latestRun?.status === "running") {
       const interval = setInterval(() => {
         loadStatus(selectedStore);
-      }, 1500);
+      }, 15_000);
       return () => clearInterval(interval);
     }
   }, [status?.latestRun?.status, selectedStore, loadStatus]);
@@ -200,6 +177,25 @@ export function AdminHelium10SyncPanel() {
   };
 
   const isRunning = status?.latestRun?.status === "running";
+  const latestRun = status?.latestRun ?? null;
+  const asins = status?.asins ?? null;
+  const canResume = !!asins && asins.done > 0 && asins.pending > 0;
+  const runProblem = !isRunning && (latestRun?.status === "interrupted" || latestRun?.status === "failed") ? latestRun : null;
+
+  // Lượt chạy vừa kết thúc → bỏ thông báo xanh "Đang chạy crawl ngầm" để không che kết quả / lỗi thật
+  const prevRunStatus = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevRunStatus.current === "running" && latestRun?.status !== "running") setNotice(null);
+    prevRunStatus.current = latestRun?.status;
+  }, [latestRun?.status]);
+
+  // Đồng hồ chạy thật (tính từ started_at), chỉ tick khi đang chạy
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isRunning) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isRunning]);
 
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
@@ -309,6 +305,41 @@ export function AdminHelium10SyncPanel() {
             <span>{notice}</span>
           </div>
         )}
+        {runProblem && (
+          <div
+            className={`flex flex-wrap items-start justify-between gap-3 rounded-xl border px-3.5 py-2.5 text-xs ${
+              runProblem.status === "failed"
+                ? "border-rose-200 bg-rose-50 text-rose-800"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+          >
+            <div className="flex min-w-0 flex-1 items-start gap-2">
+              <WarningCircle size={15} weight="fill" className="mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <div className="font-bold">
+                  {runProblem.status === "failed" ? "Lượt quét gần nhất bị lỗi" : "Lượt quét gần nhất đang tạm dừng"}
+                  {runProblem.finished_at && (
+                    <span className="font-medium opacity-75">
+                      {" "}· {new Date(runProblem.finished_at).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" })}
+                      {" "}· {runProblem.store_name || "ALL"}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 break-words font-medium">{runProblem.message || "Không có thông tin lỗi."}</p>
+              </div>
+            </div>
+            {asins && asins.pending > 0 && (
+              <button
+                type="button"
+                onClick={handleStartCrawl}
+                disabled={triggering}
+                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-sky-700 disabled:opacity-50 cursor-pointer"
+              >
+                <Play size={12} weight="fill" /> Chạy tiếp ({formatCount(asins.pending)} ASIN)
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Bảng Tiến Trình Đang Chạy Trực Tiếp (Realtime Live Progress & Stop) */}
         {isRunning && (
@@ -350,49 +381,62 @@ export function AdminHelium10SyncPanel() {
               </button>
             </div>
 
-            {/* Thanh tiến trình % dựa trên cerebro_calls / 50 lượt (budget 1 lần chạy) */}
+            {/* Tiến độ thật: ASIN đã xong (gồm checkpoint các lượt trước) / tổng ASIN đang chạy ads */}
             {(() => {
-              const calls = status?.latestRun?.cerebro_calls || 0;
-              const maxBatch = 50;
-              const percent = Math.min(100, Math.max(8, Math.round((calls / maxBatch) * 100)));
+              const total = latestRun?.asins_total ?? null;
+              const done = latestRun?.asins_done ?? null;
+              const percent = total && done !== null ? Math.min(100, Math.round((done / total) * 100)) : null;
               return (
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-[11px] font-semibold text-sky-900">
                     <span>
-                      Tiến độ Cerebro: <span className="font-mono font-bold">{calls}</span> / {maxBatch} lượt batch
+                      {total === null ? (
+                        "Đang gom keyword & ASIN cần quét..."
+                      ) : (
+                        <>
+                          Tiến độ ASIN: <span className="font-mono font-bold">{formatCount(done)}</span> / {formatCount(total)}
+                        </>
+                      )}
                     </span>
-                    <span className="font-mono font-bold text-sky-700">{percent}%</span>
+                    <span className="font-mono font-bold text-sky-700">{percent === null ? "—" : `${percent}%`}</span>
                   </div>
                   <div className="h-2.5 w-full overflow-hidden rounded-full bg-sky-200/80">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all duration-500 ease-out"
-                      style={{ width: `${percent}%` }}
+                      className={`h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all duration-500 ease-out ${percent === null ? "animate-pulse" : ""}`}
+                      style={{ width: `${percent ?? 100}%`, opacity: percent === null ? 0.35 : 1 }}
                     />
                   </div>
                 </div>
               );
             })()}
 
-            {/* Thống kê trực tiếp theo thời gian thực */}
-            <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-white/80 p-2.5 border border-sky-100 text-xs text-slate-700">
+            {/* Thống kê trực tiếp của lượt này */}
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-lg bg-white/80 p-2.5 border border-sky-100 text-xs text-slate-700">
               <div className="text-center">
-                <span className="block text-[10px] text-slate-500 font-medium">ASIN Đã Quét</span>
+                <span className="block text-[10px] text-slate-500 font-medium">ASIN quét lượt này</span>
                 <span className="font-mono text-sm font-extrabold text-slate-900">
-                  {status?.latestRun?.asins_queried?.toLocaleString() ?? 0}
+                  {formatCount(latestRun?.asins_queried)}
                 </span>
               </div>
-              <div className="text-center border-x border-slate-200">
+              <div className="text-center sm:border-l border-slate-200">
                 <span className="block text-[10px] text-slate-500 font-medium">Từ Khóa Thu Được</span>
                 <span className="font-mono text-sm font-extrabold text-emerald-700">
-                  +{status?.latestRun?.keywords_upserted?.toLocaleString() ?? 0}
+                  +{formatCount(latestRun?.keywords_upserted)}
                 </span>
               </div>
-              <div className="text-center">
+              <div className="text-center sm:border-l border-slate-200">
+                <span className="block text-[10px] text-slate-500 font-medium">Lượt Cerebro (tháng)</span>
+                <span className="font-mono text-sm font-bold text-slate-900">
+                  {latestRun?.cerebro_calls ?? 0}
+                  <span className="text-[10px] font-semibold text-slate-500">
+                    {" "}· {formatCount(status?.budget.cerebroUsed)}/{formatCount(status?.budget.cerebroLimit)}
+                  </span>
+                </span>
+              </div>
+              <div className="text-center sm:border-l border-slate-200">
                 <span className="block text-[10px] text-slate-500 font-medium">Thời Gian Chạy</span>
                 <span className="font-mono text-sm font-bold text-sky-800">
-                  {status?.latestRun?.started_at
-                    ? new Date(status.latestRun.started_at).toLocaleTimeString("vi-VN")
-                    : "—"}
+                  {latestRun?.started_at ? formatElapsed(latestRun.started_at, nowMs) : "—"}
                 </span>
               </div>
             </div>
@@ -453,7 +497,7 @@ export function AdminHelium10SyncPanel() {
                     className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-sky-700 disabled:opacity-50 shadow-2xs transition cursor-pointer"
                   >
                     <Play size={13} weight="fill" />
-                    <span>Chạy Crawl Ngay</span>
+                    <span>{canResume ? `Chạy tiếp (còn ${formatCount(asins?.pending)} ASIN)` : "Chạy Crawl Ngay"}</span>
                   </button>
                 )}
               </div>
@@ -489,15 +533,27 @@ export function AdminHelium10SyncPanel() {
                 </span>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Đã có Volume:</span>
+                    <span className="text-slate-500">Keyword đã tra / tổng:</span>
                     <span className="font-mono font-bold text-emerald-700">
-                      {status?.coverage?.withVolume?.toLocaleString() ?? "—"}
+                      {formatCount(status?.coverage?.withVolume)} / {formatCount(status?.coverage?.keywords)}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Còn thiếu:</span>
+                    <span className="text-slate-500">Keyword còn thiếu:</span>
                     <span className="font-mono font-bold text-amber-700">
-                      {status?.coverage?.missing?.toLocaleString() ?? "—"}
+                      {formatCount(status?.coverage?.missing)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">ASIN đã quét / tổng:</span>
+                    <span className="font-mono font-bold text-emerald-700">
+                      {formatCount(asins?.done)} / {formatCount(asins?.total)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">ASIN có Rank · lỗi bỏ qua:</span>
+                    <span className="font-mono font-bold text-slate-700">
+                      {formatCount(asins?.withRank)} · {formatCount(asins?.failed)}
                     </span>
                   </div>
                   <div className="flex justify-between pt-1 border-t border-slate-200 text-[11px]">
@@ -557,6 +613,7 @@ export function AdminHelium10SyncPanel() {
                       const isRunRunning = run.status === "running";
                       const isSuccess = run.status === "completed";
                       const isFailed = run.status === "failed";
+                      const isInterrupted = run.status === "interrupted";
                       return (
                         <tr key={run.id} className={isRunRunning ? "bg-sky-50/50" : "hover:bg-slate-50/70"}>
                           <td className="px-3.5 py-2.5 font-mono text-[11px] text-slate-600 whitespace-nowrap">
@@ -579,7 +636,12 @@ export function AdminHelium10SyncPanel() {
                             )}
                             {isFailed && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10.5px] font-bold text-rose-800">
-                                <XCircle size={11} weight="fill" /> Đã dừng / Lỗi
+                                <XCircle size={11} weight="fill" /> Lỗi
+                              </span>
+                            )}
+                            {isInterrupted && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-800">
+                                <Stop size={11} weight="fill" /> Tạm dừng (chạy tiếp được)
                               </span>
                             )}
                           </td>
@@ -587,7 +649,12 @@ export function AdminHelium10SyncPanel() {
                             {run.cerebro_calls}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono font-semibold text-slate-700">
-                            {run.asins_queried?.toLocaleString() ?? 0}
+                            {formatCount(run.asins_queried)}
+                            {run.asins_total !== null && (
+                              <div className="text-[10px] font-normal text-slate-400">
+                                tổng {formatCount(run.asins_done)}/{formatCount(run.asins_total)}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700">
                             +{run.keywords_upserted?.toLocaleString() ?? 0}

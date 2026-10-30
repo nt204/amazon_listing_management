@@ -158,6 +158,10 @@ const FinancialsWorkspace = dynamic(
   () => import("./financials-workspace").then((module) => module.FinancialsWorkspace),
   { loading: AccountingSectionLoading },
 );
+const AccountingAccessView = dynamic(
+  () => import("./accounting-access-view").then((module) => module.AccountingAccessView),
+  { loading: AccountingSectionLoading },
+);
 const AccountingDashboardView = dynamic(
   () => import("./accounting-dashboard-view").then((module) => module.AccountingDashboardView),
   { loading: AccountingSectionLoading },
@@ -173,6 +177,7 @@ export type AccountingModuleKey =
   | "financials"
   | "reports"
   | "admin"
+  | "access"
   | "dashboard"
   | "revenue"
   | "costs"
@@ -372,6 +377,15 @@ export function AccountingWorkspace({
     return (
       <AccountingSectionShell>
         <AccountingFileManager />
+      </AccountingSectionShell>
+    );
+  }
+
+  // Section 7.1: Phân quyền kế toán theo team (Admin / Kế toán)
+  if (effectiveSection === "access") {
+    return (
+      <AccountingSectionShell>
+        <AccountingAccessView />
       </AccountingSectionShell>
     );
   }

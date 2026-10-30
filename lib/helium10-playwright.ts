@@ -22,6 +22,8 @@ export interface Helium10MiningOptions {
   limit?: number;
   headless?: boolean;
   timeoutMs?: number;
+  /** Bỏ qua fallback Playwright, ném thẳng lỗi API gốc (job nền: tránh mở Chromium và giữ lỗi 401 để dừng đúng). */
+  directApiOnly?: boolean;
 }
 
 export interface Helium10KeywordItem {
@@ -729,6 +731,7 @@ export async function mineHelium10Keywords(
       };
     }
   } catch (directApiErr) {
+    if (options.directApiOnly) throw directApiErr;
     console.warn("[Helium 10] Direct API attempt failed, trying browser automation fallback:", directApiErr);
   }
 

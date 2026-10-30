@@ -118,9 +118,15 @@ function readFrozenCount(storageKey: string, fallback: number) {
 /**
  * Khóa cột (freeze) cho các bảng PPC giống bên Accounting. Lưu theo từng tài khoản đăng nhập.
  * Chuột phải vào tiêu đề cột để mở menu "Khóa đến cột này".
+ * frozenKey: đổi key lưu khóa cột (vd. reset lựa chọn cũ) mà không đụng tới cấu hình ẩn/hiện cột.
  */
-export function usePpcFrozenColumns(tableKey: string, actor: RequestActor | undefined, defaultCount: number) {
-  const storageKey = storageKeyFor(tableKey, actor);
+export function usePpcFrozenColumns(
+  tableKey: string,
+  actor: RequestActor | undefined,
+  defaultCount: number,
+  frozenKey: string = tableKey,
+) {
+  const storageKey = storageKeyFor(frozenKey, actor);
   const [frozenState, setFrozenState] = useState(() => ({
     key: storageKey,
     count: readFrozenCount(storageKey, defaultCount),

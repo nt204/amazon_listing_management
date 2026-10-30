@@ -417,3 +417,72 @@ export function PpcSkuTrendModal({
     </div>
   );
 }
+
+/** Sparkline 7 ngày (xanh = có sales, đỏ = chỉ có spend); bấm để mở PpcSkuTrendModal. */
+export function SkuTrendSparkline({
+  dailyTrend,
+  sku,
+  storeName,
+  mockupUrl,
+  onOpenDetail,
+}: {
+  dailyTrend?: PpcSkuDailyTrendPoint[];
+  sku: string;
+  storeName: string;
+  mockupUrl?: string | null;
+  onOpenDetail?: (data: {
+    sku: string;
+    storeName: string;
+    mockupUrl?: string | null;
+    dailyTrend: PpcSkuDailyTrendPoint[];
+  }) => void;
+}) {
+  if (!dailyTrend || dailyTrend.length === 0) {
+    return <span className="text-[10px] text-slate-300 font-mono">-</span>;
+  }
+
+  // The sparkline shows the last 7 days
+  const last7 = dailyTrend.slice(-7);
+  const maxVal = Math.max(...last7.map((d) => Math.max(d.spend || 0, d.sales || 0)), 1);
+  const totSpend = last7.reduce((s, d) => s + (d.spend || 0), 0);
+  const totSales = last7.reduce((s, d) => s + (d.sales || 0), 0);
+  const totOrders = last7.reduce((s, d) => s + (d.orders || 0), 0);
+
+  return (
+    <div
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenDetail?.({ sku, storeName, mockupUrl, dailyTrend });
+      }}
+      className="group/spark inline-flex items-end gap-[3px] h-6 px-1.5 py-0.5 rounded hover:bg-indigo-50/70 cursor-pointer transition select-none"
+      title={`7D: Spend $${totSpend.toFixed(1)} • Sales $${totSales.toFixed(1)} (${totOrders} orders) - Click to view 30D trend`}
+    >
+      {last7.map((d, idx) => {
+        const hasSales = (d.sales || 0) > 0;
+        const hasSpend = (d.spend || 0) > 0;
+        const val = hasSales ? d.sales : d.spend;
+        const heightPx = Math.max(3, Math.min(18, Math.round((val / maxVal) * 18)));
+
+        let bgClass = "bg-slate-200";
+        if (hasSales) {
+          bgClass = "bg-emerald-500 group-hover/spark:bg-emerald-600";
+        } else if (hasSpend) {
+          bgClass = "bg-rose-400 group-hover/spark:bg-rose-500";
+        }
+
+        return (
+          <div
+            key={idx}
+            className="flex flex-col items-center justify-end h-full"
+            style={{ width: "6px" }}
+          >
+            <div
+              style={{ height: `${heightPx}px` }}
+              className={`w-full rounded-xs ${bgClass} transition-all`}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}

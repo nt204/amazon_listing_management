@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { canAccessStore, getAccountingAccess, requireStoreAccess, sheetLinkChannel } from "@/lib/accounting/access";
 import {
   LINK_TYPES,
   deleteSheetLink,
@@ -24,9 +25,11 @@ const saveSchema = z.object({
 /** Danh sách link Google Sheet của mọi store + email service account + trạng thái lịch tự đồng bộ. */
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     startInventorySheetSyncScheduler();
-    const links = await listSheetLinks();
+    const [allLinks, access] = await Promise.all([listSheetLinks(), getAccountingAccess(actor)]);
+    // File INVENTORY thuộc kênh FBA; Bảng mã FBM / Kế toán FBM thuộc kênh FBM
+    const links = allLinks.filter((link) => canAccessStore(access, link.store_id, sheetLinkChannel(link.link_type)));
     return Response.json({
       links,
       service_account_email: getServiceAccountEmail(),
@@ -45,6 +48,7 @@ export async function PUT(request: Request) {
     startInventorySheetSyncScheduler();
     const input = saveSchema.parse(await readJsonBody(request, 5_000));
     if (!isLinkType(input.link_type)) return Response.json({ error: "link_type không hợp lệ" }, { status: 400 });
+    await requireStoreAccess(actor, input.store_id, sheetLinkChannel(input.link_type), "write");
     const outcome = await saveSheetLink(input.store_id, input.link_type, input.sheet_url, actorName);
     return Response.json(outcome, { status: outcome.ok ? 200 : 422 });
   } catch (error) {
@@ -54,13 +58,14 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     const linkType = searchParams.get("link_type");
     if (!storeId || !isLinkType(linkType)) {
       return Response.json({ error: "store_id và link_type là bắt buộc" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, sheetLinkChannel(linkType), "write");
     return Response.json({ success: await deleteSheetLink(storeId, linkType) });
   } catch (error) {
     return routeErrorResponse(error, "Không xóa được link Google Sheet.");

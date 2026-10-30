@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import {
   deleteCheckShipmentItem,
   listCheckShipments,
@@ -29,7 +30,7 @@ const checkShipmentInputSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     if (!storeId) {
@@ -42,6 +43,7 @@ export async function GET(request: Request) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "50", 10);
 
+    await requireStoreAccess(actor, storeId, "FBA");
     const result = await listCheckShipments(storeId, { search, status, shipmentId, page, limit });
     return Response.json(result);
   } catch (error) {
@@ -54,6 +56,7 @@ export async function POST(request: Request) {
     const actor = await authorize(request, "write", "accounting");
     const body = (await readJsonBody(request, 50_000)) as any;
 
+    if (body?.store_id) await requireStoreAccess(actor, body.store_id, "FBA", "write");
     if (body?.action === "sync" && body?.store_id) {
       const res = await syncCheckShipmentsToInbound(
         body.store_id,
@@ -64,6 +67,7 @@ export async function POST(request: Request) {
     }
 
     const parsed = checkShipmentInputSchema.parse(body);
+    await requireStoreAccess(actor, parsed.store_id, "FBA", "write");
     const item = await upsertCheckShipmentItem(
       parsed.store_id,
       parsed,
@@ -87,6 +91,7 @@ export async function PATCH(request: Request) {
     if (!body?.id || !body?.store_id || !body?.field) {
       return Response.json({ error: "id, store_id, and field are required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, body.store_id, "FBA", "write");
     const item = await patchCheckShipmentField(
       body.store_id,
       body.id,

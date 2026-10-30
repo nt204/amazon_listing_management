@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { PackageIcon } from "@phosphor-icons/react";
-import type { DashboardTopProducts, TopProductItem } from "@/lib/accounting/dashboard-db";
+import type { DashboardTopProducts, TopProductItem, TopProductLists } from "@/lib/accounting/dashboard-db";
 
 interface TopSellingProductsProps {
   startDate: string;
@@ -12,7 +12,11 @@ interface TopSellingProductsProps {
   /** Tăng khi bấm Refresh / nạp dữ liệu mới để tải lại. */
   reloadKey?: number;
   delay?: number;
+  /** Thẻ cùng hàng bên phải (Cost Breakdown). */
+  aside?: ReactNode;
 }
+
+type Channel = DashboardTopProducts["channels"][number];
 
 type TopTab = "profit" | "revenue" | "loss";
 
@@ -231,6 +235,14 @@ function ProductThumbnail({ src, alt }: { src: string | null; alt: string }) {
   );
 }
 
+const hasProducts = (lists: TopProductLists) => lists.profit.length + lists.revenue.length + lists.loss.length > 0;
+
+/** Kênh có sản phẩm trong kỳ; không kênh nào có thì giữ các kênh của bộ lọc để hiện trạng thái trống. */
+function visibleChannels(data: DashboardTopProducts): Channel[] {
+  const withData = data.channels.filter((c) => hasProducts(data[c]));
+  return withData.length ? withData : data.channels;
+}
+
 export function TopSellingProducts({
   startDate,
   endDate,
@@ -238,11 +250,13 @@ export function TopSellingProducts({
   team,
   reloadKey = 0,
   delay = 160,
+  aside,
 }: TopSellingProductsProps) {
-  const [tab, setTab] = useState<TopTab>("profit");
   // Cache phản hồi theo bộ lọc như Dashboard: quay lại lựa chọn cũ hiển thị ngay.
   const [responses, setResponses] = useState<Record<string, DashboardTopProducts>>({});
   const [settled, setSettled] = useState<{ key: string; error: string | null } | null>(null);
+  // Giữ bố cục kênh của lần tải trước trong lúc chờ để hàng không nhảy.
+  const [lastChannels, setLastChannels] = useState<Channel[]>(["FBA", "FBM"]);
 
   const queryKey = `${startDate}|${endDate}|${storeIds.join(",")}|${team || ""}`;
   const requestKey = `${queryKey}|${reloadKey}`;
@@ -261,7 +275,10 @@ export function TopSellingProducts({
       .then(async (res) => {
         const payload = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(payload.error || `Failed to load data (${res.status})`);
-        setResponses((prev) => ({ ...prev, [queryKey]: payload as DashboardTopProducts }));
+        const result = payload as DashboardTopProducts;
+        setResponses((prev) => ({ ...prev, [queryKey]: result }));
+        const shown = visibleChannels(result);
+        if (shown.length) setLastChannels(shown);
         setSettled({ key: requestKey, error: null });
       })
       .catch((err: unknown) => {
@@ -273,20 +290,73 @@ export function TopSellingProducts({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestKey]);
 
-  const products: TopProductItem[] = data?.[tab] ?? [];
+  // Team / store chỉ có 1 kênh (hoặc 1 kênh không có sản phẩm nào trong kỳ) thì chỉ hiện 1 bảng.
+  // Có aside: FBA | FBM | aside chia 3 (1 kênh thì rộng 2 cột); không aside: FBA | FBM chia đôi, 1 kênh rộng hết hàng.
+  const shown = data ? visibleChannels(data) : [];
+  const channels: Channel[] = shown.length ? shown : lastChannels;
   const multiStore = storeIds.length !== 1;
+
+  return (
+    <div
+      className={`grid gap-4 ${
+        aside ? "@min-[900px]:grid-cols-3" : channels.length > 1 ? "@min-[900px]:grid-cols-2" : ""
+      }`}
+    >
+      {channels.map((channel, i) => (
+        <div key={channel} className={`min-w-0 ${aside && channels.length === 1 ? "@min-[900px]:col-span-2" : ""}`}>
+          <ChannelTopCard
+            channel={channel}
+            lists={data?.[channel]}
+            loading={loading}
+            error={error}
+            multiStore={multiStore}
+            delay={delay + i * 30}
+          />
+        </div>
+      ))}
+      {aside}
+    </div>
+  );
+}
+
+function ChannelTopCard({
+  channel,
+  lists,
+  loading,
+  error,
+  multiStore,
+  delay,
+}: {
+  channel: Channel;
+  lists: TopProductLists | undefined;
+  loading: boolean;
+  error: string | null;
+  multiStore: boolean;
+  delay: number;
+}) {
+  const [tab, setTab] = useState<TopTab>("profit");
+  const products: TopProductItem[] = lists?.[tab] ?? [];
   const activeTab = TABS.find((t) => t.key === tab)!;
 
   return (
     <div
       style={{ animationDelay: `${delay}ms` }}
-      className="acc-rise flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)]"
+      className="acc-rise @container flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)]"
     >
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
-        <h2 className="text-lg font-bold tracking-tight text-slate-900">
-          Top Selling Products (by{" "}
-          <span className={`font-extrabold ${tab === "loss" ? "text-rose-600" : "text-emerald-600"}`}>{activeTab.title}</span>)
+        <h2 className="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
+          <span
+            className={`rounded-md px-1.5 py-0.5 text-[12px] font-bold ${
+              channel === "FBM" ? "bg-violet-50 text-violet-600" : "bg-sky-50 text-sky-600"
+            }`}
+          >
+            {channel}
+          </span>
+          <span>
+            Top Products (by{" "}
+            <span className={`font-extrabold ${tab === "loss" ? "text-rose-600" : "text-emerald-600"}`}>{activeTab.title}</span>)
+          </span>
         </h2>
         <div role="tablist" className="flex rounded-lg bg-slate-100 p-0.5 text-[12.5px] font-semibold">
           {TABS.map((t) => (
@@ -307,13 +377,13 @@ export function TopSellingProducts({
       </div>
 
       {/* Table content */}
-      {!data && loading ? (
+      {!lists && loading ? (
         <div className="flex flex-col gap-2 py-2" aria-busy="true">
           {Array.from({ length: 5 }, (_, i) => (
             <div key={i} className="h-12 animate-pulse rounded-lg bg-slate-100" />
           ))}
         </div>
-      ) : !data && error ? (
+      ) : !lists && error ? (
         <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
           <p className="text-sm font-semibold text-rose-600">Không tải được Top sản phẩm</p>
           <p className="mt-1 text-xs text-slate-400">{error}</p>
@@ -328,41 +398,38 @@ export function TopSellingProducts({
           </p>
           <p className="mt-1 text-xs text-slate-400">
             {tab === "loss"
-              ? "Không có SKU nào có profit âm trong khoảng thời gian hoặc bộ lọc đã chọn."
-              : "Không tìm thấy đơn hàng nào trong khoảng thời gian hoặc bộ lọc đã chọn."}
+              ? `Không có SKU ${channel} nào có profit âm trong khoảng thời gian hoặc bộ lọc đã chọn.`
+              : `Không tìm thấy đơn ${channel} nào trong khoảng thời gian hoặc bộ lọc đã chọn.`}
           </p>
         </div>
       ) : (
         <div className={`mt-1 overflow-x-auto transition-opacity ${loading ? "opacity-60" : ""}`}>
-          <table className="w-full text-left">
+          {/* Luôn hiện đủ cột chỉ số; tên phôi co lại theo độ rộng thẻ, màn quá hẹp thì cuộn ngang */}
+          <table className="w-full min-w-[560px] text-left">
             <thead>
               <tr className="bg-slate-50/90 text-[12px] font-semibold text-slate-500">
-                <th className="rounded-l-lg py-2.5 pl-3 pr-2 text-center w-12">#</th>
-                <th className="py-2.5 px-3">Product / SKU</th>
-                <th className="py-2.5 px-3 text-right">Units</th>
-                <th className={`py-2.5 px-3 text-right ${tab === "revenue" ? "font-bold text-slate-800" : ""}`}>Revenue</th>
+                <th className="rounded-l-lg py-2.5 pl-2 pr-1 text-center w-10">#</th>
+                <th className="py-2.5 px-2">Product / SKU</th>
+                <th className="py-2.5 px-2 text-right">Units</th>
+                <th className={`py-2.5 px-2 text-right ${tab === "revenue" ? "font-bold text-slate-800" : ""}`}>Revenue</th>
                 <th
-                  className={`py-2.5 px-3 text-right ${
+                  className={`py-2.5 px-2 text-right ${
                     tab === "revenue" ? "" : tab === "loss" ? "font-bold text-rose-600" : "font-bold text-emerald-600"
                   }`}
                 >
                   Profit
                 </th>
-                <th className="py-2.5 px-3 text-right">Margin</th>
-                <th className="py-2.5 px-3 text-right">ACOS</th>
-                <th className="rounded-r-lg py-2.5 pl-3 pr-4 text-right">TACOS</th>
+                <th className="py-2.5 px-2 text-right">ACOS</th>
+                <th className="py-2.5 pl-2 pr-3 text-right">TACOS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-[13px]">
               {products.map((p, index) => {
                 const rank = index + 1;
                 return (
-                  <tr
-                    key={`${p.storeId}-${p.channel}-${p.sku}-${p.asin ?? ""}`}
-                    className="group transition-colors hover:bg-slate-50/60"
-                  >
+                  <tr key={`${p.storeId}-${p.sku}-${p.asin ?? ""}`} className="group transition-colors hover:bg-slate-50/60">
                     {/* Huy chương cho top 3 Profit / Revenue; Top Loss chỉ đánh số */}
-                    <td className="py-3 pl-3 pr-2 text-center align-middle">
+                    <td className="py-3 pl-2 pr-1 text-center align-middle">
                       {tab === "loss" ? (
                         <div className="flex items-center justify-center">
                           <span className="flex h-6 w-6 items-center justify-center rounded-full border border-rose-200 bg-rose-50 font-semibold text-xs text-rose-600">
@@ -374,56 +441,47 @@ export function TopSellingProducts({
                       )}
                     </td>
 
-                    {/* Product image, name, SKU, store, kênh */}
-                    <td className="py-3 px-3 align-middle">
+                    {/* Product image, name, SKU, store; max-w-0 + w-full để tên co theo độ rộng thẻ */}
+                    <td className="w-full max-w-0 py-3 px-2 align-middle">
                       <div className="flex items-center gap-3">
                         <ProductThumbnail src={p.imageUrl} alt={p.productName} />
-                        <div className="min-w-0 max-w-[240px] sm:max-w-[320px]">
+                        <div className="min-w-0">
+                          {/* Tên phôi (Product Type); chưa khai báo phôi thì dùng tên sản phẩm trên đơn */}
                           <p
-                            title={p.productName}
+                            title={p.productType ? `${p.productType}\n${p.productName}` : p.productName}
                             className="truncate text-[13px] font-semibold text-slate-800 transition-colors group-hover:text-blue-600"
                           >
-                            {p.productName}
+                            {p.productType || p.productName}
                           </p>
-                          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 font-mono text-[11.5px] font-medium text-slate-500">
-                            <span>{p.sku}</span>
-                            {multiStore && <span className="font-sans text-slate-400">· {p.storeName}</span>}
-                            <span
-                              className={`rounded px-1 font-sans text-[10px] font-bold ${
-                                p.channel === "FBM" ? "bg-violet-50 text-violet-600" : "bg-sky-50 text-sky-600"
-                              }`}
-                            >
-                              {p.channel}
-                            </span>
+                          <p className="mt-0.5 truncate font-mono text-[11.5px] font-medium text-slate-500">
+                            {p.sku}
+                            {multiStore && <span className="font-sans text-slate-400"> · {p.storeName}</span>}
                           </p>
                         </div>
                       </div>
                     </td>
 
                     {/* Chỉ Profit in đậm; các chỉ số khác chữ thường */}
-                    <td className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    <td className="py-3 px-2 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {p.units.toLocaleString("en-US")}
                     </td>
-                    <td className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    <td className="py-3 px-2 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {formatCurrency(p.revenue)}
                     </td>
                     {/* Profit: dương xanh, âm đỏ (inline như bản cũ để không bị style bảng đè) */}
                     <td
-                      className="py-3 px-3 text-right font-bold align-middle tabular-nums text-sm"
+                      className="py-3 px-2 text-right font-bold align-middle tabular-nums text-sm"
                       style={{ color: p.profit >= 0 ? "#16a34a" : "#e11d48" }}
                     >
                       {formatCurrency(p.profit)}
                     </td>
-                    <td className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
-                      {formatPercent(p.margin)}
-                    </td>
                     <td
-                      className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm"
+                      className="py-3 px-2 text-right font-normal text-slate-700 align-middle tabular-nums text-sm"
                       style={p.acos > 0 ? { color: acosColor(p.acos) } : undefined}
                     >
                       {p.acos > 0 ? formatPercent(p.acos) : "—"}
                     </td>
-                    <td className="py-3 pl-3 pr-4 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    <td className="py-3 pl-2 pr-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {p.tacos > 0 ? formatPercent(p.tacos) : "—"}
                     </td>
                   </tr>

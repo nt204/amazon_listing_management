@@ -1,15 +1,17 @@
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { channelParam, requireStoreAccess } from "@/lib/accounting/access";
 import { listFbaDaily } from "@/lib/accounting/fba-daily-db";
 import { listFbmDaily } from "@/lib/accounting/fbm-financials-db";
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     if (!storeId) {
       return Response.json({ error: "store_id is required" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, channelParam(searchParams.get("channel")));
 
     const startDate = searchParams.get("start_date") || undefined;
     const endDate = searchParams.get("end_date") || undefined;

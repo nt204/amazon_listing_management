@@ -1,15 +1,17 @@
 import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 import { exportFbmPwCosts, listFbmPwCosts } from "@/lib/accounting/fbm-pw-db";
 
 /** BASECOST THÁNG FBM: danh sách dòng ĐẦU VÀO FBM PW (format=xlsx để xuất Excel theo bộ lọc hiện tại). */
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read", "accounting");
+    const actor = await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("store_id");
     if (!storeId) return Response.json({ error: "store_id is required" }, { status: 400 });
+    await requireStoreAccess(actor, storeId, "FBM");
     const filter = {
       search: searchParams.get("search") || undefined,
       month: searchParams.get("month") || undefined,

@@ -22,3 +22,18 @@ export function listTeams(stores: { team?: string | null }[]): string[] {
 export function storeHasFbaTeam(team: string | null | undefined): boolean {
   return parseStoreTeams(team).some((t) => /^fba\b/i.test(t));
 }
+
+type WithAccess = { access?: { channels: string[]; editChannels: string[] } };
+
+/** Người đang xem được xem kênh này của store (store không kèm access = toàn quyền). */
+export function storeCanView(store: object | null | undefined, channel: "FBA" | "FBM"): boolean {
+  const access = (store as WithAccess | null | undefined)?.access;
+  return !access || access.channels.includes(channel);
+}
+
+/** Người đang xem được sửa (kênh này / bất kỳ kênh nào) của store. */
+export function storeCanEdit(store: object | null | undefined, channel?: "FBA" | "FBM"): boolean {
+  const access = (store as WithAccess | null | undefined)?.access;
+  if (!access) return true;
+  return channel ? access.editChannels.includes(channel) : access.editChannels.length > 0;
+}

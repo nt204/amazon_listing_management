@@ -35,6 +35,8 @@ import {
   DEFAULT_SKU_TEST_COLUMNS,
 } from "./column-manager-modal";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
+import { UnitsSparkline, useSkuUnitTrends } from "./sku-units-trend";
+import { storeCanView } from "@/lib/accounting/store-teams";
 import {
   PpcAmazonDatePicker,
   type DateRange,
@@ -392,7 +394,8 @@ export function SkuTestView() {
         if (res.ok) {
           const data = await res.json();
           if (!ignore) {
-            const list: Store[] = data.stores || [];
+            // SKU Test là FBA: chỉ store được phân quyền xem FBA
+            const list: Store[] = (data.stores || []).filter((s: Store) => storeCanView(s, "FBA"));
             setStores(list);
             
             if (list.length > 0) {
@@ -497,7 +500,9 @@ export function SkuTestView() {
   }, [fetchData]);
 
   // Sorting Handler
-  const handleSort = (field: string) => {
+  const handleSort = (sortKey: string) => {
+    // Cột Trend không có giá trị để sắp: sắp theo Quantity
+    const field = sortKey === "trend" ? "quantity" : sortKey;
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -777,6 +782,17 @@ export function SkuTestView() {
   };
 
   // Client-side filtering if user applies a column filter from context menu
+  // Cột Trend: units theo ngày của các SKU đang hiển thị, tải riêng sau bảng
+  const trendVisible = columns.some((c) => c.id === "trend" && c.visible !== false);
+  const unitTrend = useSkuUnitTrends({
+    storeId: selectedStoreId,
+    channel: "fba",
+    startDate,
+    endDate,
+    skus: useMemo(() => items.map((i) => i.sku), [items]),
+    enabled: trendVisible,
+  });
+
   const displayItems = useMemo(() => {
     if (!Object.values(columnFilters).some(Boolean)) {
       return items;
@@ -1367,6 +1383,11 @@ export function SkuTestView() {
                                     <PencilSimpleIcon size={12} weight="bold" />
                                   </button>
                                 </div>
+                              )}
+
+                              {/* Trend: units theo ngày trong kỳ */}
+                              {col.id === "trend" && (
+                                <UnitsSparkline data={unitTrend ? unitTrend(item.sku) : undefined} />
                               )}
 
                               {/* Product Type */}

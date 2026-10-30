@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 const createSchema = z.object({
   email: z.string().trim().email("Email không hợp lệ").max(256),
   displayName: z.string().trim().max(128).optional(),
-  role: z.enum(["editor", "reviewer", "admin"]).default("editor"),
+  role: z.enum(["editor", "reviewer", "admin", "accountant"]).default("editor"),
   allowedFeatures: z.array(z.enum(ALL_SYSTEM_FEATURES)).max(ALL_SYSTEM_FEATURES.length)
     .default([...ALL_SYSTEM_FEATURES]),
 }).strict();
@@ -22,7 +22,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   userId: z.string().trim().min(1).max(128),
   action: z.enum(["approve", "reject", "disable", "restore"]).optional(),
-  role: z.enum(["editor", "reviewer", "admin"]).optional(),
+  role: z.enum(["editor", "reviewer", "admin", "accountant"]).optional(),
   allowedFeatures: z.array(z.enum(ALL_SYSTEM_FEATURES)).max(ALL_SYSTEM_FEATURES.length).optional(),
 }).strict().refine((data) => data.action || data.role || data.allowedFeatures, {
   message: "Cần cung cấp ít nhất một trường để cập nhật (action, role, hoặc allowedFeatures).",

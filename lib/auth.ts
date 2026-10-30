@@ -5,7 +5,7 @@ import {
   type AppUserSummary,
 } from "@/lib/db";
 
-export type TeamRole = "editor" | "reviewer" | "admin";
+export type TeamRole = "editor" | "reviewer" | "admin" | "accountant";
 export type Permission =
   | "read"
   | "write"
@@ -58,6 +58,8 @@ const memberPermissions: Permission[] = [
 const rolePermissions: Record<TeamRole, Set<Permission>> = {
   editor: new Set(memberPermissions),
   reviewer: new Set(memberPermissions),
+  // Kế toán: như thành viên, thêm toàn quyền dữ liệu kế toán + phân quyền kế toán (lib/accounting/access.ts)
+  accountant: new Set(memberPermissions),
   admin: new Set([
     ...memberPermissions,
     "manage_users",
@@ -96,7 +98,7 @@ function credentials(): TeamCredential[] {
     if (
       !credential.team_id?.trim() || !credential.user_id?.trim() ||
       !credential.token || credential.token.length < 12 ||
-      !["editor", "reviewer", "admin"].includes(credential.role)
+      !["editor", "reviewer", "admin", "accountant"].includes(credential.role)
     ) {
       throw new Error("Each team credential needs team_id, user_id, role, and a token of at least 12 characters.");
     }

@@ -30,12 +30,22 @@ export interface DashboardSeriesPoint {
   compare?: DashboardSeriesPoint | null;
 }
 
+export interface DashboardStoreChannelRow {
+  channel: "FBA" | "FBM";
+  current: DashboardTotals;
+  previous: DashboardTotals | null;
+}
+
 export interface DashboardStoreRow {
   storeId: string;
   storeName: string;
   marketplace: string;
   current: DashboardTotals;
   previous: DashboardTotals | null;
+  /** Kênh store đang tính (theo Team / team đang lọc). */
+  channels: ("FBA" | "FBM")[];
+  /** Tách riêng từng kênh, chỉ có khi store chạy cả FBA và FBM. */
+  byChannel?: DashboardStoreChannelRow[];
 }
 
 export interface TopProductItem {
@@ -45,6 +55,8 @@ export interface TopProductItem {
   sku: string;
   asin: string | null;
   productName: string;
+  /** Tên phôi (Product Type trong Bảng mã). */
+  productType: string | null;
   imageUrl: string | null;
   units: number;
   revenue: number;
@@ -55,11 +67,18 @@ export interface TopProductItem {
   tacos: number;
 }
 
-export interface DashboardTopProducts {
-  period: { startDate: string; endDate: string };
+export interface TopProductLists {
   profit: TopProductItem[];
   revenue: TopProductItem[];
   loss: TopProductItem[];
+}
+
+export interface DashboardTopProducts {
+  period: { startDate: string; endDate: string };
+  /** Kênh có trong bộ lọc store / team (chỉ 1 kênh thì giao diện chỉ hiện 1 bảng). */
+  channels: ("FBA" | "FBM")[];
+  FBA: TopProductLists;
+  FBM: TopProductLists;
 }
 
 export interface AccountingDashboardData {
@@ -179,13 +198,24 @@ type DashboardChannel = "Amazon" | "Merchant";
  *   chọn team → team FBM chỉ lấy FBM, team FBA chỉ lấy FBA;
  *   không chọn team → cộng mọi kênh store đang chạy (team FBA… → FBA, team FBM → FBM).
  */
-function storeChannels(storeTeam: string | null | undefined, selectedTeam?: string): DashboardChannel[] {
-  if (selectedTeam) return /^fbm$/i.test(selectedTeam.trim()) ? ["Merchant"] : ["Amazon"];
+function storeChannels(
+  storeTeam: string | null | undefined,
+  selectedTeam?: string,
+  /** Kênh người dùng được phân quyền xem (undefined = toàn quyền). */
+  allowed?: ("FBA" | "FBM")[],
+): DashboardChannel[] {
   const channels: DashboardChannel[] = [];
-  if (storeHasFbaTeam(storeTeam)) channels.push("Amazon");
-  if (storeHasTeam(storeTeam, "FBM")) channels.push("Merchant");
-  return channels.length ? channels : ["Amazon"];
+  if (selectedTeam) channels.push(/^fbm$/i.test(selectedTeam.trim()) ? "Merchant" : "Amazon");
+  else {
+    if (storeHasFbaTeam(storeTeam)) channels.push("Amazon");
+    if (storeHasTeam(storeTeam, "FBM")) channels.push("Merchant");
+    if (!channels.length) channels.push("Amazon");
+  }
+  return allowed ? channels.filter((c) => allowed.includes(c === "Merchant" ? "FBM" : "FBA")) : channels;
 }
+
+/** Phân quyền kế toán: kênh được xem của từng store (không truyền = toàn quyền). */
+export type DashboardAllowedChannels = (storeId: string) => ("FBA" | "FBM")[];
 
 // Cache theo từng store + khoảng ngày + channel để đổi lựa chọn store không phải tính lại các store khác.
 // FBM dùng công thức tab FBM (listFbmDaily, khớp workbook "FBM - <STORE>"), FBA dùng listFbaDaily.
@@ -231,6 +261,7 @@ export async function getAccountingDashboard(options: {
   /** Bỏ qua cache (nút Refresh). */
   fresh?: boolean;
   team?: string;
+  allowedChannels?: DashboardAllowedChannels;
 }): Promise<AccountingDashboardData> {
   if (options.fresh) await invalidateAccountingDashboardCache();
   const [allStores, latestDate, cache] = await Promise.all([
@@ -241,7 +272,10 @@ export async function getAccountingDashboard(options: {
   const requested = new Set((options.storeIds ?? []).filter(Boolean));
   // Chọn theo team: chỉ giữ các store thuộc team đó (vd FBA 2 = mọi store có "FBA 2" trong cột Team).
   const stores = allStores.filter(
-    (s) => (!requested.size || requested.has(s.id)) && (!options.team || storeHasTeam(s.team, options.team)),
+    (s) =>
+      (!requested.size || requested.has(s.id)) &&
+      (!options.team || storeHasTeam(s.team, options.team)) &&
+      storeChannels(s.team, options.team, options.allowedChannels?.(s.id)).length > 0,
   );
 
   const periods = resolveDashboardPeriods(
@@ -261,18 +295,21 @@ export async function getAccountingDashboard(options: {
 
   const hasRange = Boolean(fetchStart && fetchEnd);
   const perStore = await Promise.all(
-    stores.map(async (store) => ({
-      store,
+    stores.map(async (store) => {
+      const channels = await Promise.all(
+        storeChannels(store.team, options.team, options.allowedChannels?.(store.id)).map(async (channel) => ({
+          channel: channel === "Merchant" ? ("FBM" as const) : ("FBA" as const),
+          items: await loadStoreDaily(cache, store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : "", channel),
+        })),
+      );
       // Store chạy cả FBA và FBM: ghép dòng ngày của 2 kênh (các phép tổng hợp đều cộng theo dòng).
-      items: (
-        await Promise.all(
-          storeChannels(store.team, options.team).map((channel) =>
-            loadStoreDaily(cache, store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : "", channel),
-          ),
-        )
-      ).flat(),
-    })),
+      return { store, channels, items: channels.flatMap((c) => c.items) };
+    }),
   );
+  const periodTotals = (items: FbaDailyItem[]) => ({
+    current: summarize(items.filter((it) => inRange(it.date, periods.current))),
+    previous: periods.previous ? summarize(items.filter((it) => inRange(it.date, periods.previous!))) : null,
+  });
 
   const allItems = perStore.flatMap((s) => s.items);
   const currentItems = allItems.filter((it) => inRange(it.date, periods.current));
@@ -308,12 +345,13 @@ export async function getAccountingDashboard(options: {
     daily,
     monthly,
     monthlyCompareShift: monthShift,
-    byStore: perStore.map(({ store, items }) => ({
+    byStore: perStore.map(({ store, channels, items }) => ({
       storeId: store.id,
       storeName: store.name,
       marketplace: store.marketplace,
-      current: summarize(items.filter((it) => inRange(it.date, periods.current))),
-      previous: periods.previous ? summarize(items.filter((it) => inRange(it.date, periods.previous!))) : null,
+      ...periodTotals(items),
+      channels: channels.map((c) => c.channel),
+      byChannel: channels.length > 1 ? channels.map((c) => ({ channel: c.channel, ...periodTotals(c.items) })) : undefined,
     })),
     trendStartDate: periods.trendStartDate,
     days: sumByDate(allItems),
@@ -328,6 +366,7 @@ const TOP_PRODUCTS_LIMIT = 5;
 interface SkuPerformance {
   sku: string;
   asin: string | null;
+  productType: string | null;
   imageUrl: string | null;
   units: number;
   revenue: number;
@@ -346,10 +385,10 @@ function loadStoreSkuPerformance(
   channel: DashboardChannel,
 ): Promise<SkuPerformance[]> {
   return getCachedOrFetch(
-    `${cache.prefix}sku2:${storeId}:${startDate}:${endDate}:${channel === "Merchant" ? "fbm" : "fba"}`,
+    `${cache.prefix}sku3:${storeId}:${startDate}:${endDate}:${channel === "Merchant" ? "fbm" : "fba"}`,
     cache.ttl,
     async () => {
-      const options = { status: "all", startDate, endDate, limit: 100_000 };
+      const options = { status: "all", startDate, endDate, limit: 100_000, includeAllTime: false };
       const [res, nonFbaSkus] = await Promise.all([
         channel === "Merchant" ? listFbmSkuFixed(storeId, options) : listSkuWin(storeId, options),
         channel === "Merchant" ? Promise.resolve(new Set<string>()) : loadNonFbaSkus(storeId),
@@ -360,6 +399,7 @@ function loadStoreSkuPerformance(
         .map((i) => ({
           sku: i.sku,
           asin: i.asin,
+          productType: i.product_type || null,
           imageUrl: i.mockup_url || i.mockup || null,
           units: i.quantity,
           revenue: i.revenue,
@@ -411,6 +451,7 @@ export async function getDashboardTopProducts(options: {
   endDate?: string;
   storeIds?: string[];
   team?: string;
+  allowedChannels?: DashboardAllowedChannels;
 }): Promise<DashboardTopProducts> {
   const [allStores, latestDate, cache] = await Promise.all([
     listStores(),
@@ -419,15 +460,19 @@ export async function getDashboardTopProducts(options: {
   ]);
   const requested = new Set((options.storeIds ?? []).filter(Boolean));
   const stores = allStores.filter(
-    (s) => (!requested.size || requested.has(s.id)) && (!options.team || storeHasTeam(s.team, options.team)),
+    (s) =>
+      (!requested.size || requested.has(s.id)) &&
+      (!options.team || storeHasTeam(s.team, options.team)) &&
+      storeChannels(s.team, options.team, options.allowedChannels?.(s.id)).length > 0,
   );
   const period = resolveDashboardPeriods(options.startDate ?? "", options.endDate ?? "", latestDate, "none").current;
-  if (!period.startDate || !period.endDate || !stores.length) return { period, profit: [], revenue: [], loss: [] };
+  const empty = (): TopProductLists => ({ profit: [], revenue: [], loss: [] });
+  if (!period.startDate || !period.endDate || !stores.length) return { period, channels: [], FBA: empty(), FBM: empty() };
 
   const rows = (
     await Promise.all(
       stores.flatMap((store) =>
-        storeChannels(store.team, options.team).map(async (channel) =>
+        storeChannels(store.team, options.team, options.allowedChannels?.(store.id)).map(async (channel) =>
           (await loadStoreSkuPerformance(cache, store.id, period.startDate, period.endDate, channel)).map(
             (r): TopProductItem => ({
               storeId: store.id,
@@ -436,6 +481,7 @@ export async function getDashboardTopProducts(options: {
               sku: r.sku,
               asin: r.asin,
               productName: "",
+              productType: r.productType,
               imageUrl: r.imageUrl,
               units: r.units,
               revenue: r.revenue,
@@ -450,20 +496,31 @@ export async function getDashboardTopProducts(options: {
     )
   ).flat();
 
-  const top = (filter: (i: TopProductItem) => boolean, compare: (a: TopProductItem, b: TopProductItem) => number) =>
-    rows.filter(filter).sort(compare).slice(0, TOP_PRODUCTS_LIMIT);
-  const lists = {
-    profit: top((i) => i.profit > 0, (a, b) => b.profit - a.profit),
-    revenue: top((i) => i.revenue > 0, (a, b) => b.revenue - a.revenue),
-    loss: top((i) => i.profit < 0, (a, b) => a.profit - b.profit),
+  const channels = (["FBA", "FBM"] as const).filter((c) =>
+    stores.some((store) => storeChannels(store.team, options.team, options.allowedChannels?.(store.id)).includes(c === "FBM" ? "Merchant" : "Amazon")),
+  );
+  const topLists = (channel: "FBA" | "FBM"): TopProductLists => {
+    const channelRows = rows.filter((i) => i.channel === channel);
+    const top = (filter: (i: TopProductItem) => boolean, compare: (a: TopProductItem, b: TopProductItem) => number) =>
+      channelRows.filter(filter).sort(compare).slice(0, TOP_PRODUCTS_LIMIT);
+    return {
+      profit: top((i) => i.profit > 0, (a, b) => b.profit - a.profit),
+      revenue: top((i) => i.revenue > 0, (a, b) => b.revenue - a.revenue),
+      loss: top((i) => i.profit < 0, (a, b) => a.profit - b.profit),
+    };
   };
+  const byChannel = { FBA: topLists("FBA"), FBM: topLists("FBM") };
 
-  const names = await loadProductNames([...lists.profit, ...lists.revenue, ...lists.loss], period.startDate, period.endDate);
+  const names = await loadProductNames(
+    Object.values(byChannel).flatMap((l) => [...l.profit, ...l.revenue, ...l.loss]),
+    period.startDate,
+    period.endDate,
+  );
   const withName = (i: TopProductItem) => ({ ...i, productName: names.get(`${i.storeId}|${i.sku}`) || i.sku });
-  return {
-    period,
-    profit: lists.profit.map(withName),
-    revenue: lists.revenue.map(withName),
-    loss: lists.loss.map(withName),
-  };
+  const named = (l: TopProductLists): TopProductLists => ({
+    profit: l.profit.map(withName),
+    revenue: l.revenue.map(withName),
+    loss: l.loss.map(withName),
+  });
+  return { period, channels, FBA: named(byChannel.FBA), FBM: named(byChannel.FBM) };
 }

@@ -24,7 +24,7 @@ import type {
   SheetSyncResult,
   SheetType,
 } from "@/lib/accounting/inventory-sheet-sync";
-import { storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
+import { storeCanEdit, storeCanView, storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
 
 export const SHEET_LINKS_QUERY_KEY = ["inventory-sheet-links"];
 
@@ -419,6 +419,8 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [copied, setCopied] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  // Đồng bộ tất cả: tiến độ khi đang chạy, tóm tắt khi xong
+  const [syncAll, setSyncAll] = useState<{ done: number; total: number; failed: number; running: boolean } | null>(null);
 
   if (!isOpen) return null;
 
@@ -456,6 +458,45 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
     }
     return true;
   });
+
+  // Chỉ file thuộc kênh người dùng được phân quyền xem: INVENTORY → FBA, Bảng mã / Kế toán FBM → FBM
+  const storeLinkTypes = (store: Store): LinkType[] => [
+    ...(storeHasFbaTeam(store.team) && storeCanView(store, "FBA") ? (["inventory"] as const) : []),
+    ...(storeHasTeam(store.team, "FBM") && storeCanView(store, "FBM") ? (["fbm", "fbm_accounting"] as const) : []),
+  ];
+  const linkChannel = (linkType: LinkType) => (linkType === "inventory" ? "FBA" : "FBM");
+
+  // Các file đã có link của những store đang hiển thị (theo bộ lọc store / tìm kiếm)
+  const syncTargets = filteredStores.flatMap((store) =>
+    storeLinkTypes(store)
+      .filter((linkType) => linkFor(store.id, linkType) && storeCanEdit(store, linkChannel(linkType)))
+      .map((linkType) => ({ store, linkType })),
+  );
+
+  const handleSyncAll = async () => {
+    if (!syncTargets.length || syncAll?.running) return;
+    const queue = [...syncTargets];
+    let done = 0;
+    let failed = 0;
+    setSyncAll({ done, total: queue.length, failed, running: true });
+    // Chạy 2 file song song để không chạm giới hạn đọc của Google Sheets API
+    const worker = async () => {
+      for (let target = queue.shift(); target; target = queue.shift()) {
+        const outcome = await requestSheetSync("sync", {
+          store_id: target.store.id,
+          link_type: target.linkType,
+          trigger: "manual",
+        });
+        done += 1;
+        if (!outcome.ok && !outcome.skipped) failed += 1;
+        setSyncAll({ done, total: syncTargets.length, failed, running: true });
+        queryClient.invalidateQueries({ queryKey: SHEET_LINKS_QUERY_KEY });
+        onSynced?.(target.store.id, LINK_LABELS[target.linkType].parts);
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    setSyncAll({ done, total: syncTargets.length, failed, running: false });
+  };
 
   const handleCopyEmail = () => {
     if (!email) return;
@@ -623,10 +664,7 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
             </div>
           ) : (
             filteredStores.map((store) => {
-              const linkTypes: LinkType[] = [
-                ...(storeHasFbaTeam(store.team) ? (["inventory"] as const) : []),
-                ...(storeHasTeam(store.team, "FBM") ? (["fbm", "fbm_accounting"] as const) : []),
-              ];
+              const linkTypes = storeLinkTypes(store);
               const storeStatus = getStoreStatus(store.id);
 
               return (
@@ -658,16 +696,6 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
                         {store.team || "Chưa gán team"}
                       </span>
                     </div>
-
-                    {selectedStoreId === "all" && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedStoreId(store.id)}
-                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
-                      >
-                        Chỉ xem store này →
-                      </button>
-                    )}
                   </div>
 
                   {/* Links for this store */}
@@ -708,13 +736,42 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
               </button>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white hover:bg-slate-800 transition cursor-pointer shadow-xs"
-          >
-            Đóng
-          </button>
+          <div className="flex items-center gap-3">
+            {syncAll && (
+              <span
+                className={`text-xs font-semibold ${
+                  syncAll.running ? "text-slate-500" : syncAll.failed ? "text-rose-600" : "text-emerald-700"
+                }`}
+              >
+                {syncAll.running
+                  ? `Đang đồng bộ ${syncAll.done}/${syncAll.total} file…`
+                  : syncAll.failed
+                  ? `Xong ${syncAll.total} file · ${syncAll.failed} lỗi (xem chi tiết từng file)`
+                  : `Đã đồng bộ ${syncAll.total} file`}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleSyncAll}
+              disabled={!syncTargets.length || syncAll?.running}
+              title={
+                selectedStoreId === "all" && !searchTerm.trim()
+                  ? "Đồng bộ ngay mọi file đã liên kết"
+                  : "Đồng bộ ngay mọi file đã liên kết của các store đang hiển thị"
+              }
+              className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ArrowClockwiseIcon size={14} weight="bold" className={syncAll?.running ? "animate-spin" : ""} />
+              {syncAll?.running ? "Đang đồng bộ…" : `Đồng bộ tất cả (${syncTargets.length})`}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white hover:bg-slate-800 transition cursor-pointer shadow-xs"
+            >
+              Đóng
+            </button>
+          </div>
         </div>
       </div>
     </div>

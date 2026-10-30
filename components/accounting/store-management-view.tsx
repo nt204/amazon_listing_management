@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Store } from "@/lib/accounting/types";
+import { storeCanEdit } from "@/lib/accounting/store-teams";
 
 const MARKETPLACE_OPTIONS = [
   "Amazon US",
@@ -38,14 +39,17 @@ export function StoreManagementView() {
   });
   const [savingStore, setSavingStore] = useState(false);
   const [storeFormError, setStoreFormError] = useState<string | null>(null);
+  // Admin / Kế toán: tạo, xoá store và đổi Team; người khác chỉ sửa store được phân quyền Sửa
+  const [canManage, setCanManage] = useState(true);
 
   const fetchStores = useCallback(async () => {
     try {
       setError(null);
       const res = await fetch("/api/accounting/stores");
       if (!res.ok) throw new Error("Failed to load stores");
-      const data = (await res.json()) as { stores?: Store[]; error?: string };
+      const data = (await res.json()) as { stores?: Store[]; canManageAccess?: boolean; error?: string };
       setStores(data.stores || []);
+      setCanManage(data.canManageAccess !== false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load stores");
     } finally {
@@ -192,6 +196,7 @@ export function StoreManagementView() {
           </p>
         </div>
 
+        {canManage && (
         <button
           type="button"
           onClick={handleOpenAddStore}
@@ -199,6 +204,7 @@ export function StoreManagementView() {
         >
           <span>+ Add Store</span>
         </button>
+        )}
       </div>
 
       {/* Filter and Search Bar */}
@@ -285,8 +291,8 @@ export function StoreManagementView() {
                 {filteredStores.map((store) => (
                   <tr
                     key={store.id}
-                    onClick={() => handleOpenEditStore(store)}
-                    className="hover:bg-indigo-50/40 transition-colors cursor-pointer group"
+                    onClick={() => storeCanEdit(store) && handleOpenEditStore(store)}
+                    className={`hover:bg-indigo-50/40 transition-colors group ${storeCanEdit(store) ? "cursor-pointer" : ""}`}
                   >
                     <td className="py-4 px-5 font-black text-slate-900 group-hover:text-indigo-600 transition-colors">
                       {store.name}
@@ -401,6 +407,8 @@ export function StoreManagementView() {
                   type="text"
                   required
                   value={storeFormData.team}
+                  disabled={!canManage}
+                  title={canManage ? undefined : "Chỉ Admin hoặc Kế toán được đổi Team (Team quyết định phân quyền)"}
                   onChange={(e) => setStoreFormData((prev) => ({ ...prev, team: e.target.value }))}
                   placeholder="e.g. NCE, Team 1, Team 2..."
                   className="w-full h-11 bg-white border border-slate-300 rounded-xl px-4 text-sm font-semibold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-4 focus:ring-indigo-100 shadow-2xs"
@@ -471,7 +479,7 @@ export function StoreManagementView() {
 
               {/* Modal Actions */}
               <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-                {editingStore ? (
+                {editingStore && canManage ? (
                   <button
                     type="button"
                     onClick={handleDeleteStore}

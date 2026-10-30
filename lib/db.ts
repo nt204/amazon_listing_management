@@ -1,6 +1,7 @@
 import "server-only";
 
 import postgres from "postgres";
+import type { TeamRole } from "@/lib/auth";
 import { createHash } from "node:crypto";
 import {
   createStoredImageDerivatives,
@@ -185,7 +186,7 @@ export interface AppUserSummary {
   userId: string;
   username: string;
   displayName: string;
-  role: "editor" | "reviewer" | "admin";
+  role: TeamRole;
   status: AppUserStatus;
   allowedFeatures: string[];
   approvedBy: string | null;
@@ -201,7 +202,7 @@ interface AppUserRow {
   username: string;
   display_name: string;
   password_hash: string | null;
-  role: "editor" | "reviewer" | "admin";
+  role: TeamRole;
   status: AppUserStatus;
   allowed_features?: string[] | null;
   approved_by: string | null;
@@ -375,7 +376,7 @@ export async function addTeamUserByAdmin(
   input: {
     email: string;
     displayName?: string;
-    role: "editor" | "reviewer" | "admin";
+    role: TeamRole;
     allowedFeatures: string[];
   },
 ): Promise<AppUserSummary | null> {
@@ -464,7 +465,7 @@ export async function updateTeamUserAccount(
   targetUserId: string,
   options: {
     action?: "approve" | "reject" | "disable" | "restore";
-    role?: "editor" | "reviewer" | "admin";
+    role?: TeamRole;
     allowedFeatures?: string[];
   },
 ): Promise<AppUserSummary | null> {

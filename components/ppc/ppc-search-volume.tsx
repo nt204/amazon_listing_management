@@ -132,7 +132,7 @@ export function PpcSearchVolumeSyncButton({ storeName, canWrite = true }: { stor
         fetchSearchVolumeStatus(storeName)
           .then(setStatus)
           .catch(() => {});
-      }, 3000);
+      }, 15_000);
       return () => clearInterval(timer);
     }
   }, [status?.latestRun?.status, storeName]);
@@ -159,6 +159,8 @@ export function PpcSearchVolumeSyncButton({ storeName, canWrite = true }: { stor
   const isRunning = status?.latestRun?.status === "running";
   const withVolume = status?.coverage.withVolume || 0;
   const missing = status?.coverage.missing || 0;
+  const lastRun = status?.latestRun;
+  const runProblem = !isRunning && (lastRun?.status === "interrupted" || lastRun?.status === "failed") ? lastRun.message : null;
 
   return (
     <div className="relative inline-flex items-center gap-1.5">
@@ -181,11 +183,15 @@ export function PpcSearchVolumeSyncButton({ storeName, canWrite = true }: { stor
         <span>{isRunning ? "Đang đồng bộ..." : "Đồng bộ SV"}</span>
       </button>
 
-      {error && (
+      {error ? (
         <span className="text-[10px] text-rose-600 max-w-[140px] truncate" title={error}>
           {error}
         </span>
-      )}
+      ) : runProblem ? (
+        <span className="text-[10px] text-amber-700 max-w-[160px] truncate" title={runProblem}>
+          Tạm dừng: {runProblem}
+        </span>
+      ) : null}
     </div>
   );
 }
