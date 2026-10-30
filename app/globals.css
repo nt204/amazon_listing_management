@@ -104,6 +104,19 @@ body {
   color: #020617;
 }
 
+/* Bảng Financials (FBA/FBM theo ngày, SKU Win/Test, FBM cố định): tên cột to hơn cho dễ đọc.
+   Chỉ hàng tiêu đề đầu tiên, không đụng hàng TOTAL. */
+.font-accounting-system table.acc-financial-table thead tr:first-child th,
+.font-accounting-system table.acc-financial-table thead tr:first-child th .truncate {
+  font-size: 13.5px !important;
+}
+
+/* SKU Win/Test, FBM cố định mặc định zoom 100% (FBA/FBM theo ngày zoom 90%): 12px ≈ 13.5px × 90% để nhìn bằng nhau */
+.font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th,
+.font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th .truncate {
+  font-size: 12px !important;
+}
+
 /* Cột chính của mỗi bảng (tên chiến dịch, keyword, search term, sku...): in đậm (font-weight: 700) */
 .font-accounting-system table tbody td.col-primary,
 .font-accounting-system table tbody td.col-primary *,

@@ -217,7 +217,7 @@ function ProductThumbnail({ src, alt }: { src: string | null; alt: string }) {
 
   if (!src || error) {
     return (
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200/80 bg-slate-100 text-slate-400">
+      <div className="flex h-11 w-11 @max-[560px]:h-9 @max-[560px]:w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200/80 bg-slate-100 text-slate-400">
         <PackageIcon size={22} weight="duotone" />
       </div>
     );
@@ -230,7 +230,7 @@ function ProductThumbnail({ src, alt }: { src: string | null; alt: string }) {
       alt={alt}
       onError={() => setError(true)}
       loading="lazy"
-      className="h-11 w-11 shrink-0 rounded-lg border border-slate-200/80 bg-white object-contain p-0.5 shadow-2xs transition-transform duration-200 hover:scale-105"
+      className="h-11 w-11 @max-[560px]:h-9 @max-[560px]:w-9 shrink-0 rounded-lg border border-slate-200/80 bg-white object-contain p-0.5 shadow-2xs transition-transform duration-200 hover:scale-105"
     />
   );
 }
@@ -418,22 +418,22 @@ function ChannelTopCard({
         </div>
       ) : (
         <div className={`mt-1 overflow-x-auto transition-opacity ${loading ? "opacity-60" : ""}`}>
-          {/* Luôn hiện đủ cột chỉ số; tên phôi co lại theo độ rộng thẻ, màn quá hẹp thì cuộn ngang */}
-          <table className="w-full min-w-[560px] text-left">
+          {/* Luôn hiện đủ cột chỉ số; tên phôi + SKU co lại (cắt "…") theo độ rộng thẻ, thẻ hẹp thì thu nhỏ ảnh/khoảng cách; màn quá hẹp mới cuộn ngang */}
+          <table className="w-full min-w-[440px] text-left">
             <thead>
               <tr className="bg-slate-50/90 text-[12px] font-semibold text-slate-500">
                 <th className="rounded-l-lg py-2.5 pl-2 pr-1 text-center w-10">#</th>
                 <th className="py-2.5 px-2">Product / SKU</th>
-                <th className="py-2.5 px-2 text-right">Units</th>
-                <th className={`py-2.5 px-2 text-right ${tab === "revenue" ? "font-bold text-slate-800" : ""}`}>Revenue</th>
+                <th className="py-2.5 px-2 @max-[560px]:px-1.5 text-right">Units</th>
+                <th className={`py-2.5 px-2 @max-[560px]:px-1.5 text-right ${tab === "revenue" ? "font-bold text-slate-800" : ""}`}>Revenue</th>
                 <th
-                  className={`py-2.5 px-2 text-right ${
+                  className={`py-2.5 px-2 @max-[560px]:px-1.5 text-right ${
                     tab === "revenue" ? "" : tab === "loss" ? "font-bold text-rose-600" : "font-bold text-emerald-600"
                   }`}
                 >
                   Profit
                 </th>
-                <th className="py-2.5 px-2 text-right">ACOS</th>
+                <th className="py-2.5 px-2 @max-[560px]:px-1.5 text-right">ACOS</th>
                 <th className="py-2.5 pl-2 pr-3 text-right">TACOS</th>
               </tr>
             </thead>
@@ -456,8 +456,8 @@ function ChannelTopCard({
                     </td>
 
                     {/* Product image, name, SKU, store; max-w-0 + w-full để tên co theo độ rộng thẻ */}
-                    <td className="w-full max-w-0 py-3 px-2 align-middle">
-                      <div className="flex items-center gap-3">
+                    <td className="w-full max-w-0 py-3 px-2 @max-[560px]:px-1.5 align-middle">
+                      <div className="flex items-center gap-3 @max-[560px]:gap-2">
                         <ProductThumbnail src={p.imageUrl} alt={p.productName} />
                         <div className="min-w-0">
                           {/* Tên phôi (Product Type); chưa khai báo phôi thì dùng tên sản phẩm trên đơn */}
@@ -476,21 +476,21 @@ function ChannelTopCard({
                     </td>
 
                     {/* Chỉ Profit in đậm; các chỉ số khác chữ thường */}
-                    <td className="py-3 px-2 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    <td className="py-3 px-2 @max-[560px]:px-1.5 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {p.units.toLocaleString("en-US")}
                     </td>
-                    <td className="py-3 px-2 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    <td className="py-3 px-2 @max-[560px]:px-1.5 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {formatCurrency(p.revenue)}
                     </td>
                     {/* Profit: dương xanh, âm đỏ (inline như bản cũ để không bị style bảng đè) */}
                     <td
-                      className="py-3 px-2 text-right font-bold align-middle tabular-nums text-sm"
+                      className="py-3 px-2 @max-[560px]:px-1.5 text-right font-bold align-middle tabular-nums text-sm"
                       style={{ color: p.profit >= 0 ? "#16a34a" : "#e11d48" }}
                     >
                       {formatCurrency(p.profit)}
                     </td>
                     <td
-                      className="py-3 px-2 text-right font-normal text-slate-700 align-middle tabular-nums text-sm"
+                      className="py-3 px-2 @max-[560px]:px-1.5 text-right font-normal text-slate-700 align-middle tabular-nums text-sm"
                       style={p.acos > 0 ? { color: acosColor(p.acos) } : undefined}
                     >
                       {p.acos > 0 ? formatPercent(p.acos) : "—"}

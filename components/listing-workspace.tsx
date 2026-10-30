@@ -167,7 +167,7 @@ function WorkspaceSidebar({
             </div>
             <div>
               <h1 className="text-sm font-black tracking-tight text-slate-900 leading-tight">NCE HUB</h1>
-              <p className="text-[10px] font-semibold text-slate-400">Workflow &amp; Trello Automation</p>
+              <p className="text-[11px] font-semibold text-slate-400">Workflow &amp; Trello Automation</p>
             </div>
           </button>
           {isMobile && onClose && (
@@ -193,7 +193,7 @@ function WorkspaceSidebar({
                 markBatchAsRead();
                 onClose?.();
               }}
-              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
                 sidebarTab === "trello" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -225,7 +225,7 @@ function WorkspaceSidebar({
                 selectView("mockups");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
                 sidebarTab === "mockups" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -248,7 +248,7 @@ function WorkspaceSidebar({
                 selectView("sellersprite");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
                 viewMode === "sellersprite"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -272,7 +272,7 @@ function WorkspaceSidebar({
                   selectPpcSection("dashboard");
                   onClose?.();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
                   viewMode === "ppc"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -284,7 +284,7 @@ function WorkspaceSidebar({
                     weight={viewMode === "ppc" ? "fill" : "duotone"}
                     className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
                   />
-                  <span>PPC Analytics</span>
+                  <span className="whitespace-nowrap">PPC Analytics</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span
@@ -317,12 +317,12 @@ function WorkspaceSidebar({
                       selectPpcDashboardTab("overview");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                    className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
                       ppcSection === "dashboard" && ppcDashboardTab === "overview"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                         : ppcSection === "dashboard"
                           ? "text-indigo-900 font-semibold hover:bg-slate-100"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
@@ -349,10 +349,10 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("campaigns");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
                         ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
@@ -370,10 +370,10 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("targets");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
                         ppcSection === "dashboard" && ppcDashboardTab === "targets"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
@@ -391,10 +391,10 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("search_terms");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
                         ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
@@ -412,10 +412,10 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("skus");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
                         ppcSection === "dashboard" && ppcDashboardTab === "skus"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
@@ -433,10 +433,10 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("st_campaigns");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
                         ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
@@ -455,10 +455,10 @@ function WorkspaceSidebar({
                       selectPpcSection("negative_keyword");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
                       ppcSection === "negative_keyword"
                         ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
                     <span
@@ -476,10 +476,10 @@ function WorkspaceSidebar({
                       selectPpcSection("sale_kw");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
                       ppcSection === "sale_kw"
                         ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
                     <span
@@ -497,10 +497,10 @@ function WorkspaceSidebar({
                       selectPpcSection("auto_bid");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
                       ppcSection === "auto_bid"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
                     <span
@@ -521,10 +521,10 @@ function WorkspaceSidebar({
                       selectPpcSection("phoi");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
                       ppcSection === "phoi"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
                     <span
@@ -542,10 +542,10 @@ function WorkspaceSidebar({
                       selectPpcSection("rules");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
                       ppcSection === "rules"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
                     <span
@@ -569,7 +569,7 @@ function WorkspaceSidebar({
                   selectAccountingSection("overview");
                   onClose?.();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
                   viewMode === "accounting"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -604,8 +604,8 @@ function WorkspaceSidebar({
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "overview" || accountingSection === "dashboard"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <SquaresFourIcon
@@ -618,7 +618,7 @@ function WorkspaceSidebar({
                       }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-xs font-bold text-slate-800">Overview</span>
+                      <span className="text-[13px]">Overview</span>
                     </div>
                   </button>
 
@@ -631,8 +631,8 @@ function WorkspaceSidebar({
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "stores"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <StorefrontIcon
@@ -641,7 +641,7 @@ function WorkspaceSidebar({
                       className={`shrink-0 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"}`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-xs font-bold text-slate-800">Stores</span>
+                      <span className="text-[13px]">Stores</span>
                     </div>
                   </button>
 
@@ -654,8 +654,8 @@ function WorkspaceSidebar({
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "inventory"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <PackageIcon
@@ -664,7 +664,7 @@ function WorkspaceSidebar({
                       className={`shrink-0 ${accountingSection === "inventory" ? "text-indigo-600" : "text-slate-400"}`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-xs font-bold text-slate-800">Inventory</span>
+                      <span className="text-[13px]">Inventory</span>
                     </div>
                   </button>
 
@@ -677,8 +677,8 @@ function WorkspaceSidebar({
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "orders" || accountingSection === "import"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <UploadSimpleIcon
@@ -689,7 +689,7 @@ function WorkspaceSidebar({
                       }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-xs font-bold text-slate-800">Import</span>
+                      <span className="text-[13px]">Import</span>
                     </div>
                   </button>
 
@@ -706,8 +706,8 @@ function WorkspaceSidebar({
                       accountingSection === "costs" ||
                       accountingSection === "amazon_fees" ||
                       accountingSection === "ads"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <WalletIcon
@@ -732,7 +732,7 @@ function WorkspaceSidebar({
                       }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-xs font-bold text-slate-800">Financials</span>
+                      <span className="text-[13px]">Financials</span>
                     </div>
                   </button>
 
@@ -747,8 +747,8 @@ function WorkspaceSidebar({
                       accountingSection === "reports" ||
                       accountingSection === "pnl" ||
                       accountingSection === "settlements"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <TrendUpIcon
@@ -769,7 +769,7 @@ function WorkspaceSidebar({
                       }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-xs font-bold text-slate-800">Reports</span>
+                      <span className="text-[13px]">Reports</span>
                     </div>
                   </button>
 
@@ -785,8 +785,8 @@ function WorkspaceSidebar({
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "admin" || accountingSection === "files"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
                     <GearIcon
@@ -797,7 +797,7 @@ function WorkspaceSidebar({
                       }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-xs font-bold text-slate-800">System Admin</span>
+                      <span className="text-[13px]">System Admin</span>
                     </div>
                   </button>
 
@@ -811,8 +811,8 @@ function WorkspaceSidebar({
                       }}
                       className={`flex w-full items-center gap-2.5 rounded-xl py-2 pl-7 pr-2.5 text-left transition-all cursor-pointer ${
                         accountingSection === "access"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                       }`}
                     >
                       <ShieldCheckIcon
@@ -820,7 +820,7 @@ function WorkspaceSidebar({
                         weight={accountingSection === "access" ? "fill" : "duotone"}
                         className={`shrink-0 ${accountingSection === "access" ? "text-indigo-600" : "text-slate-400"}`}
                       />
-                      <span className="text-xs font-bold text-slate-800">Phân quyền</span>
+                      <span className="text-[13px]">Phân quyền</span>
                     </button>
                   )}
                 </div>
@@ -838,7 +838,7 @@ function WorkspaceSidebar({
               selectView("kanban");
               onClose?.();
             }}
-            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
               activeView === "kanban"
                 ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                 : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -850,7 +850,7 @@ function WorkspaceSidebar({
                 weight={activeView === "kanban" ? "fill" : "duotone"}
                 className={activeView === "kanban" ? "text-indigo-600" : "text-slate-400"}
               />
-              <span className="truncate">Kanban Góp ý &amp; Báo lỗi</span>
+              <span className="truncate">Kanban góp ý</span>
             </div>
             {kanbanPendingCount > 0 && (
               <span
@@ -878,9 +878,9 @@ function WorkspaceSidebar({
             <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500 text-white text-[10px] font-bold shadow-xs">
               ?
             </div>
-            <h4 className="text-xs font-extrabold text-slate-900">Cần hỗ trợ?</h4>
+            <h4 className="text-[13px] font-extrabold text-slate-900">Cần hỗ trợ?</h4>
           </div>
-          <p className="text-[11px] font-medium leading-relaxed text-slate-500 mb-2.5">
+          <p className="text-[12px] font-medium leading-relaxed text-slate-500 mb-2.5">
             Xem hướng dẫn hoặc liên hệ team hỗ trợ.
           </p>
           <button
@@ -890,7 +890,7 @@ function WorkspaceSidebar({
               void handleOpenGuides();
               onClose?.();
             }}
-            className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-extrabold shadow-2xs transition cursor-pointer disabled:opacity-60 ${
+            className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-extrabold shadow-2xs transition cursor-pointer disabled:opacity-60 ${
               dark
                 ? "border border-white/20 bg-white/10 text-white hover:bg-white/20"
                 : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50/80 hover:border-indigo-300"

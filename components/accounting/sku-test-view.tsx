@@ -1023,7 +1023,7 @@ export function SkuTestView() {
       <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col">
         <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-210px)] min-h-[520px] scrollbar-thin">
           <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
-            <table className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+            <table className="acc-financial-table acc-financial-table-unzoomed min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
               <colgroup>
                 {visibleColumns.map((column) => {
                   const configuredWidth = typeof column.width === "number"
@@ -1040,7 +1040,7 @@ export function SkuTestView() {
 
               {/* Header màu cam chuẩn Bảng Mã (#ff9900) với ColumnHeaderCell (drag, resize, auto-fit, context menu) */}
               <thead className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs">
-                <tr className="text-xs tracking-[0.02em]">
+                <tr className="text-[15px] tracking-[0.02em]">
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
                     const isSorted = sortField === col.id;
@@ -1059,7 +1059,7 @@ export function SkuTestView() {
                         isFrozen={f.isFrozen}
                         isBoundary={f.isBoundary}
                         style={f.style}
-                        className={`py-1.5 px-2 text-xs bg-[#ff9900] text-slate-950 select-none ${isKeyBoldCol ? "font-bold text-slate-950" : "font-normal text-slate-900"
+                        className={`py-1.5 px-2 text-[15px] bg-[#ff9900] text-slate-950 select-none ${isKeyBoldCol ? "font-bold text-slate-950" : "font-bold text-slate-900"
                           } ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}
                         draggable={true}
                         isDragging={headerDragId === col.id}
@@ -1092,7 +1092,7 @@ export function SkuTestView() {
                         }}
                       >
                         <div
-                          className={`flex items-center w-full min-h-[30px] relative group/title px-0.5 ${col.align === "center" ? "justify-center" : col.align === "right" ? "justify-end" : "justify-start"
+                          className={`flex items-center w-full min-h-[38px] relative group/title px-0.5 ${col.align === "center" ? "justify-center" : col.align === "right" ? "justify-end" : "justify-start"
                             }`}
                         >
                           <button

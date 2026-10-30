@@ -622,11 +622,11 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           }}
           className="min-w-full inline-block align-top"
         >
-          <table className="w-full border-separate border-spacing-0 text-left border-b border-slate-200">
+          <table className="acc-financial-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
             {/* THEAD with Header Row + Sticky TOTAL Row */}
             <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
               {/* ROW 1: COLUMN HEADERS */}
-              <tr className="text-xs font-bold shadow-xs">
+              <tr className="text-[15px] font-bold shadow-xs">
                 {visibleColumns.map((col) => {
                   const f = getCellFreezeProps(col.id, true);
                   const isSorted = sortField === col.id;
@@ -664,7 +664,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       onAutoFit={handleAutoFitColumn}
                     >
                       <div
-                        className={`group/title flex min-h-[30px] w-full items-center gap-1 ${
+                        className={`group/title flex min-h-[38px] w-full items-center gap-1 ${
                           col.align === "center"
                             ? "justify-center"
                             : col.align === "right"
