@@ -113,13 +113,29 @@ function driversLine(a: DailyReportAnalysis): string {
 function actionsBlock(a: DailyReportAnalysis, options: DailyReportCardOptions): string {
   if (!a.actions.length) return "**✅ Không có việc khẩn**";
   return [
-    "**Cần làm hôm nay**",
+    "**Ưu tiên hôm nay**",
     ...a.actions.map((x, i) => {
       const lead = options.teamLeads?.[x.team]?.trim();
-      return `${i + 1}. **${x.title}** ${x.label}${lead ? ` · ${lead}` : ""} <font color='grey'>— ${x.reason}</font>`;
+      return `${i + 1}. **${x.label}**${lead ? ` · ${lead}` : ""}: ${x.title}`;
     }),
   ].join("\n");
 }
+
+/** Rà soát từng kênh của team: nguyên nhân (kèm bằng chứng) → việc cần kiểm tra. */
+function reviewLines(team: TeamAnalysis): string[] {
+  const reviewed = team.channels
+    .filter((c) => c.diagnosis)
+    .sort((x, y) => Number(y.diagnosis?.isIssue) - Number(x.diagnosis?.isIssue) || (y.diagnosis?.impact ?? 0) - (x.diagnosis?.impact ?? 0));
+  return reviewed.map((c) => {
+    const d = c.diagnosis!;
+    const mark = c.isNew ? "🌱" : d.isIssue ? LIGHT_EMOJI[c.light] : "▲";
+    const lines = [`${mark} **${c.label}**: ${d.cause}`];
+    if (d.checks.length) lines.push(`　→ ${d.checks.join("; ")}`);
+    return lines.join("\n");
+  });
+}
+
+const issueCount = (team: TeamAnalysis) => team.channels.filter((c) => c.diagnosis?.isIssue && c.diagnosis.checks.length).length;
 
 function channelName(ch: ChannelAnalysis): string {
   const mark = ch.isNew ? "🌱" : LIGHT_EMOJI[ch.light];
@@ -168,7 +184,10 @@ function channelGrid(team: TeamAnalysis): Array<Record<string, unknown>> {
 
 function teamHeadline(team: TeamAnalysis, options: DailyReportCardOptions): string {
   const delta = team.avg7 && !team.unreliable.length ? ` ${deltaUsd(team.today.profit, team.avg7.profit)}` : "";
-  return `${LIGHT_EMOJI[team.light]} **${teamLabel(team.team, options.teamLeads)}**　Profit **${formatUsd(team.today.profit)}**${delta}`;
+  const issues = issueCount(team);
+  return `${LIGHT_EMOJI[team.light]} **${teamLabel(team.team, options.teamLeads)}**　Profit **${formatUsd(team.today.profit)}**${delta}${
+    issues ? `　<font color='grey'>${issues} việc</font>` : ""
+  }`;
 }
 
 /** Chẩn đoán 1 câu do code soạn — dùng khi AI tắt hoặc lỗi. */
@@ -201,6 +220,9 @@ function teamPanel(team: TeamAnalysis, options: DailyReportCardOptions): Record<
     elements: [
       { tag: "markdown", content: `<font color='grey'>${comment}</font>` },
       ...channelGrid(team),
+      ...(reviewLines(team).length
+        ? [{ tag: "markdown", content: `**Rà soát**\n${reviewLines(team).join("\n")}` }]
+        : []),
     ],
   };
 }
@@ -245,6 +267,7 @@ export function buildDailyReportText(a: DailyReportAnalysis, options: DailyRepor
     for (const row of channelRows(team)) {
       lines.push(`  ${stripTags(row.ch)} | ${stripTags(row.rev)} | Profit ${stripTags(row.profit)} | TACoS ${stripTags(row.tacos)}`);
     }
+    for (const review of reviewLines(team)) lines.push(...stripTags(review).split("\n").map((l) => `  ${l}`));
   }
   lines.push("", FOOTNOTE);
   return lines.join("\n");

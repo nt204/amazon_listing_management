@@ -8,6 +8,7 @@ import { parseStoreTeams, storeHasFbaTeam, storeHasTeam } from "@/lib/accounting
 import {
   analyzeDailyReport,
   shiftIsoDate,
+  type ChannelDrill,
   type ChannelSeriesInput,
   type DailyReportAnalysis,
   type ReportChannel,
@@ -25,7 +26,7 @@ import { notifyLarkEventBestEffort, sendLarkCardNotification } from "@/lib/lark-
 const ACTIVE_STORE_WINDOW_DAYS = 7;
 /** Kênh có số liệu đầu tiên trong N ngày gần đây = kênh mới. */
 const NEW_CHANNEL_DAYS = 30;
-const AI_COMMENTARY_TIMEOUT_MS = 30_000;
+const AI_COMMENTARY_TIMEOUT_MS = 60_000;
 
 type ReportRecipient = { receiveId: string; receiveIdType: string };
 
@@ -83,6 +84,8 @@ async function loadChannelSeries(date: string): Promise<ChannelSeriesInput[]> {
   const isNewStore = (store: (typeof stores)[number]) =>
     store.created_at > store.first_created_at && store.created_at >= newSince;
 
+  const drills = await loadChannelDrills(stores.map((s) => s.id), date);
+
   const tasks = stores.flatMap((store) => {
     const channels: ReportChannel[] = [];
     if (storeHasFbaTeam(store.team) || !storeHasTeam(store.team, "FBM")) channels.push("FBA");
@@ -105,6 +108,7 @@ async function loadChannelSeries(date: string): Promise<ChannelSeriesInput[]> {
           team: channel === "FBM" ? "FBM" : fbaTeam,
           isNew: isNewStore(store),
           days,
+          drill: drills.get(`${store.id}:${channel}`),
         };
       } catch (err) {
         console.warn(`[Accounting Report] Không thể lấy dữ liệu ${store.name} ${channel}:`, err);
@@ -114,6 +118,60 @@ async function loadChannelSeries(date: string): Promise<ChannelSeriesInput[]> {
   });
 
   return (await Promise.all(tasks)).filter((c): c is ChannelSeriesInput => c !== null);
+}
+
+/** Units theo SKU và chi tiêu theo portfolio Ads (ngày báo cáo vs TB 7 ngày trước) của từng kênh. */
+async function loadChannelDrills(storeIds: string[], date: string): Promise<Map<string, ChannelDrill>> {
+  const drills = new Map<string, ChannelDrill>();
+  if (!storeIds.length) return drills;
+  const sql = await getDatabaseClient();
+  const from = shiftIsoDate(date, -7);
+  const [skuRows, adsRows] = await Promise.all([
+    sql<Array<{ store_id: string; channel: string; sku: string; today: number; avg7: number }>>`
+      SELECT store_id,
+        CASE WHEN fulfillment_channel = 'Merchant' THEN 'FBM' ELSE 'FBA' END AS channel,
+        UPPER(TRIM(sku)) AS sku,
+        SUM(CASE WHEN date = ${date}::date THEN COALESCE(quantity, 1) ELSE 0 END)::float AS today,
+        (SUM(CASE WHEN date < ${date}::date THEN COALESCE(quantity, 1) ELSE 0 END) / 7.0)::float AS avg7
+      FROM accounting_orders
+      WHERE store_id = ANY(${storeIds}::uuid[])
+        AND date BETWEEN ${from}::date AND ${date}::date
+        AND COALESCE(TRIM(sku), '') <> ''
+        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+      GROUP BY 1, 2, 3
+    `,
+    sql<Array<{ store_id: string; channel: string; name: string; today_spend: number; today_sales: number; today_orders: number; avg7_spend: number }>>`
+      SELECT store_id,
+        UPPER(TRIM(loai)) AS channel,
+        COALESCE(NULLIF(TRIM(sku), ''), portfolio) AS name,
+        SUM(CASE WHEN date = ${date}::date THEN COALESCE(spend, 0) ELSE 0 END)::float AS today_spend,
+        SUM(CASE WHEN date = ${date}::date THEN COALESCE(sales, 0) ELSE 0 END)::float AS today_sales,
+        SUM(CASE WHEN date = ${date}::date THEN COALESCE(orders, 0) ELSE 0 END)::float AS today_orders,
+        (SUM(CASE WHEN date < ${date}::date THEN COALESCE(spend, 0) ELSE 0 END) / 7.0)::float AS avg7_spend
+      FROM accounting_ads
+      WHERE store_id = ANY(${storeIds}::uuid[])
+        AND date BETWEEN ${from}::date AND ${date}::date
+        AND UPPER(TRIM(loai)) IN ('FBA', 'FBM')
+      GROUP BY 1, 2, 3
+    `,
+  ]);
+  const drillOf = (storeId: string, channel: string) => {
+    const key = `${storeId}:${channel}`;
+    let drill = drills.get(key);
+    if (!drill) drills.set(key, (drill = { skus: [], portfolios: [] }));
+    return drill;
+  };
+  for (const r of skuRows) drillOf(r.store_id, r.channel).skus.push({ sku: r.sku, today: Number(r.today), avg7: Number(r.avg7) });
+  for (const r of adsRows) {
+    drillOf(r.store_id, r.channel).portfolios.push({
+      name: r.name,
+      todaySpend: Number(r.today_spend),
+      todaySales: Number(r.today_sales),
+      todayOrders: Number(r.today_orders),
+      avg7Spend: Number(r.avg7_spend),
+    });
+  }
+  return drills;
 }
 
 /** Tên trưởng team, lưu ở app_settings dạng {"FBA 1": "Quỳnh", ...}. */
@@ -134,8 +192,8 @@ const AI_COMMENTARY_SYSTEM_PROMPT = `Bạn là chuyên viên phân tích kinh do
 Đầu vào là JSON số liệu đã tính sẵn (so với trung bình 7 ngày trước = "TB7").
 Quy tắc:
 - Mỗi team ĐÚNG 1 câu, tối đa 20 chữ, tiếng Việt, văn phong báo cáo chuyên nghiệp.
-- Chỉ nêu NGUYÊN NHÂN chính: kênh có "profit_vs_tb7" thay đổi nhiều nhất (âm hoặc dương) và chỉ số giải thích nó (vd: "Limima mất doanh thu nhưng vẫn tiêu $383 Ads.", "Fastpeace-FBM tăng $286 Profit nhờ TACoS giảm 5.1đ.").
-- KHÔNG nêu việc cần làm (đã có mục riêng), KHÔNG nhắc lại Profit tổng của team (đã có ở tiêu đề).
+- Đây là câu TỔNG KẾT team: nêu kênh quyết định kết quả của team và vì sao, dựa trên "ra_soat" (đã phân tích sẵn) và "profit_vs_tb7" (vd: "Kết quả bị kéo xuống chủ yếu bởi Limima mất doanh thu nhưng vẫn tiêu Ads.").
+- KHÔNG liệt kê việc cần làm (đã có mục rà soát riêng), KHÔNG nhắc lại Profit tổng của team (đã có ở tiêu đề).
 - Không động viên, không khen chung chung, không "cần chú ý".
 - Chỉ dùng con số có trong dữ liệu, không tự tính số mới, không dự báo.
 - Kênh "thieu_ads": true thì không nhận xét Profit/ACoS của kênh đó, chỉ nhắc nạp file Ads.
@@ -188,7 +246,9 @@ async function generateTeamComments(
       tacos: c.today.revenue > 0 ? pct(c.today.tacos) : null,
       tacos_vs_tb7: c.today.revenue > 0 && !c.baselineAdsMissing ? pts(c.today.tacos, c.avg7?.tacos) : null,
     })),
-    viec_can_lam: analysis.actions.filter((a) => a.team === team.team).map((a) => `${a.title} ${a.label}: ${a.reason}`),
+    ra_soat: team.channels
+      .filter((c) => c.diagnosis)
+      .map((c) => `${c.label}: ${c.diagnosis?.cause}`),
   }));
 
   try {

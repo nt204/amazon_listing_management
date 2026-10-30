@@ -40,25 +40,50 @@ test("kênh ổn định thì đèn xanh, không có việc cần làm", () => {
   assert.deepEqual(a.actions, []);
 });
 
-test("lỗ thì đèn đỏ và có việc cần làm", () => {
+test("lỗ thì đèn đỏ, rà soát tách đúng Δ Profit và có việc cần làm", () => {
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { revenue: 400, adsFee: 300, revenueAds: 200, profit: -120 })]);
-  assert.equal(a.teams[0].channels[0].light, "red");
-  assert.equal(a.actions[0].title, "Giảm bid");
-  assert.match(a.actions[0].reason, /lỗ \$120/);
+  const ch = a.teams[0].channels[0];
+  assert.equal(ch.light, "red");
+  // Δ Profit -370 = doanh số -240 + biên +20 + chi phí Ads -150
+  assert.match(ch.diagnosis?.cause ?? "", /^lỗ \$120, Profit -\$370: doanh số giảm -\$240, Ads tăng -\$150/);
+  assert.equal(a.actions.length, 1);
+  assert.equal(a.actions[0].label, "A");
 });
 
-test("Ads = 0 bất thường: cảnh báo thiếu số Ads thay vì khen profit tăng", () => {
+test("Ads = 0 bất thường: nhắc nạp file Ads thay vì khen profit tăng", () => {
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 0, revenueAds: 0, profit: 400 })]);
   const ch = a.teams[0].channels[0];
   assert.equal(ch.adsMissing, true);
   assert.equal(ch.light, "yellow");
-  assert.equal(a.actions.length, 1);
-  assert.equal(a.actions[0].title, "Nạp file Ads");
+  assert.deepEqual(ch.diagnosis?.checks, ["Nạp file Ads ngày này"]);
 });
 
-test("TACoS tăng mạnh thì báo số tiền Ads tốn thêm", () => {
-  const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 250, profit: 150 })]);
-  assert.ok(a.actions.some((x) => x.title === "Rà bid" && /Ads vượt ~\$100/.test(x.reason)));
+test("Ads tăng: chỉ ra portfolio tiêu tiền không ra đơn", () => {
+  const drill = {
+    skus: [],
+    portfolios: [
+      { name: "SKU-BURN", todaySpend: 60, todaySales: 0, todayOrders: 0, avg7Spend: 20 },
+      { name: "SKU-OK", todaySpend: 190, todaySales: 600, todayOrders: 10, avg7Spend: 130 },
+    ],
+  };
+  const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 250, profit: 150 }, { drill })]);
+  const d = a.teams[0].channels[0].diagnosis;
+  assert.match(d?.cause ?? "", /Ads tăng -\$100/);
+  assert.match(d?.checks[0] ?? "", /Giảm bid \/ tắt SKU-BURN \(\$60, 0 đơn\)/);
+});
+
+test("doanh số giảm: chỉ ra SKU tụt units", () => {
+  const drill = {
+    skus: [
+      { sku: "SKU-HOT", today: 0, avg7: 12 },
+      { sku: "SKU-STABLE", today: 20, avg7: 20 },
+    ],
+    portfolios: [],
+  };
+  const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, revenue: 600, revenueAds: 500, quantity: 25, profit: 90 }, { drill })]);
+  const d = a.teams[0].channels[0].diagnosis;
+  assert.match(d?.cause ?? "", /SKU-HOT 0\/12 units/);
+  assert.match(d?.checks[0] ?? "", /^Kiểm tra tồn kho, listing: SKU-HOT/);
 });
 
 test("kênh mới không chấm vào việc cần làm, gom vào mục kênh mới", () => {
