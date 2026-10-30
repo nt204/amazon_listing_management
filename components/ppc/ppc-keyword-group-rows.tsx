@@ -162,9 +162,17 @@ export function PpcKeywordGroupRows({ groups, total, selection, showSearchVolume
 
 // ---- Sắp xếp bảng tổng (bấm vào tên cột). Sắp xếp phía client trên dữ liệu đã tải; SKU luôn nằm trên keyword.
 
-export type SummarySortField = "sku" | "keyword" | "impressions" | "clicks" | "ctr" | "spend" | "sales" | "orders" | "cvr" | "cpc" | "acos";
+export type SummarySortField =
+  | "sku" | "keyword" | "sv" | "orgRank" | "sponRank"
+  | "impressions" | "clicks" | "ctr" | "spend" | "sales" | "orders" | "cvr" | "cpc" | "acos";
 
-type SummaryMetrics = { impressions: number; clicks: number; spend: number; sales: number; orders: number };
+type SummaryMetrics = {
+  impressions: number; clicks: number; spend: number; sales: number; orders: number;
+  searchVolume?: number | null; organicRank?: number | null; sponsoredRank?: number | null;
+};
+
+// SV / rank chưa có dữ liệu → NaN: luôn xếp cuối dù tăng hay giảm dần
+const optionalMetric = (v: number | null | undefined) => (v == null || v <= 0 ? Number.NaN : Number(v));
 
 function metricValue(m: SummaryMetrics, field: SummarySortField): number {
   const impressions = Number(m.impressions || 0);
@@ -180,6 +188,12 @@ function metricValue(m: SummaryMetrics, field: SummarySortField): number {
     // Không có sales → ACOS vô cực (luôn xếp sau khi tăng dần)
     case "acos":
       return sales > 0 ? Number(m.spend || 0) / sales : Number.POSITIVE_INFINITY;
+    case "sv":
+      return optionalMetric(m.searchVolume);
+    case "orgRank":
+      return optionalMetric(m.organicRank);
+    case "sponRank":
+      return optionalMetric(m.sponsoredRank);
     case "impressions":
     case "clicks":
     case "spend":
@@ -198,6 +212,7 @@ function sortBy<T>(rows: T[], field: SummarySortField | null, dir: "asc" | "desc
     if (field === textField) return sign * getText(a).localeCompare(getText(b), "vi", { numeric: true, sensitivity: "base" });
     const va = metricValue(getMetrics(a), field);
     const vb = metricValue(getMetrics(b), field);
+    if (Number.isNaN(va) || Number.isNaN(vb)) return Number.isNaN(va) ? (Number.isNaN(vb) ? 0 : 1) : -1;
     if (va === vb) return 0;
     return va > vb ? sign : -sign;
   });
@@ -208,8 +223,8 @@ export function usePpcSummarySort() {
   const [dir, setDir] = useState<"asc" | "desc">("desc");
 
   const toggle = useCallback((next: SummarySortField) => {
-    // Cột chữ & ACOS mặc định tăng dần, còn lại giảm dần
-    const defaultDir = next === "sku" || next === "keyword" || next === "acos" ? "asc" : "desc";
+    // Cột chữ, ACOS & thứ hạng (số nhỏ = tốt) mặc định tăng dần, còn lại giảm dần
+    const defaultDir = ["sku", "keyword", "acos", "orgRank", "sponRank"].includes(next) ? "asc" : "desc";
     if (field !== next) {
       setField(next);
       setDir(defaultDir);
@@ -250,6 +265,12 @@ const SUMMARY_COLUMNS: { field: SummarySortField; label: string; className: stri
   { field: "acos", label: "ACOS", className: "px-3 py-3 text-right" },
 ];
 
+const SEARCH_VOLUME_COLUMNS: { field: SummarySortField; label: string; title: string; className: string }[] = [
+  { field: "sv", label: "SV", title: "Search Volume tháng từ Helium 10", className: "px-2 py-3 text-right" },
+  { field: "orgRank", label: "Org Rank", title: "Thứ hạng tự nhiên (Organic Rank) của sản phẩm", className: "px-2 py-3 text-center" },
+  { field: "sponRank", label: "Spon Rank", title: "Thứ hạng quảng cáo (Sponsored Rank) của sản phẩm", className: "px-2 py-3 text-center" },
+];
+
 export function PpcSummaryTableHead({ keywordLabel, sort, selection, showSearchVolume = false }: { keywordLabel: string; sort: ReturnType<typeof usePpcSummarySort>; selection?: KeywordGroupSelection; showSearchVolume?: boolean }) {
   return (
     <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
@@ -277,13 +298,19 @@ export function PpcSummaryTableHead({ keywordLabel, sort, selection, showSearchV
             >
               {col.label || keywordLabel} {active && (sort.dir === "asc" ? "↑" : "↓")}
             </th>
-            {showSearchVolume && col.field === "keyword" && (
-              <>
-                <th className="px-2 py-3 text-right whitespace-nowrap" title="Search Volume tháng từ Helium 10">SV</th>
-                <th className="px-2 py-3 text-center whitespace-nowrap" title="Thứ hạng tự nhiên (Organic Rank) của sản phẩm">Org Rank</th>
-                <th className="px-2 py-3 text-center whitespace-nowrap" title="Thứ hạng quảng cáo (Sponsored Rank) của sản phẩm">Spon Rank</th>
-              </>
-            )}
+            {showSearchVolume && col.field === "keyword" && SEARCH_VOLUME_COLUMNS.map((sv) => {
+              const svActive = sort.field === sv.field;
+              return (
+                <th
+                  key={sv.field}
+                  className={`${sv.className} cursor-pointer select-none whitespace-nowrap hover:text-indigo-600 ${svActive ? "text-indigo-600" : ""}`}
+                  onClick={() => sort.toggle(sv.field)}
+                  title={`${sv.title} — nhấn để sắp xếp (bấm lần 3 để về mặc định)`}
+                >
+                  {sv.label} {svActive && (sort.dir === "asc" ? "↑" : "↓")}
+                </th>
+              );
+            })}
             </Fragment>
           );
         })}
