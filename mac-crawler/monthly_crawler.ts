@@ -770,7 +770,7 @@ async function main() {
     console.log(`\n${msgStart}\n`);
     await sendTelegramMessage(msgStart).catch(() => {});
 
-    const summaryResults: Array<{ store: string; files: string[]; status: "SUCCESS" | "FAILED"; error?: string }> = [];
+    const summaryResults: Array<{ store: string; files: string[]; status: "SUCCESS" | "FAILED" | "PARTIAL"; error?: string }> = [];
 
     for (const store of targetStores) {
       console.log(`\n======================================================`);
