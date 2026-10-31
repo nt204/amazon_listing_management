@@ -15,18 +15,17 @@ import {
 } from "@/lib/accounting/daily-report-analysis";
 import {
   buildDailyReportCard,
+  buildDailyReportDetailCard,
+  buildDailyReportDetailText,
   buildDailyReportText,
   displayDate,
-  formatUsd,
-  teamLabel,
 } from "@/lib/accounting/daily-report-card";
-import { notifyLarkEventBestEffort, sendLarkCardNotification } from "@/lib/lark-notifications";
+import { notifyLarkEventBestEffort, sendLarkCardNotification, type LarkRecipient } from "@/lib/lark-notifications";
 
 /** Store có đơn trong N ngày gần nhất mới tính là "đang hoạt động". */
 const ACTIVE_STORE_WINDOW_DAYS = 7;
-/** Kênh có số liệu đầu tiên trong N ngày gần đây = kênh mới. */
+/** Store tạo trong N ngày gần đây = kênh mới. */
 const NEW_CHANNEL_DAYS = 30;
-const AI_COMMENTARY_TIMEOUT_MS = 60_000;
 
 type ReportRecipient = { receiveId: string; receiveIdType: string };
 
@@ -34,7 +33,6 @@ export interface DailyReportPreview {
   card: Record<string, unknown>;
   text: string;
   analysis: DailyReportAnalysis;
-  teamComments: Record<string, string> | null;
 }
 
 function toDay(it: FbaDailyItem): DashboardDay {
@@ -62,12 +60,13 @@ const titleCase = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
  * Chuỗi số liệu từng kênh (store × FBA/FBM) đúng công thức Dashboard: FBA theo listFbaDaily,
  * FBM theo listFbmDaily; kênh và team lấy theo cột Team của store.
  */
-async function loadChannelSeries(date: string): Promise<ChannelSeriesInput[]> {
+async function loadChannelSeries(date: string, storeNames?: string[]): Promise<ChannelSeriesInput[]> {
   const sql = await getDatabaseClient();
   const activeFrom = shiftIsoDate(date, -(ACTIVE_STORE_WINDOW_DAYS - 1));
-  const historyFrom = [shiftIsoDate(date, -7), `${date.slice(0, 8)}01`].sort()[0];
+  const historyFrom = shiftIsoDate(date, -7);
+  const nameFilter = storeNames?.map((n) => n.trim().toUpperCase()).filter(Boolean);
 
-  const stores = await sql<Array<{ id: string; name: string; team: string | null; created_at: string; first_created_at: string }>>`
+  const stores = (await sql<Array<{ id: string; name: string; team: string | null; created_at: string; first_created_at: string }>>`
       SELECT id, name, team, created_at::date::text AS created_at,
         (SELECT MIN(created_at)::date::text FROM stores) AS first_created_at
       FROM stores
@@ -76,7 +75,7 @@ async function loadChannelSeries(date: string): Promise<ChannelSeriesInput[]> {
         WHERE o.store_id = stores.id AND o.date BETWEEN ${activeFrom}::date AND ${date}::date
       )
       ORDER BY name ASC
-  `;
+  `).filter((s) => !nameFilter || nameFilter.includes(s.name.trim().toUpperCase()));
 
   // Kênh mới = store tạo sau đợt khởi tạo hệ thống và trong 30 ngày gần đây. Không dựa vào ngày
   // có đơn đầu tiên vì lịch sử đơn trong DB ngắn hơn tuổi thật của store.
@@ -120,7 +119,7 @@ async function loadChannelSeries(date: string): Promise<ChannelSeriesInput[]> {
   return (await Promise.all(tasks)).filter((c): c is ChannelSeriesInput => c !== null);
 }
 
-/** Units theo SKU và chi tiêu theo portfolio Ads (ngày báo cáo vs TB 7 ngày trước) của từng kênh. */
+/** Units/ngày theo SKU và chi tiêu Ads/ngày theo portfolio: ngày báo cáo vs TB 7 ngày trước. */
 async function loadChannelDrills(storeIds: string[], date: string): Promise<Map<string, ChannelDrill>> {
   const drills = new Map<string, ChannelDrill>();
   if (!storeIds.length) return drills;
@@ -161,14 +160,13 @@ async function loadChannelDrills(storeIds: string[], date: string): Promise<Map<
     if (!drill) drills.set(key, (drill = { skus: [], portfolios: [] }));
     return drill;
   };
-  for (const r of skuRows) drillOf(r.store_id, r.channel).skus.push({ sku: r.sku, today: Number(r.today), prev: Number(r.avg7), avg7: Number(r.avg7) });
+  for (const r of skuRows) drillOf(r.store_id, r.channel).skus.push({ sku: r.sku, today: Number(r.today), avg7: Number(r.avg7) });
   for (const r of adsRows) {
     drillOf(r.store_id, r.channel).portfolios.push({
       name: r.name,
       todaySpend: Number(r.today_spend),
       todaySales: Number(r.today_sales),
       todayOrders: Number(r.today_orders),
-      prevSpend: Number(r.avg7_spend),
       avg7Spend: Number(r.avg7_spend),
     });
   }
@@ -178,115 +176,38 @@ async function loadChannelDrills(storeIds: string[], date: string): Promise<Map<
 /** Tên trưởng team, lưu ở app_settings dạng {"FBA 1": "Quỳnh", ...}. */
 async function loadTeamLeads(teamId: string): Promise<Record<string, string>> {
   const sql = await getDatabaseClient();
-  const rows = await sql<Array<{ value: string }>>`
+  const rows = await sql<Array<{ value: unknown }>>`
     SELECT value FROM app_settings WHERE key = ${`daily_report_team_leads:${teamId}`} LIMIT 1
   `;
+  const raw = rows[0]?.value;
   try {
-    const parsed = rows[0]?.value ? JSON.parse(rows[0].value) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
   } catch {
     return {};
   }
 }
 
-const AI_COMMENTARY_SYSTEM_PROMPT = `Bạn là chuyên viên phân tích kinh doanh Amazon, viết 1 câu chẩn đoán cho từng team trong báo cáo ngày gửi qua Lark.
-Đầu vào là JSON số liệu đã tính sẵn (so với trung bình 7 ngày trước = "TB7").
-Quy tắc:
-- Mỗi team ĐÚNG 1 câu, tối đa 20 chữ, tiếng Việt, văn phong báo cáo chuyên nghiệp.
-- Đây là câu TỔNG KẾT team: nêu kênh quyết định kết quả của team và vì sao, dựa trên "ra_soat" (đã phân tích sẵn) và "profit_vs_tb7" (vd: "Kết quả bị kéo xuống chủ yếu bởi Limima mất doanh thu nhưng vẫn tiêu Ads.").
-- KHÔNG liệt kê việc cần làm (đã có mục rà soát riêng), KHÔNG nhắc lại Profit tổng của team (đã có ở tiêu đề).
-- Không động viên, không khen chung chung, không "cần chú ý".
-- Chỉ dùng con số có trong dữ liệu, không tự tính số mới, không dự báo.
-- Kênh "thieu_ads": true thì không nhận xét Profit/ACoS của kênh đó, chỉ nhắc nạp file Ads.
-- Kênh "tb7_thieu_ads": true thì 7 ngày trước thiếu số Ads: KHÔNG so Profit với TB7, nhắc nạp bù file Ads.
-- Trường nào là null nghĩa là không so được — không tự suy ra hay tự tính số thay thế.
-- Kênh "kenh_moi": true là kênh đang đầu tư, không đánh giá nặng.
-- Không dùng markdown, không in đậm, không xuống dòng.
-Trả về DUY NHẤT một JSON object: {"<mã team>": "<nhận xét>", ...}.`;
-
-async function generateTeamComments(
-  analysis: DailyReportAnalysis,
-  teamLeads: Record<string, string>,
-): Promise<Record<string, string> | null> {
-  const apiKey = (process.env.LARK_AGENT_KEY || process.env.CHEAPKEYAI_API_KEY || "").trim();
-  if (!apiKey) return null;
-  const baseUrl = (process.env.LARK_AGENT_BASE_URL || "https://cheapkeyai.shop/v1").replace(/\/+$/, "");
-  const model = (process.env.LARK_AGENT_MODEL || "gemini-3.5-flash-lite").trim();
-
-  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
-  // Ghi rõ "tăng/giảm" bằng chữ: model hay đọc nhầm dấu của số âm
-  const word = (diff: number, text: string) => `${diff >= 0 ? "tăng" : "giảm"} ${text}`;
-  const pts = (cur: number, base?: number) =>
-    base == null ? null : word(cur - base, `${Math.abs((cur - base) * 100).toFixed(1)}đ`);
-  const change = (cur: number, base?: number) =>
-    base == null || base <= 0 ? null : word(cur - base, `${Math.abs(Math.round(((cur - base) / base) * 100))}%`);
-  const data = analysis.teams.map((team) => ({
-    team: team.team,
-    ten_team: teamLabel(team.team, teamLeads),
-    den: team.light,
-    profit: formatUsd(team.today.profit),
-    // Mốc thiếu số Ads thì không đưa số so sánh profit, tránh AI kết luận sai
-    profit_tb7: team.avg7 && !team.unreliable.length ? formatUsd(team.avg7.profit) : null,
-    kenh_thieu_so_ads: team.unreliable,
-    profit_tb_thang: team.monthAvg ? formatUsd(team.monthAvg.profit) : null,
-    kenh: team.channels.map((c) => ({
-      kenh: c.label,
-      den: c.isNew ? "moi" : c.light,
-      kenh_moi: c.isNew,
-      thieu_ads: c.adsMissing,
-      tb7_thieu_ads: c.baselineAdsMissing,
-      revenue: formatUsd(c.today.revenue),
-      revenue_vs_tb7: change(c.today.revenue, c.avg7?.revenue),
-      profit: formatUsd(c.today.profit),
-      profit_vs_tb7: c.avg7 && !c.adsMissing && !c.baselineAdsMissing
-        ? word(c.today.profit - c.avg7.profit, formatUsd(Math.abs(c.today.profit - c.avg7.profit)))
-        : null,
-      margin: pct(c.today.margin),
-      acos: c.today.revenueAds > 0 ? pct(c.today.acos) : null,
-      acos_vs_tb7: c.today.revenueAds > 0 && !c.baselineAdsMissing ? pts(c.today.acos, c.avg7?.acos) : null,
-      tacos: c.today.revenue > 0 ? pct(c.today.tacos) : null,
-      tacos_vs_tb7: c.today.revenue > 0 && !c.baselineAdsMissing ? pts(c.today.tacos, c.avg7?.tacos) : null,
-    })),
-    ra_soat: team.channels
-      .filter((c) => c.diagnosis)
-      .map((c) => `${c.label}: ${c.diagnosis?.cause}`),
-  }));
-
-  try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: AI_COMMENTARY_SYSTEM_PROMPT },
-          { role: "user", content: JSON.stringify(data) },
-        ],
-      }),
-      signal: AbortSignal.timeout(AI_COMMENTARY_TIMEOUT_MS),
-    });
-    if (!response.ok) throw new Error(`AI API lỗi (${response.status})`);
-    const body = await response.json();
-    const text = String(body?.choices?.[0]?.message?.content || "");
-    const json = text.match(/\{[\s\S]*\}/)?.[0];
-    if (!json) throw new Error("AI không trả về JSON");
-    const parsed = JSON.parse(json) as Record<string, unknown>;
-    const comments: Record<string, string> = {};
-    for (const team of analysis.teams) {
-      const value = parsed[team.team];
-      if (typeof value === "string" && value.trim()) comments[team.team] = value.trim().slice(0, 200);
-    }
-    return Object.keys(comments).length ? comments : null;
-  } catch (err) {
-    console.warn("[Accounting Report] Không tạo được nhận xét AI, dùng nhận xét do code soạn:", err);
-    return null;
-  }
-}
-
-function aiCommentaryEnabled(override?: boolean): boolean {
-  if (typeof override === "boolean") return override;
-  return process.env.DAILY_REPORT_AI_COMMENTARY?.trim().toLowerCase() === "true";
+/** Ngày mới nhất (< hôm nay) mà mọi store ĐANG HOẠT ĐỘNG (có đơn trong 7 ngày gần nhất) đều đã có đơn. */
+async function latestCompleteDate(): Promise<string | undefined> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<Array<{ latest_date: string }>>`
+    WITH active AS (
+      SELECT DISTINCT store_id FROM accounting_orders
+      WHERE date IS NOT NULL AND date < CURRENT_DATE
+        AND date > (SELECT MAX(date) FROM accounting_orders WHERE date < CURRENT_DATE) - ${ACTIVE_STORE_WINDOW_DAYS}::int
+    )
+    SELECT o.date::text AS latest_date
+    FROM accounting_orders o
+    JOIN active a ON a.store_id = o.store_id
+    WHERE o.date < CURRENT_DATE
+      AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
+    GROUP BY o.date
+    HAVING COUNT(DISTINCT o.store_id) = (SELECT COUNT(*) FROM active)
+    ORDER BY o.date DESC
+    LIMIT 1
+  `;
+  return rows[0]?.latest_date;
 }
 
 export async function reportDailyBusinessData(
@@ -295,8 +216,6 @@ export async function reportDailyBusinessData(
     force?: boolean;
     targetDate?: string;
     recipient?: ReportRecipient;
-    /** Ghi đè cờ DAILY_REPORT_AI_COMMENTARY. */
-    aiCommentary?: boolean;
     /** Ghi đè tên trưởng team trong app_settings. */
     teamLeads?: Record<string, string>;
     /** Chỉ dựng nội dung để xem trước: không gửi, không ghi app_settings. */
@@ -306,30 +225,9 @@ export async function reportDailyBusinessData(
   const sql = await getDatabaseClient();
   const isAutomatic = !options.force && !options.recipient && !options.dryRun;
 
-  let latestDate = options.targetDate?.trim();
-
-  // 1. Không chỉ định ngày: lấy ngày mới nhất (< hôm nay) mà mọi store ĐANG HOẠT ĐỘNG
-  //    (có đơn trong 7 ngày gần nhất) đều đã có đơn. Store ngừng nạp dữ liệu không chặn báo cáo.
-  if (!latestDate) {
-    const completeDateRows = await sql<Array<{ latest_date: string }>>`
-      WITH active AS (
-        SELECT DISTINCT store_id FROM accounting_orders
-        WHERE date IS NOT NULL AND date < CURRENT_DATE
-          AND date > (SELECT MAX(date) FROM accounting_orders WHERE date < CURRENT_DATE) - ${ACTIVE_STORE_WINDOW_DAYS}::int
-      )
-      SELECT o.date::text AS latest_date
-      FROM accounting_orders o
-      JOIN active a ON a.store_id = o.store_id
-      WHERE o.date < CURRENT_DATE
-        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
-      GROUP BY o.date
-      HAVING COUNT(DISTINCT o.store_id) = (SELECT COUNT(*) FROM active)
-      ORDER BY o.date DESC
-      LIMIT 1
-    `;
-    latestDate = completeDateRows[0]?.latest_date;
-  }
-
+  // 1. Không chỉ định ngày: ngày mới nhất mà mọi store đang hoạt động đã có đơn.
+  //    Store ngừng nạp dữ liệu không chặn báo cáo.
+  const latestDate = options.targetDate?.trim() || (await latestCompleteDate());
   if (!latestDate) {
     return {
       success: false,
@@ -341,23 +239,7 @@ export async function reportDailyBusinessData(
   // 2. Kiểm tra nhanh đã báo cáo ngày này (hoặc ngày mới hơn) chưa
   const settingKey = `lark_accounting_last_reported_date:${scope.teamId}`;
   if (isAutomatic) {
-    const settingRows = await sql<Array<{ value: unknown }>>`
-      SELECT value FROM app_settings
-      WHERE key = ${settingKey}
-      LIMIT 1
-    `;
-    const rawVal = settingRows[0]?.value;
-    let lastReportedDate = "";
-    if (typeof rawVal === "string") {
-      try {
-        const parsed = JSON.parse(rawVal);
-        lastReportedDate = typeof parsed === "object" && parsed ? (parsed as { date?: string }).date || "" : String(parsed || "");
-      } catch {
-        lastReportedDate = rawVal;
-      }
-    } else if (typeof rawVal === "object" && rawVal !== null) {
-      lastReportedDate = (rawVal as { date?: string }).date || "";
-    }
+    const lastReportedDate = await lastReportedDateOf(settingKey);
     if (lastReportedDate && lastReportedDate >= latestDate) {
       return {
         success: true,
@@ -367,19 +249,13 @@ export async function reportDailyBusinessData(
     }
   }
 
-  // 3. Số liệu từng kênh + so sánh, chấm đèn, việc cần làm (tính bằng code)
+  // 3. Số liệu từng kênh → so với TB 7 ngày, rà soát, xếp hạng ưu tiên (tính bằng code)
   const channels = await loadChannelSeries(latestDate);
   if (!channels.length) {
     return { success: false, reportedDate: latestDate, message: `Không có kênh nào có số liệu trong 7 ngày tính đến ${latestDate}.` };
   }
   const analysis = analyzeDailyReport(latestDate, channels);
-
-  // 4. Nhận xét team: AI (nếu bật) diễn đạt từ số đã tính; lỗi thì dùng bản do code soạn
-  const teamLeads = options.teamLeads ?? (await loadTeamLeads(scope.teamId));
-  const teamComments = aiCommentaryEnabled(options.aiCommentary)
-    ? await generateTeamComments(analysis, teamLeads)
-    : null;
-  const cardOptions = { teamLeads, teamComments: teamComments ?? undefined };
+  const cardOptions = { teamLeads: options.teamLeads ?? (await loadTeamLeads(scope.teamId)) };
   const card = buildDailyReportCard(analysis, cardOptions);
   const text = buildDailyReportText(analysis, cardOptions);
 
@@ -388,11 +264,11 @@ export async function reportDailyBusinessData(
       success: true,
       reportedDate: latestDate,
       message: `Xem trước báo cáo ngày ${displayDate(latestDate)} cho ${channels.length} kênh (chưa gửi).`,
-      preview: { card, text, analysis, teamComments },
+      preview: { card, text, analysis },
     };
   }
 
-  // 5. Chống gửi trùng khi nhiều lần import kết thúc cùng lúc: chiếm ngày báo cáo trước khi gửi
+  // 4. Chống gửi trùng khi nhiều lần import kết thúc cùng lúc: chiếm ngày báo cáo trước khi gửi
   if (isAutomatic) {
     const claimed = await sql<Array<{ key: string }>>`
       INSERT INTO app_settings (key, value, updated_at)
@@ -415,7 +291,7 @@ export async function reportDailyBusinessData(
     }
   }
 
-  // 6. Gửi card Lark (card lỗi thì notifyLarkEventBestEffort gửi bản text)
+  // 5. Gửi card Lark (card lỗi thì notifyLarkEventBestEffort gửi bản text)
   if (options.recipient) {
     await sendLarkCardNotification(card, options.recipient);
   } else {
@@ -441,6 +317,66 @@ export async function reportDailyBusinessData(
     reportedDate: latestDate,
     message: `Đã gửi báo cáo kinh doanh ngày ${displayDate(latestDate)} cho ${channels.length} kênh qua Lark bot.`,
   };
+}
+
+async function lastReportedDateOf(settingKey: string): Promise<string> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<Array<{ value: unknown }>>`
+    SELECT value FROM app_settings
+    WHERE key = ${settingKey}
+    LIMIT 1
+  `;
+  const rawVal = rows[0]?.value;
+  if (typeof rawVal === "string") {
+    try {
+      const parsed = JSON.parse(rawVal);
+      return typeof parsed === "object" && parsed ? (parsed as { date?: string }).date || "" : String(parsed || "");
+    } catch {
+      return rawVal;
+    }
+  }
+  if (typeof rawVal === "object" && rawVal !== null) return (rawVal as { date?: string }).date || "";
+  return "";
+}
+
+/**
+ * Bản chi tiết (tầng 2), gửi khi có người nhắn bot "báo cáo chi tiết [dd/mm]".
+ * Không chỉ định ngày thì lấy ngày đã gửi báo cáo gần nhất. `storeNames` giới hạn theo store người hỏi được xem.
+ */
+export async function sendDailyReportDetail(options: {
+  teamId?: string;
+  targetDate?: string;
+  storeNames?: string[];
+  recipient: LarkRecipient;
+  dryRun?: boolean;
+}): Promise<{ success: boolean; message: string; text?: string; card?: Record<string, unknown> }> {
+  const teamId = options.teamId || "default";
+  const date = options.targetDate?.trim()
+    || (await lastReportedDateOf(`lark_accounting_last_reported_date:${teamId}`))
+    || (await latestCompleteDate());
+  if (!date) return { success: false, message: "Chưa có ngày nào đủ dữ liệu để lập báo cáo." };
+
+  const channels = await loadChannelSeries(date, options.storeNames);
+  if (!channels.length) return { success: false, message: `Không có kênh nào bạn được xem có số liệu ngày ${displayDate(date)}.` };
+
+  const analysis = analyzeDailyReport(date, channels);
+  const cardOptions = { teamLeads: await loadTeamLeads(teamId) };
+  const card = buildDailyReportDetailCard(analysis, cardOptions);
+  const text = buildDailyReportDetailText(analysis, cardOptions);
+  if (!options.dryRun) await sendLarkCardNotification(card, options.recipient);
+  return { success: true, message: `Đã gửi báo cáo chi tiết ngày ${displayDate(date)}.`, text, card };
+}
+
+/** Nhận diện tin nhắn xin bản chi tiết: "báo cáo chi tiết", "chi tiết báo cáo 28/10"... Trả về ngày (YYYY-MM-DD) nếu có. */
+export function parseDailyReportDetailRequest(message: string, today = new Date()): { date?: string } | null {
+  const text = message.normalize("NFC").toLowerCase();
+  const asksDetail = /chi\s*ti[eế]t/.test(text) && /(b[aá]o\s*c[aá]o|report)/.test(text);
+  if (!asksDetail) return null;
+  const match = text.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?\b/);
+  if (!match) return {};
+  const year = match[3] ? Number(match[3]) : today.getFullYear();
+  const date = `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+  return Number.isNaN(new Date(`${date}T00:00:00Z`).getTime()) ? {} : { date };
 }
 
 /**

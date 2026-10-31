@@ -7,7 +7,12 @@ import {
   shiftIsoDate,
   type ChannelSeriesInput,
 } from "../lib/accounting/daily-report-analysis";
-import { buildDailyReportCard, buildDailyReportText } from "../lib/accounting/daily-report-card";
+import {
+  buildDailyReportCard,
+  buildDailyReportDetailText,
+  buildDailyReportText,
+} from "../lib/accounting/daily-report-card";
+import { parseDailyReportDetailRequest } from "../lib/accounting/daily-business-reporter";
 
 const DATE = "2026-10-28";
 
@@ -33,82 +38,101 @@ function channel(
 
 const normal = { revenue: 1000, quantity: 40, adsFee: 150, revenueAds: 500, profit: 250 };
 
-test("kênh ổn định thì đèn xanh, không có việc cần làm", () => {
+test("kênh ổn định: không có vấn đề, không có ưu tiên", () => {
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, normal)]);
-  assert.equal(a.teams[0].channels[0].light, "green");
-  assert.equal(a.company.light, "green");
-  assert.deepEqual(a.actions, []);
+  assert.equal(a.teams[0].channels[0].review, null);
+  assert.deepEqual(a.priorities, []);
+  assert.deepEqual(a.warnings, []);
 });
 
-test("lỗ thì đèn đỏ, rà soát tách đúng Δ Profit và có việc cần làm", () => {
-  const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { revenue: 400, adsFee: 300, revenueAds: 200, profit: -120 })]);
-  const ch = a.teams[0].channels[0];
-  assert.equal(ch.light, "red");
-  assert.match(ch.diagnosis?.cause ?? "", /doanh số giảm, mất \$240/);
-  assert.equal(a.actions.length, 1);
-  assert.equal(a.actions[0].label, "A");
+test("mọi Δ Profit cùng một mốc TB 7 ngày: kênh, team, công ty và card khớp nhau", () => {
+  const a = analyzeDailyReport(DATE, [
+    channel("A", "FBA 2", normal, { ...normal, profit: 170 }),
+    channel("B", "FBA 2", normal, { ...normal, profit: 296 }),
+  ]);
+  const [chA, chB] = a.teams[0].channels;
+  assert.equal(chA.profitDelta! + chB.profitDelta!, a.teams[0].today.profit - a.teams[0].avg7!.profit);
+  assert.equal(a.teams[0].today.profit - a.teams[0].avg7!.profit, a.company.today.profit - a.company.avg7!.profit);
+  // Team -$34 hiện đúng 1 con số ở cả bảng team và KPI tổng
+  assert.match(buildDailyReportText(a), /FBA 2: \$466 -\$34/);
+  assert.match(buildDailyReportText(a), /Profit \$466 -\$34/);
 });
 
-test("Ads = 0 bất thường: nhắc nạp file Ads thay vì khen profit tăng", () => {
-  const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 0, revenueAds: 0, profit: 400 })]);
-  const ch = a.teams[0].channels[0];
-  assert.equal(ch.adsMissing, true);
-  assert.equal(ch.light, "yellow");
-  assert.deepEqual(ch.diagnosis?.checks, ["Nạp file Ads ngày này"]);
+test("số ưu tiên ở tiêu đề khớp đúng số vấn đề được liệt kê", () => {
+  const a = analyzeDailyReport(DATE, [
+    channel("A", "FBA 1", normal, { ...normal, profit: -100 }),
+    channel("B", "FBA 1", normal, { ...normal, profit: 100 }),
+    channel("C", "FBA 2", normal, { ...normal, profit: 150 }),
+    channel("D", "FBA 3", normal, { ...normal, profit: 170 }),
+  ]);
+  const card = buildDailyReportCard(a) as { header: { subtitle: { content: string } } };
+  const listed = (buildDailyReportText(a).match(/^[🔴🟡] /gmu) ?? []).length;
+  assert.equal(listed, a.priorities.length);
+  assert.match(card.header.subtitle.content, new RegExp(`${a.priorities.length} ưu tiên`));
+  // Xếp theo $ ảnh hưởng: lỗ nặng nhất lên đầu
+  assert.equal(a.priorities[0].label, "A");
 });
 
-test("Ads tăng: chỉ ra portfolio tiêu tiền không ra đơn", () => {
+test("dữ kiện có số tách khỏi việc cần kiểm tra (giả thuyết)", () => {
+  const drill = { skus: [{ sku: "NSA6012062421", today: 0, avg7: 3.6 }], portfolios: [] };
+  const a = analyzeDailyReport(DATE, [
+    channel("Bozspacer", "FBA 1", normal, { ...normal, revenue: 552, revenueAds: 500, quantity: 22, profit: 41 }, { drill }),
+  ]);
+  const review = a.priorities[0].review!;
+  assert.ok(review.facts.includes("Organic -$448"));
+  assert.ok(review.facts.includes("SKU NSA6012062421 3.6 → 0 units/ngày"));
+  assert.deepEqual(review.checks.slice(0, 2), ["tồn kho", "listing"]);
+  assert.match(buildDailyReportText(a), /→ Kiểm tra tồn kho, listing, rank keyword chính\./);
+});
+
+test("portfolio tiêu tiền 0 đơn thành hành động cụ thể", () => {
   const drill = {
     skus: [],
     portfolios: [
-      { name: "SKU-BURN", todaySpend: 60, todaySales: 0, todayOrders: 0, prevSpend: 20 },
-      { name: "SKU-OK", todaySpend: 190, todaySales: 600, todayOrders: 10, prevSpend: 130 },
+      { name: "SKU-BURN", todaySpend: 60, todaySales: 0, todayOrders: 0, avg7Spend: 20 },
+      { name: "SKU-OK", todaySpend: 190, todaySales: 600, todayOrders: 10, avg7Spend: 130 },
     ],
   };
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 250, profit: 150 }, { drill })]);
-  const d = a.teams[0].channels[0].diagnosis;
-  assert.match(d?.cause ?? "", /Ads tốn thêm \$100/);
-  assert.match(d?.checks[0] ?? "", /Giảm bid \/ tắt SKU-BURN \(\$60, 0 đơn\)/);
+  const review = a.priorities[0].review!;
+  assert.ok(review.facts.includes("Ads $150 → $250/ngày"));
+  assert.deepEqual(review.actions, ["Giảm bid / tắt SKU-BURN ($60, 0 đơn)"]);
 });
 
-test("doanh số giảm: chỉ ra SKU tụt units", () => {
-  const drill = {
-    skus: [
-      { sku: "SKU-HOT", today: 0, prev: 12 },
-      { sku: "SKU-STABLE", today: 20, prev: 20 },
-    ],
-    portfolios: [],
-  };
-  const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, revenue: 600, revenueAds: 500, quantity: 25, profit: 90 }, { drill })]);
-  const d = a.teams[0].channels[0].diagnosis;
-  assert.match(d?.cause ?? "", /SKU-HOT 12→0/);
-  assert.match(d?.checks[0] ?? "", /^Kiểm tra tồn kho, listing: SKU-HOT/);
-});
-
-test("kênh mới không chấm vào việc cần làm, gom vào mục kênh mới", () => {
+test("thiếu số Ads: cảnh báo trước, không so Profit, không đưa vào ưu tiên", () => {
   const a = analyzeDailyReport(DATE, [
-    channel("A", "FBA 1", normal, normal),
-    channel("B", "FBA 1", { revenue: 50, adsFee: 40, profit: -10 }, { revenue: 20, adsFee: 40, profit: -30 }, { isNew: true }),
+    channel("A", "FBA 1", normal, { ...normal, adsFee: 0, revenueAds: 0, profit: 400 }),
+    channel("B", "FBA 1", normal, normal),
   ]);
-  assert.equal(a.teams[0].channels.filter((c) => c.isNew).length, 1);
-  assert.deepEqual(a.actions, []);
+  assert.equal(a.warnings.length, 1);
+  assert.match(a.warnings[0], /^A: chưa có số Ads/);
+  assert.equal(a.teams[0].channels.find((c) => c.label === "A")?.profitDelta, null);
+  assert.equal(a.company.comparable, false);
+  assert.deepEqual(a.priorities, []);
+  assert.match(buildDailyReportText(a), /Profit \$650 n\/a/);
 });
 
-test("phân rã profit theo kênh và gộp team", () => {
+test("doanh thu $0 nhưng vẫn tiêu Ads: ưu tiên cao, nghi thiếu file đơn hàng", () => {
+  const a = analyzeDailyReport(DATE, [channel("Limima", "FBA 2", normal, { adsFee: 383, profit: -422 })]);
+  const review = a.priorities[0].review!;
+  assert.equal(review.severity, "high");
+  assert.deepEqual(review.facts, ["Revenue $0 (TB $1,000/ngày)", "Ads vẫn tiêu $383"]);
+  assert.equal(review.checks[0], "file đơn hàng đã nạp chưa");
+});
+
+test("kênh mới không vào ưu tiên; tăng trưởng tốt vào mục nổi bật", () => {
   const a = analyzeDailyReport(DATE, [
-    channel("A", "FBA 1", normal, { ...normal, profit: 400 }),
-    channel("B", "FBA 2", normal, { ...normal, profit: 100 }),
+    channel("Up", "FBA 1", normal, { ...normal, profit: 616 }),
+    channel("New", "FBM", { revenue: 50, adsFee: 40, profit: -10 }, { revenue: 20, adsFee: 40, profit: -30 }, { isNew: true }),
   ]);
-  assert.deepEqual(a.drivers.up.map((d) => [d.label, d.delta]), [["A", 150]]);
-  assert.deepEqual(a.drivers.down.map((d) => [d.label, d.delta]), [["B", -150]]);
-  assert.deepEqual(a.teams.map((t) => t.team), ["FBA 1", "FBA 2"]);
+  assert.deepEqual(a.priorities, []);
+  assert.deepEqual(a.highlights, [{ label: "Up", delta: 366 }]);
+  assert.match(buildDailyReportDetailText(a), /New 🌱/);
 });
 
-test("card và text dựng được, có tên trưởng team và nhận xét AI", () => {
-  const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, normal)]);
-  const options = { teamLeads: { "FBA 1": "Quỳnh" }, teamComments: { "FBA 1": "Ổn định." } };
-  const card = JSON.stringify(buildDailyReportCard(a, options));
-  assert.match(card, /FBA 1 · Quỳnh/);
-  assert.match(card, /Ổn định\./);
-  assert.match(buildDailyReportText(a, options), /T4 28\/10\/2026/);
+test("nhận diện lệnh xin bản chi tiết", () => {
+  const now = new Date("2026-10-31T03:00:00Z");
+  assert.deepEqual(parseDailyReportDetailRequest("báo cáo chi tiết", now), {});
+  assert.deepEqual(parseDailyReportDetailRequest("Gửi chi tiết báo cáo 28/10", now), { date: "2026-10-28" });
+  assert.equal(parseDailyReportDetailRequest("store nào cần chú ý", now), null);
 });

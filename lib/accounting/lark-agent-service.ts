@@ -38,6 +38,7 @@ import {
 import { sendLarkCardNotification, sendLarkTextNotification } from "@/lib/lark-notifications";
 import { resolveLarkActorStoreAccess, type PpcStoreAccessStore } from "@/lib/ppc/store-user-access";
 import { getDatabaseClient } from "@/lib/db";
+import { parseDailyReportDetailRequest, sendDailyReportDetail } from "@/lib/accounting/daily-business-reporter";
 
 const AUTO_BID_TOOLS = new Set([
   "listBidRecommendations",
@@ -887,6 +888,21 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
       }
       return { replyText, toolsUsed: [], larkSent: Boolean(options.sendToLark && targetReceiveId) };
     }
+  }
+
+  // Bản chi tiết báo cáo kinh doanh ngày: trả thẳng card do code dựng (không qua AI),
+  // chỉ gồm các store người hỏi được phân quyền
+  const detailRequest = parseDailyReportDetailRequest(options.message);
+  if (detailRequest && targetReceiveId) {
+    const recipient = { receiveId: targetReceiveId, receiveIdType: targetReceiveIdType, replyToMessageId: options.replyToMessageId };
+    const result = await sendDailyReportDetail({
+      targetDate: detailRequest.date,
+      storeNames: allowedStores?.map((store) => store.name),
+      recipient,
+      dryRun: !options.sendToLark,
+    });
+    if (!result.success && options.sendToLark) await sendLarkTextNotification(result.message, recipient);
+    return { replyText: result.text ?? result.message, toolsUsed: ["daily_report_detail"], larkSent: Boolean(options.sendToLark) };
   }
 
   // 1. KIỂM TRA THAO TÁC PPC ĐANG CHỜ XÁC NHẬN (NẾU CÓ SESSION ID)

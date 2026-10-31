@@ -1,44 +1,44 @@
 // Phân tích số liệu cho báo cáo kinh doanh ngày qua Lark (thuần, không truy cập DB).
-// Mọi con số và đánh giá đèn được tính ở đây; AI (nếu bật) chỉ diễn đạt lại.
 //
-// Hai mốc so sánh, mỗi mốc một vai trò:
-//   - Δ (biến động) = so với HÔM QUA: hôm nay khác hôm qua bao nhiêu, vì sao.
-//   - Đèn (sức khỏe) = Profit so với TB/ngày của THÁNG (đầu tháng chưa đủ ngày thì dùng TB 7 ngày).
+// Nguyên tắc:
+// - MỘT mốc so sánh duy nhất: trung bình/ngày của 7 ngày trước ngày báo cáo (TB 7 ngày).
+//   Mọi Δ (tổng, team, kênh, SKU, portfolio) đều so với mốc này.
+// - Tách "dữ kiện" (con số đo được) khỏi "việc cần kiểm tra" (giả thuyết như mất rank, hết hàng).
+// - Thiếu dữ liệu (Ads, đơn hàng) được cảnh báo trước và không đem ra so Profit.
 
 import { summarizeDays, type DashboardDay, type DashboardTotals } from "./dashboard-totals";
 
 export type ReportChannel = "FBA" | "FBM";
-export type Light = "green" | "yellow" | "red";
+/** Mức ưu tiên: high 🔴 / medium 🟡 là vấn đề cần xử lý; good 🟢 là biến động tốt. */
+export type Severity = "high" | "medium" | "good";
 
 export interface ChannelSeriesInput {
   label: string;
   storeName: string;
   channel: ReportChannel;
   team: string;
-  /** Kênh mới mở (< 30 ngày): không chấm đèn, không đưa vào ưu tiên. */
+  /** Kênh mới mở (< 30 ngày): không đưa vào ưu tiên. */
   isNew: boolean;
-  /** Số liệu từng ngày, đã bao gồm khoảng lịch sử dùng để so sánh. */
+  /** Số liệu từng ngày, gồm ngày báo cáo và 7 ngày trước. */
   days: DashboardDay[];
   /** Chi tiết SKU / portfolio Ads để truy nguyên nhân. */
   drill?: ChannelDrill;
 }
 
-/** Units 1 SKU: ngày báo cáo và hôm qua. */
+/** Units/ngày của 1 SKU: ngày báo cáo và TB 7 ngày. */
 export interface SkuMove {
   sku: string;
   today: number;
-  prev: number;
-  avg7?: number;
+  avg7: number;
 }
 
-/** Chi tiêu 1 portfolio Ads: ngày báo cáo và hôm qua. */
+/** Chi tiêu Ads/ngày của 1 portfolio: ngày báo cáo và TB 7 ngày. */
 export interface PortfolioStat {
   name: string;
   todaySpend: number;
   todaySales: number;
   todayOrders: number;
-  prevSpend: number;
-  avg7Spend?: number;
+  avg7Spend: number;
 }
 
 export interface ChannelDrill {
@@ -46,82 +46,57 @@ export interface ChannelDrill {
   portfolios: PortfolioStat[];
 }
 
-/** Rà soát 1 kênh: nguyên nhân (kèm bằng chứng) và việc cần kiểm tra. */
-export interface ChannelDiagnosis {
-  cause: string;
+export type DataIssue = "ads_missing" | "baseline_ads_missing";
+
+export interface ChannelReview {
+  severity: Severity;
+  /** Dữ kiện có số liệu chứng minh. */
+  facts: string[];
+  /** Thứ cần kiểm tra (giả thuyết) — chỉ là danh từ, ghép thành "Kiểm tra a, b, c". */
   checks: string[];
-  /** true = kênh có vấn đề cần xử lý; false = biến động tốt, chỉ ghi nhận. */
-  isIssue: boolean;
-  impact: number;
+  /** Hành động cụ thể có dữ kiện đi kèm (vd: giảm bid portfolio 0 đơn). */
+  actions: string[];
+  /** Điểm xếp hạng ưu tiên. */
+  score: number;
 }
 
-export interface PeriodComparison {
-  today: DashboardTotals;
-  /** Hôm qua (null khi hôm qua không có số). */
-  prev: DashboardTotals | null;
-  /** Trung bình/ngày của 7 ngày trước ngày báo cáo. */
-  avg7: DashboardTotals | null;
-  /** Trung bình/ngày từ đầu tháng đến hôm qua. */
-  monthAvg: DashboardTotals | null;
-  /** Mốc chấm đèn: TB tháng nếu đủ 3 ngày, không thì TB 7 ngày. */
-  health: DashboardTotals | null;
-}
-
-export interface ChannelAnalysis extends PeriodComparison {
+export interface ChannelAnalysis {
   label: string;
   storeName: string;
   channel: ReportChannel;
   team: string;
   isNew: boolean;
-  light: Light;
-  /** Ads = 0 trong khi các ngày trước có chạy: nhiều khả năng file Ads chưa nạp. */
-  adsMissing: boolean;
-  /** Hôm nay có Ads nhưng hôm qua không có: Δ Profit so với hôm qua không tin được. */
-  prevAdsMissing: boolean;
-  /** Alias cho prevAdsMissing */
-  baselineAdsMissing: boolean;
-  diagnosis: ChannelDiagnosis | null;
+  today: DashboardTotals;
+  avg7: DashboardTotals | null;
+  dataIssue: DataIssue | null;
+  /** Δ Profit so với TB 7 ngày (null khi không so được). */
+  profitDelta: number | null;
+  review: ChannelReview | null;
 }
 
-export interface TeamAnalysis extends PeriodComparison {
+export interface GroupAnalysis {
+  today: DashboardTotals;
+  avg7: DashboardTotals | null;
+  /** false khi có kênh thiếu dữ liệu: Δ Profit / Margin / TACoS không so được. */
+  comparable: boolean;
+}
+
+export interface TeamAnalysis extends GroupAnalysis {
   team: string;
-  light: Light;
   channels: ChannelAnalysis[];
-  /** Kênh thiếu số Ads: Δ Profit gộp không tin được. */
-  unreliable: string[];
-}
-
-export interface ProfitDriver {
-  label: string;
-  delta: number;
-}
-
-export interface ActionItem {
-  team: string;
-  label: string;
-  /** Việc cần làm đầu tiên của kênh. */
-  title: string;
-  /** Nguyên nhân kèm con số. */
-  reason: string;
-  /** Ước tính $ ảnh hưởng, dùng để xếp hạng. */
-  impact: number;
 }
 
 export interface DailyReportAnalysis {
   date: string;
-  company: PeriodComparison & { light: Light; storeCount: number; channelCount: number; unreliable: string[] };
+  company: GroupAnalysis & { storeCount: number; channelCount: number };
   teams: TeamAnalysis[];
-  drivers: { up: ProfitDriver[]; down: ProfitDriver[] };
-  actions: ActionItem[];
+  /** Cảnh báo dữ liệu, hiển thị trước mọi con số. */
+  warnings: string[];
+  /** Vấn đề cần xử lý, đã xếp hạng (cao nhất trước). */
+  priorities: ChannelAnalysis[];
+  /** Kênh tăng Profit nổi bật. */
+  highlights: Array<{ label: string; delta: number }>;
 }
-
-/** Ngưỡng chấm đèn (Profit hôm nay so với mốc sức khỏe) — in ra cuối báo cáo. */
-export const LIGHT_RULES = {
-  redProfitRatio: 0.6,
-  yellowProfitRatio: 0.85,
-  /** Chỉ chấm theo tỉ lệ khi mốc đủ lớn để có ý nghĩa. */
-  minBaselineProfit: 50,
-} as const;
 
 const SUM_KEYS = [
   "revenue", "quantity", "orders", "adsFee", "basecost", "amazonFee", "tax",
@@ -134,6 +109,15 @@ export function shiftIsoDate(date: string, days: number): string {
   return value.toISOString().slice(0, 10);
 }
 
+export const usd = (value: number) => {
+  const text = `$${Math.round(Math.abs(value)).toLocaleString("en-US")}`;
+  return Math.round(value) < 0 ? `-${text}` : text;
+};
+export const usdSigned = (value: number) => `${value >= 0 ? "+" : "-"}$${Math.round(Math.abs(value)).toLocaleString("en-US")}`;
+const pct1 = (value: number) => `${(value * 100).toFixed(1)}%`;
+const num1 = (value: number) => (Math.round(value * 10) / 10).toString();
+const shortName = (name: string) => (name.length > 22 ? `${name.slice(0, 21)}…` : name);
+
 function averagePerDay(days: DashboardDay[]): DashboardTotals | null {
   const total = summarizeDays(days);
   if (!total.days) return null;
@@ -143,19 +127,11 @@ function averagePerDay(days: DashboardDay[]): DashboardTotals | null {
   return avg;
 }
 
-export function compareSeries(days: DashboardDay[], date: string): PeriodComparison {
-  const inRange = (from: string, to: string) => days.filter((d) => d.date >= from && d.date <= to);
-  const yesterday = shiftIsoDate(date, -1);
-  const prevDays = inRange(yesterday, yesterday);
-  const monthStart = `${date.slice(0, 8)}01`;
-  const avg7 = averagePerDay(inRange(shiftIsoDate(date, -7), yesterday));
-  const monthAvg = monthStart < date ? averagePerDay(inRange(monthStart, yesterday)) : null;
+/** Số liệu ngày báo cáo và TB/ngày của 7 ngày trước. */
+export function compareSeries(days: DashboardDay[], date: string): { today: DashboardTotals; avg7: DashboardTotals | null } {
   return {
-    today: summarizeDays(inRange(date, date)),
-    prev: prevDays.length ? summarizeDays(prevDays) : null,
-    avg7,
-    monthAvg,
-    health: monthAvg && monthAvg.days >= 3 ? monthAvg : avg7,
+    today: summarizeDays(days.filter((d) => d.date === date)),
+    avg7: averagePerDay(days.filter((d) => d.date >= shiftIsoDate(date, -7) && d.date < date)),
   };
 }
 
@@ -173,114 +149,63 @@ export function sumSeries(series: DashboardDay[][]): DashboardDay[] {
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export function isAdsMissing(cmp: PeriodComparison): boolean {
-  return cmp.today.adsFee === 0 && (cmp.avg7?.adsFee ?? 0) >= 20;
+export function dataIssueOf(today: DashboardTotals, avg7: DashboardTotals | null): DataIssue | null {
+  if (!avg7) return null;
+  if (today.adsFee === 0 && avg7.adsFee >= 20) return "ads_missing";
+  if (avg7.adsFee < 1 && today.adsFee >= 20) return "baseline_ads_missing";
+  return null;
 }
 
-export function isPrevAdsMissing(cmp: PeriodComparison): boolean {
-  return Boolean(cmp.prev && cmp.prev.adsFee < 1 && cmp.today.adsFee >= 20);
-}
-
-export function lightOf(cmp: PeriodComparison): Light {
-  const { today, health } = cmp;
-  if (today.profit < 0) return "red";
-  if (isAdsMissing(cmp)) return "yellow";
-  if (!health || health.profit < LIGHT_RULES.minBaselineProfit) return "green";
-  // Mốc không có số Ads thì profit mốc bị thổi phồng: không chấm theo tỉ lệ
-  if (health.adsFee < 1 && today.adsFee >= 20) return "yellow";
-  if (today.profit < health.profit * LIGHT_RULES.redProfitRatio) return "red";
-  if (today.profit < health.profit * LIGHT_RULES.yellowProfitRatio) return "yellow";
-  return "green";
-}
-
-const usdAbs = (value: number) => `$${Math.round(Math.abs(value)).toLocaleString("en-US")}`;
-const usdSigned = (value: number) => `${value >= 0 ? "+" : "-"}${usdAbs(value)}`;
-const shortName = (name: string) => (name.length > 22 ? `${name.slice(0, 21)}…` : name);
-
-/** SKU tụt units mạnh nhất so với hôm qua (bỏ SKU bán lẻ tẻ để tránh nhiễu). */
+/** SKU tụt units/ngày mạnh nhất (bỏ SKU bán lẻ tẻ để tránh nhiễu). */
 function skuDrops(drill?: ChannelDrill): SkuMove[] {
   return (drill?.skus ?? [])
-    .filter((s) => s.prev >= 3 && s.today <= s.prev * 0.5)
-    .sort((a, b) => b.prev - b.today - (a.prev - a.today))
+    .filter((s) => s.avg7 >= 1.5 && s.today <= s.avg7 * 0.5)
+    .sort((a, b) => b.avg7 - b.today - (a.avg7 - a.today))
     .slice(0, 2);
 }
 
 function skuGains(drill?: ChannelDrill): SkuMove[] {
   return (drill?.skus ?? [])
-    .filter((s) => s.today >= 3 && s.today >= s.prev * 1.5)
-    .sort((a, b) => b.today - b.prev - (a.today - a.prev))
+    .filter((s) => s.today >= 3 && s.today >= s.avg7 * 1.5)
+    .sort((a, b) => b.today - b.avg7 - (a.today - a.avg7))
     .slice(0, 2);
 }
 
-const skuText = (list: SkuMove[]) => list.map((s) => `${shortName(s.sku)} ${s.prev}→${s.today}`).join(", ");
-
-/** Bằng chứng + việc cần làm cho phần chi phí Ads. */
-function adsEvidence(drill: ChannelDrill | undefined, checks: string[]): string {
-  const burning = (drill?.portfolios ?? [])
-    .filter((p) => p.todaySpend >= 15 && p.todayOrders === 0)
-    .sort((a, b) => b.todaySpend - a.todaySpend)
-    .slice(0, 2);
-  if (burning.length) {
-    checks.push(`Giảm bid / tắt ${burning.map((p) => `${shortName(p.name)} (${usdAbs(p.todaySpend)}, 0 đơn)`).join(", ")}`);
-    return `${burning.length} portfolio tiêu tiền 0 đơn`;
-  }
-  const spike = (drill?.portfolios ?? [])
-    .filter((p) => p.todaySpend - p.prevSpend >= 15)
-    .sort((a, b) => b.todaySpend - b.prevSpend - (a.todaySpend - a.prevSpend))[0];
-  if (spike) {
-    const acos = spike.todaySales > 0 ? `, ACoS ${Math.round((spike.todaySpend / spike.todaySales) * 100)}%` : "";
-    checks.push(`Rà search term ${shortName(spike.name)}`);
-    return `${shortName(spike.name)} ${usdAbs(spike.prevSpend)}→${usdAbs(spike.todaySpend)}${acos}`;
-  }
-  checks.push("Rà search term ACoS cao, thêm negative keyword");
-  return "";
-}
-
-/** Cách nói từng phần tách Δ Profit: [kéo giảm, kéo tăng]. */
-const PART_TEXT: Record<string, [(v: string) => string, (v: string) => string]> = {
-  volume: [(v) => `doanh số giảm, mất ${v}`, (v) => `doanh số tăng, thêm ${v}`],
-  rate: [(v) => `biên giảm, mất ${v}`, (v) => `biên tăng, thêm ${v}`],
-  ads: [(v) => `Ads tốn thêm ${v}`, (v) => `Ads giảm, tiết kiệm ${v}`],
-};
+const skuFact = (s: SkuMove) => `SKU ${shortName(s.sku)} ${num1(s.avg7)} → ${num1(s.today)} units/ngày`;
 
 /**
- * Rà soát 1 kênh. Δ Profit so với hôm qua được tách đúng bằng 3 phần:
- *   doanh số = ΔRevenue × biên trước Ads của hôm qua
+ * Rà soát 1 kênh so với TB 7 ngày. Δ Profit được tách thành 3 phần để biết phần nào kéo:
+ *   doanh số = ΔRevenue × biên trước Ads của TB 7 ngày
  *   biên     = Revenue hôm nay × Δ biên trước Ads (giá, phí, refund, giá vốn)
  *   Ads      = −ΔAds
- * Phần nào kéo giảm thì truy bằng chứng (SKU, portfolio, khoản phí) và đề xuất việc kiểm tra.
+ * Rồi với mỗi phần kéo, lấy dữ kiện (organic/Ads sales, SKU, portfolio, tỉ lệ phí) và việc cần kiểm tra.
  */
-export function diagnoseChannel(ch: Omit<ChannelAnalysis, "diagnosis">, drill?: ChannelDrill): ChannelDiagnosis | null {
-  const { today: t, prev: b, avg7 } = ch;
+export function reviewChannel(ch: Omit<ChannelAnalysis, "review">, drill?: ChannelDrill): ChannelReview | null {
+  const { today: t, avg7: b } = ch;
+  if (!b || ch.dataIssue) return null;
+
+  const facts: string[] = [];
   const checks: string[] = [];
+  const actions: string[] = [];
 
-  if (ch.adsMissing && avg7) {
-    return { cause: `chưa có số Ads (TB ${usdAbs(avg7.adsFee)}/ngày), Profit đang cao ảo`, checks: ["Nạp file Ads ngày này"], isIssue: true, impact: avg7.adsFee };
-  }
-
-  if (t.revenue <= 0 && t.adsFee > 0) {
-    const lost = skuDrops(drill);
-    return {
-      cause: `không có doanh thu nhưng vẫn tiêu ${usdAbs(t.adsFee)} Ads`,
-      checks: ["Dừng Ads ngay", `Kiểm tra listing bị ẩn / hết hàng${lost.length ? `: ${lost.map((s) => shortName(s.sku)).join(", ")}` : ""}`],
-      isIssue: true,
-      impact: t.adsFee + Math.max(0, b?.profit ?? 0),
-    };
-  }
-
-  if (ch.prevAdsMissing) {
-    return { cause: "hôm qua thiếu số Ads, chưa so được Profit", checks: ["Nạp bù file Ads hôm qua"], isIssue: true, impact: t.adsFee };
-  }
-
-  if (!b) {
-    if (t.profit >= 0) return null;
-    const evidence = adsEvidence(drill, checks);
-    return { cause: evidence || `lỗ ${usdAbs(t.profit)}`, checks: checks.slice(0, 2), isIssue: true, impact: Math.abs(t.profit) };
+  // Không có doanh thu nhưng vẫn tiêu Ads: có thể chưa nạp file đơn hàng hoặc listing ngừng bán
+  if (t.revenue <= 0 && b.revenue >= 100) {
+    facts.push(`Revenue $0 (TB ${usd(b.revenue)}/ngày)`);
+    if (t.adsFee > 0) facts.push(`Ads vẫn tiêu ${usd(t.adsFee)}`);
+    checks.push("file đơn hàng đã nạp chưa", "listing", "tồn kho");
+    if (t.adsFee > 0) actions.push("Tạm dừng Ads nếu listing ngừng bán");
+    const impact = Math.max(0, b.profit) + t.adsFee;
+    return { severity: "high", facts, checks, actions, score: impact * 1.5 };
   }
 
   const dProfit = t.profit - b.profit;
-  const isIssue = t.profit < 0 || ch.light !== "green" || dProfit <= -30;
-  if (!isIssue && dProfit < 30) return null;
+  const scale = Math.max(Math.abs(b.profit), 50);
+  let severity: Severity | null = null;
+  if ((t.profit < 0 && !ch.isNew) || dProfit <= -Math.max(100, 0.4 * scale)) severity = "high";
+  else if (dProfit <= -Math.max(50, 0.2 * scale)) severity = "medium";
+  else if (dProfit >= Math.max(50, 0.2 * scale)) severity = "good";
+  if (!severity) return null;
+  const isIssue = severity !== "good";
 
   const baseRate = b.revenue > 0 ? (b.profit + b.adsFee) / b.revenue : 0;
   const todayRate = t.revenue > 0 ? (t.profit + t.adsFee) / t.revenue : baseRate;
@@ -289,147 +214,143 @@ export function diagnoseChannel(ch: Omit<ChannelAnalysis, "diagnosis">, drill?: 
     { key: "rate", value: t.revenue * (todayRate - baseRate) },
     { key: "ads", value: -(t.adsFee - b.adsFee) },
   ]
-    .filter((p) => Math.abs(p.value) >= 15)
-    .sort((x, y) => Math.abs(y.value) - Math.abs(x.value));
-  const describe = (p: { key: string; value: number }) => PART_TEXT[p.key][p.value >= 0 ? 1 : 0](usdAbs(p.value));
+    .filter((p) => (isIssue ? p.value <= -15 : p.value >= 15))
+    .sort((x, y) => Math.abs(y.value) - Math.abs(x.value))
+    .slice(0, 2);
 
-  // Kênh có vấn đề: nêu phần kéo giảm, phần kéo tăng ghi là "bù"; kênh tốt: nêu phần kéo tăng
-  const main = parts.filter((p) => (isIssue ? p.value < 0 : p.value > 0)).slice(0, 2);
-  const offset = isIssue ? parts.filter((p) => p.value > 0).slice(0, 1) : [];
-
-  const evidence: string[] = [];
-  for (const part of main) {
+  let concrete = false;
+  for (const part of parts) {
     if (part.key === "volume") {
-      if (!isIssue) {
-        const gains = skuGains(drill);
-        if (gains.length) evidence.push(`${skuText(gains)} units`);
-        continue;
+      const organic = t.revenue - t.revenueAds - (b.revenue - b.revenueAds);
+      const adSales = t.revenueAds - b.revenueAds;
+      if (b.revenueAds > 0 && Math.abs(organic) >= 20 && (isIssue ? organic < 0 : organic > 0)) facts.push(`Organic ${usdSigned(organic)}`);
+      if (b.revenueAds > 0 && Math.abs(adSales) >= 20 && (isIssue ? adSales < 0 : adSales > 0)) facts.push(`Ads Sales ${usdSigned(adSales)}`);
+      if (b.revenueAds <= 0) facts.push(`Revenue ${usdSigned(t.revenue - b.revenue)}`);
+      const skus = isIssue ? skuDrops(drill) : skuGains(drill);
+      facts.push(...skus.map(skuFact));
+      if (!isIssue) continue;
+      concrete ||= skus.length > 0;
+      if (skus.some((s) => s.today === 0)) checks.push("tồn kho", "listing");
+      if (organic < 0 && Math.abs(organic) >= Math.abs(adSales)) checks.push("rank keyword chính", "review mới");
+      else checks.push("Buy Box", "giá bán");
+      if (adSales < 0 && Math.abs(adSales) > Math.abs(organic)) checks.push("ngân sách / bid campaign");
+    } else if (part.key === "rate") {
+      if (!isIssue || t.revenue <= 0 || b.revenue <= 0) continue;
+      const rise = [
+        { label: "Refund", cost: (x: DashboardTotals) => x.returnCost, check: "lý do trả hàng" },
+        { label: "Phí AMZ", cost: (x: DashboardTotals) => x.amazonFee, check: "phí FBA / size tier" },
+        { label: "Promotion", cost: (x: DashboardTotals) => x.promotion, check: "coupon / promotion đang chạy" },
+        { label: "Giá vốn", cost: (x: DashboardTotals) => x.basecost, check: "giá bán, mix SKU" },
+      ]
+        .map((c) => ({ ...c, from: c.cost(b) / b.revenue, to: c.cost(t) / t.revenue }))
+        .sort((x, y) => y.to - y.from - (x.to - x.from))[0];
+      if (rise && rise.to - rise.from >= 0.02) {
+        facts.push(`${rise.label} ${pct1(rise.from)} → ${pct1(rise.to)} doanh thu`);
+        checks.push(rise.check);
       }
-      const lost = skuDrops(drill);
-      if (lost.length) {
-        evidence.push(`${skuText(lost)} units`);
-        checks.push(`${lost.every((s) => s.today === 0) ? "Kiểm tra tồn kho, listing" : "Kiểm tra Buy Box, giá, traffic"}: ${lost.map((s) => shortName(s.sku)).join(", ")}`);
-      }
-      if (b.revenueAds > 0) {
-        const organic = t.revenue - t.revenueAds - (b.revenue - b.revenueAds);
-        const adSales = t.revenueAds - b.revenueAds;
-        if (organic < 0 && Math.abs(organic) > Math.abs(adSales)) {
-          evidence.push(`organic ${usdSigned(organic)}`);
-          checks.push("Organic giảm: kiểm tra rank keyword chính, review mới");
-        } else if (adSales < 0) {
-          evidence.push(`sales từ Ads ${usdSigned(adSales)}`);
+    } else if (part.key === "ads") {
+      facts.push(`Ads ${usd(b.adsFee)} → ${usd(t.adsFee)}/ngày`);
+      if (t.revenue > 0 && b.revenue > 0) facts.push(`TACoS ${pct1(b.tacos)} → ${pct1(t.tacos)}`);
+      if (!isIssue) continue;
+      const burning = (drill?.portfolios ?? [])
+        .filter((p) => p.todaySpend >= 15 && p.todayOrders === 0)
+        .sort((x, y) => y.todaySpend - x.todaySpend)
+        .slice(0, 2);
+      if (burning.length) {
+        concrete = true;
+        actions.push(`Giảm bid / tắt ${burning.map((p) => `${shortName(p.name)} (${usd(p.todaySpend)}, 0 đơn)`).join(", ")}`);
+      } else {
+        const spike = (drill?.portfolios ?? [])
+          .filter((p) => p.todaySpend - p.avg7Spend >= 15)
+          .sort((x, y) => y.todaySpend - y.avg7Spend - (x.todaySpend - x.avg7Spend))[0];
+        if (spike) {
+          concrete = true;
+          facts.push(`${shortName(spike.name)} ${usd(spike.avg7Spend)} → ${usd(spike.todaySpend)}/ngày`);
+          checks.push(`search term ${shortName(spike.name)}`);
+        } else {
+          checks.push("search term ACoS cao");
         }
       }
-      if (!lost.length) checks.push("Kiểm tra tồn kho, Buy Box, listing");
-    } else if (part.key === "rate" && isIssue && t.revenue > 0 && b.revenue > 0) {
-      const rateUp = [
-        { label: "Refund", cost: (x: DashboardTotals) => x.returnCost, check: "Xem lý do trả hàng của SKU bị trả" },
-        { label: "Phí AMZ", cost: (x: DashboardTotals) => x.amazonFee, check: "Kiểm tra phí FBA / size tier / phí lưu kho" },
-        { label: "Promotion", cost: (x: DashboardTotals) => x.promotion, check: "Rà coupon / promotion đang chạy" },
-        { label: "Giá vốn", cost: (x: DashboardTotals) => x.basecost, check: "Kiểm tra giá bán bị giảm hoặc mix SKU biên thấp" },
-      ]
-        .map((c) => ({ ...c, rise: c.cost(t) / t.revenue - c.cost(b) / b.revenue }))
-        .sort((x, y) => y.rise - x.rise)[0];
-      if (rateUp && rateUp.rise >= 0.02) {
-        const share = (x: DashboardTotals) => `${Math.round((rateUp.cost(x) / x.revenue) * 100)}%`;
-        evidence.push(`${rateUp.label} ${share(b)}→${share(t)} doanh thu`);
-        checks.push(rateUp.check);
-      }
-    } else if (part.key === "ads" && isIssue) {
-      const found = adsEvidence(drill, checks);
-      if (found) evidence.push(found);
     }
   }
 
-  if (isIssue && !main.length && t.profit < 0) {
-    const found = adsEvidence(drill, checks);
-    if (found) evidence.push(found);
-  }
-
-  const causeParts = [
-    main.map(describe).join(", "),
-    offset.length ? `(bù: ${offset.map(describe).join(", ")})` : "",
-  ].filter(Boolean);
-  const cause = [causeParts.join(" "), ...evidence.slice(0, 2)].filter(Boolean).join(" · ");
+  // Ưu tiên = $ Profit bị ảnh hưởng × mức bất thường × khả năng can thiệp (có SKU/portfolio cụ thể)
+  const impact = Math.max(0, -dProfit) + Math.max(0, -t.profit);
+  const anomaly = Math.min(2, Math.abs(dProfit) / scale);
   return {
-    cause: cause || (t.profit < 0 ? `lỗ ${usdAbs(t.profit)}` : "biến động nhỏ"),
-    checks: [...new Set(checks)].slice(0, 2),
-    isIssue,
-    impact: Math.max(0, -dProfit) + Math.max(0, -t.profit),
+    severity,
+    facts: [...new Set(facts)],
+    // Tối đa 3 thứ cần kiểm tra, theo thứ tự phần kéo Profit nhiều nhất
+    checks: [...new Set(checks)].slice(0, 3),
+    actions,
+    score: isIssue ? impact * (0.5 + anomaly / 2) * (concrete ? 1 : 0.7) : dProfit,
   };
 }
 
+function groupOf(inputs: ChannelSeriesInput[], channels: ChannelAnalysis[], date: string): GroupAnalysis {
+  return {
+    ...compareSeries(sumSeries(inputs.map((i) => i.days)), date),
+    comparable: channels.every((c) => !c.dataIssue),
+  };
+}
+
+const DATA_WARNING: Record<DataIssue, (c: ChannelAnalysis) => string> = {
+  ads_missing: (c) => `${c.label}: chưa có số Ads ngày này (TB ${usd(c.avg7?.adsFee ?? 0)}/ngày) — Profit, TACoS chưa chính xác`,
+  baseline_ads_missing: (c) => `${c.label}: 7 ngày trước chưa có số Ads — chưa so được Profit`,
+};
+
+/** Số vấn đề tối đa ở bản gửi tự động (luôn hiện hết vấn đề 🔴, tối đa 5). */
+const MAX_PRIORITIES = 5;
+const MIN_PRIORITIES = 3;
+
 export function analyzeDailyReport(date: string, inputs: ChannelSeriesInput[]): DailyReportAnalysis {
   const channels: ChannelAnalysis[] = inputs.map((input) => {
-    const cmp = compareSeries(input.days, date);
-    return {
+    const { today, avg7 } = compareSeries(input.days, date);
+    const dataIssue = dataIssueOf(today, avg7);
+    const ch: ChannelAnalysis = {
       label: input.label,
       storeName: input.storeName,
       channel: input.channel,
       team: input.team,
       isNew: input.isNew,
-      ...cmp,
-      light: lightOf(cmp),
-      adsMissing: isAdsMissing(cmp),
-      prevAdsMissing: isPrevAdsMissing(cmp),
-      baselineAdsMissing: isPrevAdsMissing(cmp),
-      diagnosis: null,
+      today,
+      avg7,
+      dataIssue,
+      profitDelta: avg7 && !dataIssue ? today.profit - avg7.profit : null,
+      review: null,
     };
+    ch.review = reviewChannel(ch, input.drill);
+    return ch;
   });
-  for (const ch of channels) {
-    ch.diagnosis = diagnoseChannel(ch, inputs.find((i) => i.label === ch.label)?.drill);
-  }
-
-  const unreliableOf = (list: ChannelAnalysis[]) =>
-    list.filter((c) => c.adsMissing || c.prevAdsMissing).map((c) => c.label);
-  const LIGHT_RANK: Record<Light, number> = { green: 0, yellow: 1, red: 2 };
-  const worstLight = (list: ChannelAnalysis[], fallback: Light): Light =>
-    list.filter((c) => !c.isNew).reduce<Light>((worst, c) => (LIGHT_RANK[c.light] > LIGHT_RANK[worst] ? c.light : worst), fallback);
-  const groupLight = (cmp: PeriodComparison, members: ChannelAnalysis[]) =>
-    unreliableOf(members).length ? worstLight(members, cmp.today.profit < 0 ? "red" : "green") : lightOf(cmp);
 
   const teamNames = [...new Set(inputs.map((i) => i.team))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const teams: TeamAnalysis[] = teamNames.map((team) => {
-    const cmp = compareSeries(sumSeries(inputs.filter((i) => i.team === team).map((m) => m.days)), date);
     const members = channels
       .filter((c) => c.team === team)
       .sort((a, b) => Number(a.isNew) - Number(b.isNew) || b.today.revenue - a.today.revenue);
-    return { team, ...cmp, light: groupLight(cmp, members), channels: members, unreliable: unreliableOf(members) };
+    return { team, ...groupOf(inputs.filter((i) => i.team === team), members, date), channels: members };
   });
 
-  const companyCmp = compareSeries(sumSeries(inputs.map((i) => i.days)), date);
-
-  // Δ Profit so với hôm qua, phân rã theo kênh (bỏ kênh thiếu số Ads)
-  const deltas = channels
-    .filter((c) => c.prev && !c.adsMissing && !c.prevAdsMissing)
-    .map((c) => ({ label: c.label, delta: c.today.profit - (c.prev?.profit ?? 0) }))
-    .filter((d) => Math.abs(d.delta) >= 30);
+  const issues = channels
+    .filter((c) => !c.isNew && c.review && c.review.severity !== "good")
+    .sort((x, y) => (y.review?.score ?? 0) - (x.review?.score ?? 0));
+  const highCount = issues.filter((c) => c.review?.severity === "high").length;
+  const priorities = issues.slice(0, Math.min(MAX_PRIORITIES, Math.max(MIN_PRIORITIES, highCount)));
 
   return {
     date,
     company: {
-      ...companyCmp,
-      light: groupLight(companyCmp, channels),
+      ...groupOf(inputs, channels, date),
       storeCount: new Set(inputs.map((i) => i.storeName)).size,
       channelCount: channels.length,
-      unreliable: unreliableOf(channels),
     },
     teams,
-    drivers: {
-      up: deltas.filter((d) => d.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 3),
-      down: deltas.filter((d) => d.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 3),
-    },
-    // Ưu tiên toàn công ty = các kênh có vấn đề, xếp theo $ ảnh hưởng (cùng nguồn với phần rà soát từng team)
-    actions: channels
-      .filter((c) => !c.isNew && c.diagnosis?.isIssue && c.diagnosis.checks.length)
-      .sort((x, y) => (y.diagnosis?.impact ?? 0) - (x.diagnosis?.impact ?? 0))
+    warnings: channels.filter((c) => c.dataIssue).map((c) => DATA_WARNING[c.dataIssue as DataIssue](c)),
+    priorities,
+    highlights: channels
+      .filter((c) => (c.profitDelta ?? 0) >= 50)
+      .sort((x, y) => (y.profitDelta ?? 0) - (x.profitDelta ?? 0))
       .slice(0, 3)
-      .map((c) => ({
-        team: c.team,
-        label: c.label,
-        title: c.diagnosis?.checks[0] ?? "",
-        reason: c.diagnosis?.cause ?? "",
-        impact: c.diagnosis?.impact ?? 0,
-      })),
+      .map((c) => ({ label: c.label, delta: c.profitDelta ?? 0 })),
   };
 }
