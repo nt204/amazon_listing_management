@@ -450,7 +450,12 @@ async function downloadMonthlyReportCentralFile(
       break;
     }
     if (statusResult === "Cancelled") {
-      console.warn(`  [${config.code}] ⚠️ Amazon báo 'Cancelled' (Store không phát sinh dữ liệu cho kỳ này). Bỏ qua.`);
+      console.warn(`  [${config.code}] ℹ️ Amazon báo 'Cancelled' (Store không phát sinh dữ liệu cho kỳ này). Tạo file chuẩn header.`);
+      if (config.code === "11_RemovalOrderDetail") {
+        const header = '"request-date","order-id","order-source","order-type","order-status","last-updated-date","sku","fnsku","disposition","requested-quantity","cancelled-quantity","disposed-quantity","shipped-quantity","in-process-quantity","removal-fee","currency"\n';
+        fs.writeFileSync(targetPath, header, "utf8");
+        return targetPath;
+      }
       return null;
     }
     if (statusResult && statusResult !== "InQueue" && statusResult !== "InProgress") {
@@ -494,20 +499,31 @@ async function downloadPaymentsReportsRepository(
   const downloadedList: string[] = [];
 
   const hasTrans = fs.existsSync(transTargetPath) && fs.statSync(transTargetPath).size > 1000;
+  const hasSummary = fs.existsSync(summaryTargetPath) && fs.statSync(summaryTargetPath).size > 1000;
+
   if (hasTrans) {
-    console.log(`  [15_DateRangeTransactions] File đã tồn tại: ${transFileName} (${fs.statSync(transTargetPath).size} bytes). Bỏ qua.`);
+    console.log(`  [15_DateRangeTransactions] File đã tồn tại: ${transFileName} (${fs.statSync(transTargetPath).size} bytes).`);
     downloadedList.push(transTargetPath);
+  }
+  if (hasSummary) {
+    console.log(`  [16_DateRangeSummary] File đã tồn tại: ${summaryFileName} (${fs.statSync(summaryTargetPath).size} bytes).`);
+    downloadedList.push(summaryTargetPath);
+  }
+
+  // Nếu cả 2 file đều đã tồn tại thì mới bỏ qua toàn bộ
+  if (hasTrans && hasSummary) {
+    console.log(`  [Payments Reports] Cả 2 file Transactions & Summary đã có sẵn. Bỏ qua.`);
     return downloadedList;
   }
 
   const url = "https://sellercentral.amazon.com/payments/reports-repository?ref_=xx_rrepo_ttab_dash";
-  console.log(`  [15_DateRangeTransactions] Đang truy cập ${url}...`);
+  console.log(`  [Payments Reports] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForTimeout(4000);
 
   if (isSignInUrl(page.url())) {
     if (storeName) {
-      console.log(`  [15_DateRangeTransactions] Phát hiện trang đăng nhập. Gọi ensureAmazonSession...`);
+      console.log(`  [Payments Reports] Phát hiện trang đăng nhập. Gọi ensureAmazonSession...`);
       await ensureAmazonSession(page, storeName);
       if (!page.url().includes("reports-repository")) {
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -530,7 +546,7 @@ async function downloadPaymentsReportsRepository(
   const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
 
   // Kiểm tra danh sách báo cáo
-  console.log(`  [15_DateRangeTransactions] Kiểm tra danh sách báo cáo trên trang Payments...`);
+  console.log(`  [Payments Reports] Kiểm tra danh sách báo cáo trên trang Payments...`);
   const findReports = async () => {
     return await page.evaluate(async (mStr) => {
       try {
@@ -563,8 +579,8 @@ async function downloadPaymentsReportsRepository(
 
   let found = await findReports();
 
-  // Nếu chưa có báo cáo Transaction cho tháng này, gửi yêu cầu tạo
-  if (!found.trans) {
+  // Nếu chưa có báo cáo Transaction cho tháng này và file chưa có trên máy, gửi yêu cầu tạo
+  if (!found.trans && !hasTrans) {
     console.log(`  [15_DateRangeTransactions] Chưa có báo cáo Transaction tháng ${monthStr}. Đang gửi request tạo...`);
     await page.evaluate(async ({ year, monthIdx, daysInMonth }) => {
       const pad = (n: number) => String(n).padStart(2, "0");
@@ -593,8 +609,38 @@ async function downloadPaymentsReportsRepository(
     }, { year, monthIdx, daysInMonth });
   }
 
-  // Chờ báo cáo Transaction hoàn thành
-  console.log(`  [15_DateRangeTransactions] Đang chờ Amazon tạo báo cáo (tối đa 4 phút)...`);
+  // Nếu chưa có báo cáo Summary cho tháng này và file chưa có trên máy, gửi yêu cầu tạo Summary
+  if (!found.summary && !hasSummary) {
+    console.log(`  [16_DateRangeSummary] Chưa có báo cáo Summary tháng ${monthStr}. Đang gửi request tạo...`);
+    await page.evaluate(async ({ year, monthIdx, daysInMonth }) => {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const startDateISO = `${year}-${pad(monthIdx + 1)}-01T00:00:00+07:00`;
+      const endDateISO = `${year}-${pad(monthIdx + 1)}-${pad(daysInMonth)}T23:59:59+07:00`;
+      const startMs = new Date(startDateISO).getTime();
+      const endMs = new Date(endDateISO).getTime();
+
+      const payload = {
+        accountType: "ALL",
+        reportType: "SELLER_SUMMARY_DATE_RANGE",
+        startDate: startMs,
+        startDateISO,
+        endDate: endMs,
+        endDateISO,
+        timeRangeType: "MONTHLY",
+      };
+
+      try {
+        await fetch("/payments/reports/api/request-report", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch {}
+    }, { year, monthIdx, daysInMonth });
+  }
+
+  // Chờ báo cáo hoàn thành
+  console.log(`  [Payments Reports] Đang chờ Amazon tạo báo cáo (tối đa 4 phút)...`);
   const startTime = Date.now();
   let transReportId: string | null = null;
   let summaryReportId: string | null = null;
@@ -604,15 +650,20 @@ async function downloadPaymentsReportsRepository(
     found = await findReports();
     if (found.trans && found.trans.status === "DOWNLOADABLE") {
       transReportId = found.trans.reportId;
-      if (found.summary && found.summary.status === "DOWNLOADABLE") {
-        summaryReportId = found.summary.reportId;
-      }
+    }
+    if (found.summary && found.summary.status === "DOWNLOADABLE") {
+      summaryReportId = found.summary.reportId;
+    }
+
+    const transDone = hasTrans || transReportId !== null;
+    const summaryDone = hasSummary || summaryReportId !== null;
+    if (transDone && summaryDone) {
       break;
     }
-    console.log(`  [15_DateRangeTransactions] Trạng thái Transaction: ${found.trans?.status || "In progress..."}`);
+    console.log(`  [Payments Reports] Trạng thái - Trans: ${found.trans?.status || (hasTrans ? "Cached" : "In progress...")}, Summary: ${found.summary?.status || (hasSummary ? "Cached" : "In progress...")}`);
   }
 
-  if (transReportId) {
+  if (!hasTrans && transReportId) {
     console.log(`  [15_DateRangeTransactions] Báo cáo đã xong! Đang tải file CSV...`);
     const dlUrl = `https://sellercentral.amazon.com/payments/reports/api/download-report?reportId=${transReportId}`;
     const content = await page.evaluate(async (url) => {
@@ -626,12 +677,12 @@ async function downloadPaymentsReportsRepository(
       console.log(`  [15_DateRangeTransactions] ✅ Tải thành công: ${transFileName} (${fs.statSync(transTargetPath).size} bytes)`);
       downloadedList.push(transTargetPath);
     }
-  } else {
+  } else if (!hasTrans) {
     console.warn(`  [15_DateRangeTransactions] ⚠️ Không hoàn tất tải báo cáo Transaction sau 4 phút.`);
   }
 
   // Nếu có Summary Report hoàn tất, tải luôn PDF
-  if (summaryReportId && !fs.existsSync(summaryTargetPath)) {
+  if (!hasSummary && summaryReportId) {
     try {
       console.log(`  [16_DateRangeSummary] Tìm thấy Summary PDF đã sẵn sàng! Đang tải...`);
       const dlSummaryUrl = `https://sellercentral.amazon.com/payments/reports/api/download-report?reportId=${summaryReportId}`;
