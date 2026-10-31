@@ -21,6 +21,7 @@ import type {
   CrawlerJobStatus,
   CrawlerWorker,
 } from "@/lib/accounting/crawler-jobs";
+import { AccountingAnimatedModal } from "./accounting-skeleton";
 
 interface CrawlerOverview {
   crawlers: {
@@ -41,6 +42,7 @@ interface CrawlerOverview {
 
 const CRAWLER_LABELS: Record<AccountingCrawler, string> = {
   accounting_daily: "Kế toán hằng ngày",
+  accounting_monthly: "Báo cáo kế toán tháng",
   inventory_ledger: "Inventory Ledger FBA",
   awd_ledger: "AWD Ledger",
 };
@@ -292,14 +294,12 @@ export function AccountingCrawlerModal({ isOpen, onClose }: { isOpen: boolean; o
     await load();
   };
 
-  if (!isOpen) return null;
-
   const worker = data?.workers.find((w) => w.online) ?? data?.workers[0];
   const online = Boolean(worker?.online);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
+    <AccountingAnimatedModal isOpen={isOpen} onClose={onClose} maxWidthClass="max-w-3xl">
+      <div className="flex max-h-[92vh] w-full flex-col overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-6 py-4">
           <div className="flex flex-wrap items-center gap-3">
             <h3 className="flex items-center gap-2 text-lg font-extrabold text-slate-900">
@@ -400,7 +400,7 @@ export function AccountingCrawlerModal({ isOpen, onClose }: { isOpen: boolean; o
           )}
         </div>
       </div>
-    </div>
+    </AccountingAnimatedModal>
   );
 }
 

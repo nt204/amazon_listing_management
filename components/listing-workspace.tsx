@@ -31,7 +31,47 @@ import { GlobalListingBatchBar } from "@/components/global-listing-batch-bar";
 import type { RequestActor } from "@/lib/auth";
 import type { BrandProfile } from "@/lib/types";
 
-const ViewLoading = () => <div className="h-full w-full animate-pulse bg-slate-100" />;
+function ViewLoading() {
+  return (
+    <div className="h-full w-full bg-slate-50 p-3 sm:p-5 md:p-6 space-y-4 font-sans select-none animate-in fade-in duration-150" role="status" aria-label="Đang nạp dữ liệu...">
+      {/* Top Bar Skeleton */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 pb-3.5">
+        <div className="flex items-center gap-2.5">
+          <div className="h-7 w-40 rounded-lg bg-slate-200/80 acc-shimmer" />
+          <div className="h-5 w-20 rounded-full bg-slate-200/60 acc-shimmer" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-8 w-24 rounded-lg bg-slate-200/70 acc-shimmer" />
+          <div className="h-8 w-32 rounded-lg bg-slate-200/70 acc-shimmer" />
+        </div>
+      </div>
+      {/* KPI Cards Placeholder */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-2xs space-y-2">
+            <div className="h-3 w-16 rounded bg-slate-200/60 acc-shimmer" />
+            <div className="h-6 w-24 rounded bg-slate-200/80 acc-shimmer" />
+          </div>
+        ))}
+      </div>
+      {/* Main Panel Skeleton */}
+      <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-2xs space-y-3">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="h-4 w-36 rounded bg-slate-200/70 acc-shimmer" />
+          <div className="h-7 w-48 rounded-lg bg-slate-200/60 acc-shimmer" />
+        </div>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 py-2 border-b border-slate-50">
+            <div className="h-3.5 w-8 rounded bg-slate-200/60 acc-shimmer" />
+            <div className="h-3.5 w-36 rounded bg-slate-200/70 acc-shimmer" />
+            <div className="h-3.5 w-48 rounded bg-slate-200/50 acc-shimmer" />
+            <div className="ml-auto h-3.5 w-20 rounded bg-slate-200/60 acc-shimmer" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const TrelloBoardView = dynamic(
   () => import("@/components/trello-board-view").then((module) => module.TrelloBoardView),
@@ -602,7 +642,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("overview");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                       accountingSection === "overview" || accountingSection === "dashboard"
                         ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
@@ -629,7 +669,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("stores");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                       accountingSection === "stores"
                         ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
@@ -652,7 +692,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("inventory");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                       accountingSection === "inventory"
                         ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
@@ -675,7 +715,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("orders");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                       accountingSection === "orders" || accountingSection === "import"
                         ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
@@ -700,7 +740,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("financials");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                       accountingSection === "financials" ||
                       accountingSection === "revenue" ||
                       accountingSection === "costs" ||
@@ -743,7 +783,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("reports");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                       accountingSection === "reports" ||
                       accountingSection === "pnl" ||
                       accountingSection === "settlements"
@@ -783,7 +823,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("admin");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                       accountingSection === "admin" || accountingSection === "files"
                         ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"

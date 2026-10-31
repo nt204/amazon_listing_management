@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
+import { AccountingModuleSkeleton, AccountingViewTransition } from "./accounting-skeleton";
 
 const ACCOUNTING_IMPORT_JOB_KEY = "accounting_import_active_job";
 
@@ -118,24 +119,25 @@ function AccountingImportTracker() {
   );
 }
 
-function AccountingSectionShell({ children }: { children: React.ReactNode }) {
+function AccountingSectionShell({
+  children,
+  sectionKey,
+}: {
+  children: React.ReactNode;
+  sectionKey?: string;
+}) {
   return (
     <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
       <AccountingImportTracker />
-      {children}
+      <AccountingViewTransition transitionKey={sectionKey}>
+        {children}
+      </AccountingViewTransition>
     </div>
   );
 }
 
 function AccountingSectionLoading() {
-  return (
-    <div className="grid h-full min-h-[420px] place-items-center bg-slate-50" role="status" aria-label="Đang tải mục Accounting">
-      <div className="text-center">
-        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
-        <p className="mt-3 text-xs font-bold text-slate-500">Đang tải dữ liệu…</p>
-      </div>
-    </div>
-  );
+  return <AccountingModuleSkeleton title="Đang tải phân hệ Kế toán..." />;
 }
 
 const StoreManagementView = dynamic(
@@ -339,7 +341,7 @@ export function AccountingWorkspace({
   // Section 1: Overview - Dashboard tổng quan P&L đa store
   if (effectiveSection === "overview") {
     return (
-      <AccountingSectionShell>
+      <AccountingSectionShell sectionKey="overview">
         <AccountingDashboardView />
       </AccountingSectionShell>
     );
@@ -348,7 +350,7 @@ export function AccountingWorkspace({
   // Section 2: Stores (Existing Full UI)
   if (effectiveSection === "stores") {
     return (
-      <AccountingSectionShell>
+      <AccountingSectionShell sectionKey="stores">
         <StoreManagementView />
       </AccountingSectionShell>
     );
@@ -357,7 +359,7 @@ export function AccountingWorkspace({
   // Section 3: Inventory (Full Multi-Store UI with SKU Master & Inbound Shipments)
   if (effectiveSection === "inventory") {
     return (
-      <AccountingSectionShell>
+      <AccountingSectionShell sectionKey="inventory">
         <InventoryView />
       </AccountingSectionShell>
     );
@@ -366,7 +368,7 @@ export function AccountingWorkspace({
   // Section 4: Import (Đầu Vào Order, Ads, Return, Service Fee)
   if (effectiveSection === "orders" || effectiveSection === "import") {
     return (
-      <AccountingSectionShell>
+      <AccountingSectionShell sectionKey="import">
         <OrderInputView />
       </AccountingSectionShell>
     );
@@ -375,7 +377,7 @@ export function AccountingWorkspace({
   // Section 7: System Admin & Quản lý file Kế toán theo Ngày & Store
   if (effectiveSection === "admin" || effectiveSection === "files") {
     return (
-      <AccountingSectionShell>
+      <AccountingSectionShell sectionKey="admin">
         <AccountingFileManager />
       </AccountingSectionShell>
     );
@@ -384,7 +386,7 @@ export function AccountingWorkspace({
   // Section 7.1: Phân quyền kế toán theo team (Admin / Kế toán)
   if (effectiveSection === "access") {
     return (
-      <AccountingSectionShell>
+      <AccountingSectionShell sectionKey="access">
         <AccountingAccessView />
       </AccountingSectionShell>
     );
@@ -393,7 +395,7 @@ export function AccountingWorkspace({
   // Section 5: Financials - Lọc SKU Win & FBA (như file ketoan_limima.xlsx)
   if (effectiveSection === "financials") {
     return (
-      <AccountingSectionShell>
+      <AccountingSectionShell sectionKey="financials">
         <FinancialsWorkspace />
       </AccountingSectionShell>
     );

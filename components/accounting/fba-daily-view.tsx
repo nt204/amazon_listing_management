@@ -34,6 +34,10 @@ import {
   getSavedStoreDateRange,
   saveStoreDateRange,
 } from "./financials-date-utils";
+import {
+  AccountingTableSkeletonRows,
+  AccountingTopProgressBar,
+} from "./accounting-skeleton";
 
 const FBA_DAILY_COLUMNS_STORAGE_KEY = "acc_fba_daily_columns_global";
 const FBA_DAILY_FROZEN_STORAGE_KEY = "acc_fba_daily_frozen_global";
@@ -616,6 +620,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
 
       {/* TABLE CONTAINER */}
       <div className="flex-1 overflow-auto bg-white relative">
+        <AccountingTopProgressBar loading={loading} variant={fbm ? "indigo" : "amber"} />
         <div
           style={{
             zoom: `${zoomLevel}%`,
@@ -899,16 +904,13 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
             </thead>
 
             {/* TBODY */}
-            <tbody className="divide-y divide-slate-100 text-xs">
+            <tbody
+              className={`divide-y divide-slate-100 text-xs transition-opacity duration-200 ${
+                loading && items.length > 0 ? "opacity-60 pointer-events-none" : "opacity-100"
+              }`}
+            >
               {loading && items.length === 0 ? (
-                <tr>
-                  <td colSpan={visibleColumns.length} className="text-center py-12">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
-                      <span className="text-slate-500 font-medium">Đang tính toán dữ liệu {channelLabel} theo ngày…</span>
-                    </div>
-                  </td>
-                </tr>
+                <AccountingTableSkeletonRows rows={10} colSpan={visibleColumns.length} />
               ) : items.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColumns.length} className="text-center py-12 text-slate-400">

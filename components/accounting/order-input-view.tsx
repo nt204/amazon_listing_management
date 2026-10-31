@@ -44,14 +44,14 @@ import {
 import type { ReturnStats } from "@/lib/accounting/returns-db";
 import type { ServiceFeeStats } from "@/lib/accounting/service-fees-db";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
+import {
+  AccountingModuleSkeleton,
+  AnimatedTabPill,
+  AccountingViewTransition,
+} from "./accounting-skeleton";
 
 const ImportTabLoading = () => (
-  <div className="grid min-h-[420px] place-items-center rounded-xl border border-slate-200 bg-white" role="status">
-    <div className="text-center">
-      <div className="mx-auto h-7 w-7 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
-      <p className="mt-2 text-xs font-bold text-slate-500">Đang tải bảng dữ liệu…</p>
-    </div>
-  </div>
+  <AccountingModuleSkeleton title="Đang tải bảng dữ liệu..." cardsCount={0} />
 );
 const AdsInputView = dynamic(
   () => import("./ads-input-view").then((module) => module.AdsInputView),
@@ -1329,20 +1329,28 @@ export function OrderInputView() {
             <button
               type="button"
               onClick={() => handleTabChange("orders")}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
+              className={`relative flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border cursor-pointer select-none whitespace-nowrap acc-interactive-btn ${
                 activeTab === "orders"
-                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  ? "text-white border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <ShoppingCartIcon size={14} weight="bold" />
-              <span>Đầu Vào Order</span>
-              <span
-                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                  activeTab === "orders" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
-                }`}
-              >
-                {totalOrders.toLocaleString()}
+              {activeTab === "orders" && (
+                <AnimatedTabPill
+                  layoutId="order-input-tab-indicator"
+                  className="bg-emerald-600 shadow-2xs border border-emerald-700"
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <ShoppingCartIcon size={14} weight="bold" />
+                <span>Đầu Vào Order</span>
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                    activeTab === "orders" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                  }`}
+                >
+                  {totalOrders.toLocaleString()}
+                </span>
               </span>
             </button>
 
@@ -1350,69 +1358,93 @@ export function OrderInputView() {
             <button
               type="button"
               onClick={() => handleTabChange("ads")}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
+              className={`relative flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border cursor-pointer select-none whitespace-nowrap acc-interactive-btn ${
                 activeTab === "ads"
-                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  ? "text-white border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <TrendUpIcon size={14} weight="bold" />
-              <span>Ads</span>
-              {totalAds > 0 && (
-                <span
-                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                    activeTab === "ads" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
-                  }`}
-                >
-                  {totalAds}
-                </span>
+              {activeTab === "ads" && (
+                <AnimatedTabPill
+                  layoutId="order-input-tab-indicator"
+                  className="bg-emerald-600 shadow-2xs border border-emerald-700"
+                />
               )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <TrendUpIcon size={14} weight="bold" />
+                <span>Ads</span>
+                {totalAds > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                      activeTab === "ads" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                    }`}
+                  >
+                    {totalAds}
+                  </span>
+                )}
+              </span>
             </button>
 
             {/* Tab 3: Return */}
             <button
               type="button"
               onClick={() => handleTabChange("return")}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
+              className={`relative flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border cursor-pointer select-none whitespace-nowrap acc-interactive-btn ${
                 activeTab === "return"
-                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  ? "text-white border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <ArrowCounterClockwiseIcon size={14} weight="bold" />
-              <span>Return</span>
-              {totalReturns > 0 && (
-                <span
-                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                    activeTab === "return" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
-                  }`}
-                >
-                  {totalReturns}
-                </span>
+              {activeTab === "return" && (
+                <AnimatedTabPill
+                  layoutId="order-input-tab-indicator"
+                  className="bg-emerald-600 shadow-2xs border border-emerald-700"
+                />
               )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <ArrowCounterClockwiseIcon size={14} weight="bold" />
+                <span>Return</span>
+                {totalReturns > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                      activeTab === "return" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                    }`}
+                  >
+                    {totalReturns}
+                  </span>
+                )}
+              </span>
             </button>
 
             {/* Tab 4: Service Fee */}
             <button
               type="button"
               onClick={() => handleTabChange("service_fee")}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
+              className={`relative flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border cursor-pointer select-none whitespace-nowrap acc-interactive-btn ${
                 activeTab === "service_fee"
-                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  ? "text-white border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <ReceiptIcon size={14} weight="bold" />
-              <span>Service Fee</span>
-              {totalServiceFees > 0 && (
-                <span
-                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                    activeTab === "service_fee" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
-                  }`}
-                >
-                  {totalServiceFees}
-                </span>
+              {activeTab === "service_fee" && (
+                <AnimatedTabPill
+                  layoutId="order-input-tab-indicator"
+                  className="bg-emerald-600 shadow-2xs border border-emerald-700"
+                />
               )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <ReceiptIcon size={14} weight="bold" />
+                <span>Service Fee</span>
+                {totalServiceFees > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                      activeTab === "service_fee" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                    }`}
+                  >
+                    {totalServiceFees}
+                  </span>
+                )}
+              </span>
             </button>
           </div>
         </div>

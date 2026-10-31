@@ -6,7 +6,7 @@ import { getDatabaseClient } from "@/lib/db";
 // Crawler kế toán chạy trên máy Mac (AdsPower + Seller Central). Web chỉ tạo lệnh; máy Mac
 // (mac-crawler/accounting_job_worker.ts) nhận lệnh, chạy đúng script của lịch tự động và báo tiến độ về.
 
-export type AccountingCrawler = "accounting_daily" | "inventory_ledger" | "awd_ledger";
+export type AccountingCrawler = "accounting_daily" | "accounting_monthly" | "inventory_ledger" | "awd_ledger";
 export type CrawlerJobStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
 export const ACCOUNTING_CRAWLERS: Record<
@@ -19,6 +19,13 @@ export const ACCOUNTING_CRAWLERS: Record<
     schedule: "15:00 mỗi ngày",
     dateHint: "Ngày chốt sổ (trống = hôm qua, trước 15:00 là hôm kia)",
     freshnessLabel: "Đơn hàng mới nhất",
+  },
+  accounting_monthly: {
+    label: "Báo cáo kế toán tháng",
+    description: "File 01, 02, 05: Portfolios, All Orders, Chi phí Ads trọn vẹn cả tháng (từ mùng 1 đến hết tháng).",
+    schedule: "04:00 ngày mùng 2 hằng tháng",
+    dateHint: "Tháng báo cáo YYYY-MM (trống = tháng trước, ví dụ: 2026-09)",
+    freshnessLabel: "Báo cáo tháng mới nhất",
   },
   inventory_ledger: {
     label: "Inventory Ledger FBA (Tồn kho)",
@@ -106,7 +113,7 @@ async function getFreshness(sql: Sql): Promise<Record<AccountingCrawler, { store
     perStore("accounting_inventory_ledger", "snapshot_date"),
     perStore("accounting_awd_inventory_ledger", "snapshot_date"),
   ]);
-  return { accounting_daily: daily, inventory_ledger: inventory, awd_ledger: awd };
+  return { accounting_daily: daily, accounting_monthly: daily, inventory_ledger: inventory, awd_ledger: awd };
 }
 
 export async function getCrawlerOverview() {

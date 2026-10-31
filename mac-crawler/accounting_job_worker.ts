@@ -37,6 +37,7 @@ const LOG_TAIL_CHARS = 8_000;
 
 const CRAWLER_SCRIPTS: Record<string, string> = {
   accounting_daily: "run_accounting_daily.sh",
+  accounting_monthly: "run_accounting_monthly.sh",
   inventory_ledger: "run_inventory_weekly.sh",
   awd_ledger: "run_awd_weekly.sh",
 };

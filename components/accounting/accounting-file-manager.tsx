@@ -7,6 +7,8 @@ import {
   ArrowsClockwise,
   MagnifyingGlass,
   CalendarBlank,
+  CalendarCheck,
+  Package,
   Storefront,
   HardDrives,
   FileText,
@@ -20,9 +22,51 @@ import {
   Robot,
   X,
 } from "@phosphor-icons/react";
-import type { ManagedAccountingFile, AccountingFileStats } from "@/lib/accounting/accounting-file-service";
+import type { ManagedAccountingFile, AccountingFileStats, AccountingReportCategory } from "@/lib/accounting/accounting-file-service";
 import { InventorySheetLinksModal } from "./inventory-sheet-links-modal";
 import { AccountingCrawlerModal } from "./accounting-crawler-modal";
+
+export type ReportCategoryTab = "DAILY" | "MONTHLY" | "INVENTORY" | "ALL";
+
+export function getFileCategory(file: { fileTypeCode?: string; fileName?: string; category?: string }): AccountingReportCategory {
+  if (file.category === "daily" || file.category === "monthly" || file.category === "inventory") {
+    return file.category;
+  }
+  const code = file.fileTypeCode || "";
+  const name = (file.fileName || "").toLowerCase();
+
+  // 1. Báo cáo tồn kho: FBA Ledger + AWD Ledger (chạy theo tuần & theo tháng)
+  if (
+    code === "09_INVENTORY_LEDGER" ||
+    code === "AWD_INVENTORY_LEDGER" ||
+    code === "INVENTORY_OTHER" ||
+    name.includes("09_inventoryledger") ||
+    name.includes("inventoryledger") ||
+    name.includes("inventory_ledger") ||
+    name.includes("awd_ledger") ||
+    name.includes("awd_inventory")
+  ) {
+    return "inventory";
+  }
+
+  // 2. Báo cáo tháng (tạm để trống chờ luồng auto tải)
+  if (
+    code === "10_MONTHLY_REPORT" ||
+    code === "MONTHLY_OTHER" ||
+    name.includes("10_monthly") ||
+    name.includes("monthly_report") ||
+    name.includes("baocao_thang") ||
+    name.includes("bao_cao_thang") ||
+    name.includes("date_range") ||
+    name.includes("daterange") ||
+    name.includes("settlement")
+  ) {
+    return "monthly";
+  }
+
+  // 3. Báo cáo ngày: 8 file kế toán tải hằng ngày (01 -> 08)
+  return "daily";
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -45,7 +89,6 @@ function formatLastUpdated(isoString?: string): { date: string; time: string; fu
     return null;
   }
 }
-
 
 interface StoreGroup {
   storeName: string;
@@ -153,6 +196,9 @@ export function AccountingFileManager() {
     }
   };
 
+  // Mục phân loại báo cáo: Báo cáo ngày, Báo cáo tháng, Báo cáo tồn, Tất cả
+  const [activeCategory, setActiveCategory] = useState<ReportCategoryTab>("DAILY");
+
   // Filters
   const [selectedStore, setSelectedStore] = useState<string>("ALL");
   const [selectedDate, setSelectedDate] = useState<string>("ALL");
@@ -163,13 +209,11 @@ export function AccountingFileManager() {
   // Store là tầng accordion thứ hai: mở ngày chỉ hiện danh sách store, không bung file hàng loạt.
   const [expandedStores, setExpandedStores] = useState<Set<string>>(new Set());
 
-
   const fetchFiles = useCallback(async () => {
     try {
       setRefreshing(true);
       const params = new URLSearchParams();
       if (selectedStore !== "ALL") params.append("storeName", selectedStore);
-      if (selectedDate !== "ALL") params.append("date", selectedDate);
 
       const res = await fetch(`/api/accounting/files?${params.toString()}`);
       const json = await res.json();
@@ -185,14 +229,76 @@ export function AccountingFileManager() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedStore, selectedDate]);
+  }, [selectedStore]);
 
   useEffect(() => {
     fetchFiles();
   }, [fetchFiles]);
 
+  // Thống kê số lượng file theo 3 mục chính
+  const categoryCounts = useMemo(() => {
+    let daily = 0;
+    let monthly = 0;
+    let inventory = 0;
+    for (const f of files) {
+      const cat = f.category || getFileCategory(f);
+      if (cat === "daily") daily++;
+      else if (cat === "monthly") monthly++;
+      else if (cat === "inventory") inventory++;
+    }
+    return {
+      all: files.length,
+      daily,
+      monthly,
+      inventory,
+    };
+  }, [files]);
+
+  // Lọc files theo mục (category) đang chọn
+  const categoryFiles = useMemo(() => {
+    if (activeCategory === "ALL") return files;
+    const target = activeCategory.toLowerCase();
+    return files.filter((f) => (f.category || getFileCategory(f)) === target);
+  }, [files, activeCategory]);
+
+  // Danh sách ngày/kỳ riêng của mục đang chọn
+  const categoryAvailableDates = useMemo(() => {
+    return Array.from(new Set(categoryFiles.map((f) => f.reportDate))).sort().reverse();
+  }, [categoryFiles]);
+
+  // Tự động reset bộ lọc Ngày nếu ngày cũ không thuộc mục mới
+  useEffect(() => {
+    if (selectedDate !== "ALL" && !categoryAvailableDates.includes(selectedDate)) {
+      setSelectedDate("ALL");
+    }
+  }, [activeCategory, categoryAvailableDates, selectedDate]);
+
+  // Thống kê hiển thị tương ứng với mục đang kích hoạt
+  const displayStats = useMemo(() => {
+    const bytes = categoryFiles.reduce((acc, f) => acc + f.sizeBytes, 0);
+    const stores = new Set(categoryFiles.map((f) => f.storeName)).size;
+    const latestDate = categoryAvailableDates[0] || "--";
+    let latestModified = "";
+    for (const f of categoryFiles) {
+      if (f.lastModified && (!latestModified || f.lastModified > latestModified)) {
+        latestModified = f.lastModified;
+      }
+    }
+    return {
+      totalFiles: categoryFiles.length,
+      totalBytes: bytes,
+      storesCount: stores,
+      latestDate,
+      latestModified,
+    };
+  }, [categoryFiles, categoryAvailableDates]);
+
+  // Lọc theo search & selectedDate
   const filteredFiles = useMemo(() => {
-    return files.filter((f) => {
+    return categoryFiles.filter((f) => {
+      if (selectedDate !== "ALL" && f.reportDate !== selectedDate) {
+        return false;
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchName = f.fileName.toLowerCase().includes(q);
@@ -202,7 +308,7 @@ export function AccountingFileManager() {
       }
       return true;
     });
-  }, [files, searchQuery]);
+  }, [categoryFiles, selectedDate, searchQuery]);
 
   // Tự động mở khi user chọn ngày cụ thể hoặc tìm kiếm
   useEffect(() => {
@@ -327,6 +433,13 @@ export function AccountingFileManager() {
             type="button"
             onClick={() => {
               if (availableStores.length > 0 && !uploadStore) setUploadStore(availableStores[0]);
+              if (activeCategory === "MONTHLY") {
+                setUploadFileType("10_MONTHLY_REPORT");
+              } else if (activeCategory === "INVENTORY") {
+                setUploadFileType("09_INVENTORY_LEDGER");
+              } else {
+                setUploadFileType("02_ALL_ORDERS");
+              }
               setShowUploadModal(true);
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-semibold text-emerald-700 shadow-2xs hover:bg-emerald-100 transition cursor-pointer"
@@ -369,58 +482,161 @@ export function AccountingFileManager() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
-              <FileText size={18} weight="duotone" />
-            </div>
-            <div>
-              <div className="text-[11px] font-medium text-slate-500">Tổng file</div>
-              <div className="text-base font-bold text-slate-900">{stats.totalFiles}</div>
-            </div>
-          </div>
+      {/* Tabs Phân loại Báo cáo: Báo cáo ngày | Báo cáo tháng | Báo cáo tồn */}
+      <div className="flex flex-wrap items-center gap-1.5 bg-white p-2 rounded-2xl border border-slate-200/90 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveCategory("DAILY")}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeCategory === "DAILY"
+              ? "bg-indigo-600 text-white shadow-xs"
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-100/80"
+          }`}
+        >
+          <CalendarBlank size={16} weight={activeCategory === "DAILY" ? "bold" : "regular"} />
+          <span>Báo cáo ngày</span>
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+              activeCategory === "DAILY"
+                ? "bg-white/20 text-white"
+                : "bg-slate-100 text-slate-600 border border-slate-200"
+            }`}
+          >
+            {categoryCounts.daily}
+          </span>
+        </button>
 
-          <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
-              <HardDrives size={18} weight="duotone" />
-            </div>
-            <div>
-              <div className="text-[11px] font-medium text-slate-500">Dung lượng</div>
-              <div className="text-base font-bold text-slate-900">{formatBytes(stats.totalBytes)}</div>
-            </div>
-          </div>
+        <button
+          type="button"
+          onClick={() => setActiveCategory("MONTHLY")}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeCategory === "MONTHLY"
+              ? "bg-indigo-600 text-white shadow-xs"
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-100/80"
+          }`}
+        >
+          <CalendarCheck size={16} weight={activeCategory === "MONTHLY" ? "bold" : "regular"} />
+          <span>Báo cáo tháng</span>
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+              activeCategory === "MONTHLY"
+                ? "bg-white/20 text-white"
+                : "bg-slate-100 text-slate-600 border border-slate-200"
+            }`}
+          >
+            {categoryCounts.monthly}
+          </span>
+        </button>
 
-          <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600">
-              <Storefront size={18} weight="duotone" />
-            </div>
-            <div>
-              <div className="text-[11px] font-medium text-slate-500">Store có file</div>
-              <div className="text-base font-bold text-slate-900">{stats.storesCount}</div>
-            </div>
-          </div>
+        <button
+          type="button"
+          onClick={() => setActiveCategory("INVENTORY")}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeCategory === "INVENTORY"
+              ? "bg-indigo-600 text-white shadow-xs"
+              : "text-slate-600 hover:text-slate-900 hover:bg-slate-100/80"
+          }`}
+        >
+          <Package size={16} weight={activeCategory === "INVENTORY" ? "bold" : "regular"} />
+          <span>Báo cáo tồn</span>
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+              activeCategory === "INVENTORY"
+                ? "bg-white/20 text-white"
+                : "bg-slate-100 text-slate-600 border border-slate-200"
+            }`}
+          >
+            {categoryCounts.inventory}
+          </span>
+        </button>
 
-          <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+        <button
+          type="button"
+          onClick={() => setActiveCategory("ALL")}
+          className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeCategory === "ALL"
+              ? "bg-slate-800 text-white shadow-xs"
+              : "text-slate-500 hover:text-slate-800 hover:bg-slate-100/80"
+          }`}
+        >
+          <span>Tất cả file</span>
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+              activeCategory === "ALL"
+                ? "bg-white/20 text-white"
+                : "bg-slate-100 text-slate-500"
+            }`}
+          >
+            {categoryCounts.all}
+          </span>
+        </button>
+      </div>
+
+      {/* Summary Cards theo mục */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+            <FileText size={18} weight="duotone" />
+          </div>
+          <div>
+            <div className="text-[11px] font-medium text-slate-500">
+              {activeCategory === "DAILY"
+                ? "Tổng file ngày"
+                : activeCategory === "MONTHLY"
+                ? "Tổng file tháng"
+                : activeCategory === "INVENTORY"
+                ? "Tổng file tồn"
+                : "Tổng file"}
+            </div>
+            <div className="text-base font-bold text-slate-900">{displayStats.totalFiles}</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
+            <HardDrives size={18} weight="duotone" />
+          </div>
+          <div>
+            <div className="text-[11px] font-medium text-slate-500">Dung lượng</div>
+            <div className="text-base font-bold text-slate-900">{formatBytes(displayStats.totalBytes)}</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600">
+            <Storefront size={18} weight="duotone" />
+          </div>
+          <div>
+            <div className="text-[11px] font-medium text-slate-500">Store có file</div>
+            <div className="text-base font-bold text-slate-900">{displayStats.storesCount}</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200/80 p-3.5 shadow-2xs flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+            {activeCategory === "MONTHLY" ? (
+              <CalendarCheck size={18} weight="duotone" />
+            ) : activeCategory === "INVENTORY" ? (
+              <Package size={18} weight="duotone" />
+            ) : (
               <CalendarBlank size={18} weight="duotone" />
+            )}
+          </div>
+          <div>
+            <div className="text-[11px] font-medium text-slate-500">
+              {activeCategory === "MONTHLY" ? "Kỳ gần nhất" : "File mới nhất"}
             </div>
-            <div>
-              <div className="text-[11px] font-medium text-slate-500">File mới nhất</div>
-              <div className="flex flex-wrap items-baseline gap-1.5">
-                <span className="text-base font-bold text-slate-900">{stats.latestDate || "--"}</span>
-                {formatLastUpdated(stats.latestModified)?.time && (
-                  <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 font-mono">
-                    {formatLastUpdated(stats.latestModified)?.time}
-                  </span>
-                )}
-              </div>
+            <div className="flex flex-wrap items-baseline gap-1.5">
+              <span className="text-base font-bold text-slate-900">{displayStats.latestDate || "--"}</span>
+              {formatLastUpdated(displayStats.latestModified)?.time && (
+                <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 font-mono">
+                  {formatLastUpdated(displayStats.latestModified)?.time}
+                </span>
+              )}
             </div>
           </div>
         </div>
-      )}
-
+      </div>
 
       {/* Filter Toolbar */}
       <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-2xs flex flex-wrap items-center justify-between gap-3">
@@ -444,16 +660,24 @@ export function AccountingFileManager() {
 
           {/* Date Filter */}
           <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <span className="font-semibold text-slate-500">Ngày:</span>
+            <span className="font-semibold text-slate-500">
+              {activeCategory === "MONTHLY"
+                ? "Kỳ/Tháng:"
+                : activeCategory === "INVENTORY"
+                ? "Ngày tồn:"
+                : "Ngày:"}
+            </span>
             <select
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
               className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
             >
-              <option value="ALL">Tất cả các ngày</option>
-              {availableDates.map((d) => (
+              <option value="ALL">
+                Tất cả {activeCategory === "MONTHLY" ? "các tháng" : "các ngày"}
+              </option>
+              {categoryAvailableDates.map((d) => (
                 <option key={d} value={d}>
-                  {d}
+                  {activeCategory === "MONTHLY" && d.length <= 7 ? `Tháng ${d}` : d}
                 </option>
               ))}
             </select>
@@ -465,7 +689,13 @@ export function AccountingFileManager() {
           <MagnifyingGlass size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Tìm tên file hoặc store..."
+            placeholder={
+              activeCategory === "MONTHLY"
+                ? "Tìm file báo cáo tháng..."
+                : activeCategory === "INVENTORY"
+                ? "Tìm file tồn kho..."
+                : "Tìm tên file hoặc store..."
+            }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -480,9 +710,61 @@ export function AccountingFileManager() {
           Đang tải danh sách file kế toán...
         </div>
       ) : dateGroups.length === 0 ? (
-        <div className="py-16 text-center text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shadow-2xs">
-          Không tìm thấy file nào phù hợp với bộ lọc.
-        </div>
+        activeCategory === "MONTHLY" ? (
+          <div className="py-14 px-6 text-center bg-white rounded-2xl border-2 border-dashed border-indigo-200 shadow-2xs space-y-4">
+            <div className="h-14 w-14 mx-auto rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-xs">
+              <CalendarCheck size={32} weight="duotone" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-slate-900">Mục Báo cáo tháng</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                Khu vực lưu trữ và quản lý các file báo cáo tài chính chốt theo tháng (Date Range Summary, Settlement Reports, Basecost tháng). Sẵn sàng nhận dữ liệu khi chạy luồng tự động tải báo cáo tháng.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadFileType("10_MONTHLY_REPORT");
+                  if (availableStores.length > 0 && !uploadStore) setUploadStore(availableStores[0]);
+                  setShowUploadModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+              >
+                <UploadSimple size={14} weight="bold" />
+                Tải lên báo cáo tháng thủ công
+              </button>
+            </div>
+          </div>
+        ) : activeCategory === "INVENTORY" ? (
+          <div className="py-12 px-6 text-center bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+            <div className="h-12 w-12 mx-auto rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+              <Package size={28} weight="duotone" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-bold text-slate-900">Chưa có file Báo cáo tồn kho</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Bao gồm các file FBA Inventory (06), DC Shipments / AWD (08) và Inventory Ledger (09).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setUploadFileType("09_INVENTORY_LEDGER");
+                if (availableStores.length > 0 && !uploadStore) setUploadStore(availableStores[0]);
+                setShowUploadModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition cursor-pointer"
+            >
+              <UploadSimple size={14} weight="bold" />
+              Tải lên file Inventory Ledger
+            </button>
+          </div>
+        ) : (
+          <div className="py-16 text-center text-xs text-slate-400 bg-white rounded-xl border border-slate-200 shadow-2xs">
+            Không tìm thấy file nào phù hợp với bộ lọc.
+          </div>
+        )
       ) : (
         <div className="space-y-4">
           {dateGroups.map((dateGroup) => {
@@ -493,7 +775,7 @@ export function AccountingFileManager() {
                 key={dateGroup.date}
                 className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden transition-all"
               >
-                {/* 1. Header Ngày (Date Group Header) */}
+                {/* 1. Header Ngày / Kỳ (Date Group Header) */}
                 <button
                   type="button"
                   onClick={() => toggleDate(dateGroup.date)}
@@ -503,11 +785,21 @@ export function AccountingFileManager() {
                 >
                   <div className="flex items-center gap-3">
                     <div className="h-7 w-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
-                      <CalendarBlank size={16} weight="bold" />
+                      {activeCategory === "MONTHLY" ? (
+                        <CalendarCheck size={16} weight="bold" />
+                      ) : activeCategory === "INVENTORY" ? (
+                        <Package size={16} weight="bold" />
+                      ) : (
+                        <CalendarBlank size={16} weight="bold" />
+                      )}
                     </div>
                     <div>
                       <span className="text-sm font-bold text-slate-900 tracking-tight">
-                        Ngày {dateGroup.date}
+                        {activeCategory === "MONTHLY"
+                          ? dateGroup.date.length <= 7
+                            ? `Tháng ${dateGroup.date}`
+                            : `Kỳ ${dateGroup.date}`
+                          : `Ngày ${dateGroup.date}`}
                       </span>
                       <span className="ml-2.5 text-[11px] font-semibold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full">
                         {dateGroup.filesCount} file
@@ -709,16 +1001,31 @@ export function AccountingFileManager() {
                   onChange={(e) => setUploadFileType(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 >
-                  <option value="09_INVENTORY_LEDGER">09. Tồn kho Inventory Ledger (tính Tồn kho = In Transit + Ending)</option>
-                  <option value="AUTO">Tự động nhận diện theo tên file</option>
-                  <option value="01_PORTFOLIOS">01. Danh mục Portfolios</option>
-                  <option value="02_ALL_ORDERS">02. Đơn hàng All Orders</option>
-                  <option value="03_RETURNS">03. Trả hàng Returns</option>
-                  <option value="04_SERVICE_FEES">04. Phí dịch vụ Service Fees</option>
-                  <option value="05_CAMPAIGNS">05. Chi phí Ads (Portfolios)</option>
-                  <option value="06_FBA_INVENTORY">06. Tồn kho FBA Inventory</option>
-                  <option value="07_SHIPMENTS">07. Lô hàng Inbound Shipments</option>
-                  <option value="08_DC_SHIPMENTS">08. Lô hàng DC Shipments (AWD)</option>
+                  <optgroup label="Báo cáo ngày">
+                    <option value="01_PORTFOLIOS">01. Danh mục Portfolios</option>
+                    <option value="02_ALL_ORDERS">02. Đơn hàng All Orders</option>
+                    <option value="03_RETURNS">03. Trả hàng Returns</option>
+                    <option value="04_SERVICE_FEES">04. Phí dịch vụ Service Fees</option>
+                    <option value="05_CAMPAIGNS">05. Chi phí Ads (Portfolios)</option>
+                    <option value="07_SHIPMENTS">07. Lô hàng Inbound Shipments</option>
+                  </optgroup>
+                  <optgroup label="Báo cáo tháng">
+                    <option value="11_REMOVAL_ORDER_DETAIL">11. Chi tiết tiêu hủy/rút hàng (Removal Order)</option>
+                    <option value="12_INBOUND_PLACEMENT_FEES">12. Phí đặt hàng nhập kho (Inbound Placement)</option>
+                    <option value="13_LONGTERM_STORAGE_FEES">13. Phí lưu kho dài hạn (Long-Term Storage)</option>
+                    <option value="14_MONTHLY_STORAGE_FEES">14. Phí lưu kho tháng (Monthly Storage)</option>
+                    <option value="15_PAYMENTS_TRANSACTIONS">15. Giao dịch Date Range (Payments Transactions CSV)</option>
+                    <option value="16_PAYMENTS_SUMMARY">16. Tổng kết tài chính Date Range (Summary PDF)</option>
+                    <option value="10_MONTHLY_REPORT">10. Báo cáo tháng (Date Range Summary / Settlement / P&L)</option>
+                  </optgroup>
+                  <optgroup label="Báo cáo tồn kho">
+                    <option value="09_INVENTORY_LEDGER">09. Tồn kho Inventory Ledger (tính Tồn = In Transit + Ending)</option>
+                    <option value="06_FBA_INVENTORY">06. Tồn kho FBA Inventory</option>
+                    <option value="08_DC_SHIPMENTS">08. Lô hàng DC Shipments (AWD)</option>
+                  </optgroup>
+                  <optgroup label="Khác">
+                    <option value="AUTO">Tự động nhận diện theo tên file</option>
+                  </optgroup>
                 </select>
               </div>
 

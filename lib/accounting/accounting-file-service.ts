@@ -19,6 +19,8 @@ import { parseServiceFeeBuffer, batchUpsertServiceFees } from "./service-fees-db
 import { assertRowsInsideCoverage, coverageFromAccountingFileName } from "./import-coverage";
 import { triggerDailyReportCheckAfterImport } from "./daily-business-reporter";
 
+export type AccountingReportCategory = "daily" | "monthly" | "inventory";
+
 export interface ManagedAccountingFile {
   id: string;
   r2Key: string;
@@ -27,6 +29,7 @@ export interface ManagedAccountingFile {
   fileName: string;
   fileTypeCode: string;
   fileTypeLabel: string;
+  category: AccountingReportCategory;
   sizeBytes: number;
   lastModified: string;
   isIngestable: boolean;
@@ -41,6 +44,9 @@ export interface AccountingFileStats {
   datesCount: number;
   latestDate: string;
   latestModified?: string;
+  dailyFilesCount?: number;
+  monthlyFilesCount?: number;
+  inventoryFilesCount?: number;
 }
 
 function getR2Client() {
@@ -91,47 +97,111 @@ export async function uploadAccountingFileToR2(
 
 import { parseInventoryLedgerContent, ingestInventoryLedgerRows } from "./inventory-ledger-db";
 
-export function detectFileType(fileName: string): { code: string; label: string; isIngestable: boolean } {
+export function detectFileType(fileName: string, dateStr?: string): {
+  code: string;
+  label: string;
+  category: AccountingReportCategory;
+  isIngestable: boolean;
+} {
   const lower = fileName.toLowerCase();
-  if (lower.includes("01_portfolios") || lower.includes("portfolio")) {
-    return { code: "01_PORTFOLIOS", label: "01. Danh mục Portfolios", isIngestable: true };
+  const isMonthlyDate = dateStr ? /^\d{4}-\d{2}$/.test(dateStr) : false;
+  const isMonthlyFile =
+    isMonthlyDate ||
+    lower.includes("monthly") ||
+    lower.includes("date_range") ||
+    lower.includes("daterange") ||
+    lower.includes("bao_cao_thang") ||
+    lower.includes("baocaothang") ||
+    /_\d{4}-\d{2}\.(tsv|csv|txt|pdf)$/i.test(fileName);
+
+  // 1. Nếu là tệp thuộc kỳ báo cáo tháng (Monthly)
+  if (isMonthlyFile) {
+    if (lower.includes("01_portfolios") || lower.includes("portfolio")) {
+      return { code: "01_PORTFOLIOS_MONTHLY", label: "01. Ads Portfolios tháng", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("02_allorders") || lower.includes("allorders") || lower.includes("all orders")) {
+      return { code: "02_ALL_ORDERS_MONTHLY", label: "02. Đơn hàng All Orders tháng", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("05_campaigns") || lower.includes("campaign")) {
+      return { code: "05_CAMPAIGNS_MONTHLY", label: "05. Chi phí Ads tháng", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("11_removal") || lower.includes("removal_order") || lower.includes("removalorder")) {
+      return { code: "11_REMOVAL_ORDER_DETAIL", label: "11. Chi tiết tiêu hủy/rút hàng (Removal Order)", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("12_inbound") || lower.includes("inbound_placement") || lower.includes("inboundplacement")) {
+      return { code: "12_INBOUND_PLACEMENT_FEES", label: "12. Phí đặt hàng nhập kho (Inbound Placement)", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("13_longterm") || lower.includes("longterm_storage") || lower.includes("long_term_storage")) {
+      return { code: "13_LONGTERM_STORAGE_FEES", label: "13. Phí lưu kho dài hạn (Long-Term Storage)", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("14_monthlystorage") || lower.includes("monthly_storage") || lower.includes("storage_fee")) {
+      return { code: "14_MONTHLY_STORAGE_FEES", label: "14. Phí lưu kho tháng (Monthly Storage)", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("15_daterange") || lower.includes("daterangetransaction") || lower.includes("transaction_date_range") || lower.includes("monthlyunifiedtransaction")) {
+      return { code: "15_PAYMENTS_TRANSACTIONS", label: "15. Báo cáo giao dịch Date Range (Transactions)", category: "monthly", isIngestable: true };
+    }
+    if (lower.includes("16_daterangesummary") || lower.includes("daterangesummary") || lower.includes("summary_date_range")) {
+      return { code: "16_PAYMENTS_SUMMARY", label: "16. Tổng kết Date Range (Summary)", category: "monthly", isIngestable: false };
+    }
+    return {
+      code: "10_MONTHLY_REPORT",
+      label: "10. Báo cáo tổng kết tháng",
+      category: "monthly",
+      isIngestable: false,
+    };
   }
-  if (lower.includes("02_allorders") || lower.includes("allorders") || lower.includes("all orders")) {
-    return { code: "02_ALL_ORDERS", label: "02. Đơn hàng All Orders", isIngestable: true };
-  }
-  if (lower.includes("03_returns") || lower.includes("returns")) {
-    return { code: "03_RETURNS", label: "03. Trả hàng Returns", isIngestable: true };
-  }
-  if (lower.includes("04_servicefees") || lower.includes("servicefees") || lower.includes("service fees")) {
-    return { code: "04_SERVICE_FEES", label: "04. Phí dịch vụ Service Fees", isIngestable: true };
-  }
-  if (lower.includes("05_campaigns") || lower.includes("campaign")) {
-    return { code: "05_CAMPAIGNS", label: "05. Chi phí Ads (Portfolios)", isIngestable: true };
-  }
-  if (lower.includes("06_fbainventory") || lower.includes("fbainventory") || lower.includes("fba inventory")) {
-    return { code: "06_FBA_INVENTORY", label: "06. Tồn kho FBA Inventory", isIngestable: true };
-  }
-  if (lower.includes("08_dcshipments") || lower.includes("dcshipments") || lower.includes("dc-shipment") || lower.includes("awd")) {
-    return { code: "08_DC_SHIPMENTS", label: "08. Lô hàng Distribution Center (AWD)", isIngestable: false };
-  }
-  if (lower.includes("07_shipments") || lower.includes("shipment")) {
-    return { code: "07_SHIPMENTS", label: "07. Lô hàng Inbound Shipments", isIngestable: true };
-  }
+
+  // 2. Báo cáo tồn kho: FBA Ledger + AWD Ledger tải theo tuần & theo tháng
   if (
     lower.includes("09_inventoryledger") ||
     lower.includes("inventoryledger") ||
+    lower.includes("inventory_ledger") ||
     lower.includes("ledger_report") ||
     lower.includes("ledgerreport") ||
     lower.includes("inventory ledger")
   ) {
-    return { code: "09_INVENTORY_LEDGER", label: "09. Tồn kho Inventory Ledger", isIngestable: true };
+    return { code: "09_INVENTORY_LEDGER", label: "09. Tồn kho Inventory Ledger FBA", category: "inventory", isIngestable: true };
   }
-  return { code: "OTHER", label: "Khác", isIngestable: false };
+  if (lower.includes("awd_ledger") || lower.includes("awd_inventory") || (lower.includes("awd") && lower.includes("ledger"))) {
+    return { code: "AWD_INVENTORY_LEDGER", label: "Tồn kho AWD Ledger", category: "inventory", isIngestable: false };
+  }
+  if (lower.includes("ledger") || lower.includes("ton_kho") || lower.includes("tonkho")) {
+    return { code: "INVENTORY_OTHER", label: "Báo cáo tồn kho", category: "inventory", isIngestable: false };
+  }
+
+  // 3. Báo cáo ngày: 8 file kế toán tải hằng ngày (File 01 -> File 08)
+  if (lower.includes("01_portfolios") || lower.includes("portfolio")) {
+    return { code: "01_PORTFOLIOS", label: "01. Danh mục Portfolios", category: "daily", isIngestable: true };
+  }
+  if (lower.includes("02_allorders") || lower.includes("allorders") || lower.includes("all orders")) {
+    return { code: "02_ALL_ORDERS", label: "02. Đơn hàng All Orders", category: "daily", isIngestable: true };
+  }
+  if (lower.includes("03_returns") || lower.includes("returns")) {
+    return { code: "03_RETURNS", label: "03. Trả hàng Returns", category: "daily", isIngestable: true };
+  }
+  if (lower.includes("04_servicefees") || lower.includes("servicefees") || lower.includes("service fees")) {
+    return { code: "04_SERVICE_FEES", label: "04. Phí dịch vụ Service Fees", category: "daily", isIngestable: true };
+  }
+  if (lower.includes("05_campaigns") || lower.includes("campaign")) {
+    return { code: "05_CAMPAIGNS", label: "05. Chi phí Ads (Portfolios)", category: "daily", isIngestable: true };
+  }
+  if (lower.includes("06_fbainventory") || lower.includes("fbainventory") || lower.includes("fba inventory")) {
+    return { code: "06_FBA_INVENTORY", label: "06. Tồn kho FBA Inventory", category: "daily", isIngestable: true };
+  }
+  if (lower.includes("07_shipments") || lower.includes("shipment")) {
+    return { code: "07_SHIPMENTS", label: "07. Lô hàng Inbound Shipments", category: "daily", isIngestable: true };
+  }
+  if (lower.includes("08_dcshipments") || lower.includes("dcshipments") || lower.includes("dc-shipment")) {
+    return { code: "08_DC_SHIPMENTS", label: "08. Lô hàng Distribution Center (AWD)", category: "daily", isIngestable: false };
+  }
+
+  return { code: "OTHER", label: "Khác", category: "daily", isIngestable: false };
 }
 
 export async function listManagedAccountingFiles(options?: {
   storeName?: string;
   reportDate?: string;
+  category?: AccountingReportCategory | "ALL";
 }): Promise<{
   files: ManagedAccountingFile[];
   stats: AccountingFileStats;
@@ -167,7 +237,7 @@ export async function listManagedAccountingFiles(options?: {
               const storeStr = parts[1].toUpperCase();
               const fname = parts.slice(2).join("/");
 
-              const typeInfo = detectFileType(fname);
+              const typeInfo = detectFileType(fname, dateStr);
               const fileId = `${dateStr}_${storeStr}_${fname}`;
 
               fileMap.set(fileId, {
@@ -178,6 +248,7 @@ export async function listManagedAccountingFiles(options?: {
                 fileName: fname,
                 fileTypeCode: typeInfo.code,
                 fileTypeLabel: typeInfo.label,
+                category: typeInfo.category,
                 sizeBytes: item.Size || 0,
                 lastModified: item.LastModified?.toISOString() || new Date().toISOString(),
                 isIngestable: typeInfo.isIngestable,
@@ -208,7 +279,7 @@ export async function listManagedAccountingFiles(options?: {
             const fPath = path.join(sPath, fname);
             const stat = fs.statSync(fPath);
             const fileId = `${d}_${sUpper}_${fname}`;
-            const typeInfo = detectFileType(fname);
+            const typeInfo = detectFileType(fname, d);
 
             const existing = fileMap.get(fileId);
             if (existing) {
@@ -222,6 +293,7 @@ export async function listManagedAccountingFiles(options?: {
                 fileName: fname,
                 fileTypeCode: typeInfo.code,
                 fileTypeLabel: typeInfo.label,
+                category: typeInfo.category,
                 sizeBytes: stat.size,
                 lastModified: stat.mtime.toISOString(),
                 isIngestable: typeInfo.isIngestable,
@@ -238,7 +310,16 @@ export async function listManagedAccountingFiles(options?: {
 
   let allFiles = Array.from(fileMap.values());
 
-  // Lọc
+  const dailyFilesCount = allFiles.filter((f) => f.category === "daily").length;
+  const monthlyFilesCount = allFiles.filter((f) => f.category === "monthly").length;
+  const inventoryFilesCount = allFiles.filter((f) => f.category === "inventory").length;
+
+  // Lọc category
+  if (options?.category && options.category !== "ALL") {
+    allFiles = allFiles.filter((f) => f.category === options.category);
+  }
+
+  // Lọc Store & Date
   if (options?.storeName && options.storeName !== "ALL") {
     allFiles = allFiles.filter((f) => f.storeName.toUpperCase() === options.storeName?.toUpperCase());
   }
@@ -274,6 +355,9 @@ export async function listManagedAccountingFiles(options?: {
       datesCount: availableDates.length,
       latestDate: availableDates[0] || "",
       latestModified,
+      dailyFilesCount,
+      monthlyFilesCount,
+      inventoryFilesCount,
     },
     availableStores,
     availableDates,

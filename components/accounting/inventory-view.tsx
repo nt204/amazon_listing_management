@@ -45,6 +45,10 @@ import type { SkuMasterItem, InboundShipmentItem, CheckShipmentItem, SkuChannel 
 import { channelTabActiveClass, channelTabBadgeActiveClass } from "./channel-tab-colors";
 import { storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
 import type { Store } from "@/lib/accounting/types";
+import {
+  AccountingTableSkeletonRows,
+  AccountingTopProgressBar,
+} from "./accounting-skeleton";
 
 const DEFAULT_PRODUCT_TYPES = [
   "11 Oz Glass",
@@ -5737,7 +5741,8 @@ function InventoryViewInner() {
           FROZEN COLUMNS: STT (left-0), Product Type (left-[56px]), Phôi Mockup (left-[230px]), Mã SKU (left-[326px])
           SOLID 100% OPAQUE BACKGROUND & CRISP DIVIDER LINE */}
       {visitedTabs.sku && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col ${activeTab === "sku" ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${activeTab === "sku" ? "" : "hidden"}`}>
+          <AccountingTopProgressBar loading={loadingSkus} variant="indigo" />
           <div
             ref={skuScrollRef}
             className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600"
@@ -5759,14 +5764,13 @@ function InventoryViewInner() {
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
-                {loadingSkus ? (
-                  <tr>
-                    <td colSpan={skuVisibleCount + 1} className="py-20 text-center text-slate-500 font-bold text-base">
-                      <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-indigo-600" />
-                      Đang tải {skuSheetLabel} của Store {selectedStore?.name}...
-                    </td>
-                  </tr>
+              <tbody
+                className={`divide-y divide-slate-200 transition-opacity duration-200 ${
+                  loadingSkus && sortedSkus.length > 0 ? "opacity-60 pointer-events-none" : "opacity-100"
+                }`}
+              >
+                {loadingSkus && sortedSkus.length === 0 ? (
+                  <AccountingTableSkeletonRows rows={12} colSpan={skuVisibleCount + 1} />
                 ) : sortedSkus.length === 0 ? (
                   <tr>
                     <td colSpan={skuVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
@@ -5943,7 +5947,8 @@ function InventoryViewInner() {
       {/* TAB 2: INBOUND SHIPMENTS TABLE
           FROZEN COLUMNS: STT (left-0), Product Type (left-[56px]), Mockup (left-[230px]), Mã SKU (left-[326px]) */}
       {visitedTabs.inbound && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col ${activeTab === "inbound" ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${activeTab === "inbound" ? "" : "hidden"}`}>
+          <AccountingTopProgressBar loading={loadingShipments} variant="indigo" />
           <div
             ref={shipmentScrollRef}
             className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600"
@@ -5965,14 +5970,13 @@ function InventoryViewInner() {
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
-                {loadingShipments ? (
-                  <tr>
-                    <td colSpan={inboundVisibleCount + 1} className="py-20 text-center text-slate-500 font-bold text-base">
-                      <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-indigo-600" />
-                      Đang tải danh sách lô hàng của Store {selectedStore?.name}...
-                    </td>
-                  </tr>
+              <tbody
+                className={`divide-y divide-slate-200 transition-opacity duration-200 ${
+                  loadingShipments && sortedShipments.length > 0 ? "opacity-60 pointer-events-none" : "opacity-100"
+                }`}
+              >
+                {loadingShipments && sortedShipments.length === 0 ? (
+                  <AccountingTableSkeletonRows rows={10} colSpan={inboundVisibleCount + 1} />
                 ) : sortedShipments.length === 0 ? (
                   <tr>
                     <td colSpan={inboundVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
@@ -6149,7 +6153,8 @@ function InventoryViewInner() {
       {/* TAB 3: CHECK SHIPMENT TABLE
           FROZEN COLUMNS: STT (left-0), Shipment ID (left-[58px]), Shipment Name (left-[218px]) */}
       {visitedTabs.check_shipment && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col ${activeTab === "check_shipment" ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${activeTab === "check_shipment" ? "" : "hidden"}`}>
+          <AccountingTopProgressBar loading={loadingCheckShipments} variant="indigo" />
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
               <table ref={checkShipmentTableRef} className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
@@ -6170,14 +6175,13 @@ function InventoryViewInner() {
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
-                {loadingCheckShipments ? (
-                  <tr>
-                    <td colSpan={checkShipmentVisibleCount + 1} className="py-20 text-center text-slate-500 font-bold text-base">
-                      <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-indigo-600" />
-                      Đang tải danh sách check shipment của Store {selectedStore?.name}...
-                    </td>
-                  </tr>
+              <tbody
+                className={`divide-y divide-slate-200 transition-opacity duration-200 ${
+                  loadingCheckShipments && sortedCheckShipments.length > 0 ? "opacity-60 pointer-events-none" : "opacity-100"
+                }`}
+              >
+                {loadingCheckShipments && sortedCheckShipments.length === 0 ? (
+                  <AccountingTableSkeletonRows rows={10} colSpan={checkShipmentVisibleCount + 1} />
                 ) : sortedCheckShipments.length === 0 ? (
                   <tr>
                     <td colSpan={checkShipmentVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
@@ -7930,7 +7934,7 @@ function InventoryViewInner() {
         </div>
       )}
       {fieldEditor && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4" onClick={() => setFieldEditor(null)}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4 animate-in fade-in duration-150" onClick={() => setFieldEditor(null)}>
           <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div><p className="text-sm font-black text-slate-900">Cấu hình cột</p><p className="text-xs text-slate-500">{fieldEditor.field_id}</p></div>

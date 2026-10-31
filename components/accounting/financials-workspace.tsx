@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, startTransition } from "react";
+import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   CalendarBlankIcon,
@@ -12,17 +12,15 @@ import {
 } from "@phosphor-icons/react";
 import { storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
 import type { StoreAccessInfo } from "@/lib/accounting/types";
-import { channelTabActiveClass, channelTabBadgeActiveClass } from "./channel-tab-colors";
+import { channelTabBadgeActiveClass } from "./channel-tab-colors";
+import {
+  AccountingModuleSkeleton,
+  AnimatedTabPill,
+  AccountingViewTransition,
+} from "./accounting-skeleton";
 
 function TabLoading() {
-  return (
-    <div className="grid h-full min-h-[420px] place-items-center bg-slate-50" role="status">
-      <div className="text-center">
-        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-amber-100 border-t-amber-500" />
-        <p className="mt-3 text-xs font-bold text-slate-500">Đang tải dữ liệu…</p>
-      </div>
-    </div>
-  );
+  return <AccountingModuleSkeleton title="Đang tải dữ liệu tài chính..." cardsCount={0} />;
 }
 
 const SkuWinView = dynamic(
@@ -126,25 +124,39 @@ export function FinancialsWorkspace() {
         key={tab.key}
         type="button"
         onClick={() => handleTabChange(tab.key)}
-        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
+        className={`relative flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border cursor-pointer select-none whitespace-nowrap acc-interactive-btn ${
           isActive
-            ? channelTabActiveClass(isFbm ? "fbm" : "fba")
+            ? isFbm
+              ? "text-white border-violet-700"
+              : "text-white border-sky-700"
             : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
         }`}
       >
-        <Icon size={14} weight="bold" />
-        <span>{tab.label}</span>
-        {tab.badge && (
-          <span
-            className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-              isActive
-                ? channelTabBadgeActiveClass(isFbm ? "fbm" : "fba")
-                : "bg-slate-300/80 text-slate-700"
-            }`}
-          >
-            {tab.badge}
-          </span>
+        {isActive && (
+          <AnimatedTabPill
+            layoutId="financials-tab-indicator"
+            className={
+              isFbm
+                ? "bg-violet-600 shadow-2xs border border-violet-700"
+                : "bg-sky-600 shadow-2xs border border-sky-700"
+            }
+          />
         )}
+        <span className="relative z-10 flex items-center gap-1.5">
+          <Icon size={14} weight="bold" />
+          <span>{tab.label}</span>
+          {tab.badge && (
+            <span
+              className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                isActive
+                  ? channelTabBadgeActiveClass(isFbm ? "fbm" : "fba")
+                  : "bg-slate-300/80 text-slate-700"
+              }`}
+            >
+              {tab.badge}
+            </span>
+          )}
+        </span>
       </button>
     );
   };
@@ -168,11 +180,13 @@ export function FinancialsWorkspace() {
 
       {/* CONTENT PANELS: Mount ONLY active tab to isolate performance and eliminate background lag */}
       <div className="flex-1 overflow-hidden relative">
-        {visibleTab === "fba" && <FbaDailyView key="fba" />}
-        {visibleTab === "sku_win" && <SkuWinView key="sku_win" />}
-        {visibleTab === "sku_test" && <SkuTestView />}
-        {visibleTab === "fbm" && <FbaDailyView key="fbm" channel="fbm" />}
-        {visibleTab === "fbm_fixed" && <SkuWinView key="fbm_fixed" variant="fbm_fixed" />}
+        <AccountingViewTransition transitionKey={visibleTab} className="h-full w-full">
+          {visibleTab === "fba" && <FbaDailyView key="fba" />}
+          {visibleTab === "sku_win" && <SkuWinView key="sku_win" />}
+          {visibleTab === "sku_test" && <SkuTestView />}
+          {visibleTab === "fbm" && <FbaDailyView key="fbm" channel="fbm" />}
+          {visibleTab === "fbm_fixed" && <SkuWinView key="fbm_fixed" variant="fbm_fixed" />}
+        </AccountingViewTransition>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import type { InventoryEntityType, InventoryHistoryItem } from "@/lib/accounting/inventory-db";
+import { AccountingAnimatedDrawer } from "./accounting-skeleton";
 
 interface InventoryHistoryDrawerProps {
   isOpen: boolean;
@@ -242,19 +243,9 @@ export function InventoryHistoryDrawer({
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden animate-in fade-in duration-200">
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity"
-        onClick={onClose}
-      />
-
-      {/* Drawer */}
-      <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="w-screen max-w-xl bg-white shadow-2xl flex flex-col border-l border-slate-200">
+    <AccountingAnimatedDrawer isOpen={isOpen} onClose={onClose} maxWidthClass="max-w-xl">
+      <div className="flex h-full w-full flex-col">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
             <div className="flex items-center gap-3">
@@ -507,8 +498,7 @@ export function InventoryHistoryDrawer({
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </AccountingAnimatedDrawer>
   );
 }
 

@@ -47,6 +47,10 @@ import {
   getSavedStoreDateRange,
   saveStoreDateRange,
 } from "./financials-date-utils";
+import {
+  AccountingTableSkeletonRows,
+  AccountingTopProgressBar,
+} from "./accounting-skeleton";
 
 export interface SkuWinItem {
   id: string;
@@ -1040,7 +1044,8 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
       )}
 
       {/* 3. DATA TABLE (EXCEL GRID CHUẨN GIAO DIỆN BẢNG MÃ CÓ ĐẦY ĐỦ CHỨC NĂNG, FIT CHIỀU CAO) */}
-      <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col">
+      <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative">
+        <AccountingTopProgressBar loading={loading} variant="amber" />
         <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-210px)] min-h-[520px] scrollbar-thin">
           <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
             <table className="acc-financial-table acc-financial-table-unzoomed min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
@@ -1342,14 +1347,13 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
               </thead>
 
               {/* Body */}
-              <tbody className="divide-y divide-slate-200">
-                {loading ? (
-                  <tr>
-                    <td colSpan={visibleColumns.length} className="py-24 text-center text-slate-500 font-bold text-sm">
-                      <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-amber-600" />
-                      Đang tải dữ liệu {fbm ? "Lọc SKU cố định FBM" : "Lọc SKU Win"} của Store {selectedStore?.name}...
-                    </td>
-                  </tr>
+              <tbody
+                className={`divide-y divide-slate-200 transition-opacity duration-200 ${
+                  loading && displayItems.length > 0 ? "opacity-60 pointer-events-none" : "opacity-100"
+                }`}
+              >
+                {loading && displayItems.length === 0 ? (
+                  <AccountingTableSkeletonRows rows={12} colSpan={visibleColumns.length} />
                 ) : displayItems.length === 0 ? (
                   <tr>
                     <td colSpan={visibleColumns.length} className="py-24 text-center text-slate-500 text-sm">
@@ -1801,7 +1805,7 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
 
       {/* 4. TARGET & PRICE EDIT MODAL */}
       {targetModalItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
@@ -1904,7 +1908,7 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
       {/* 5. IMAGE PREVIEW MODAL */}
       {previewImage && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 cursor-zoom-out"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 cursor-zoom-out animate-in fade-in duration-150"
           onClick={() => setPreviewImage(null)}
         >
           <div

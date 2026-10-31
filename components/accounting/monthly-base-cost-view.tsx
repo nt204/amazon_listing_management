@@ -1003,7 +1003,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
       {/* MODAL 2: Lightbox xem ảnh Mockup lớn */}
       {previewImage && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs cursor-pointer"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs cursor-pointer animate-in fade-in duration-150"
           onClick={() => setPreviewImage(null)}
         >
           <div
@@ -1030,7 +1030,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
 
       {/* MODAL 3: Chi tiết tính toán Basecost của 1 tháng cụ thể */}
       {breakdownData && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850">
               <div>

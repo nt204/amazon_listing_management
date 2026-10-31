@@ -14,8 +14,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const storeName = url.searchParams.get("storeName") || undefined;
     const reportDate = url.searchParams.get("date") || undefined;
+    const category = (url.searchParams.get("category") as any) || undefined;
 
-    const data = await listManagedAccountingFiles({ storeName, reportDate });
+    const data = await listManagedAccountingFiles({ storeName, reportDate, category });
 
     return Response.json({
       success: true,
@@ -55,10 +56,19 @@ export async function POST(request: Request) {
       if (
         fileTypeCode === "09_INVENTORY_LEDGER" ||
         detected.code === "09_INVENTORY_LEDGER" ||
-        /^\d{8,}\.(csv|tsv|txt)$/i.test(originalName) ||
+        (/^\d{8,}\.(csv|tsv|txt)$/i.test(originalName) && !originalName.toLowerCase().includes("month")) ||
         originalName.toLowerCase().includes("ledger")
       ) {
         standardFileName = `09_InventoryLedger_${reportDate}.csv`;
+      } else if (
+        fileTypeCode === "10_MONTHLY_REPORT" ||
+        detected.code === "10_MONTHLY_REPORT" ||
+        originalName.toLowerCase().includes("monthly")
+      ) {
+        const ext = originalName.slice(originalName.lastIndexOf(".")) || ".csv";
+        standardFileName = originalName.startsWith("10_")
+          ? originalName
+          : `10_MonthlyReport_${reportDate.slice(0, 7)}_${originalName.replace(ext, "")}${ext}`;
       }
 
       const buffer = Buffer.from(await file.arrayBuffer());

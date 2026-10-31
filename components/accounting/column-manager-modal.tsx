@@ -17,6 +17,7 @@ import {
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import { AccountingAnimatedModal } from "./accounting-skeleton";
 
 export interface ColumnConfig {
   id: string;
@@ -589,8 +590,6 @@ export function ColumnManagerModal({
     );
   }, [localColumns, search]);
 
-  if (!isOpen) return null;
-
   // Toggle visibility of a column
   const handleToggleVisible = (id: string) => {
     setLocalColumns((prev) =>
@@ -732,14 +731,8 @@ export function ColumnManagerModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-200"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-3xl max-h-[92vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <AccountingAnimatedModal isOpen={isOpen} onClose={onClose} maxWidthClass="max-w-3xl">
+      <div className="flex h-full w-full flex-col overflow-hidden">
         {/* HEADER */}
         <div className="px-6 py-4 border-b border-slate-200 bg-linear-to-r from-amber-500 via-amber-600 to-orange-600 text-slate-950 flex items-center justify-between shadow-xs">
           <div className="flex items-center gap-3">
@@ -1132,6 +1125,6 @@ export function ColumnManagerModal({
           </div>
         </div>
       </div>
-    </div>
+    </AccountingAnimatedModal>
   );
 }

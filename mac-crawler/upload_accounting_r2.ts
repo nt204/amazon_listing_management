@@ -46,8 +46,8 @@ async function uploadAccountingFilesToR2() {
   }
 
   const requestedDate = process.argv.find((arg) => arg.startsWith("--date="))?.slice("--date=".length);
-  if (requestedDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
-    throw new Error(`--date không hợp lệ: ${requestedDate}. Dùng YYYY-MM-DD.`);
+  if (requestedDate && !/^\d{4}-\d{2}(-\d{2})?$/.test(requestedDate)) {
+    throw new Error(`--date không hợp lệ: ${requestedDate}. Dùng YYYY-MM hoặc YYYY-MM-DD.`);
   }
   const dateDirs = (requestedDate ? [requestedDate] : fs.readdirSync(baseDir))
     .filter((d) => !d.startsWith(".") && fs.existsSync(path.join(baseDir, d)) && fs.statSync(path.join(baseDir, d)).isDirectory());
@@ -78,6 +78,8 @@ async function uploadAccountingFilesToR2() {
                 ? "text/csv"
                 : fileName.endsWith(".tsv") || fileName.endsWith(".txt")
                 ? "text/tab-separated-values"
+                : fileName.endsWith(".pdf")
+                ? "application/pdf"
                 : "application/octet-stream",
             }),
           );
