@@ -121,18 +121,13 @@ export async function listSkuWin(
     ? (status.toLowerCase() === "all" ? sql`` : sql`AND (sm.status = ${status} OR LOWER(sm.status) = LOWER(${status}))`)
     : (defaultStatus.toLowerCase() === "all" ? sql`` : sql`AND (sm.status = ${defaultStatus} OR LOWER(sm.status) = LOWER(${defaultStatus}))`);
 
-  // 1. Fetch available Product Types and Statuses for filter dropdowns
-  const [filterOptions] = await Promise.all([
-    sql<{ product_type: string; status: string }[]>`
-      SELECT DISTINCT sm.product_type, sm.status
-      FROM accounting_sku_master sm
-      WHERE sm.store_id = ${storeId} AND sm.deleted_at IS NULL
-        ${statusCondition}
-    `,
-  ]);
-
-  const productTypes = Array.from(new Set(filterOptions.map((r) => r.product_type).filter(Boolean))) as string[];
-  const statuses = Array.from(new Set(filterOptions.map((r) => r.status).filter(Boolean))) as string[];
+  // 1. Prepare filter options query and main aggregation query concurrently
+  const filterOptionsPromise = sql<{ product_type: string; status: string }[]>`
+    SELECT DISTINCT sm.product_type, sm.status
+    FROM accounting_sku_master sm
+    WHERE sm.store_id = ${storeId} AND sm.deleted_at IS NULL
+      ${statusCondition}
+  `;
 
   // 2. Build and execute unified aggregation query in PostgreSQL
   // Date conditions for orders, ads, returns, shipments
@@ -140,7 +135,7 @@ export async function listSkuWin(
   const hasCompareFilter = Boolean(compareStartDate && compareEndDate);
 
   // We query all active SKUs in the store joined with their orders, ads, returns, shipments, and basecost
-  const rows = await sql<Record<string, unknown>[]>`
+  const rowsPromise = sql<Record<string, unknown>[]>`
     WITH asin_fees AS (
       SELECT 
         store_id,
@@ -361,6 +356,11 @@ export async function listSkuWin(
     ${productType ? sql`AND sm.product_type = ${productType}` : sql``}
     ${search ? sql`AND (sm.sku ILIKE ${'%' + search + '%'} OR sm.asin ILIKE ${'%' + search + '%'} OR sm.product_type ILIKE ${'%' + search + '%'} OR sm.niche ILIKE ${'%' + search + '%'} OR sm.pic_mkt ILIKE ${'%' + search + '%'})` : sql``}
   `;
+
+  const [filterOptions, rows] = await Promise.all([filterOptionsPromise, rowsPromise]);
+
+  const productTypes = Array.from(new Set(filterOptions.map((r) => r.product_type).filter(Boolean))) as string[];
+  const statuses = Array.from(new Set(filterOptions.map((r) => r.status).filter(Boolean))) as string[];
 
   // 3. Process items in JavaScript with exact formulas
   const processedItems: SkuWinItem[] = rows.map((r) => {

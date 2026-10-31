@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
+import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 import ExcelJS from "exceljs";
 import { parseCsv } from "@/lib/csv";
 import { ApiError } from "@/lib/api-guard";
@@ -381,80 +382,86 @@ export async function saveInventoryFieldSetting(storeId: string, setting: Invent
       label = EXCLUDED.label, input_type = EXCLUDED.input_type, options = EXCLUDED.options,
       allow_custom_value = EXCLUDED.allow_custom_value, updated_at = NOW()
   `;
+  try {
+    await invalidateCachePattern(`acc:inv:options:v1:${storeId}*`);
+  } catch {}
 }
 
 /**
- * Returns every usable text value for the selected store.  This deliberately
+ * Returns every usable text value for the selected store. This deliberately
  * does not depend on the paginated table query, so new forms can suggest
  * values that are only present on older records.
+ * Cached for 10 minutes to avoid running 16 distinct SQL queries on every page load.
  */
 export async function listInventoryFieldOptions(storeId: string): Promise<InventoryFieldOptions> {
-  const sql = await getDatabaseClient();
-  const skuFields = ["product_type", "pic_mkt", "loai", "niche", "pic_idea", "status", "event", "tinh_trang", "design_pic"] as const;
-  const inboundFields = ["product_type", "sup", "line_ship", "status", "trang_thai", "tinh_trang_hang_den_kho"] as const;
+  return getCachedOrFetch(`acc:inv:options:v1:${storeId}`, 600, async () => {
+    const sql = await getDatabaseClient();
+    const skuFields = ["product_type", "pic_mkt", "loai", "niche", "pic_idea", "status", "event", "tinh_trang", "design_pic"] as const;
+    const inboundFields = ["product_type", "sup", "line_ship", "status", "trang_thai", "tinh_trang_hang_den_kho"] as const;
 
-  const getValues = async (table: "accounting_sku_master" | "accounting_inbound_shipments", field: string) => {
-    const rows = await sql<{ value: string }[]>`
-      SELECT DISTINCT BTRIM(${sql(field)}) AS value
-      FROM ${sql(table)}
-      WHERE store_id = ${storeId}
-        AND deleted_at IS NULL
-        AND ${sql(field)} IS NOT NULL
-        AND BTRIM(${sql(field)}) <> ''
-        AND BTRIM(${sql(field)}) <> '0'
-        AND BTRIM(${sql(field)}) <> '0.00'
-        AND BTRIM(${sql(field)}) <> '—'
-        AND BTRIM(${sql(field)}) <> '-'
-      ORDER BY value ASC
-    `;
-    return rows.map((row) => row.value).filter(isValidOptionValue);
-  };
+    const getValues = async (table: "accounting_sku_master" | "accounting_inbound_shipments", field: string) => {
+      const rows = await sql<{ value: string }[]>`
+        SELECT DISTINCT BTRIM(${sql(field)}) AS value
+        FROM ${sql(table)}
+        WHERE store_id = ${storeId}
+          AND deleted_at IS NULL
+          AND ${sql(field)} IS NOT NULL
+          AND BTRIM(${sql(field)}) <> ''
+          AND BTRIM(${sql(field)}) <> '0'
+          AND BTRIM(${sql(field)}) <> '0.00'
+          AND BTRIM(${sql(field)}) <> '—'
+          AND BTRIM(${sql(field)}) <> '-'
+        ORDER BY value ASC
+      `;
+      return rows.map((row) => row.value).filter(isValidOptionValue);
+    };
 
-  // Lấy toàn bộ Product Type chuẩn từ product_cost_master để luôn có danh sách phôi hoàn chỉnh
-  let masterProductTypes: string[] = [];
-  try {
-    const masterRows = await sql<{ value: string }[]>`
-      SELECT DISTINCT BTRIM(product_type) AS value
-      FROM product_cost_master
-      WHERE product_type IS NOT NULL AND BTRIM(product_type) <> ''
-      ORDER BY value ASC
-    `;
-    masterProductTypes = masterRows.map((r) => r.value);
-  } catch {}
+    // Lấy toàn bộ Product Type chuẩn từ product_cost_master để luôn có danh sách phôi hoàn chỉnh
+    let masterProductTypes: string[] = [];
+    try {
+      const masterRows = await sql<{ value: string }[]>`
+        SELECT DISTINCT BTRIM(product_type) AS value
+        FROM product_cost_master
+        WHERE product_type IS NOT NULL AND BTRIM(product_type) <> ''
+        ORDER BY value ASC
+      `;
+      masterProductTypes = masterRows.map((r) => r.value);
+    } catch {}
 
-  const [skuEntries, inboundEntries] = await Promise.all([
-    Promise.all(skuFields.map(async (field) => {
-      const vals = await getValues("accounting_sku_master", field);
-      if (field === "product_type") {
-        const merged = [...new Set([...vals, ...masterProductTypes])].sort((a, b) => a.localeCompare(b));
-        return [field, merged] as const;
-      }
-      return [field, vals] as const;
-    })),
-    Promise.all(inboundFields.map(async (field) => {
-      const vals = await getValues("accounting_inbound_shipments", field);
-      if (field === "product_type") {
-        const merged = [...new Set([...vals, ...masterProductTypes])].sort((a, b) => a.localeCompare(b));
-        return [field, merged] as const;
-      }
-      if (field === "status") {
-        const defaults = ["Working", "In Transit", "Receiving", "Closed", "Cancelled", "Delivered"];
-        const merged = [...new Set([...vals, ...defaults])];
-        return [field, merged] as const;
-      }
-      if (field === "trang_thai") {
-        const defaults = ["Phát triển", "Active", "Test", "Hủy", "Tạm dừng", "Đã updated", "Tối ưu"];
-        const merged = [...new Set([...vals, ...defaults])];
-        return [field, merged] as const;
-      }
-      return [field, vals] as const;
-    })),
-  ]);
+    const [skuEntries, inboundEntries] = await Promise.all([
+      Promise.all(skuFields.map(async (field) => {
+        const vals = await getValues("accounting_sku_master", field);
+        if (field === "product_type") {
+          const merged = [...new Set([...vals, ...masterProductTypes])].sort((a, b) => a.localeCompare(b));
+          return [field, merged] as const;
+        }
+        return [field, vals] as const;
+      })),
+      Promise.all(inboundFields.map(async (field) => {
+        const vals = await getValues("accounting_inbound_shipments", field);
+        if (field === "product_type") {
+          const merged = [...new Set([...vals, ...masterProductTypes])].sort((a, b) => a.localeCompare(b));
+          return [field, merged] as const;
+        }
+        if (field === "status") {
+          const defaults = ["Working", "In Transit", "Receiving", "Closed", "Cancelled", "Delivered"];
+          const merged = [...new Set([...vals, ...defaults])];
+          return [field, merged] as const;
+        }
+        if (field === "trang_thai") {
+          const defaults = ["Phát triển", "Active", "Test", "Hủy", "Tạm dừng", "Đã updated", "Tối ưu"];
+          const merged = [...new Set([...vals, ...defaults])];
+          return [field, merged] as const;
+        }
+        return [field, vals] as const;
+      })),
+    ]);
 
-  return {
-    sku: Object.fromEntries(skuEntries) as InventoryFieldOptions["sku"],
-    inbound: Object.fromEntries(inboundEntries) as InventoryFieldOptions["inbound"],
-  };
+    return {
+      sku: Object.fromEntries(skuEntries) as InventoryFieldOptions["sku"],
+      inbound: Object.fromEntries(inboundEntries) as InventoryFieldOptions["inbound"],
+    };
+  });
 }
 
 export async function listSkuMaster(
@@ -1827,6 +1834,12 @@ export const SKU_HEADER_MAP: Record<string, string> = {
   "brand logo asset id": "brand_logo_asset_id",
   "landing page url": "landing_page_url",
   "landing page": "landing_page_url",
+  "tồn": "ton_kho",
+  "ton": "ton_kho",
+  "tồn kho": "ton_kho",
+  "ton kho": "ton_kho",
+  "giá trị tồn": "gia_tri_ton",
+  "gia tri ton": "gia_tri_ton",
 };
 
 export const INBOUND_HEADER_MAP: Record<string, string> = {
@@ -2251,7 +2264,7 @@ export function createDefaultInboundSheet(ws: ExcelJS.Worksheet, shipments: any[
       row.status ?? null,
       row.so_luong_amazon_nhan != null && row.so_luong_amazon_nhan !== "" ? Number(row.so_luong_amazon_nhan) : null,
       // Y (25) Discrepancy
-      computedDiscrepancy,
+      { formula: `IF(ISBLANK(U${r}),"",U${r}-G${r})`, result: computedDiscrepancy ?? (amzReceived != null ? amzReceived - qty : 0) },
       row.note ?? null,
       row.trang_thai ?? null,
     ];

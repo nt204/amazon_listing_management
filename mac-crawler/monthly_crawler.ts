@@ -579,23 +579,23 @@ async function downloadPaymentsReportsRepository(
 
   let found = await findReports();
 
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const startDateISO = `${year}-${pad(monthIdx + 1)}-01T00:00:00+07:00`;
+  const endDateISO = `${year}-${pad(monthIdx + 1)}-${pad(daysInMonth)}T23:59:59+07:00`;
+  const startMs = new Date(startDateISO).getTime();
+  const endMs = new Date(endDateISO).getTime();
+
   // Nếu chưa có báo cáo Transaction cho tháng này và file chưa có trên máy, gửi yêu cầu tạo
   if (!found.trans && !hasTrans) {
     console.log(`  [15_DateRangeTransactions] Chưa có báo cáo Transaction tháng ${monthStr}. Đang gửi request tạo...`);
-    await page.evaluate(async ({ year, monthIdx, daysInMonth }) => {
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const startDateISO = `${year}-${pad(monthIdx + 1)}-01T00:00:00+07:00`;
-      const endDateISO = `${year}-${pad(monthIdx + 1)}-${pad(daysInMonth)}T23:59:59+07:00`;
-      const startMs = new Date(startDateISO).getTime();
-      const endMs = new Date(endDateISO).getTime();
-
+    await page.evaluate(async (params) => {
       const payload = {
         accountType: "ALL",
         reportType: "SELLER_TRANSACTION_DATE_RANGE",
-        startDate: startMs,
-        startDateISO,
-        endDate: endMs,
-        endDateISO,
+        startDate: params.startMs,
+        startDateISO: params.startDateISO,
+        endDate: params.endMs,
+        endDateISO: params.endDateISO,
         timeRangeType: "MONTHLY",
       };
 
@@ -606,26 +606,20 @@ async function downloadPaymentsReportsRepository(
           body: JSON.stringify(payload),
         });
       } catch {}
-    }, { year, monthIdx, daysInMonth });
+    }, { startMs, endMs, startDateISO, endDateISO });
   }
 
   // Nếu chưa có báo cáo Summary cho tháng này và file chưa có trên máy, gửi yêu cầu tạo Summary
   if (!found.summary && !hasSummary) {
     console.log(`  [16_DateRangeSummary] Chưa có báo cáo Summary tháng ${monthStr}. Đang gửi request tạo...`);
-    await page.evaluate(async ({ year, monthIdx, daysInMonth }) => {
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const startDateISO = `${year}-${pad(monthIdx + 1)}-01T00:00:00+07:00`;
-      const endDateISO = `${year}-${pad(monthIdx + 1)}-${pad(daysInMonth)}T23:59:59+07:00`;
-      const startMs = new Date(startDateISO).getTime();
-      const endMs = new Date(endDateISO).getTime();
-
+    await page.evaluate(async (params) => {
       const payload = {
         accountType: "ALL",
         reportType: "SELLER_SUMMARY_DATE_RANGE",
-        startDate: startMs,
-        startDateISO,
-        endDate: endMs,
-        endDateISO,
+        startDate: params.startMs,
+        startDateISO: params.startDateISO,
+        endDate: params.endMs,
+        endDateISO: params.endDateISO,
         timeRangeType: "MONTHLY",
       };
 
@@ -636,7 +630,7 @@ async function downloadPaymentsReportsRepository(
           body: JSON.stringify(payload),
         });
       } catch {}
-    }, { year, monthIdx, daysInMonth });
+    }, { startMs, endMs, startDateISO, endDateISO });
   }
 
   // Chờ báo cáo hoàn thành
@@ -738,6 +732,25 @@ async function main() {
       process.argv.find((arg) => arg.startsWith("--date="))?.slice("--date=".length);
     const storeArg = process.argv.find((arg) => arg.startsWith("--store="))?.slice("--store=".length);
 
+    // Hỗ trợ lọc báo cáo tải: --reports=14 hoặc --only-reports=14_MonthlyStorageFees,...
+    const reportsArg =
+      process.argv.find((arg) => arg.startsWith("--reports="))?.slice("--reports=".length) ||
+      process.argv.find((arg) => arg.startsWith("--only-reports="))?.slice("--only-reports=".length);
+    const reportFilters = reportsArg
+      ? reportsArg.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)
+      : null;
+
+    // Hỗ trợ cờ auto-ingest: --no-ingest / --skip-ingest, --force / --force-ingest
+    const noIngest = process.argv.includes("--no-ingest") || process.argv.includes("--skip-ingest");
+    const forceIngest = process.argv.includes("--force") || process.argv.includes("--force-ingest");
+    const shouldAutoIngest = !noIngest && (!reportFilters || process.argv.includes("--ingest") || forceIngest);
+
+    const isReportWanted = (code: string) => {
+      if (!reportFilters || reportFilters.length === 0) return true;
+      const c = code.toLowerCase();
+      return reportFilters.some((f) => c.includes(f) || f.includes(c));
+    };
+
     const targetMonth = monthArg && /^\d{4}-\d{2}$/.test(monthArg) ? monthArg : lastMonthStr;
     const isPreviousMonth = targetMonth === lastMonthStr;
 
@@ -752,7 +765,8 @@ async function main() {
     }
 
     const { startSlash, endSlash } = getMonthDateRange(targetMonth);
-    const msgStart = `🚀 [BÁO CÁO THÁNG] Bắt đầu tải trọn bộ báo cáo tháng ${targetMonth} (${startSlash} → ${endSlash}) cho ${targetStores.length} store: ${targetStores.map((s) => s.store_name).join(", ")}`;
+    const filterInfo = reportFilters ? ` [Lọc báo cáo: ${reportFilters.join(", ")}]` : "";
+    const msgStart = `🚀 [BÁO CÁO THÁNG] Bắt đầu tải báo cáo tháng ${targetMonth} (${startSlash} → ${endSlash})${filterInfo} cho ${targetStores.length} store: ${targetStores.map((s) => s.store_name).join(", ")}`;
     console.log(`\n${msgStart}\n`);
     await sendTelegramMessage(msgStart).catch(() => {});
 
@@ -777,21 +791,28 @@ async function main() {
 
         try {
           // 1. Tải File 01: Ads Portfolios (+ File 05 Campaigns)
-          const p1 = await withSessionRecovery("Ads Portfolios", page, store.store_name, () =>
-            downloadMonthlyPortfolios(page, storeDownloadDir, targetMonth, isPreviousMonth, store.store_name),
-          );
-          if (p1) downloadedFiles.push(path.basename(p1));
-          const p5 = path.join(storeDownloadDir, `05_Campaigns_${targetMonth}.csv`);
-          if (fs.existsSync(p5)) downloadedFiles.push(path.basename(p5));
+          if (isReportWanted("01_Portfolios") || isReportWanted("01") || isReportWanted("ads")) {
+            const p1 = await withSessionRecovery("Ads Portfolios", page, store.store_name, () =>
+              downloadMonthlyPortfolios(page, storeDownloadDir, targetMonth, isPreviousMonth, store.store_name),
+            );
+            if (p1) downloadedFiles.push(path.basename(p1));
+            const p5 = path.join(storeDownloadDir, `05_Campaigns_${targetMonth}.csv`);
+            if (fs.existsSync(p5)) downloadedFiles.push(path.basename(p5));
+          }
 
           // 2. Tải File 02: All Orders
-          const p2 = await withSessionRecovery("All Orders", page, store.store_name, () =>
-            downloadMonthlyOrders(page, storeDownloadDir, targetMonth, store.store_name),
-          );
-          if (p2) downloadedFiles.push(path.basename(p2));
+          if (isReportWanted("02_AllOrders") || isReportWanted("02") || isReportWanted("orders")) {
+            const p2 = await withSessionRecovery("All Orders", page, store.store_name, () =>
+              downloadMonthlyOrders(page, storeDownloadDir, targetMonth, store.store_name),
+            );
+            if (p2) downloadedFiles.push(path.basename(p2));
+          }
 
           // 3. Tải 4 báo cáo kế toán tháng mới (Removal, Inbound Placement, Long-term Storage, Monthly Storage)
           for (const repConfig of ADDITIONAL_MONTHLY_REPORTS) {
+            if (!isReportWanted(repConfig.code) && !isReportWanted(repConfig.code.slice(0, 2))) {
+              continue;
+            }
             try {
               const p = await withSessionRecovery(repConfig.code, page, store.store_name, () =>
                 downloadMonthlyReportCentralFile(page, storeDownloadDir, targetMonth, repConfig, store.store_name),
@@ -803,15 +824,24 @@ async function main() {
           }
 
           // 4. Tải Báo cáo Date Range Transactions & Summary từ Payments Reports Repository
-          try {
-            const pRepo = await withSessionRecovery("Payments Repository", page, store.store_name, () =>
-              downloadPaymentsReportsRepository(page, storeDownloadDir, targetMonth, store.store_name),
-            );
-            for (const p of pRepo) {
-              downloadedFiles.push(path.basename(p));
+          if (
+            isReportWanted("15_DateRangeTransactions") ||
+            isReportWanted("16_DateRangeSummary") ||
+            isReportWanted("15") ||
+            isReportWanted("16") ||
+            isReportWanted("payments") ||
+            isReportWanted("transactions")
+          ) {
+            try {
+              const pRepo = await withSessionRecovery("Payments Repository", page, store.store_name, () =>
+                downloadPaymentsReportsRepository(page, storeDownloadDir, targetMonth, store.store_name),
+              );
+              for (const p of pRepo) {
+                downloadedFiles.push(path.basename(p));
+              }
+            } catch (repoErr: any) {
+              console.warn(`  ⚠️ Lỗi khi tải payments reports repository: ${repoErr.message || repoErr}`);
             }
-          } catch (repoErr: any) {
-            console.warn(`  ⚠️ Lỗi khi tải payments reports repository: ${repoErr.message || repoErr}`);
           }
 
           summaryResults.push({ store: store.store_name, files: downloadedFiles, status: "SUCCESS" });
@@ -834,17 +864,71 @@ async function main() {
     // Đồng bộ lên Cloudflare R2
     await syncMonthlyToR2(targetMonth);
 
-    // Báo cáo hoàn tất
     const successStores = summaryResults.filter((r) => r.status === "SUCCESS");
+
+    // 5. Tự động tính toán kế toán tháng trực tiếp từ file thô vừa tải và lưu vào PostgreSQL
+    if (!shouldAutoIngest) {
+      console.log(`\n⏭️ [AUTO-INGEST] Bỏ qua bước tính toán tự động (${noIngest ? "--no-ingest được kích hoạt" : "đang chạy chế độ lọc báo cáo lẻ"}).`);
+    } else {
+      console.log(`\n📊 [AUTO-INGEST] Bắt đầu tính toán kế toán tháng từ file thô cho các store thành công...`);
+      const pythonBin = process.env.PYTHON_BIN || (fs.existsSync("/opt/homebrew/bin/python3") ? "/opt/homebrew/bin/python3" : (fs.existsSync("/usr/local/bin/python3") ? "/usr/local/bin/python3" : "python3"));
+      const ingestErrors: { store: string; error: string }[] = [];
+      for (const s of successStores) {
+        try {
+          let scriptPath = path.join(__dirname, "..", "scripts", "ingest_monthly_from_raw.py");
+          if (!fs.existsSync(scriptPath)) {
+            scriptPath = path.join(__dirname, "scripts", "ingest_monthly_from_raw.py");
+          }
+          console.log(`  -> Đang tính toán tự động cho store ${s.store} (${targetMonth}) bằng ${scriptPath} [Python: ${pythonBin}]...`);
+          const ingestArgs = [
+            scriptPath,
+            "--store",
+            s.store,
+            "--month",
+            targetMonth,
+          ];
+          if (forceIngest) {
+            ingestArgs.push("--force");
+          }
+          const { stdout, stderr } = await execFileAsync(pythonBin, ingestArgs);
+          if (stdout) console.log(stdout);
+          if (stderr) console.error(stderr);
+          console.log(`  ✅ [AUTO-INGEST ${s.store}] Hoàn tất!`);
+        } catch (ingestErr: any) {
+          const errMsg = ingestErr.stderr || ingestErr.message || String(ingestErr);
+          console.error(`  ❌ [AUTO-INGEST LỖI ${s.store}]:`, errMsg);
+          ingestErrors.push({ store: s.store, error: errMsg.trim().slice(0, 300) });
+        }
+      }
+
+      if (ingestErrors.length > 0) {
+        summaryResults.forEach((r) => {
+          const err = ingestErrors.find((e) => e.store === r.store);
+          if (err) {
+            r.status = "PARTIAL";
+            r.error = `Auto-ingest: ${err.error}`;
+          }
+        });
+      }
+    }
+
+    // Báo cáo hoàn tất
     const failedStores = summaryResults.filter((r) => r.status === "FAILED");
+    const partialStores = summaryResults.filter((r) => r.status === "PARTIAL");
 
     let finalReport = `🏁 [HOÀN TẤT BÁO CÁO THÁNG ${targetMonth}]\n`;
-    finalReport += `✅ Thành công: ${successStores.length}/${targetStores.length} store\n`;
+    finalReport += `✅ Tải file thành công: ${successStores.length}/${targetStores.length} store\n`;
     for (const s of successStores) {
       finalReport += `  • ${s.store}: ${s.files.join(", ")}\n`;
     }
+    if (partialStores.length > 0) {
+      finalReport += `⚠️ Lỗi tính toán Auto-Ingest: ${partialStores.length} store\n`;
+      for (const p of partialStores) {
+        finalReport += `  • ${p.store}: ${p.error}\n`;
+      }
+    }
     if (failedStores.length > 0) {
-      finalReport += `❌ Thất bại: ${failedStores.length} store\n`;
+      finalReport += `❌ Thất bại tải file: ${failedStores.length} store\n`;
       for (const f of failedStores) {
         finalReport += `  • ${f.store}: ${f.error}\n`;
       }

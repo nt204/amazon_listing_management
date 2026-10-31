@@ -38,15 +38,21 @@ const FbaDailyView = dynamic(
   { loading: TabLoading }
 );
 
-export type FinancialsSubTab = "sku_win" | "sku_test" | "fba" | "fbm" | "fbm_fixed";
+const SkuMonthlyView = dynamic(
+  () => import("./sku-monthly-view").then((m) => m.SkuMonthlyView),
+  { loading: TabLoading }
+);
 
-const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "fba", "fbm", "fbm_fixed"];
+export type FinancialsSubTab = "sku_win" | "sku_test" | "sku_monthly" | "fba" | "fbm" | "fbm_fixed";
+
+const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "sku_monthly", "fba", "fbm", "fbm_fixed"];
 const FBM_TABS: FinancialsSubTab[] = ["fbm", "fbm_fixed"];
 
 type TabItem = { key: FinancialsSubTab; label: string; badge?: string; icon: Icon };
 
 const FBA_TAB_ITEMS: TabItem[] = [
   { key: "fba", label: "FBA", badge: "Theo Ngày", icon: CalendarBlankIcon },
+  { key: "sku_monthly", label: "Báo Cáo Tháng", badge: "SKU Monthly", icon: CalendarBlankIcon },
   { key: "sku_win", label: "Lọc SKU Win", icon: PackageIcon },
   { key: "sku_test", label: "Lọc SKU Test", icon: FlaskIcon },
 ];
@@ -182,6 +188,7 @@ export function FinancialsWorkspace() {
       <div className="flex-1 overflow-hidden relative">
         <AccountingViewTransition transitionKey={visibleTab} className="h-full w-full">
           {visibleTab === "fba" && <FbaDailyView key="fba" />}
+          {visibleTab === "sku_monthly" && <SkuMonthlyView key="sku_monthly" />}
           {visibleTab === "sku_win" && <SkuWinView key="sku_win" />}
           {visibleTab === "sku_test" && <SkuTestView />}
           {visibleTab === "fbm" && <FbaDailyView key="fbm" channel="fbm" />}

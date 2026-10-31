@@ -58,10 +58,10 @@ test("Accounting Inventory Excel: createDefaultSkuSheet matches import specifica
   assert.equal(ws.name, "BẢNG MÃ");
 
   // 2. Check header columns count
-  assert.equal(ws.columnCount, 30);
+  assert.equal(ws.columnCount, 32);
 
   // 3. Verify every header cell maps into SKU_HEADER_MAP
-  for (let c = 1; c <= 30; c++) {
+  for (let c = 1; c <= 32; c++) {
     const headerVal = getExcelCellValue(ws.getRow(1).getCell(c));
     assert.ok(headerVal, `Header at column ${c} must not be empty`);
     const headerLower = String(headerVal).trim().toLowerCase();

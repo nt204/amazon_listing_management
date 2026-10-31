@@ -38,7 +38,11 @@ import {
 import { sendLarkCardNotification, sendLarkTextNotification } from "@/lib/lark-notifications";
 import { resolveLarkActorStoreAccess, type PpcStoreAccessStore } from "@/lib/ppc/store-user-access";
 import { getDatabaseClient } from "@/lib/db";
-import { parseDailyReportDetailRequest, sendDailyReportDetail } from "@/lib/accounting/daily-business-reporter";
+import {
+  getDailyBusinessReview,
+  parseDailyReportDetailRequest,
+  sendDailyReportDetail,
+} from "@/lib/accounting/daily-business-reporter";
 
 const AUTO_BID_TOOLS = new Set([
   "listBidRecommendations",
@@ -221,6 +225,23 @@ export interface AgentResult {
 }
 
 const TOOLS_SCHEMA = [
+  {
+    type: "function",
+    function: {
+      name: "getBusinessReview",
+      description:
+        "Rà soát sức khỏe kinh doanh 1 ngày trên TẤT CẢ store/kênh người hỏi được xem: kết quả (Revenue, Profit, Margin, TACoS), " +
+        "rủi ro đã xếp hạng (hiện tượng, yếu tố đóng góp, nguyên nhân cần xác minh, hành động, SKU liên quan), cơ hội và cảnh báo dữ liệu. " +
+        "So với TB 7 ngày trước. DÙNG cho câu hỏi chung như: store nào cần chú ý, hôm qua kinh doanh thế nào, có vấn đề gì, cần làm gì hôm nay, cơ hội ở đâu. " +
+        "Không cần tên store.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: { type: "string", description: "Ngày cần rà soát (YYYY-MM-DD). Bỏ trống = ngày mới nhất đủ dữ liệu." },
+        },
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -596,6 +617,13 @@ async function executeTool(
 ): Promise<string> {
   try {
     const args = JSON.parse(rawArgs || "{}");
+    // Rà soát tổng hợp: không cần chọn store, tự giới hạn theo các store người hỏi được xem
+    if (name === "getBusinessReview") {
+      return JSON.stringify(await getDailyBusinessReview({
+        targetDate: typeof args.date === "string" ? args.date : undefined,
+        storeNames: allowedStores?.map((store) => store.name),
+      }));
+    }
     if (allowedStores) {
       if (name === "getAllStores") return JSON.stringify(allowedStores);
       if (allowedStores.length === 0) {
@@ -1245,6 +1273,12 @@ QUY TẮC CỐT LÕI VỀ MỐC THỜI GIAN & DỮ LIỆU SERVER:
     + Sau khi gọi tool: BẮT BUỘC dùng đúng câu mở đầu (headerIntro) và các mốc ngày cùng kỳ trong kết quả tool (ví dụ: 01/10/2026 - 23/10/2026 so với 01/09/2026 - 23/09/2026).
     + TUYỆT ĐỐI CẤM tự ý gán mốc thời gian vượt quá ngày có dữ liệu thực tế (${latestDbDateVn})!
     + BẮT BUỘC dùng các con số và tỷ lệ % tăng/giảm đã được tool tính sẵn trong comparison, TUYỆT ĐỐI KHÔNG tự tính lại gây sai lệch cùng kỳ!
+
+RÀ SOÁT KINH DOANH (store nào cần chú ý, hôm qua thế nào, có vấn đề / cơ hội gì, hôm nay cần làm gì):
+- BẮT BUỘC gọi tool "getBusinessReview", KHÔNG hỏi lại tên store.
+- Trả lời theo luồng: Kết quả → Rủi ro → Cơ hội. Mỗi rủi ro/cơ hội ghi: Hiện tượng · Yếu tố đóng góp · Nguyên nhân cần xác minh · Hành động (nêu SKU).
+- "nguyen_nhan_can_xac_minh" là GIẢ THUYẾT: viết "cần xác minh: ...", TUYỆT ĐỐI KHÔNG khẳng định là nguyên nhân.
+- Có "canh_bao_du_lieu" thì nêu TRƯỚC mọi con số. Chỉ dùng số tool trả về, không tự tính.
 
 QUY TẮC BẮT BUỘC:
 0. BẮT BUỘC PHẢI BIẾT RÕ STORE (TRỪ CÂU HỎI SO SÁNH / TỔNG HỢP CÁC STORE):

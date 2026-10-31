@@ -73,16 +73,31 @@ test("số ưu tiên ở tiêu đề khớp đúng số vấn đề được li�
   assert.equal(a.priorities[0].label, "A");
 });
 
-test("dữ kiện có số tách khỏi việc cần kiểm tra (giả thuyết)", () => {
+test("tách Hiện tượng / Yếu tố / Cần xác minh / Hành động (ví dụ Bozspacer)", () => {
   const drill = { skus: [{ sku: "NSA6012062421", today: 0, avg7: 3.6 }], portfolios: [] };
   const a = analyzeDailyReport(DATE, [
     channel("Bozspacer", "FBA 1", normal, { ...normal, revenue: 552, revenueAds: 500, quantity: 22, profit: 41 }, { drill }),
   ]);
   const review = a.priorities[0].review!;
-  assert.ok(review.facts.includes("Organic -$448"));
-  assert.ok(review.facts.includes("SKU NSA6012062421 3.6 → 0 units/ngày"));
-  assert.deepEqual(review.checks.slice(0, 2), ["tồn kho", "listing"]);
-  assert.match(buildDailyReportText(a), /→ Kiểm tra tồn kho, listing, rank keyword chính\./);
+  assert.deepEqual(review.facts, ["Organic -$448", "SKU NSA6012062421 3.6 → 0 units/ngày"]);
+  // Nguyên nhân chỉ là giả thuyết cần xác minh, không khẳng định
+  assert.deepEqual(review.checks, ["hết hàng", "vấn đề listing", "mất Buy Box", "giảm rank"]);
+  assert.deepEqual(review.actions, ["Kiểm tra trước SKU NSA6012062421"]);
+  const text = buildDailyReportText(a);
+  assert.match(text, /Bozspacer · Profit -\$209/);
+  assert.match(text, /Yếu tố: Organic -\$448 · SKU NSA6012062421 3\.6 → 0 units\/ngày/);
+  assert.match(text, /Cần xác minh: hết hàng, vấn đề listing, mất Buy Box, giảm rank/);
+  assert.match(text, /→ Kiểm tra trước SKU NSA6012062421/);
+});
+
+test("nhiều yếu tố cùng lúc: dữ kiện SKU không bị cắt khỏi bản tóm tắt", () => {
+  const drill = { skus: [{ sku: "NSA6012062421", today: 0, avg7: 3.6 }], portfolios: [] };
+  const a = analyzeDailyReport(DATE, [
+    channel("Bozspacer", "FBA 1", normal, { ...normal, revenue: 552, revenueAds: 500, quantity: 22, adsFee: 300, profit: -109 }, { drill }),
+  ]);
+  const shown = a.priorities[0].review!.facts.slice(0, 3);
+  assert.ok(shown.includes("SKU NSA6012062421 3.6 → 0 units/ngày"), shown.join(" | "));
+  assert.ok(shown.some((f) => f.startsWith("Ads ")), shown.join(" | "));
 });
 
 test("portfolio tiêu tiền 0 đơn thành hành động cụ thể", () => {
@@ -96,6 +111,7 @@ test("portfolio tiêu tiền 0 đơn thành hành động cụ thể", () => {
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 250, profit: 150 }, { drill })]);
   const review = a.priorities[0].review!;
   assert.ok(review.facts.includes("Ads $150 → $250/ngày"));
+  assert.ok(review.facts.includes("1 portfolio tiêu tiền 0 đơn"));
   assert.deepEqual(review.actions, ["Giảm bid / tắt SKU-BURN ($60, 0 đơn)"]);
 });
 
@@ -117,16 +133,25 @@ test("doanh thu $0 nhưng vẫn tiêu Ads: ưu tiên cao, nghi thiếu file đơ
   const review = a.priorities[0].review!;
   assert.equal(review.severity, "high");
   assert.deepEqual(review.facts, ["Revenue $0 (TB $1,000/ngày)", "Ads vẫn tiêu $383"]);
-  assert.equal(review.checks[0], "file đơn hàng đã nạp chưa");
+  assert.equal(review.checks[0], "chưa nạp file đơn hàng");
+  assert.equal(review.actions[0], "Xác nhận file đơn hàng đã nạp");
 });
 
-test("kênh mới không vào ưu tiên; tăng trưởng tốt vào mục nổi bật", () => {
+test("kênh mới không vào ưu tiên; cơ hội nêu SKU tăng và portfolio hiệu quả", () => {
+  const drill = {
+    skus: [{ sku: "LIM-HOT", today: 9, avg7: 3 }],
+    portfolios: [{ name: "LIM-HOT", todaySpend: 30, todaySales: 300, todayOrders: 6, avg7Spend: 25 }],
+  };
   const a = analyzeDailyReport(DATE, [
-    channel("Up", "FBA 1", normal, { ...normal, profit: 616 }),
+    channel("Limima", "FBA 2", normal, { ...normal, revenue: 1700, revenueAds: 900, quantity: 70, profit: 612 }, { drill }),
     channel("New", "FBM", { revenue: 50, adsFee: 40, profit: -10 }, { revenue: 20, adsFee: 40, profit: -30 }, { isNew: true }),
   ]);
   assert.deepEqual(a.priorities, []);
-  assert.deepEqual(a.highlights, [{ label: "Up", delta: 366 }]);
+  assert.deepEqual(a.opportunities.map((c) => c.label), ["Limima"]);
+  const review = a.opportunities[0].review!;
+  assert.ok(review.facts.includes("SKU LIM-HOT 3 → 9 units/ngày"));
+  assert.ok(review.actions.includes("Đảm bảo tồn kho SKU LIM-HOT"));
+  assert.match(buildDailyReportText(a), /Cơ hội[\s\S]*🟢 Limima · Profit \+\$362/);
   assert.match(buildDailyReportDetailText(a), /New 🌱/);
 });
 

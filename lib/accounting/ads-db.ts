@@ -217,8 +217,8 @@ export async function listAds(
 
   const whereClause = conditions.reduce((prev, curr) => sql`${prev} AND ${curr}`);
 
-  // Fetch paginated rows
-  const rows = await sql<AdsItem[]>`
+  // Fetch paginated rows, aggregate stats, and distinct dates concurrently
+  const rowsPromise = sql<AdsItem[]>`
     SELECT
       id,
       store_id,
@@ -267,7 +267,7 @@ export async function listAds(
   `;
 
   // Aggregate stats
-  const statsRes = await sql<any[]>`
+  const statsPromise = sql<any[]>`
     SELECT
       COUNT(*)::text as count,
       COALESCE(SUM(spend), 0)::float as total_spend,
@@ -279,6 +279,21 @@ export async function listAds(
     FROM accounting_ads
     WHERE ${whereClause}
   `;
+
+  // Distinct dates for quick filter
+  const datesPromise = sql<{ date: string }[]>`
+    SELECT DISTINCT date::text
+    FROM accounting_ads
+    WHERE store_id = ${storeId}
+    ORDER BY date DESC
+    LIMIT 60
+  `;
+
+  const [rows, statsRes, datesRes] = await Promise.all([
+    rowsPromise,
+    statsPromise,
+    datesPromise,
+  ]);
 
   const s = statsRes[0] || {};
   const totalRows = parseInt(s.count || "0", 10);
@@ -305,15 +320,6 @@ export async function listAds(
     avgRoas,
     totalThue10: Number(totalThue10.toFixed(2)),
   };
-
-  // Distinct dates for quick filter
-  const datesRes = await sql<{ date: string }[]>`
-    SELECT DISTINCT date::text
-    FROM accounting_ads
-    WHERE store_id = ${storeId}
-    ORDER BY date DESC
-    LIMIT 60
-  `;
 
   return {
     rows,

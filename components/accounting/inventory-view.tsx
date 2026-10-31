@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   QueryClient,
   QueryClientProvider,
@@ -715,6 +715,16 @@ function ActiveCellEditor({
 }
 
 // Ultra-fast, Excel-like Inline Editable Cell (0ms keystroke lag, auto-save on blur / Enter)
+// Tab đã mở nhưng đang ẩn: bỏ qua render lại (DOM/state/ref giữ nguyên) để chuyển tab hoặc thao tác ở tab
+// khác không phải reconcile cả bảng ẩn. Khi tab hiện lại sẽ render với dữ liệu mới nhất.
+const FreezeWhenHidden = memo(
+  function FreezeWhenHidden({ render }: { active: boolean; frozen?: boolean; render: () => React.ReactNode }) {
+    return <>{render()}</>;
+  },
+  // frozen: đang chờ chuyển tab (lượt render khẩn chỉ để đổi màu nút) — chưa cần dựng lại bảng.
+  (_prevProps, nextProps) => !nextProps.active || !!nextProps.frozen,
+);
+
 const EditableCell = memo(
   function EditableCell({
     table,
@@ -1481,9 +1491,14 @@ function InventoryViewInner() {
     monthly_base_cost: activeTab === "monthly_base_cost",
   }));
 
+  // Nút tab đổi màu ngay theo activeTab; phần bảng đi theo shownTab (deferred) nên được render ở mức ưu tiên
+  // thấp, chia nhỏ — click/hover không bị đơ trong lúc dựng bảng của tab mới.
+  const shownTab = useDeferredValue(activeTab);
+  const tabSwitchPending = shownTab !== activeTab;
+  if (!visitedTabs[shownTab]) setVisitedTabs((prev) => ({ ...prev, [shownTab]: true }));
+
   const handleTabChange = useCallback((tab: InventoryTab) => {
     setActiveTab(tab);
-    setVisitedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
   }, []);
 
   // Store có team FBM có thêm tab BẢNG MÃ FBM: cùng giao diện/chức năng BẢNG MÃ nhưng dữ liệu
@@ -2178,7 +2193,7 @@ function InventoryViewInner() {
         limit: number;
       }>;
     },
-    enabled: !!selectedStoreId,
+    enabled: !!selectedStoreId && activeTab === "sku",
   });
 
   const allSkus = useMemo(() => skuQuery.data?.items ?? [], [skuQuery.data?.items]);
@@ -2198,8 +2213,20 @@ function InventoryViewInner() {
     },
     enabled: !!selectedStoreId && storeHasFbm,
   });
-  const fbaSkuCount = skuChannel === "fba" ? skuTotal : otherSkuCountQuery.data ?? 0;
-  const fbmSkuCount = skuChannel === "fbm" ? skuTotal : otherSkuCountQuery.data ?? 0;
+  // Bảng chính chỉ tải khi mở tab → tab chưa mở lấy số cho badge từ request đếm nhẹ (limit=1).
+  const currentSkuCountQuery = useQuery({
+    queryKey: ["sku-master-count", selectedStoreId, skuChannel],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({ store_id: selectedStoreId!, page: "1", limit: "1", channel: skuChannel });
+      const res = await fetch(`/api/accounting/inventory/sku-master?${params.toString()}`, { signal });
+      if (!res.ok) throw new Error("Không thể tải số lượng SKU");
+      return ((await res.json()) as { total: number }).total;
+    },
+    enabled: !!selectedStoreId && !skuQuery.data,
+  });
+  const skuBadgeCount = skuQuery.data?.total ?? currentSkuCountQuery.data ?? 0;
+  const fbaSkuCount = skuChannel === "fba" ? skuBadgeCount : otherSkuCountQuery.data ?? 0;
+  const fbmSkuCount = skuChannel === "fbm" ? skuBadgeCount : otherSkuCountQuery.data ?? 0;
 
   // 2. TanStack Query for Inbound Shipments (Server-side Page Pagination, 100/trang)
   const shipmentQuery = useQuery({
@@ -2224,7 +2251,7 @@ function InventoryViewInner() {
         limit: number;
       }>;
     },
-    enabled: !!selectedStoreId,
+    enabled: !!selectedStoreId && activeTab === "inbound",
   });
 
   const allShipments = useMemo(() => shipmentQuery.data?.items ?? [], [shipmentQuery.data?.items]);
@@ -2254,7 +2281,7 @@ function InventoryViewInner() {
         limit: number;
       }>;
     },
-    enabled: !!selectedStoreId,
+    enabled: !!selectedStoreId && activeTab === "check_shipment",
   });
 
   const fieldOptionsQuery = useQuery({
@@ -2284,6 +2311,28 @@ function InventoryViewInner() {
   const checkShipmentTotalCount = checkShipmentQuery.data?.total ?? 0;
   const checkShipmentTotal = checkShipmentTotalCount;
   const checkShipmentTotalPages = Math.max(1, Math.ceil(checkShipmentTotal / checkShipmentLimit));
+
+  // Badge số dòng cho tab Đi Hàng / Check Shipment khi bảng chính chưa tải (tab chưa mở).
+  const shipmentCountQuery = useQuery({
+    queryKey: ["inbound-shipments-count", selectedStoreId],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/api/accounting/inventory/inbound-shipments?store_id=${selectedStoreId}&page=1&limit=1`, { signal });
+      if (!res.ok) throw new Error("Không thể tải số lượng lô hàng");
+      return ((await res.json()) as { total: number }).total;
+    },
+    enabled: !!selectedStoreId && !shipmentQuery.data,
+  });
+  const checkShipmentCountQuery = useQuery({
+    queryKey: ["check-shipments-count", selectedStoreId],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/api/accounting/inventory/check-shipments?store_id=${selectedStoreId}&page=1&limit=1`, { signal });
+      if (!res.ok) throw new Error("Không thể tải số lượng Check Shipment");
+      return ((await res.json()) as { total: number }).total;
+    },
+    enabled: !!selectedStoreId && !checkShipmentQuery.data,
+  });
+  const shipmentBadgeCount = shipmentQuery.data?.total ?? shipmentCountQuery.data ?? 0;
+  const checkShipmentBadgeCount = checkShipmentQuery.data?.total ?? checkShipmentCountQuery.data ?? 0;
 
   const fetchSkus = useCallback(() => {
     return skuQuery.refetch();
@@ -5369,7 +5418,7 @@ function InventoryViewInner() {
                 activeTab === "inbound" ? channelTabBadgeActiveClass("fba") : "bg-slate-300 text-slate-700"
               }`}
             >
-              {shipmentTotal}
+              {shipmentBadgeCount}
             </span>
           </button>
 
@@ -5389,7 +5438,7 @@ function InventoryViewInner() {
                 activeTab === "check_shipment" ? channelTabBadgeActiveClass("fba") : "bg-slate-300 text-slate-700"
               }`}
             >
-              {checkShipmentTotal}
+              {checkShipmentBadgeCount}
             </span>
           </button>
 
@@ -5741,7 +5790,8 @@ function InventoryViewInner() {
           FROZEN COLUMNS: STT (left-0), Product Type (left-[56px]), Phôi Mockup (left-[230px]), Mã SKU (left-[326px])
           SOLID 100% OPAQUE BACKGROUND & CRISP DIVIDER LINE */}
       {visitedTabs.sku && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${activeTab === "sku" ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${shownTab === "sku" ? "" : "hidden"}`}>
+          <FreezeWhenHidden active={shownTab === "sku"} frozen={tabSwitchPending} render={() => (<>
           <AccountingTopProgressBar loading={loadingSkus} variant="indigo" />
           <div
             ref={skuScrollRef}
@@ -5941,13 +5991,15 @@ function InventoryViewInner() {
             }}
             label="SKU"
           />
+          </>)} />
         </div>
       )}
 
       {/* TAB 2: INBOUND SHIPMENTS TABLE
           FROZEN COLUMNS: STT (left-0), Product Type (left-[56px]), Mockup (left-[230px]), Mã SKU (left-[326px]) */}
       {visitedTabs.inbound && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${activeTab === "inbound" ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${shownTab === "inbound" ? "" : "hidden"}`}>
+          <FreezeWhenHidden active={shownTab === "inbound"} frozen={tabSwitchPending} render={() => (<>
           <AccountingTopProgressBar loading={loadingShipments} variant="indigo" />
           <div
             ref={shipmentScrollRef}
@@ -6147,13 +6199,15 @@ function InventoryViewInner() {
           }}
           label="Lô hàng"
         />
+          </>)} />
       </div>
     )}
 
       {/* TAB 3: CHECK SHIPMENT TABLE
           FROZEN COLUMNS: STT (left-0), Shipment ID (left-[58px]), Shipment Name (left-[218px]) */}
       {visitedTabs.check_shipment && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${activeTab === "check_shipment" ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative ${shownTab === "check_shipment" ? "" : "hidden"}`}>
+          <FreezeWhenHidden active={shownTab === "check_shipment"} frozen={tabSwitchPending} render={() => (<>
           <AccountingTopProgressBar loading={loadingCheckShipments} variant="indigo" />
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
@@ -6333,11 +6387,12 @@ function InventoryViewInner() {
           }}
           label="Shipment"
         />
+          </>)} />
       </div>
     )}
 
       {/* TAB 4b: BASECOST THÁNG FBM (dữ liệu thô ĐẦU VÀO FBM PW) */}
-      {isFbmBaseCost && selectedStoreId && (
+      {shownTab === "monthly_base_cost" && baseCostChannel === "fbm" && selectedStoreId && (
         <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px]">
           <FbmPwCostView
             ref={fbmPwCostRef}
@@ -6351,7 +6406,8 @@ function InventoryViewInner() {
 
       {/* TAB 4: BASECOST THÁNG */}
       {visitedTabs.monthly_base_cost && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px] ${activeTab === "monthly_base_cost" && !isFbmBaseCost ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px] ${shownTab === "monthly_base_cost" && baseCostChannel !== "fbm" ? "" : "hidden"}`}>
+          <FreezeWhenHidden active={shownTab === "monthly_base_cost" && baseCostChannel !== "fbm"} frozen={tabSwitchPending} render={() => (<>
           <MonthlyBaseCostView
             ref={monthlyBaseCostRef}
             storeId={selectedStoreId}
@@ -6377,6 +6433,7 @@ function InventoryViewInner() {
             onReorderColumns={handleReorderMonthlyBaseCostColumns}
             onColumnContextMenu={(field, x, y) => setColumnContextMenu({ table: "monthly_base_cost", field, x, y })}
           />
+          </>)} />
         </div>
       )}
 

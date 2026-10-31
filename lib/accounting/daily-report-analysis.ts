@@ -52,9 +52,9 @@ export interface ChannelReview {
   severity: Severity;
   /** Dữ kiện có số liệu chứng minh. */
   facts: string[];
-  /** Thứ cần kiểm tra (giả thuyết) — chỉ là danh từ, ghép thành "Kiểm tra a, b, c". */
+  /** Nguyên nhân cần xác minh (giả thuyết, chưa khẳng định): hết hàng, mất Buy Box, giảm rank... */
   checks: string[];
-  /** Hành động cụ thể có dữ kiện đi kèm (vd: giảm bid portfolio 0 đơn). */
+  /** Hành động cụ thể, gắn SKU / portfolio khi có (vd: kiểm tra trước SKU X, giảm bid portfolio 0 đơn). */
   actions: string[];
   /** Điểm xếp hạng ưu tiên. */
   score: number;
@@ -94,8 +94,8 @@ export interface DailyReportAnalysis {
   warnings: string[];
   /** Vấn đề cần xử lý, đã xếp hạng (cao nhất trước). */
   priorities: ChannelAnalysis[];
-  /** Kênh tăng Profit nổi bật. */
-  highlights: Array<{ label: string; delta: number }>;
+  /** Cơ hội: kênh tăng Profit tốt, kèm SKU / portfolio có thể mở rộng. */
+  opportunities: ChannelAnalysis[];
 }
 
 const SUM_KEYS = [
@@ -184,18 +184,15 @@ export function reviewChannel(ch: Omit<ChannelAnalysis, "review">, drill?: Chann
   const { today: t, avg7: b } = ch;
   if (!b || ch.dataIssue) return null;
 
-  const facts: string[] = [];
-  const checks: string[] = [];
-  const actions: string[] = [];
-
   // Không có doanh thu nhưng vẫn tiêu Ads: có thể chưa nạp file đơn hàng hoặc listing ngừng bán
   if (t.revenue <= 0 && b.revenue >= 100) {
-    facts.push(`Revenue $0 (TB ${usd(b.revenue)}/ngày)`);
-    if (t.adsFee > 0) facts.push(`Ads vẫn tiêu ${usd(t.adsFee)}`);
-    checks.push("file đơn hàng đã nạp chưa", "listing", "tồn kho");
-    if (t.adsFee > 0) actions.push("Tạm dừng Ads nếu listing ngừng bán");
-    const impact = Math.max(0, b.profit) + t.adsFee;
-    return { severity: "high", facts, checks, actions, score: impact * 1.5 };
+    return {
+      severity: "high",
+      facts: [`Revenue $0 (TB ${usd(b.revenue)}/ngày)`, ...(t.adsFee > 0 ? [`Ads vẫn tiêu ${usd(t.adsFee)}`] : [])],
+      checks: ["chưa nạp file đơn hàng", "listing bị ẩn", "hết hàng"],
+      actions: ["Xác nhận file đơn hàng đã nạp", ...(t.adsFee > 0 ? ["tạm dừng Ads nếu listing ngừng bán"] : [])],
+      score: (Math.max(0, b.profit) + t.adsFee) * 1.5,
+    };
   }
 
   const dProfit = t.profit - b.profit;
@@ -218,61 +215,96 @@ export function reviewChannel(ch: Omit<ChannelAnalysis, "review">, drill?: Chann
     .sort((x, y) => Math.abs(y.value) - Math.abs(x.value))
     .slice(0, 2);
 
+  // Dữ kiện gom theo từng phần, rồi xếp xen kẽ để phần nào cũng có mặt khi bị cắt bớt
+  const factGroups: string[][] = [];
+  const checks: string[] = [];
+  const actions: string[] = [];
   let concrete = false;
+
   for (const part of parts) {
+    const facts: string[] = [];
+    factGroups.push(facts);
     if (part.key === "volume") {
       const organic = t.revenue - t.revenueAds - (b.revenue - b.revenueAds);
       const adSales = t.revenueAds - b.revenueAds;
-      if (b.revenueAds > 0 && Math.abs(organic) >= 20 && (isIssue ? organic < 0 : organic > 0)) facts.push(`Organic ${usdSigned(organic)}`);
-      if (b.revenueAds > 0 && Math.abs(adSales) >= 20 && (isIssue ? adSales < 0 : adSales > 0)) facts.push(`Ads Sales ${usdSigned(adSales)}`);
-      if (b.revenueAds <= 0) facts.push(`Revenue ${usdSigned(t.revenue - b.revenue)}`);
+      const organicLed = Math.abs(organic) >= Math.abs(adSales);
       const skus = isIssue ? skuDrops(drill) : skuGains(drill);
+      if (b.revenueAds > 0) {
+        const lead = organicLed ? `Organic ${usdSigned(organic)}` : `Ads Sales ${usdSigned(adSales)}`;
+        facts.push(lead);
+      } else {
+        facts.push(`Revenue ${usdSigned(t.revenue - b.revenue)}`);
+      }
       facts.push(...skus.map(skuFact));
-      if (!isIssue) continue;
+      if (!isIssue) {
+        if (skus.length) actions.push(`Đảm bảo tồn kho ${skus.map((s) => `SKU ${shortName(s.sku)}`).join(", ")}`);
+        continue;
+      }
       concrete ||= skus.length > 0;
-      if (skus.some((s) => s.today === 0)) checks.push("tồn kho", "listing");
-      if (organic < 0 && Math.abs(organic) >= Math.abs(adSales)) checks.push("rank keyword chính", "review mới");
-      else checks.push("Buy Box", "giá bán");
-      if (adSales < 0 && Math.abs(adSales) > Math.abs(organic)) checks.push("ngân sách / bid campaign");
+      if (skus.length) actions.push(`Kiểm tra trước ${skus.map((s) => `SKU ${shortName(s.sku)}`).join(", ")}`);
+      // Không có SKU nào tụt hẳn: doanh số giảm rải rác, kiểm tra theo nguồn bị giảm
+      else actions.push(organicLed ? "Kiểm tra rank và Buy Box của các SKU chủ lực" : "Kiểm tra ngân sách / bid các campaign chính");
+      if (skus.some((s) => s.today === 0)) checks.push("hết hàng", "vấn đề listing");
+      checks.push(...(organicLed ? ["mất Buy Box", "giảm rank"] : ["mất Buy Box", "bid / ngân sách quá thấp"]));
     } else if (part.key === "rate") {
       if (!isIssue || t.revenue <= 0 || b.revenue <= 0) continue;
       const rise = [
-        { label: "Refund", cost: (x: DashboardTotals) => x.returnCost, check: "lý do trả hàng" },
-        { label: "Phí AMZ", cost: (x: DashboardTotals) => x.amazonFee, check: "phí FBA / size tier" },
-        { label: "Promotion", cost: (x: DashboardTotals) => x.promotion, check: "coupon / promotion đang chạy" },
-        { label: "Giá vốn", cost: (x: DashboardTotals) => x.basecost, check: "giá bán, mix SKU" },
+        { label: "Refund", cost: (x: DashboardTotals) => x.returnCost, suspect: "lỗi sản phẩm / mô tả sai", action: "Xem lý do trả hàng" },
+        { label: "Phí AMZ", cost: (x: DashboardTotals) => x.amazonFee, suspect: "đổi size tier / phí lưu kho", action: "Đối soát phí FBA" },
+        { label: "Promotion", cost: (x: DashboardTotals) => x.promotion, suspect: "coupon / promotion chồng nhau", action: "Rà coupon / promotion đang chạy" },
+        { label: "Giá vốn", cost: (x: DashboardTotals) => x.basecost, suspect: "giảm giá bán / bán nhiều SKU biên thấp", action: "Kiểm tra giá bán" },
       ]
         .map((c) => ({ ...c, from: c.cost(b) / b.revenue, to: c.cost(t) / t.revenue }))
         .sort((x, y) => y.to - y.from - (x.to - x.from))[0];
       if (rise && rise.to - rise.from >= 0.02) {
         facts.push(`${rise.label} ${pct1(rise.from)} → ${pct1(rise.to)} doanh thu`);
-        checks.push(rise.check);
+        checks.push(rise.suspect);
+        actions.push(rise.action);
       }
     } else if (part.key === "ads") {
       facts.push(`Ads ${usd(b.adsFee)} → ${usd(t.adsFee)}/ngày`);
       if (t.revenue > 0 && b.revenue > 0) facts.push(`TACoS ${pct1(b.tacos)} → ${pct1(t.tacos)}`);
-      if (!isIssue) continue;
-      const burning = (drill?.portfolios ?? [])
+      const portfolios = drill?.portfolios ?? [];
+      if (!isIssue) {
+        // Cơ hội: portfolio ra đơn đều với ACoS thấp hơn hẳn mức chung của kênh
+        const channelAcos = t.revenueAds > 0 ? t.adsFee / t.revenueAds : 0;
+        const efficient = portfolios
+          .filter((p) => p.todayOrders >= 3 && p.todaySpend >= 10 && p.todaySales > 0 && channelAcos > 0 && p.todaySpend / p.todaySales <= channelAcos * 0.7)
+          .sort((x, y) => y.todayOrders - x.todayOrders)[0];
+        if (efficient) {
+          actions.push(`Cân nhắc tăng ngân sách ${shortName(efficient.name)} (ACoS ${Math.round((efficient.todaySpend / efficient.todaySales) * 100)}%, ${efficient.todayOrders} đơn)`);
+        } else if (t.revenue >= b.revenue * 0.9) {
+          // Giảm chi Ads mà doanh số gần như giữ nguyên: mức chi mới đang hiệu quả hơn
+          actions.push("Giữ mức chi Ads hiện tại, theo dõi doanh số 2–3 ngày");
+        }
+        continue;
+      }
+      const burning = portfolios
         .filter((p) => p.todaySpend >= 15 && p.todayOrders === 0)
         .sort((x, y) => y.todaySpend - x.todaySpend)
         .slice(0, 2);
+      checks.push("bid quá cao", "search term không liên quan");
       if (burning.length) {
         concrete = true;
+        facts.push(`${burning.length} portfolio tiêu tiền 0 đơn`);
         actions.push(`Giảm bid / tắt ${burning.map((p) => `${shortName(p.name)} (${usd(p.todaySpend)}, 0 đơn)`).join(", ")}`);
       } else {
-        const spike = (drill?.portfolios ?? [])
+        const spike = portfolios
           .filter((p) => p.todaySpend - p.avg7Spend >= 15)
           .sort((x, y) => y.todaySpend - y.avg7Spend - (x.todaySpend - x.avg7Spend))[0];
         if (spike) {
           concrete = true;
           facts.push(`${shortName(spike.name)} ${usd(spike.avg7Spend)} → ${usd(spike.todaySpend)}/ngày`);
-          checks.push(`search term ${shortName(spike.name)}`);
+          actions.push(`Rà search term ${shortName(spike.name)}`);
         } else {
-          checks.push("search term ACoS cao");
+          actions.push("Rà search term ACoS cao");
         }
       }
     }
   }
+
+  const facts: string[] = [];
+  for (let i = 0; factGroups.some((g) => g[i]); i++) for (const group of factGroups) if (group[i]) facts.push(group[i]);
 
   // Ưu tiên = $ Profit bị ảnh hưởng × mức bất thường × khả năng can thiệp (có SKU/portfolio cụ thể)
   const impact = Math.max(0, -dProfit) + Math.max(0, -t.profit);
@@ -280,9 +312,8 @@ export function reviewChannel(ch: Omit<ChannelAnalysis, "review">, drill?: Chann
   return {
     severity,
     facts: [...new Set(facts)],
-    // Tối đa 3 thứ cần kiểm tra, theo thứ tự phần kéo Profit nhiều nhất
-    checks: [...new Set(checks)].slice(0, 3),
-    actions,
+    checks: [...new Set(checks)].slice(0, 4),
+    actions: [...new Set(actions)].slice(0, 2),
     score: isIssue ? impact * (0.5 + anomaly / 2) * (concrete ? 1 : 0.7) : dProfit,
   };
 }
@@ -347,10 +378,9 @@ export function analyzeDailyReport(date: string, inputs: ChannelSeriesInput[]): 
     teams,
     warnings: channels.filter((c) => c.dataIssue).map((c) => DATA_WARNING[c.dataIssue as DataIssue](c)),
     priorities,
-    highlights: channels
-      .filter((c) => (c.profitDelta ?? 0) >= 50)
+    opportunities: channels
+      .filter((c) => c.review?.severity === "good")
       .sort((x, y) => (y.profitDelta ?? 0) - (x.profitDelta ?? 0))
-      .slice(0, 3)
-      .map((c) => ({ label: c.label, delta: c.profitDelta ?? 0 })),
+      .slice(0, 3),
   };
 }

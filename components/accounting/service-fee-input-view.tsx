@@ -331,6 +331,15 @@ export function ServiceFeeInputView({
     setPage(1);
   }, [startDate, endDate]);
 
+  // Debounce search to prevent query on every keystroke
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   // Fetch Service Fees Data
   const fetchServiceFees = useCallback(async () => {
     if (!selectedStoreId) {
@@ -345,7 +354,7 @@ export function ServiceFeeInputView({
       params.set("page", String(page));
       params.set("limit", String(limit));
       params.set("dateSort", dateSort);
-      if (search) params.set("search", search);
+      if (debouncedSearch) params.set("search", debouncedSearch);
       if (startDate) params.set("startDate", startDate);
       if (endDate) params.set("endDate", endDate);
 
@@ -368,7 +377,7 @@ export function ServiceFeeInputView({
     } finally {
       setLoading(false);
     }
-  }, [selectedStoreId, page, limit, dateSort, search, startDate, endDate, columnFilters, notify, onStatsChange, onTotalServiceFeesChange]);
+  }, [selectedStoreId, page, limit, dateSort, debouncedSearch, startDate, endDate, columnFilters, notify, onStatsChange, onTotalServiceFeesChange]);
 
   useEffect(() => {
     fetchServiceFees();

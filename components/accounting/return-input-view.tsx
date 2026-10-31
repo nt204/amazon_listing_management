@@ -331,6 +331,15 @@ export function ReturnInputView({
     setPage(1);
   }, [startDate, endDate]);
 
+  // Debounce search to prevent query on every keystroke
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   // Fetch Return Data
   const fetchReturns = useCallback(async () => {
     if (!selectedStoreId) {
@@ -345,7 +354,7 @@ export function ReturnInputView({
       params.set("page", String(page));
       params.set("limit", String(limit));
       params.set("dateSort", dateSort);
-      if (search) params.set("search", search);
+      if (debouncedSearch) params.set("search", debouncedSearch);
       if (startDate) params.set("startDate", startDate);
       if (endDate) params.set("endDate", endDate);
 
@@ -368,7 +377,7 @@ export function ReturnInputView({
     } finally {
       setLoading(false);
     }
-  }, [selectedStoreId, page, limit, dateSort, search, startDate, endDate, columnFilters, notify, onStatsChange, onTotalReturnsChange]);
+  }, [selectedStoreId, page, limit, dateSort, debouncedSearch, startDate, endDate, columnFilters, notify, onStatsChange, onTotalReturnsChange]);
 
   useEffect(() => {
     fetchReturns();

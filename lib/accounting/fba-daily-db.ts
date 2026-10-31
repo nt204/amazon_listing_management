@@ -96,16 +96,12 @@ export async function listFbaDaily(
   const limit = options.limit && options.limit > 0 ? options.limit : 100;
 
   const hasDateFilter = Boolean(startDate && endDate);
-  const storeRows = await sql<{ service_rate: string | number | null }[]>`
+  const storeRowsPromise = sql<{ service_rate: string | number | null }[]>`
     SELECT service_rate FROM stores WHERE id = ${storeId} LIMIT 1
   `;
-  const serviceRate = storeRows[0]?.service_rate != null 
-    ? Number(storeRows[0].service_rate) 
-    : (STORE_SERVICE_RATES[storeId] ?? 0.8572);
-  const dailyServiceCost = (20000 * serviceRate) / 184;
 
   // Daily aggregation across orders (FBA), ads, and returns
-  const rows = await sql<Record<string, unknown>[]>`
+  const rowsPromise = sql<Record<string, unknown>[]>`
     WITH asin_fees AS (
       SELECT 
         store_id,
@@ -230,6 +226,12 @@ export async function listFbaDaily(
     LEFT JOIN daily_returns r ON r.date = d.date
     ORDER BY d.date DESC
   `;
+
+  const [storeRows, rows] = await Promise.all([storeRowsPromise, rowsPromise]);
+  const serviceRate = storeRows[0]?.service_rate != null 
+    ? Number(storeRows[0].service_rate) 
+    : (STORE_SERVICE_RATES[storeId] ?? 0.8572);
+  const dailyServiceCost = (20000 * serviceRate) / 184;
 
   // Compute metrics for each day
   const items: FbaDailyItem[] = rows.map((r) => {

@@ -98,32 +98,34 @@ function warningsBlock(a: DailyReportAnalysis): string {
   return [`⚠️ **Cảnh báo dữ liệu** — các kênh dưới đây không được so Profit`, ...a.warnings.map((w) => `- ${w}`)].join("\n");
 }
 
-/** Dòng "Kiểm tra ..." + hành động cụ thể của 1 kênh. */
-function todoLine(ch: ChannelAnalysis): string {
-  const r = ch.review;
-  if (!r) return "";
-  const parts = [...r.actions];
-  if (r.checks.length) parts.push(`Kiểm tra ${r.checks.join(", ")}`);
-  return parts.length ? `→ ${parts.join(". ")}.` : "";
+/** Hiện tượng của 1 kênh: Δ Profit so với TB 7 ngày (hoặc doanh thu $0). */
+function phenomenon(ch: ChannelAnalysis): string {
+  if (ch.profitDelta == null || ch.today.revenue <= 0) return "Revenue $0";
+  return `Profit ${usdSigned(ch.profitDelta)}${ch.today.profit < 0 ? ` (lỗ ${usd(-ch.today.profit)})` : ""}`;
 }
 
-/** 1 vấn đề ưu tiên: tiêu đề có số → dữ kiện → việc cần làm. */
+/** Các dòng phân tích: Yếu tố đóng góp → Cần xác minh → Hành động. */
+function analysisLines(ch: ChannelAnalysis, maxFacts?: number): string[] {
+  const r = ch.review;
+  if (!r) return [];
+  const lines: string[] = [];
+  const facts = maxFacts ? r.facts.slice(0, maxFacts) : r.facts;
+  if (facts.length) lines.push(`<font color='grey'>Yếu tố: ${facts.join(" · ")}</font>`);
+  if (r.checks.length) lines.push(`<font color='grey'>Cần xác minh: ${r.checks.join(", ")}</font>`);
+  if (r.actions.length) lines.push(`→ **${r.actions.join("; ")}**`);
+  return lines;
+}
+
+/** 1 mục ưu tiên / cơ hội: Hiện tượng (tiêu đề) → Yếu tố → Cần xác minh → Hành động. */
 function priorityItem(ch: ChannelAnalysis, options: DailyReportCardOptions, maxFacts = 3): string {
-  const r = ch.review!;
   const lead = options.teamLeads?.[ch.team]?.trim();
-  const headline = ch.profitDelta != null && ch.today.revenue > 0
-    ? `Profit ${usdSigned(ch.profitDelta)}${ch.today.profit < 0 ? ` (lỗ ${usd(-ch.today.profit)})` : ""}`
-    : `Revenue $0`;
-  const lines = [`${SEVERITY_EMOJI[r.severity]} **${ch.label}**${lead ? ` (${lead})` : ""} · ${headline}`];
-  if (r.facts.length) lines.push(`<font color='grey'>${r.facts.slice(0, maxFacts).join(" · ")}</font>`);
-  const todo = todoLine(ch);
-  if (todo) lines.push(todo);
-  return lines.join("\n");
+  const head = `${SEVERITY_EMOJI[ch.review!.severity]} **${ch.label}**${lead ? ` (${lead})` : ""} · ${phenomenon(ch)}`;
+  return [head, ...analysisLines(ch, maxFacts)].join("\n");
 }
 
 function prioritiesBlock(a: DailyReportAnalysis, options: DailyReportCardOptions): string {
   if (!a.priorities.length) return "✅ **Không có vấn đề cần xử lý**";
-  return [`**Ưu tiên xử lý**`, ...a.priorities.map((ch) => priorityItem(ch, options))].join("\n\n");
+  return [`**Rủi ro — ưu tiên xử lý**`, ...a.priorities.map((ch) => priorityItem(ch, options))].join("\n\n");
 }
 
 function teamDelta(team: GroupAnalysis): string {
@@ -150,9 +152,9 @@ function teamTable(a: DailyReportAnalysis, options: DailyReportCardOptions): Rec
   };
 }
 
-function highlightsLine(a: DailyReportAnalysis): string {
-  if (!a.highlights.length) return "";
-  return `**Tăng trưởng nổi bật:** ${a.highlights.map((h) => `${h.label} ${colored(usdSigned(h.delta), true)}`).join(" · ")}`;
+function opportunitiesBlock(a: DailyReportAnalysis, options: DailyReportCardOptions): string {
+  if (!a.opportunities.length) return "";
+  return [`**Cơ hội**`, ...a.opportunities.map((ch) => priorityItem(ch, options, 2))].join("\n\n");
 }
 
 function cardHeader(title: string, subtitle: string): Record<string, unknown> {
@@ -170,12 +172,13 @@ export function buildDailyReportCard(a: DailyReportAnalysis, options: DailyRepor
   const elements: Array<Record<string, unknown>> = [];
   const warnings = warningsBlock(a);
   if (warnings) elements.push({ tag: "markdown", content: warnings });
+  // Luồng đọc: Kết quả (KPI, team) → Rủi ro cần xử lý → Cơ hội
   elements.push(kpiGrid(a));
-  elements.push({ tag: "markdown", content: prioritiesBlock(a, options) });
-  elements.push({ tag: "markdown", content: "**Kết quả theo team**" });
   elements.push(teamTable(a, options));
-  const highlights = highlightsLine(a);
-  if (highlights) elements.push({ tag: "markdown", content: highlights });
+  elements.push({ tag: "hr" });
+  elements.push({ tag: "markdown", content: prioritiesBlock(a, options) });
+  const opportunities = opportunitiesBlock(a, options);
+  if (opportunities) elements.push({ tag: "markdown", content: opportunities });
   elements.push(footnote(`Δ = so với TB 7 ngày trước · 🔴 ưu tiên cao · 🟡 theo dõi · Nhắn bot "${DETAIL_COMMAND}" để xem đủ ${a.company.channelCount} kênh, SKU, Organic/Ads`));
 
   return {
@@ -200,9 +203,7 @@ function channelLine(ch: ChannelAnalysis): string {
   ].filter(Boolean);
   const lines = [`${mark} **${ch.label}**${ch.isNew ? " 🌱" : ""} · ${numbers.join(" · ")}`];
   if (ch.dataIssue) lines.push(`<font color='orange'>⚠️ ${ch.dataIssue === "ads_missing" ? "Chưa có số Ads ngày này" : "7 ngày trước chưa có số Ads"} — không so Profit</font>`);
-  if (ch.review?.facts.length) lines.push(`<font color='grey'>${ch.review.facts.join(" · ")}</font>`);
-  const todo = ch.review && ch.review.severity !== "good" ? todoLine(ch) : "";
-  if (todo) lines.push(todo);
+  lines.push(...analysisLines(ch));
   return lines.join("\n");
 }
 
@@ -249,11 +250,11 @@ export function buildDailyReportText(a: DailyReportAnalysis, options: DailyRepor
   const warnings = warningsBlock(a);
   if (warnings) lines.push("", stripTags(warnings));
   lines.push("", kpis(a.company).map((k) => `${k.name} ${k.value} ${stripTags(k.delta)}`.trim()).join(" | "));
-  lines.push("", stripTags(prioritiesBlock(a, options)));
-  lines.push("", "Kết quả theo team");
+  lines.push("", "Theo team");
   for (const team of a.teams) lines.push(`  ${teamLabel(team.team, options.teamLeads)}: ${usd(team.today.profit)} ${stripTags(teamDelta(team))}`);
-  const highlights = highlightsLine(a);
-  if (highlights) lines.push("", stripTags(highlights));
+  lines.push("", stripTags(prioritiesBlock(a, options)));
+  const opportunities = opportunitiesBlock(a, options);
+  if (opportunities) lines.push("", stripTags(opportunities));
   return lines.join("\n");
 }
 

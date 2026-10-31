@@ -367,6 +367,49 @@ export async function sendDailyReportDetail(options: {
   return { success: true, message: `Đã gửi báo cáo chi tiết ngày ${displayDate(date)}.`, text, card };
 }
 
+/**
+ * Rà soát kinh doanh 1 ngày cho AI Agent (tool getBusinessReview): cùng phân tích với báo cáo ngày,
+ * trả về dữ liệu gọn để AI diễn đạt — rủi ro, cơ hội đã xếp hạng sẵn, không để AI tự tính.
+ */
+export async function getDailyBusinessReview(options: { targetDate?: string; storeNames?: string[] } = {}) {
+  const date = options.targetDate?.trim() || (await latestCompleteDate());
+  if (!date) return { error: "Chưa có ngày nào đủ dữ liệu để rà soát." };
+  const channels = await loadChannelSeries(date, options.storeNames);
+  if (!channels.length) return { error: `Không có kênh nào được xem có số liệu ngày ${displayDate(date)}.` };
+  const a = analyzeDailyReport(date, channels);
+  const item = (ch: DailyReportAnalysis["priorities"][number]) => ({
+    kenh: ch.label,
+    team: ch.team,
+    muc_do: ch.review?.severity === "high" ? "cao" : ch.review?.severity === "medium" ? "theo dõi" : "tốt",
+    hien_tuong: ch.profitDelta != null ? `Profit ${ch.profitDelta >= 0 ? "tăng" : "giảm"} $${Math.abs(Math.round(ch.profitDelta))} so với TB 7 ngày` : "Revenue $0",
+    yeu_to_dong_gop: ch.review?.facts ?? [],
+    nguyen_nhan_can_xac_minh: ch.review?.checks ?? [],
+    hanh_dong: ch.review?.actions ?? [],
+  });
+  const t = a.company.today;
+  const b = a.company.avg7;
+  return {
+    ngay: date,
+    moc_so_sanh: "TB 7 ngày trước",
+    canh_bao_du_lieu: a.warnings,
+    ket_qua: {
+      revenue: Math.round(t.revenue),
+      profit: Math.round(t.profit),
+      margin_pct: Number((t.margin * 100).toFixed(1)),
+      tacos_pct: Number((t.tacos * 100).toFixed(1)),
+      profit_tb7: b && a.company.comparable ? Math.round(b.profit) : null,
+      revenue_tb7: b ? Math.round(b.revenue) : null,
+    },
+    theo_team: a.teams.map((team) => ({
+      team: team.team,
+      profit: Math.round(team.today.profit),
+      profit_vs_tb7: team.avg7 && team.comparable ? Math.round(team.today.profit - team.avg7.profit) : null,
+    })),
+    rui_ro: a.priorities.map(item),
+    co_hoi: a.opportunities.map(item),
+  };
+}
+
 /** Nhận diện tin nhắn xin bản chi tiết: "báo cáo chi tiết", "chi tiết báo cáo 28/10"... Trả về ngày (YYYY-MM-DD) nếu có. */
 export function parseDailyReportDetailRequest(message: string, today = new Date()): { date?: string } | null {
   const text = message.normalize("NFC").toLowerCase();
