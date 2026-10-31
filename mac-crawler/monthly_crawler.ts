@@ -11,6 +11,7 @@ import {
   startAdsPowerProfile,
   stopAdsPowerProfile,
 } from "./accounting_crawler";
+import { ensureAmazonSession } from "./amazon_auth";
 
 loadEnv();
 
@@ -62,6 +63,28 @@ function acquireMonthlyLock(): () => void {
 
 function isSignInUrl(url: string): boolean {
   return /signin|sign-in|ap\/signin/i.test(url);
+}
+
+async function withSessionRecovery<T>(
+  taskLabel: string,
+  page: Page,
+  storeName: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    const msg = error?.message || String(error);
+    const sessionExpired =
+      isSignInUrl(page.url()) ||
+      /chưa đăng nhập|sign-in|signin|session expired|anti-csrftoken/i.test(msg);
+    if (!sessionExpired) throw error;
+
+    console.warn(`  [${taskLabel}] ⚠️ Phát hiện mất phiên hoặc yêu cầu đăng nhập (${msg}). Tự động đăng nhập qua ensureAmazonSession...`);
+    await ensureAmazonSession(page, storeName);
+    console.log(`  [${taskLabel}] Đã khôi phục phiên thành công. Thử lại thao tác...`);
+    return await fn();
+  }
 }
 
 /** Lấy chuỗi YYYY-MM của tháng trước */
@@ -136,6 +159,7 @@ async function downloadMonthlyPortfolios(
   downloadDir: string,
   targetMonth: string,
   isPreviousMonth: boolean,
+  storeName?: string,
 ): Promise<string> {
   const targetPath = path.join(downloadDir, `01_Portfolios_${targetMonth}.csv`);
   if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 500) {
@@ -149,7 +173,17 @@ async function downloadMonthlyPortfolios(
   await page.waitForTimeout(3500);
 
   if (isSignInUrl(page.url())) {
-    throw new Error("Trang Amazon Advertising yêu cầu đăng nhập.");
+    if (storeName) {
+      console.log(`  [Ads Portfolios Tháng] Phát hiện trang đăng nhập. Gọi ensureAmazonSession...`);
+      await ensureAmazonSession(page, storeName);
+      if (!page.url().includes("/cm/portfolios")) {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+        await page.waitForTimeout(3500);
+      }
+    }
+    if (isSignInUrl(page.url())) {
+      throw new Error("Trang Amazon Advertising yêu cầu đăng nhập.");
+    }
   }
 
   const datePickerBtn = page.locator('button[data-e2e-id="dateRangePickerButton"]').first();
@@ -231,6 +265,7 @@ async function downloadMonthlyOrders(
   page: Page,
   downloadDir: string,
   targetMonth: string,
+  storeName?: string,
 ): Promise<string> {
   const targetPath = path.join(downloadDir, `02_AllOrders_${targetMonth}.tsv`);
   if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 500) {
@@ -245,7 +280,17 @@ async function downloadMonthlyOrders(
   await page.waitForTimeout(3500);
 
   if (isSignInUrl(page.url())) {
-    throw new Error("Seller Central chưa đăng nhập (đang ở màn hình Sign-In).");
+    if (storeName) {
+      console.log(`  [All Orders Tháng] Phát hiện trang đăng nhập. Gọi ensureAmazonSession...`);
+      await ensureAmazonSession(page, storeName);
+      if (!page.url().includes("FlatFileAllOrdersReport")) {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+        await page.waitForTimeout(3500);
+      }
+    }
+    if (isSignInUrl(page.url())) {
+      throw new Error("Seller Central chưa đăng nhập (đang ở màn hình Sign-In).");
+    }
   }
 
   console.log(`  [All Orders Tháng] Gửi yêu cầu API báo cáo tháng từ ${startSlash} đến ${endSlash}...`);
@@ -325,6 +370,7 @@ async function downloadMonthlyReportCentralFile(
   downloadDir: string,
   targetMonth: string,
   config: ReportCentralConfig,
+  storeName?: string,
 ): Promise<string | null> {
   const fileName = `${config.code}_${targetMonth}.${config.ext}`;
   const targetPath = path.join(downloadDir, fileName);
@@ -340,7 +386,17 @@ async function downloadMonthlyReportCentralFile(
   await page.waitForTimeout(3000);
 
   if (isSignInUrl(page.url())) {
-    throw new Error("Seller Central chưa đăng nhập.");
+    if (storeName) {
+      console.log(`  [${config.code}] Phát hiện trang đăng nhập. Gọi ensureAmazonSession...`);
+      await ensureAmazonSession(page, storeName);
+      if (!page.url().includes(config.pageUrl)) {
+        await page.goto(config.pageUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+        await page.waitForTimeout(3000);
+      }
+    }
+    if (isSignInUrl(page.url())) {
+      throw new Error("Seller Central chưa đăng nhập.");
+    }
   }
 
   console.log(`  [${config.code}] Gửi API submitDownloadReport (frpId ${config.frpId}) từ ${startSlash} đến ${endSlash}...`);
@@ -428,6 +484,7 @@ async function downloadPaymentsReportsRepository(
   page: Page,
   downloadDir: string,
   monthStr: string,
+  storeName?: string,
 ): Promise<string[]> {
   const transFileName = `15_DateRangeTransactions_${monthStr}.csv`;
   const transTargetPath = path.join(downloadDir, transFileName);
@@ -449,7 +506,17 @@ async function downloadPaymentsReportsRepository(
   await page.waitForTimeout(4000);
 
   if (isSignInUrl(page.url())) {
-    throw new Error("Trang yêu cầu đăng nhập lại (Session expired).");
+    if (storeName) {
+      console.log(`  [15_DateRangeTransactions] Phát hiện trang đăng nhập. Gọi ensureAmazonSession...`);
+      await ensureAmazonSession(page, storeName);
+      if (!page.url().includes("reports-repository")) {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForTimeout(4000);
+      }
+    }
+    if (isSignInUrl(page.url())) {
+      throw new Error("Trang yêu cầu đăng nhập lại (Session expired).");
+    }
   }
 
   // Đóng survey popup nếu có
@@ -659,19 +726,25 @@ async function main() {
 
         try {
           // 1. Tải File 01: Ads Portfolios (+ File 05 Campaigns)
-          const p1 = await downloadMonthlyPortfolios(page, storeDownloadDir, targetMonth, isPreviousMonth);
+          const p1 = await withSessionRecovery("Ads Portfolios", page, store.store_name, () =>
+            downloadMonthlyPortfolios(page, storeDownloadDir, targetMonth, isPreviousMonth, store.store_name),
+          );
           if (p1) downloadedFiles.push(path.basename(p1));
           const p5 = path.join(storeDownloadDir, `05_Campaigns_${targetMonth}.csv`);
           if (fs.existsSync(p5)) downloadedFiles.push(path.basename(p5));
 
           // 2. Tải File 02: All Orders
-          const p2 = await downloadMonthlyOrders(page, storeDownloadDir, targetMonth);
+          const p2 = await withSessionRecovery("All Orders", page, store.store_name, () =>
+            downloadMonthlyOrders(page, storeDownloadDir, targetMonth, store.store_name),
+          );
           if (p2) downloadedFiles.push(path.basename(p2));
 
           // 3. Tải 4 báo cáo kế toán tháng mới (Removal, Inbound Placement, Long-term Storage, Monthly Storage)
           for (const repConfig of ADDITIONAL_MONTHLY_REPORTS) {
             try {
-              const p = await downloadMonthlyReportCentralFile(page, storeDownloadDir, targetMonth, repConfig);
+              const p = await withSessionRecovery(repConfig.code, page, store.store_name, () =>
+                downloadMonthlyReportCentralFile(page, storeDownloadDir, targetMonth, repConfig, store.store_name),
+              );
               if (p) downloadedFiles.push(path.basename(p));
             } catch (repErr: any) {
               console.warn(`  ⚠️ Lỗi khi tải ${repConfig.code}: ${repErr.message || repErr}`);
@@ -680,7 +753,9 @@ async function main() {
 
           // 4. Tải Báo cáo Date Range Transactions & Summary từ Payments Reports Repository
           try {
-            const pRepo = await downloadPaymentsReportsRepository(page, storeDownloadDir, targetMonth);
+            const pRepo = await withSessionRecovery("Payments Repository", page, store.store_name, () =>
+              downloadPaymentsReportsRepository(page, storeDownloadDir, targetMonth, store.store_name),
+            );
             for (const p of pRepo) {
               downloadedFiles.push(path.basename(p));
             }

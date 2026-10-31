@@ -87,7 +87,7 @@ export async function ensureAmazonSession(page: Page, storeName: string): Promis
 
   // 1. Kiểm tra ô email nếu chưa chọn sẵn
   const emailSelector = "#ap_email, #ap_email_login, input[name='email'], input[type='email']";
-  const emailField = await page.$(emailSelector);
+  const emailField = await page.waitForSelector(emailSelector, { timeout: 5000 }).catch(() => null);
   if (emailField && (await emailField.isVisible().catch(() => false))) {
     if (email) {
       console.log(`[${storeName}] Điền email: ${email}...`);
@@ -153,6 +153,19 @@ export async function ensureAmazonSession(page: Page, storeName: string): Promis
       ]);
       await page.waitForTimeout(4000);
     }
+  }
+
+  // 4. Kiểm tra nút chọn tài khoản / merchant picker nếu có
+  const selectAccountBtn = await page.$(
+    "button[name='selectAccount'], button:has-text('Select Account'), button:has-text('Select account'), input[value='Select Account']",
+  ).catch(() => null);
+  if (selectAccountBtn && (await selectAccountBtn.isVisible().catch(() => false))) {
+    console.log(`[${storeName}] Phát hiện màn hình chọn account, click Select Account...`);
+    await Promise.all([
+      page.waitForNavigation({ timeout: 20000 }).catch(() => null),
+      selectAccountBtn.click(),
+    ]);
+    await page.waitForTimeout(3000);
   }
 
   await page.waitForTimeout(4000);
