@@ -63,7 +63,7 @@ def load_sku_catalog(conn, store_id):
     cur.execute("""
         SELECT sku, asin, fnsku, product_type, amazon_fee, referral_fee_pct, pic_mkt, status, mockup_url
         FROM accounting_sku_master
-        WHERE store_id = %s
+        WHERE store_id = %s AND deleted_at IS NULL
     """, (store_id,))
     rows = cur.fetchall()
     sku_master = {}

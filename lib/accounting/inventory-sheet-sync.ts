@@ -125,10 +125,19 @@ function text(value: unknown): string | null {
   return s;
 }
 
-/** SKU không chứa khoảng trắng / xuống dòng (sheet có ô "\nWCPL220955A01"). */
+/**
+ * Bỏ xuống dòng / tab lẫn trong ô SKU (sheet có ô "\nWCPL220955A01") nhưng GIỮ dấu cách ở giữa:
+ * SKU Amazon có thể chứa dấu cách ("F-L-150622-HK-N -3", "Resin doll_gardening") — xóa đi sẽ ra SKU khác
+ * với đơn hàng / giao dịch / Base Cost.
+ */
 function skuText(value: unknown): string | null {
-  const s = text(value)?.replace(/\s+/g, "");
+  const s = text(value)?.replace(/[\n\t\v\f]+/g, "").trim();
   return s && s.toLowerCase() !== "sku" ? s : null;
+}
+
+/** Khóa so khớp SKU giữa sheet và DB: bỏ mọi khoảng trắng để dòng cũ (lưu SKU đã bị xóa dấu cách) vẫn khớp. */
+function skuMatchKey(value: unknown): string {
+  return String(value ?? "").replace(/\s+/g, "");
 }
 
 function num(value: unknown): number | null {
@@ -562,7 +571,7 @@ async function writeInboundRecords(
   for (const row of existing) {
     const id = row.id as string;
     byId.set(id, row);
-    const sku = String(row.sku ?? "").replace(/\s+/g, "");
+    const sku = skuMatchKey(row.sku);
     if (text(row.shipment_id)) push(index.ship, key(sku, row.shipment_id), id);
     else if (text(row.ten_lo_hang)) push(index.lo, key(sku, row.ten_lo_hang), id);
     else push(index.loose, key(sku, row.ngay_request, row.quantity), id);
@@ -580,7 +589,7 @@ async function writeInboundRecords(
   const dupRows = new Map<string, number[]>();
   const keyless: Row[] = [];
   for (const r of records) {
-    const identity = r.shipment_id ? key(r.sku, r.shipment_id) : r.ten_lo_hang ? key(r.sku, "lot:", r.ten_lo_hang) : null;
+    const identity = r.shipment_id ? key(skuMatchKey(r.sku), r.shipment_id) : r.ten_lo_hang ? key(skuMatchKey(r.sku), "lot:", r.ten_lo_hang) : null;
     if (!identity) {
       keyless.push(r);
       continue;
@@ -598,13 +607,13 @@ async function writeInboundRecords(
   // Lớp 2: khớp dòng web theo thứ tự ưu tiên (mỗi dòng web chỉ khớp 1 lần).
   const matches = new Map<Row, string | undefined>();
   for (const r of records) {
-    if (r.shipment_id) matches.set(r, take(index.ship, key(r.sku, r.shipment_id)));
+    if (r.shipment_id) matches.set(r, take(index.ship, key(skuMatchKey(r.sku), r.shipment_id)));
   }
   for (const r of records) {
     if (matches.get(r)) continue;
     // Lô vừa được điền Shipment ID: kế thừa dòng nháp cùng Tên lô
-    const id = r.ten_lo_hang ? take(index.lo, key(r.sku, r.ten_lo_hang)) : undefined;
-    matches.set(r, id ?? take(index.loose, key(r.sku, r.ngay_request, r.quantity)));
+    const id = r.ten_lo_hang ? take(index.lo, key(skuMatchKey(r.sku), r.ten_lo_hang)) : undefined;
+    matches.set(r, id ?? take(index.loose, key(skuMatchKey(r.sku), r.ngay_request, r.quantity)));
   }
 
   const toDelete = existing.filter((row) => !used.has(row.id as string));
