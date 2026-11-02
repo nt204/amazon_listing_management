@@ -39,7 +39,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # 2. PATH & Node environment
-export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$PATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export PYTHON_BIN="$(which python3 || echo /opt/homebrew/bin/python3)"
 export NODE_OPTIONS="--max-old-space-size=2048 --dns-result-order=ipv4first $NODE_OPTIONS"
 
 if [ -f "$SCRIPT_DIR/config.env" ]; then
@@ -58,10 +59,11 @@ else
 fi
 
 echo "[Environment] Node: $(which node)"
+echo "[Environment] Python: $(which python3)"
 echo "[Environment] TSX: $TSX_BIN"
 
 cd "$SCRIPT_DIR"
-"$TSX_BIN" monthly_crawler.ts "$@"
+"$TSX_BIN" monthly_crawler.ts --force-ingest "$@"
 EXIT_CODE=$?
 
 echo ""

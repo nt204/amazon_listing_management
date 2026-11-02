@@ -17,7 +17,10 @@ import sys
 import csv
 import re
 import argparse
+import datetime
+import json
 import psycopg2
+from psycopg2.extras import execute_values, execute_batch
 from collections import defaultdict
 from decimal import Decimal
 
@@ -37,6 +40,37 @@ OWNER_FEE_RATE = 0.005
 OWNER_FEE_REVENUE_THRESHOLD = 20000.0
 OWNER_FEE_MIN_VND = 1_000_000
 USD_VND_RATE = 25000.0  # ô AF1 sheet SKU-monthly
+
+def load_owner_fee_rules(conn):
+    """
+    Đọc cấu hình phí chủ store từ app_settings (nếu có), fallback về hằng số mặc định.
+    Cấu hình mẫu trong DB: {"start_period": "2026-09", "revenue_threshold": 20000.0, "rate": 0.005, "fixed_vnd": 1000000.0, "usd_vnd_rate": 25000.0}
+    """
+    rules = {
+        'from_year': OWNER_FEE_FROM[0],
+        'from_month': OWNER_FEE_FROM[1],
+        'rate': OWNER_FEE_RATE,
+        'threshold': OWNER_FEE_REVENUE_THRESHOLD,
+        'min_vnd': OWNER_FEE_MIN_VND,
+        'usd_vnd_rate': USD_VND_RATE
+    }
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM app_settings WHERE key = 'accounting:store_owner_fee'")
+        row = cur.fetchone()
+        if row and row[0]:
+            cfg = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+            if 'start_period' in cfg and isinstance(cfg['start_period'], str):
+                p_parts = [int(x) for x in cfg['start_period'].split('-')]
+                rules['from_year'] = p_parts[0]
+                rules['from_month'] = p_parts[1]
+            if 'rate' in cfg: rules['rate'] = float(cfg['rate'])
+            if 'revenue_threshold' in cfg: rules['threshold'] = float(cfg['revenue_threshold'])
+            if 'fixed_vnd' in cfg: rules['min_vnd'] = float(cfg['fixed_vnd'])
+            if 'usd_vnd_rate' in cfg: rules['usd_vnd_rate'] = float(cfg['usd_vnd_rate'])
+    except Exception:
+        pass
+    return rules
 
 def get_db_connection():
     db_urls = [
@@ -832,11 +866,12 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         tot['sku_profit'] += sku_profit
         tot['revenue_ads'] += a_data['sales']
 
+    owner_fee_rules = load_owner_fee_rules(conn)
     owner_fee = 0.0
-    if (year, month) >= OWNER_FEE_FROM:
-        owner_fee = -(tot['revenue'] * OWNER_FEE_RATE if tot['revenue'] > OWNER_FEE_REVENUE_THRESHOLD
-                      else OWNER_FEE_MIN_VND / USD_VND_RATE)
-        print(f"👤 Phí chủ store {period}: {owner_fee:.2f}")
+    if (year, month) >= (owner_fee_rules['from_year'], owner_fee_rules['from_month']):
+        owner_fee = -(tot['revenue'] * owner_fee_rules['rate'] if tot['revenue'] > owner_fee_rules['threshold']
+                      else owner_fee_rules['min_vnd'] / owner_fee_rules['usd_vnd_rate'])
+        print(f"👤 Phí chủ store {period}: {owner_fee:.2f} (Rate: {owner_fee_rules['rate']*100:.1f}%, Ngưỡng: ${owner_fee_rules['threshold']:,.0f})")
     awd_sub_fees += owner_fee
     tot['awd_subscription_fees'] = awd_sub_fees
     net_profit = tot['sku_profit'] + awd_sub_fees
@@ -886,70 +921,69 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         return False
 
     # 8. Upsert into database
-    print(f"\n💾 Upserting {len(sku_rows)} genuine SKUs into accounting_sku_monthly...")
+    print(f"\n💾 Upserting {len(sku_rows)} genuine SKUs into accounting_sku_monthly in bulk...")
     # Delete any invalid SKUs outside of sku_master for this month
     cur.execute(
         "DELETE FROM accounting_sku_monthly WHERE store_id = %s AND year = %s AND month = %s AND sku NOT IN %s",
         (store_id, year, month, tuple(sku_master.keys()))
     )
     
-    for r in sku_rows:
-        cur.execute("""
-            INSERT INTO accounting_sku_monthly (
-                store_id, year, month, sku, asin, product_type, mockup_url, fnsku, status,
-                revenue, quantity, ads_fee, basecost, amazon_fee_unrecognized, amazon_fee_trans,
-                thue, return_amount, adjustment, storage_fee, placement_fee, long_term_fee,
-                fba_customer_return_fee, liquidations, basecost_return_adjustment, basecost_adjustment, removal,
-                profit, tacos, acos, margin, roi, profit_per_item, basecost_per_item,
-                revenue_ads, created_at, updated_at
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s,
-                %s, NOW(), NOW()
-            )
-            ON CONFLICT (store_id, year, month, sku) DO UPDATE
-            SET asin = EXCLUDED.asin,
-                product_type = EXCLUDED.product_type,
-                mockup_url = COALESCE(EXCLUDED.mockup_url, accounting_sku_monthly.mockup_url),
-                fnsku = EXCLUDED.fnsku,
-                status = EXCLUDED.status,
-                revenue = EXCLUDED.revenue,
-                quantity = EXCLUDED.quantity,
-                ads_fee = EXCLUDED.ads_fee,
-                basecost = EXCLUDED.basecost,
-                amazon_fee_unrecognized = EXCLUDED.amazon_fee_unrecognized,
-                amazon_fee_trans = EXCLUDED.amazon_fee_trans,
-                thue = EXCLUDED.thue,
-                return_amount = EXCLUDED.return_amount,
-                adjustment = EXCLUDED.adjustment,
-                storage_fee = EXCLUDED.storage_fee,
-                placement_fee = EXCLUDED.placement_fee,
-                long_term_fee = EXCLUDED.long_term_fee,
-                fba_customer_return_fee = EXCLUDED.fba_customer_return_fee,
-                liquidations = EXCLUDED.liquidations,
-                basecost_return_adjustment = EXCLUDED.basecost_return_adjustment,
-                basecost_adjustment = EXCLUDED.basecost_adjustment,
-                removal = EXCLUDED.removal,
-                profit = EXCLUDED.profit,
-                tacos = EXCLUDED.tacos,
-                acos = EXCLUDED.acos,
-                margin = EXCLUDED.margin,
-                roi = EXCLUDED.roi,
-                profit_per_item = EXCLUDED.profit_per_item,
-                basecost_per_item = EXCLUDED.basecost_per_item,
-                revenue_ads = EXCLUDED.revenue_ads,
-                updated_at = NOW();
-        """, (
+    sku_insert_sql = """
+        INSERT INTO accounting_sku_monthly (
+            store_id, year, month, sku, asin, product_type, mockup_url, fnsku, status,
+            revenue, quantity, ads_fee, basecost, amazon_fee_unrecognized, amazon_fee_trans,
+            thue, return_amount, adjustment, storage_fee, placement_fee, long_term_fee,
+            fba_customer_return_fee, liquidations, basecost_return_adjustment, basecost_adjustment, removal,
+            profit, tacos, acos, margin, roi, profit_per_item, basecost_per_item,
+            revenue_ads, created_at, updated_at
+        ) VALUES %s
+        ON CONFLICT (store_id, year, month, sku) DO UPDATE
+        SET asin = EXCLUDED.asin,
+            product_type = EXCLUDED.product_type,
+            mockup_url = COALESCE(EXCLUDED.mockup_url, accounting_sku_monthly.mockup_url),
+            fnsku = EXCLUDED.fnsku,
+            status = EXCLUDED.status,
+            revenue = EXCLUDED.revenue,
+            quantity = EXCLUDED.quantity,
+            ads_fee = EXCLUDED.ads_fee,
+            basecost = EXCLUDED.basecost,
+            amazon_fee_unrecognized = EXCLUDED.amazon_fee_unrecognized,
+            amazon_fee_trans = EXCLUDED.amazon_fee_trans,
+            thue = EXCLUDED.thue,
+            return_amount = EXCLUDED.return_amount,
+            adjustment = EXCLUDED.adjustment,
+            storage_fee = EXCLUDED.storage_fee,
+            placement_fee = EXCLUDED.placement_fee,
+            long_term_fee = EXCLUDED.long_term_fee,
+            fba_customer_return_fee = EXCLUDED.fba_customer_return_fee,
+            liquidations = EXCLUDED.liquidations,
+            basecost_return_adjustment = EXCLUDED.basecost_return_adjustment,
+            basecost_adjustment = EXCLUDED.basecost_adjustment,
+            removal = EXCLUDED.removal,
+            profit = EXCLUDED.profit,
+            tacos = EXCLUDED.tacos,
+            acos = EXCLUDED.acos,
+            margin = EXCLUDED.margin,
+            roi = EXCLUDED.roi,
+            profit_per_item = EXCLUDED.profit_per_item,
+            basecost_per_item = EXCLUDED.basecost_per_item,
+            revenue_ads = EXCLUDED.revenue_ads,
+            updated_at = NOW();
+    """
+    now_dt = datetime.datetime.now()
+    sku_tuples = [
+        (
             store_id, year, month, r['sku'], r['asin'], r['product_type'], r['mockup_url'], r['fnsku'], r['status'],
             r['revenue'], r['quantity'], r['ads_fee'], r['basecost'], r['amazon_fee_unrecognized'], r['amazon_fee_trans'],
             r['thue'], r['return_amount'], r['adjustment'], r['storage_fee'], r['placement_fee'], r['long_term_fee'],
             r['fba_customer_return_fee'], r['liquidations'], r['basecost_return_adjustment'], r['basecost_adjustment'], r['removal'],
             r['profit'], r['tacos'], r['acos'], r['margin'], r['roi'], r['profit_per_item'], r['basecost_per_item'],
-            r['revenue_ads']
-        ))
+            r['revenue_ads'], now_dt, now_dt
+        )
+        for r in sku_rows
+    ]
+    if sku_tuples:
+        execute_values(cur, sku_insert_sql, sku_tuples, page_size=250)
 
     print(f"💾 Upserting store summary into accounting_monthly_store_summary...")
     cur.execute("""
@@ -1021,18 +1055,18 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     changed = [(qty, sku) for sku, qty in outflow.items()
                if sku in current_outflow and (current_outflow[sku][0] is None or abs(current_outflow[sku][0] - qty) > 1e-9)]
     changed_skus = {sku for _, sku in changed}
-    for sku, (_, source) in current_outflow.items():
-        if sku in outflow and source != 'ingest' and sku not in changed_skus:
-            cur.execute("""
-                UPDATE accounting_monthly_base_cost SET sl_ra_kho_source = 'ingest'
-                WHERE store_id = %s AND period = %s AND sku = %s AND deleted_at IS NULL
-            """, (store_id, period, sku))
-    for qty, sku in changed:
+    mark_skus = [sku for sku, (_, source) in current_outflow.items() if sku in outflow and source != 'ingest' and sku not in changed_skus]
+    if mark_skus:
         cur.execute("""
+            UPDATE accounting_monthly_base_cost SET sl_ra_kho_source = 'ingest'
+            WHERE store_id = %s AND period = %s AND sku = ANY(%s) AND deleted_at IS NULL
+        """, (store_id, period, mark_skus))
+    if changed:
+        execute_batch(cur, """
             UPDATE accounting_monthly_base_cost
             SET sl_ra_kho = %s, sl_ra_kho_source = 'ingest', last_changed_by = 'monthly-ingest', updated_at = NOW()
             WHERE store_id = %s AND period = %s AND sku = %s AND deleted_at IS NULL
-        """, (qty, store_id, period, sku))
+        """, [(qty, store_id, period, sku) for qty, sku in changed], page_size=200)
     missing = [sku for sku in outflow if sku not in current_outflow]
     if missing:
         print(f"⚠️ {len(missing)} SKU chưa có dòng Base Cost kỳ {period} (chưa ghi hàng ra kho): {missing[:5]}...")

@@ -12,6 +12,7 @@ DEST="${MAC_MINI_DIR:-/Users/ad/mac-crawler}"
 ITEMS=(
   "scripts/ingest_monthly_from_raw.py:scripts/ingest_monthly_from_raw.py"
   "mac-crawler/monthly_crawler.ts:monthly_crawler.ts"
+  "mac-crawler/run_accounting_monthly.sh:run_accounting_monthly.sh"
 )
 
 cd "$(dirname "$0")/.."

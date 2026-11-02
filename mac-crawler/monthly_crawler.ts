@@ -886,7 +886,8 @@ async function main() {
             "--month",
             targetMonth,
           ];
-          if (forceIngest) {
+          // Mặc định luôn cập nhật lại dữ liệu tươi mới (--force) trừ khi người dùng chỉ định --no-force
+          if (!process.argv.includes("--no-force")) {
             ingestArgs.push("--force");
           }
           const { stdout, stderr } = await execFileAsync(pythonBin, ingestArgs);
@@ -930,6 +931,44 @@ async function main() {
       finalReport += `❌ Thất bại tải file: ${failedStores.length} store\n`;
       for (const f of failedStores) {
         finalReport += `  • ${f.store}: ${f.error}\n`;
+      }
+    }
+
+    // Truy vấn số liệu tài chính thực tế từ Database để đối soát và báo cáo lên Telegram
+    if (shouldAutoIngest && successStores.length > 0) {
+      try {
+        const pythonBin = process.env.PYTHON_BIN || (fs.existsSync("/opt/homebrew/bin/python3") ? "/opt/homebrew/bin/python3" : (fs.existsSync("/usr/local/bin/python3") ? "/usr/local/bin/python3" : "python3"));
+        const [targetYear, targetMonthNum] = targetMonth.split("-").map(Number);
+        const pySummaryScript = `
+import psycopg2, os
+from psycopg2.extras import RealDictCursor
+try:
+    conn = psycopg2.connect("postgresql://listing_desk:listing_desk@167.233.26.87:2412/listing_desk", connect_timeout=4)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT s.name, m.total_revenue, m.awd_subscription_fees, m.vat_tax_adjustment, m.total_sku_profit, m.net_profit
+        FROM accounting_monthly_store_summary m
+        JOIN stores s ON s.id = m.store_id
+        WHERE m.year = %s AND m.month = %s
+        ORDER BY s.name
+    """, (${targetYear}, ${targetMonthNum}))
+    rows = cur.fetchall()
+    conn.close()
+    if rows:
+        print("\\n📊 KẾT QUẢ TÀI CHÍNH KỲ ${targetMonth}:")
+        for r in rows:
+            calc_diff = abs(float(r['net_profit']) - (float(r['total_sku_profit']) + float(r['awd_subscription_fees']) + float(r['vat_tax_adjustment'])))
+            check_flag = "✅" if calc_diff < 0.05 else f"⚠️ lệch {calc_diff:.2f}"
+            print(f"  • {r['name']}: DT \${float(r['total_revenue']):,.0f} | AWD/Chủ: \${float(r['awd_subscription_fees']):,.2f} | LN: \${float(r['net_profit']):,.2f} {check_flag}")
+except Exception:
+    pass
+`;
+        const { stdout: finOut } = await execFileAsync(pythonBin, ["-c", pySummaryScript]);
+        if (finOut && finOut.trim()) {
+          finalReport += `\n${finOut.trim()}\n`;
+        }
+      } catch (sumErr) {
+        // Không làm gián đoạn báo cáo chính
       }
     }
 
