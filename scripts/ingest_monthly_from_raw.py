@@ -19,6 +19,8 @@ import re
 import argparse
 import datetime
 import json
+import glob
+import time
 import psycopg2
 from psycopg2.extras import execute_values, execute_batch
 from collections import defaultdict
@@ -421,22 +423,70 @@ def wait_for_base_cost_resync(conn, store_id, timeout=240, settle=8):
         time.sleep(2)
     return False
 
-def load_removal_order_map(removal_file, sku_master, fnsku_to_sku, asin_to_sku):
+def load_removal_order_map(download_dir, sku_master, fnsku_to_sku, asin_to_sku):
     rem_map = {}
-    if removal_file and os.path.exists(removal_file):
-        with open(removal_file, 'r', encoding='utf-8-sig', errors='replace') as f:
-            for row in csv.DictReader(f):
-                oid = row.get('order-id', '').strip()
-                if not oid:
-                    continue
-                raw_sku = row.get('sku', '').strip()
-                fnsku = row.get('fnsku', '').strip()
-                sku = resolve_sku(raw_sku or fnsku, sku_master, fnsku_to_sku, asin_to_sku)
-                if sku:
-                    rem_map[oid] = sku
+    files_to_scan = []
+    current_rem = find_file(download_dir, "11_RemovalOrderDetail")
+    if current_rem:
+        files_to_scan.append(current_rem)
+    try:
+        store_folder = os.path.basename(os.path.normpath(download_dir))
+        download_root = os.path.dirname(os.path.dirname(os.path.normpath(download_dir)))
+        for p in glob.glob(os.path.join(download_root, "*", store_folder, "*RemovalOrderDetail*")):
+            if p not in files_to_scan:
+                files_to_scan.append(p)
+    except Exception:
+        pass
+
+    for rfile in files_to_scan:
+        if not rfile or not os.path.exists(rfile):
+            continue
+        try:
+            with open(rfile, 'r', encoding='utf-8-sig', errors='replace') as f:
+                for row in csv.DictReader(f):
+                    oid = row.get('order-id', '').strip()
+                    if not oid or oid in rem_map:
+                        continue
+                    raw_sku = row.get('sku', '').strip()
+                    fnsku = row.get('fnsku', '').strip()
+                    sku = resolve_sku(raw_sku or fnsku, sku_master, fnsku_to_sku, asin_to_sku)
+                    if sku:
+                        rem_map[oid] = sku
+        except Exception:
+            pass
     return rem_map
 
-def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map=None):
+def load_order_sku_map(conn, store_id, orders_file, sku_master, asin_to_sku, fnsku_to_sku):
+    order_sku = {}
+    if conn and store_id:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT amazon_order_id, sku FROM accounting_orders WHERE store_id = %s", (store_id,))
+                for oid, sku in cur.fetchall():
+                    if oid and sku:
+                        s = resolve_sku(sku, sku_master, fnsku_to_sku, asin_to_sku)
+                        if s:
+                            order_sku[oid] = s
+        except Exception:
+            pass
+    if orders_file and os.path.exists(orders_file):
+        try:
+            delimiter = '\t' if orders_file.endswith('.tsv') else ','
+            with open(orders_file, 'r', encoding='utf-8-sig', errors='replace') as f:
+                for row in csv.DictReader(f, delimiter=delimiter):
+                    oid = (row.get('amazon-order-id') or row.get('order-id') or '').strip()
+                    if not oid or oid in order_sku:
+                        continue
+                    raw_sku = (row.get('sku') or '').strip()
+                    asin = (row.get('asin') or '').strip()
+                    sku = resolve_sku(raw_sku, sku_master, fnsku_to_sku, asin_to_sku) or asin_to_sku.get(asin, '')
+                    if sku:
+                        order_sku[oid] = sku
+        except Exception:
+            pass
+    return order_sku
+
+def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map=None, order_to_sku=None):
     sku_trans = defaultdict(lambda: {
         'amazon_fee_trans': 0.0,
         'return_amount': 0.0,
@@ -469,14 +519,17 @@ def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, baseco
         raw_sku = row.get('sku', '').strip()
         desc = row.get('description', '').strip()
         
-        # Resolve SKU from SKU, FNSKU, ASIN in description, or removal order ID
+        # Resolve SKU from SKU, FNSKU, ASIN in description, removal order ID, or order ID
         target_sku = resolve_sku(raw_sku, sku_master, fnsku_to_sku, asin_to_sku)
         if not target_sku and desc:
             m = re.search(r'for ASIN: ([A-Z0-9]+)', desc) or re.search(r'ASIN:?\s*([A-Z0-9]{10})', desc)
             if m:
                 target_sku = asin_to_sku.get(m.group(1), '')
-        if not target_sku and order_id and removal_order_map and order_id in removal_order_map:
-            target_sku = removal_order_map[order_id]
+        if not target_sku and order_id:
+            if removal_order_map and order_id in removal_order_map:
+                target_sku = removal_order_map[order_id]
+            elif order_to_sku and order_id in order_to_sku:
+                target_sku = order_to_sku[order_id]
         
         def get_f(col):
             val = row.get(col, '')
@@ -733,11 +786,12 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     print(f"🛒 Identified {len(month_order_ids)} orders placed in {period}.")
     
     # 3. Parse Transactions
-    removal_file = find_file(download_dir, "11_RemovalOrderDetail")
-    removal_order_map = load_removal_order_map(removal_file, sku_master, fnsku_to_sku, asin_to_sku)
+    removal_order_map = load_removal_order_map(download_dir, sku_master, fnsku_to_sku, asin_to_sku)
+    order_to_sku = load_order_sku_map(conn, store_id, orders_file, sku_master, asin_to_sku, fnsku_to_sku)
+    print(f"🔍 Loaded reverse order lookups: {len(removal_order_map)} removal orders, {len(order_to_sku)} customer orders.")
     trans_file = find_file(download_dir, "15_DateRangeTransactions")
     sku_trans, settled_order_ids, awd_sub_fees, fba_storage_trans, vat_tax_adjustment = parse_transactions(
-        trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map
+        trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map, order_to_sku
     )
     print(f"💳 Settled {len(settled_order_ids)} orders in transactions. AWD/Sub fees = {awd_sub_fees:.2f}")
 

@@ -121,7 +121,7 @@ export async function listFbaDaily(
           COALESCE(o.item_price, 0) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.051
+              WHEN o.currency = 'MXN' THEN 0.056
               WHEN o.currency = 'USD' THEN 1.0
               ELSE 0
             END
@@ -141,7 +141,7 @@ export async function listFbaDaily(
             ELSE (COALESCE(sm.amazon_fee, af.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
-                WHEN o.currency = 'MXN' THEN 0.051
+                WHEN o.currency = 'MXN' THEN 0.056
                 WHEN o.currency = 'USD' THEN 1.0
                 ELSE 0
               END
@@ -152,7 +152,7 @@ export async function listFbaDaily(
           COALESCE(o.item_price, 0) * (
             CASE
               WHEN o.currency = 'CAD' THEN 0.738
-              WHEN o.currency = 'MXN' THEN 0.051
+              WHEN o.currency = 'MXN' THEN 0.056
               WHEN o.currency = 'USD' THEN 1.0
               ELSE 0
             END

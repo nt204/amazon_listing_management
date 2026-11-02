@@ -76,7 +76,7 @@ function fbmBaseCtes(sql: Sql, storeId: string, range?: { startDate: string; end
         COALESCE(o.quantity, 0) AS qty,
         CASE WHEN COALESCE(o.currency, '') <> '' THEN COALESCE(o.quantity, 0) ELSE 0 END AS qty_with_currency,
         (COALESCE(o.item_price, 0) + COALESCE(o.shipping_price, 0)) * (
-          CASE o.currency WHEN 'USD' THEN 1.0 WHEN 'CAD' THEN 0.738 WHEN 'MXN' THEN 0.051 ELSE 0 END
+          CASE o.currency WHEN 'USD' THEN 1.0 WHEN 'CAD' THEN 0.738 WHEN 'MXN' THEN 0.056 ELSE 0 END
         ) AS revenue,
         COALESCE(o.item_promotion_discount, 0) AS promotion,
         CASE

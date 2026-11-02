@@ -970,7 +970,7 @@ export async function getSkuInsight(
         WITH orders AS (
           SELECT ((${endDate}::date - date) / 7) AS week,
                  SUM(COALESCE(quantity, 1)) AS units,
-                 SUM(COALESCE(item_price, 0) * CASE currency WHEN 'CAD' THEN 0.738 WHEN 'MXN' THEN 0.051 WHEN 'USD' THEN 1.0 ELSE 0 END) AS revenue
+                 SUM(COALESCE(item_price, 0) * CASE currency WHEN 'CAD' THEN 0.738 WHEN 'MXN' THEN 0.056 WHEN 'USD' THEN 1.0 ELSE 0 END) AS revenue
           FROM accounting_orders
           WHERE store_id = ${accounting.accountingStoreId} AND UPPER(sku) = ${sku}
             AND fulfillment_channel = 'Amazon'

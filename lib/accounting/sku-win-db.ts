@@ -155,7 +155,7 @@ export async function listSkuWin(
           COALESCE(o.item_price, 0) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.051
+              WHEN o.currency = 'MXN' THEN 0.056
               WHEN o.currency = 'USD' THEN 1.0
               ELSE 0
             END
@@ -175,7 +175,7 @@ export async function listSkuWin(
             ELSE (COALESCE(sm.amazon_fee, af.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
-                WHEN o.currency = 'MXN' THEN 0.051
+                WHEN o.currency = 'MXN' THEN 0.056
                 WHEN o.currency = 'USD' THEN 1.0
                 ELSE 0
               END
@@ -254,7 +254,7 @@ export async function listSkuWin(
         o.sku,
         COUNT(CASE WHEN COALESCE(o.item_price, 0) > 0 THEN 1 END) as compare_order_count,
         SUM(COALESCE(o.quantity, 1)) as compare_qty,
-        SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END)) as compare_rev,
+        SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.056 ELSE 1.0 END)) as compare_rev,
         SUM(
           CASE 
             WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
@@ -268,7 +268,7 @@ export async function listSkuWin(
             ELSE (COALESCE(sm.amazon_fee, af_cmp.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af_cmp.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
-                WHEN o.currency = 'MXN' THEN 0.051
+                WHEN o.currency = 'MXN' THEN 0.056
                 WHEN o.currency = 'USD' THEN 1.0
                 ELSE 0
               END
