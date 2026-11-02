@@ -37,8 +37,8 @@ import {
   AccountingTopProgressBar,
 } from "./accounting-skeleton";
 
-const SKU_MONTHLY_COLUMNS_STORAGE_KEY = "acc_sku_monthly_columns_v3";
-const SKU_MONTHLY_FROZEN_STORAGE_KEY = "acc_sku_monthly_frozen_v3";
+const SKU_MONTHLY_COLUMNS_STORAGE_KEY = "acc_sku_monthly_columns_v4";
+const SKU_MONTHLY_FROZEN_STORAGE_KEY = "acc_sku_monthly_frozen_v4";
 const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
 
 function formatCurrency(val: number | null | undefined): string {
