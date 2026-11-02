@@ -720,9 +720,12 @@ async function main() {
     console.log(`\n${msgStart}\n`);
     await sendTelegramMessage(msgStart).catch(() => {});
 
-    const summaryResults: Array<{ store: string; files: string[]; status: "SUCCESS" | "FAILED" | "PARTIAL"; error?: string }> = [];
+    const MAX_STORE_RETRIES = 2; // Tối đa 2 lần thử lại cho store lỗi
+    const RETRY_DELAY_MS = Number(process.env.RETRY_DELAY_MS) || 10 * 60 * 1000; // 10 phút mặc định
 
-    for (const store of targetStores) {
+    async function crawlSingleStore(
+      store: (typeof targetStores)[0],
+    ): Promise<string[]> {
       console.log(`\n======================================================`);
       console.log(`  BẮT ĐẦU CRAWL THÁNG ${targetMonth} CHO STORE: ${store.store_name} (Profile: ${store.profile_id})`);
       console.log(`======================================================`);
@@ -732,82 +735,130 @@ async function main() {
 
       const downloadedFiles: string[] = [];
 
+      console.log(`[AdsPower] Khởi động profile ${store.profile_id}...`);
+      const cdpUrl = await startAdsPowerProfile(store.profile_id);
+      const browser = await chromium.connectOverCDP(cdpUrl);
       try {
-        console.log(`[AdsPower] Khởi động profile ${store.profile_id}...`);
-        const cdpUrl = await startAdsPowerProfile(store.profile_id);
-        const browser = await chromium.connectOverCDP(cdpUrl);
         const context = browser.contexts()[0];
         const page = context.pages()[0] || (await context.newPage());
 
-        try {
-          // 1. Tải File 01: Ads Portfolios (+ File 05 Campaigns)
-          if (isReportWanted("01_Portfolios") || isReportWanted("01") || isReportWanted("ads")) {
-            const p1 = await withSessionRecovery("Ads Portfolios", page, store.store_name, () =>
-              downloadMonthlyPortfolios(page, storeDownloadDir, targetMonth, isPreviousMonth, store.store_name),
-            );
-            if (p1) downloadedFiles.push(path.basename(p1));
-            const p5 = path.join(storeDownloadDir, `05_Campaigns_${targetMonth}.csv`);
-            if (fs.existsSync(p5)) downloadedFiles.push(path.basename(p5));
-          }
-
-          // 2. Tải File 02: All Orders
-          if (isReportWanted("02_AllOrders") || isReportWanted("02") || isReportWanted("orders")) {
-            const p2 = await withSessionRecovery("All Orders", page, store.store_name, () =>
-              downloadMonthlyOrders(page, storeDownloadDir, targetMonth, store.store_name),
-            );
-            if (p2) downloadedFiles.push(path.basename(p2));
-          }
-
-          // 3. Tải 4 báo cáo kế toán tháng mới (Removal, Inbound Placement, Long-term Storage, Monthly Storage)
-          for (const repConfig of ADDITIONAL_MONTHLY_REPORTS) {
-            if (!isReportWanted(repConfig.code) && !isReportWanted(repConfig.code.slice(0, 2))) {
-              continue;
-            }
-            try {
-              const p = await withSessionRecovery(repConfig.code, page, store.store_name, () =>
-                downloadMonthlyReportCentralFile(page, storeDownloadDir, targetMonth, repConfig, store.store_name),
-              );
-              if (p) downloadedFiles.push(path.basename(p));
-            } catch (repErr: any) {
-              console.warn(`  ⚠️ Lỗi khi tải ${repConfig.code}: ${repErr.message || repErr}`);
-            }
-          }
-
-          // 4. Tải Báo cáo Date Range Transactions từ Payments Reports Repository
-          if (
-            isReportWanted("15_DateRangeTransactions") ||
-            isReportWanted("15") ||
-            isReportWanted("payments") ||
-            isReportWanted("transactions")
-          ) {
-            try {
-              const pRepo = await withSessionRecovery("Payments Repository", page, store.store_name, () =>
-                downloadPaymentsReportsRepository(page, storeDownloadDir, targetMonth, store.store_name),
-              );
-              for (const p of pRepo) {
-                downloadedFiles.push(path.basename(p));
-              }
-            } catch (repoErr: any) {
-              console.warn(`  ⚠️ Lỗi khi tải payments reports repository: ${repoErr.message || repoErr}`);
-            }
-          }
-
-          summaryResults.push({ store: store.store_name, files: downloadedFiles, status: "SUCCESS" });
-        } finally {
-          await browser.close().catch(() => {});
-          await stopAdsPowerProfile(store.profile_id).catch(() => {});
-          console.log(`[AdsPower] Đã đóng trình duyệt cho store ${store.store_name}.`);
+        // 1. Tải File 01: Ads Portfolios (+ File 05 Campaigns)
+        if (isReportWanted("01_Portfolios") || isReportWanted("01") || isReportWanted("ads")) {
+          const p1 = await withSessionRecovery("Ads Portfolios", page, store.store_name, () =>
+            downloadMonthlyPortfolios(page, storeDownloadDir, targetMonth, isPreviousMonth, store.store_name),
+          );
+          if (p1) downloadedFiles.push(path.basename(p1));
+          const p5 = path.join(storeDownloadDir, `05_Campaigns_${targetMonth}.csv`);
+          if (fs.existsSync(p5)) downloadedFiles.push(path.basename(p5));
         }
-      } catch (storeError: any) {
-        console.error(`❌ [LỖI STORE ${store.store_name}]:`, storeError.message || storeError);
-        summaryResults.push({
-          store: store.store_name,
-          files: downloadedFiles,
-          status: "FAILED",
-          error: storeError.message || String(storeError),
-        });
+
+        // 2. Tải File 02: All Orders
+        if (isReportWanted("02_AllOrders") || isReportWanted("02") || isReportWanted("orders")) {
+          const p2 = await withSessionRecovery("All Orders", page, store.store_name, () =>
+            downloadMonthlyOrders(page, storeDownloadDir, targetMonth, store.store_name),
+          );
+          if (p2) downloadedFiles.push(path.basename(p2));
+        }
+
+        // 3. Tải 4 báo cáo kế toán tháng mới (Removal, Inbound Placement, Long-term Storage, Monthly Storage)
+        for (const repConfig of ADDITIONAL_MONTHLY_REPORTS) {
+          if (!isReportWanted(repConfig.code) && !isReportWanted(repConfig.code.slice(0, 2))) {
+            continue;
+          }
+          try {
+            const p = await withSessionRecovery(repConfig.code, page, store.store_name, () =>
+              downloadMonthlyReportCentralFile(page, storeDownloadDir, targetMonth, repConfig, store.store_name),
+            );
+            if (p) downloadedFiles.push(path.basename(p));
+          } catch (repErr: any) {
+            console.warn(`  ⚠️ Lỗi khi tải ${repConfig.code}: ${repErr.message || repErr}`);
+          }
+        }
+
+        // 4. Tải Báo cáo Date Range Transactions từ Payments Reports Repository
+        if (
+          isReportWanted("15_DateRangeTransactions") ||
+          isReportWanted("15") ||
+          isReportWanted("payments") ||
+          isReportWanted("transactions")
+        ) {
+          try {
+            const pRepo = await withSessionRecovery("Payments Repository", page, store.store_name, () =>
+              downloadPaymentsReportsRepository(page, storeDownloadDir, targetMonth, store.store_name),
+            );
+            for (const p of pRepo) {
+              downloadedFiles.push(path.basename(p));
+            }
+          } catch (repoErr: any) {
+            console.warn(`  ⚠️ Lỗi khi tải payments reports repository: ${repoErr.message || repoErr}`);
+          }
+        }
+
+        return downloadedFiles;
+      } finally {
+        await browser.close().catch(() => {});
+        await stopAdsPowerProfile(store.profile_id).catch(() => {});
+        console.log(`[AdsPower] Đã đóng trình duyệt cho store ${store.store_name}.`);
       }
     }
+
+    const storeResults = new Map<
+      string,
+      { store: string; files: string[]; status: "SUCCESS" | "FAILED" | "PARTIAL"; error?: string }
+    >();
+    let pendingStores = [...targetStores];
+
+    for (let attempt = 1; attempt <= 1 + MAX_STORE_RETRIES; attempt++) {
+      if (pendingStores.length === 0) break;
+
+      if (attempt > 1) {
+        const waitMinutes = Math.round(RETRY_DELAY_MS / 60000);
+        const retryWaitMsg = `⏳ [THỬ LẠI] Có ${pendingStores.length} store crawl lỗi (${pendingStores.map((s) => s.store_name).join(", ")}). Chờ ${waitMinutes} phút trước khi thử lại lần ${attempt - 1}/${MAX_STORE_RETRIES}...`;
+        console.log(`\n${retryWaitMsg}\n`);
+        await sendTelegramMessage(retryWaitMsg).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      }
+
+      const failedThisRound: typeof targetStores = [];
+
+      for (const store of pendingStores) {
+        try {
+          const files = await crawlSingleStore(store);
+          storeResults.set(store.store_name, {
+            store: store.store_name,
+            files,
+            status: "SUCCESS",
+          });
+          if (attempt > 1) {
+            const retrySuccessMsg = `✅ [THỬ LẠI THÀNH CÔNG] Store ${store.store_name} đã hoàn tất crawl ở lần thử lại ${attempt - 1}!`;
+            console.log(retrySuccessMsg);
+            await sendTelegramMessage(retrySuccessMsg).catch(() => {});
+          }
+        } catch (storeError: any) {
+          const errMsg = storeError.message || String(storeError);
+          console.error(`❌ [LỖI STORE ${store.store_name}] (Lần chạy ${attempt}/${1 + MAX_STORE_RETRIES}):`, errMsg);
+          storeResults.set(store.store_name, {
+            store: store.store_name,
+            files: storeResults.get(store.store_name)?.files || [],
+            status: "FAILED",
+            error: errMsg,
+          });
+          failedThisRound.push(store);
+        }
+      }
+
+      pendingStores = failedThisRound;
+    }
+
+    const summaryResults = targetStores.map(
+      (s) =>
+        storeResults.get(s.store_name) || {
+          store: s.store_name,
+          files: [],
+          status: "FAILED" as const,
+          error: "Chưa hoàn tất",
+        },
+    );
 
     // Đồng bộ lên Cloudflare R2
     await syncMonthlyToR2(targetMonth);

@@ -996,6 +996,8 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         WHERE store_id = %s AND period = %s AND deleted_at IS NULL
     """, (store_id, period))
     current_outflow = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+    # Kỳ đã có file thô thì cả kỳ tính từ file thô: SKU không phát sinh giao dịch = 0, không giữ số nạp từ sheet
+    outflow = {**{sku: 0.0 for sku in current_outflow}, **outflow}
     # Số từ file thô ('ingest') thay số nạp từ sheet và không bị đồng bộ sheet ghi đè về sau
     changed = [(qty, sku) for sku, qty in outflow.items()
                if sku in current_outflow and (current_outflow[sku][0] is None or abs(current_outflow[sku][0] - qty) > 1e-9)]

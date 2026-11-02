@@ -15,7 +15,7 @@ SERVER="${DEPLOY_SERVER:-root@167.233.26.87}"
 ssh -o StrictHostKeyChecking=accept-new "$SERVER" bash -s <<'REMOTE'
 set -euo pipefail
 APP_DIR=/var/www/amazon-listing
-LOCK=/tmp/amazon-listing-deploy.lock
+LOCK=/run/lock/amazon-listing-deploy.lock
 BUILD_LOG=/tmp/amazon-listing-build.log
 WORKERS="accounting-import-worker lark-agent-worker ppc-ingestion-worker ppc-outcome-worker"
 

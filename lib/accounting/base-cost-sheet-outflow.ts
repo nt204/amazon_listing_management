@@ -5,7 +5,7 @@ import { readSpreadsheetTab } from "@/lib/google/sheets";
 
 // Đưa store về Base Cost tính đúng công thức tab "BASECOST THÁNG" (file <STORE> INVENTORY) mà không cần thao tác tay:
 //  1. Nạp cột "Đã bán" (hàng ra kho) của từng SKU/tháng vào sl_ra_kho, nguồn 'sheet'.
-//     Không ghi đè số 'ingest' (pipeline tháng tính từ file thô Amazon — chính xác hơn sheet).
+//     Chỉ cho các kỳ trước kỳ đầu tiên có file thô ('ingest'); từ kỳ đó trở đi Base Cost không phụ thuộc sheet.
 //  2. Mở khóa các dòng bị khóa do import Excel (snapshot), để worker tự tính lại theo công thức.
 //     Dòng người dùng tự sửa trên web (is_overridden, last_changed_by = người dùng) giữ nguyên.
 //  3. Có thay đổi thì xếp hàng worker tính lại Base Cost từ tháng sớm nhất bị đổi.
@@ -121,6 +121,11 @@ export async function syncBaseCostOutflowFromSheet(storeId: string, url: string,
       WHERE b.store_id = ${storeId} AND b.period = v.period AND b.sku = v.sku AND b.deleted_at IS NULL
         AND b.sl_ra_kho_source IS DISTINCT FROM 'ingest'
         AND b.sl_ra_kho IS DISTINCT FROM v.qty
+        -- Từ kỳ đầu tiên có file thô trở đi, hàng ra kho chỉ tính từ file thô Amazon — sheet chỉ bù các kỳ cũ hơn
+        AND b.period < COALESCE((
+          SELECT MIN(f.period) FROM accounting_monthly_base_cost f
+          WHERE f.store_id = ${storeId} AND f.deleted_at IS NULL AND f.sl_ra_kho_source = 'ingest'
+        ), '9999-12')
       RETURNING b.period
     `;
     const changedPeriods = [...updated, ...unlocked].map((r) => r.period).sort();

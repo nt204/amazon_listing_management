@@ -8,11 +8,19 @@ set -euo pipefail
 
 MAC_MINI="${MAC_MINI:-ad@100.111.217.54}"
 DEST="${MAC_MINI_DIR:-/Users/ad/mac-crawler}"
-FILE=scripts/ingest_monthly_from_raw.py
+# Pair mapping: local_file:remote_relative_path
+ITEMS=(
+  "scripts/ingest_monthly_from_raw.py:scripts/ingest_monthly_from_raw.py"
+  "mac-crawler/monthly_crawler.ts:monthly_crawler.ts"
+)
 
 cd "$(dirname "$0")/.."
-ssh -o StrictHostKeyChecking=accept-new "$MAC_MINI" \
-  "cp '$DEST/$FILE' '$DEST/$FILE.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true"
-scp "$FILE" "$MAC_MINI:$DEST/$FILE"
-ssh "$MAC_MINI" "cmp -s /dev/stdin '$DEST/$FILE'" < "$FILE"
-echo "✅ Mac mini đã có $FILE bản $(git log -1 --format=%h -- "$FILE")"
+for ITEM in "${ITEMS[@]}"; do
+  LOCAL="${ITEM%%:*}"
+  REMOTE="${ITEM##*:}"
+  ssh -o StrictHostKeyChecking=accept-new "$MAC_MINI" \
+    "mkdir -p '$DEST/$(dirname "$REMOTE")' && cp '$DEST/$REMOTE' '$DEST/$REMOTE.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true"
+  scp "$LOCAL" "$MAC_MINI:$DEST/$REMOTE"
+  ssh "$MAC_MINI" "cmp -s /dev/stdin '$DEST/$REMOTE'" < "$LOCAL"
+  echo "✅ Mac mini đã có $REMOTE (từ $LOCAL) bản $(git log -1 --format=%h -- "$LOCAL" 2>/dev/null || echo 'mới nhất')"
+done
