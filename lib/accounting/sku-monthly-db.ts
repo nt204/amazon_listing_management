@@ -468,7 +468,8 @@ function calculateSummaryFromItems(
   const tacos = total_revenue > 0 ? total_ads_fee / total_revenue : null;
   const acos = total_revenue_ads > 0 ? total_ads_fee / total_revenue_ads : null;
   const margin = total_revenue > 0 ? net_profit / total_revenue : null;
-  const roi = total_basecost < 0 ? -net_profit / total_basecost : null;
+  const cost = total_revenue - net_profit;
+  const roi = cost !== 0 ? net_profit / cost : null;
 
   return {
     store_id: storeId,

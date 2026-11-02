@@ -881,7 +881,8 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     store_tacos = (tot['ads_fee'] / tot['revenue']) if tot['revenue'] > 0 else 0.0
     store_acos = (tot['ads_fee'] / tot['revenue_ads']) if tot['revenue_ads'] > 0 else 0.0
     store_margin = (net_profit / tot['revenue']) if tot['revenue'] > 0 else 0.0
-    store_roi = (net_profit / tot['basecost']) if tot['basecost'] != 0 else 0.0
+    store_cost = tot['revenue'] - net_profit
+    store_roi = (net_profit / store_cost) if store_cost != 0 else 0.0
     
     active_skus = sum(1 for r in sku_rows if r['revenue'] > 0 or r['quantity'] > 0 or r['ads_fee'] != 0 or r['profit'] != 0 or r['storage_fee'] != 0)
     
