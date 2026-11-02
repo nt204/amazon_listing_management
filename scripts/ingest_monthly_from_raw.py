@@ -252,6 +252,131 @@ def get_month_order_ids(orders_file):
             m_ids.add(oid)
     return m_ids
 
+def read_transaction_rows(trans_file):
+    """Đọc DateRangeTransactions (bỏ phần ghi chú phía trên header). Trả về list dict hoặc None nếu không đọc được."""
+    if not trans_file or not os.path.exists(trans_file):
+        return None
+    with open(trans_file, 'r', encoding='utf-8-sig', errors='replace') as f:
+        lines = f.readlines()
+    for i, line in enumerate(lines):
+        if line.startswith('"date/time","settlement id"') or line.startswith('date/time,settlement id'):
+            return list(csv.DictReader(lines[i:]))
+    print(f"  ⚠️ Warning: Could not find DateRangeTransactions header in {trans_file}")
+    return None
+
+def to_float(val):
+    if not val: return 0.0
+    try: return float(str(val).replace(',', '').strip())
+    except: return 0.0
+
+def find_later_trans_files(download_dir, year, month, max_months=3):
+    """
+    File giao dịch của các tháng SAU kỳ đang tính (cùng store).
+    Đơn đặt cuối tháng M thường được Amazon thanh toán ở tháng M+1 → phí thật nằm ở file tháng sau
+    (Excel: cột 'Tháng (Fastpeace RP)' = tháng đặt đơn, J = SUMIFS theo tháng đặt đơn trên toàn bộ Trans Rp).
+    """
+    download_root = os.path.dirname(os.path.normpath(download_dir))
+    download_root = os.path.dirname(download_root)
+    store_folder = os.path.basename(os.path.normpath(download_dir))
+    files = []
+    y, m = year, month
+    for _ in range(max_months):
+        y, m = (y, m + 1) if m < 12 else (y + 1, 1)
+        f = find_file(os.path.join(download_root, f"{y}-{m:02d}", store_folder), "15_DateRangeTransactions")
+        if f:
+            files.append(f)
+    return files
+
+def parse_late_order_fees(trans_files, sku_master, asin_to_sku, fnsku_to_sku, month_order_ids):
+    """Phí Amazon của đơn tháng này nhưng được thanh toán trong file giao dịch các tháng sau."""
+    sku_fees = defaultdict(float)
+    settled = set()
+    for trans_file in trans_files:
+        for row in read_transaction_rows(trans_file) or []:
+            if row.get('type', '').strip() != 'Order':
+                continue
+            order_id = row.get('order id', '').strip()
+            if order_id not in month_order_ids:
+                continue
+            sku = resolve_sku(row.get('sku', '').strip(), sku_master, fnsku_to_sku, asin_to_sku)
+            if not sku or sku not in sku_master:
+                continue
+            total = to_float(row.get('total'))
+            product_sales = to_float(row.get('product sales'))
+            shipping_credits = to_float(row.get('shipping credits'))
+            fee = (total - product_sales - shipping_credits) if row.get('fulfillment', '').strip() == 'Seller' else (total - product_sales)
+            sku_fees[sku] += fee
+            settled.add(order_id)
+    return sku_fees, settled
+
+def compute_outflow_by_sku(orders_file, trans_file, removal_file, period, sku_master, asin_to_sku, fnsku_to_sku):
+    """
+    "Hàng ra kho" trong tháng theo sheet LƯỢNG BÁN (dùng cho cột 'Đã bán' của BASECOST THÁNG):
+      SL bán (đơn không Cancelled, đã có giá) − SL Return + SL Adjustment + SL Removal
+      - Adjustment: '...Warehouse' (Lost/Damaged) cộng SL; 'General Adjustment' cộng nếu tiền > 0, trừ nếu tiền < 0
+      - Removal: requested − cancelled của yêu cầu removal tạo trong tháng
+    Sheet cộng theo ASIN nên ở đây cũng gom theo ASIN rồi gán lại cho từng SKU.
+    Khác sheet: SKU không có đơn trong tháng vẫn được tính Return/Adjustment/Removal (sheet bỏ sót các dòng này).
+    """
+    sku_asin = {sku: info.get('asin', '') for sku, info in sku_master.items()}
+
+    def asin_of(code):
+        sku = resolve_sku(code, sku_master, fnsku_to_sku, asin_to_sku)
+        return sku_asin.get(sku) or (code if code in asin_to_sku else '')
+
+    by_asin = defaultdict(float)
+    if orders_file and os.path.exists(orders_file):
+        with open(orders_file, 'r', encoding='utf-8', errors='replace') as f:
+            for row in csv.DictReader(f, delimiter='\t'):
+                if row.get('order-status', '').strip() == 'Cancelled' or not row.get('currency', '').strip():
+                    continue
+                asin = row.get('asin', '').strip() or asin_of(row.get('sku', '').strip())
+                by_asin[asin] += to_float(row.get('quantity'))
+
+    for row in read_transaction_rows(trans_file) or []:
+        asin = asin_of(row.get('sku', '').strip())
+        if not asin:
+            continue
+        qty = to_float(row.get('quantity'))
+        desc = row.get('description', '')
+        if row.get('type', '').strip() == 'Refund':
+            by_asin[asin] -= qty
+        if 'Warehouse' in desc:
+            by_asin[asin] += qty
+        if 'General Adjustment' in desc:
+            total = to_float(row.get('total'))
+            by_asin[asin] += qty if total > 0 else (-qty if total < 0 else 0)
+
+    if removal_file and os.path.exists(removal_file):
+        with open(removal_file, 'r', encoding='utf-8-sig', errors='replace') as f:
+            for row in csv.DictReader(f):
+                if (row.get('request-date') or '')[:7] != period:
+                    continue
+                asin = asin_of(row.get('sku', '').strip() or row.get('fnsku', '').strip())
+                if asin:
+                    by_asin[asin] += to_float(row.get('requested-quantity')) - to_float(row.get('cancelled-quantity'))
+
+    return {sku: by_asin.get(asin, 0.0) if asin else 0.0 for sku, asin in sku_asin.items()}
+
+def wait_for_base_cost_resync(conn, store_id, timeout=240, settle=8):
+    """Chờ worker Base Cost (server) xử lý xong hàng đợi của store: hết dòng trong queue và bảng không còn thay đổi."""
+    import time
+    cur = conn.cursor()
+    deadline = time.time() + timeout
+    last_change, stable_since = None, None
+    while time.time() < deadline:
+        cur.execute("SELECT count(*) FROM accounting_base_cost_resync_queue WHERE store_id = %s", (store_id,))
+        queued = cur.fetchone()[0] > 0
+        cur.execute("SELECT max(updated_at) FROM accounting_monthly_base_cost WHERE store_id = %s", (store_id,))
+        changed = cur.fetchone()[0]
+        conn.commit()
+        if queued or changed != last_change:
+            last_change, stable_since = changed, time.time()
+        elif time.time() - stable_since >= settle:
+            return True
+        time.sleep(2)
+    return False
+
 def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids):
     sku_trans = defaultdict(lambda: {
         'amazon_fee_trans': 0.0,
@@ -267,119 +392,115 @@ def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, baseco
     settled_order_ids = set()
     awd_sub_fees = 0.0
     fba_storage_fee_trans = 0.0
+    # Excel cột AC 'VAT/Tax Adjustment': mọi giao dịch có description = "Other" (không cộng vào lợi nhuận)
+    vat_tax_adjustment = 0.0
     unmapped_transactions = defaultdict(float)
-    
+
     if not trans_file or not os.path.exists(trans_file):
         print(f"  ⚠️ Warning: DateRangeTransactions file not found: {trans_file}")
-        return sku_trans, settled_order_ids, awd_sub_fees, fba_storage_fee_trans
+        return sku_trans, settled_order_ids, awd_sub_fees, fba_storage_fee_trans, vat_tax_adjustment
 
-    with open(trans_file, 'r', encoding='utf-8-sig', errors='replace') as f:
-        lines = f.readlines()
-        header_idx = -1
-        for i, line in enumerate(lines):
-            if line.startswith('"date/time","settlement id"') or line.startswith('date/time,settlement id'):
-                header_idx = i
-                break
+    rows = read_transaction_rows(trans_file)
+    if rows is None:
+        return sku_trans, settled_order_ids, awd_sub_fees, fba_storage_fee_trans, vat_tax_adjustment
+
+    for row in rows:
+        ttype = row.get('type', '').strip()
+        order_id = row.get('order id', '').strip()
+        raw_sku = row.get('sku', '').strip()
+        desc = row.get('description', '').strip()
         
-        if header_idx == -1:
-            print(f"  ⚠️ Warning: Could not find DateRangeTransactions header in {trans_file}")
-            return sku_trans, settled_order_ids, awd_sub_fees, fba_storage_fee_trans
+        # Resolve SKU from SKU, FNSKU, or ASIN in description
+        target_sku = resolve_sku(raw_sku, sku_master, fnsku_to_sku, asin_to_sku)
+        if not target_sku and desc:
+            m = re.search(r'for ASIN: ([A-Z0-9]+)', desc) or re.search(r'ASIN:?\s*([A-Z0-9]{10})', desc)
+            if m:
+                target_sku = asin_to_sku.get(m.group(1), '')
+        
+        def get_f(col):
+            val = row.get(col, '')
+            if not val: return 0.0
+            val = str(val).replace(',', '').strip()
+            try: return float(val)
+            except: return 0.0
+        
+        total = get_f('total')
+        product_sales = get_f('product sales')
+        shipping_credits = get_f('shipping credits')
+        fulfillment = row.get('fulfillment', '').strip()
+        
+        if desc == 'Other':
+            vat_tax_adjustment += total
+        
+        if ttype == 'Order':
+            if target_sku and target_sku in sku_master:
+                if order_id in month_order_ids:
+                    settled_order_ids.add(order_id)
+                    fee = (total - product_sales - shipping_credits) if fulfillment == 'Seller' else (total - product_sales)
+                    sku_trans[target_sku]['amazon_fee_trans'] += fee
+            elif raw_sku and order_id in month_order_ids:
+                unmapped_transactions[(ttype, raw_sku)] += total
             
-        reader = csv.DictReader(lines[header_idx:])
-        for row in reader:
-            ttype = row.get('type', '').strip()
-            order_id = row.get('order id', '').strip()
-            raw_sku = row.get('sku', '').strip()
-            desc = row.get('description', '').strip()
-            
-            # Resolve SKU from SKU, FNSKU, or ASIN in description
-            target_sku = resolve_sku(raw_sku, sku_master, fnsku_to_sku, asin_to_sku)
-            if not target_sku and desc:
-                m = re.search(r'for ASIN: ([A-Z0-9]+)', desc) or re.search(r'ASIN:?\s*([A-Z0-9]{10})', desc)
-                if m:
-                    target_sku = asin_to_sku.get(m.group(1), '')
-            
-            def get_f(col):
-                val = row.get(col, '')
-                if not val: return 0.0
-                val = str(val).replace(',', '').strip()
-                try: return float(val)
-                except: return 0.0
-            
-            total = get_f('total')
-            product_sales = get_f('product sales')
-            shipping_credits = get_f('shipping credits')
-            fulfillment = row.get('fulfillment', '').strip()
-            
-            if ttype == 'Order':
-                if target_sku and target_sku in sku_master:
-                    if order_id in month_order_ids:
-                        settled_order_ids.add(order_id)
-                        fee = (total - product_sales - shipping_credits) if fulfillment == 'Seller' else (total - product_sales)
-                        sku_trans[target_sku]['amazon_fee_trans'] += fee
-                elif raw_sku and order_id in month_order_ids:
-                    unmapped_transactions[(ttype, raw_sku)] += total
+        elif ttype == 'Refund':
+            if target_sku and target_sku in sku_master:
+                sku_trans[target_sku]['return_amount'] += total
+                bc_unit = basecosts.get(target_sku) or 0.0
+                qty = abs(get_f('quantity')) or 1.0
+                if total < 0:
+                    sku_trans[target_sku]['basecost_return_adjustment'] += bc_unit * qty
+                elif total > 0:
+                    sku_trans[target_sku]['basecost_return_adjustment'] -= bc_unit * qty
+            elif raw_sku:
+                unmapped_transactions[(ttype, raw_sku)] += total
                 
-            elif ttype == 'Refund':
-                if target_sku and target_sku in sku_master:
-                    sku_trans[target_sku]['return_amount'] += total
-                    bc_unit = basecosts.get(target_sku) or 0.0
-                    qty = abs(get_f('quantity')) or 1.0
-                    if total < 0:
-                        sku_trans[target_sku]['basecost_return_adjustment'] += bc_unit * qty
-                    elif total > 0:
-                        sku_trans[target_sku]['basecost_return_adjustment'] -= bc_unit * qty
-                elif raw_sku:
-                    unmapped_transactions[(ttype, raw_sku)] += total
+        elif ttype in ['Adjustment', 'Fee Adjustment']:
+            if target_sku and target_sku in sku_master:
+                sku_trans[target_sku]['adjustment'] += total
+                bc_unit = basecosts.get(target_sku) or 0.0
+                qty = abs(get_f('quantity')) or 1.0
+                if total < 0:
+                    sku_trans[target_sku]['basecost_return_adjustment'] += bc_unit * qty
+                    sku_trans[target_sku]['basecost_adjustment'] += bc_unit * qty
+                elif total > 0:
+                    sku_trans[target_sku]['basecost_return_adjustment'] -= bc_unit * qty
+                    sku_trans[target_sku]['basecost_adjustment'] -= bc_unit * qty
+            elif raw_sku:
+                unmapped_transactions[(ttype, raw_sku)] += total
                     
-            elif ttype in ['Adjustment', 'Fee Adjustment']:
-                if target_sku and target_sku in sku_master:
-                    sku_trans[target_sku]['adjustment'] += total
-                    bc_unit = basecosts.get(target_sku) or 0.0
-                    qty = abs(get_f('quantity')) or 1.0
-                    if total < 0:
-                        sku_trans[target_sku]['basecost_return_adjustment'] += bc_unit * qty
-                        sku_trans[target_sku]['basecost_adjustment'] += bc_unit * qty
-                    elif total > 0:
-                        sku_trans[target_sku]['basecost_return_adjustment'] -= bc_unit * qty
-                        sku_trans[target_sku]['basecost_adjustment'] -= bc_unit * qty
-                elif raw_sku:
-                    unmapped_transactions[(ttype, raw_sku)] += total
-                        
-            elif 'FBA Customer Return' in ttype or 'FBA Customer Return' in desc:
-                if target_sku and target_sku in sku_master:
-                    sku_trans[target_sku]['fba_customer_return_fee'] += total
-                else:
-                    awd_sub_fees += total
-                    
-            elif ttype == 'Liquidations' or 'Liquidations' in desc:
-                if target_sku and target_sku in sku_master:
-                    sku_trans[target_sku]['liquidations'] += total
-                else:
-                    unmapped_transactions[('Liquidations', raw_sku or desc[:30])] += total
+        elif 'FBA Customer Return' in ttype or 'FBA Customer Return' in desc:
+            if target_sku and target_sku in sku_master:
+                sku_trans[target_sku]['fba_customer_return_fee'] += total
+            else:
+                awd_sub_fees += total
                 
-            elif 'Removal' in desc or 'removal' in desc.lower():
-                if target_sku and target_sku in sku_master:
-                    sku_trans[target_sku]['removal_trans'] += total
-                else:
-                    unmapped_transactions[('Removal', raw_sku or desc[:30])] += total
+        elif ttype == 'Liquidations' or 'Liquidations' in desc:
+            if target_sku and target_sku in sku_master:
+                sku_trans[target_sku]['liquidations'] += total
+            else:
+                unmapped_transactions[('Liquidations', raw_sku or desc[:30])] += total
+            
+        elif 'Removal' in desc or 'removal' in desc.lower():
+            if target_sku and target_sku in sku_master:
+                sku_trans[target_sku]['removal_trans'] += total
+            else:
+                unmapped_transactions[('Removal', raw_sku or desc[:30])] += total
+            
+        elif ttype == 'FBA Transaction fees':
+            if 'AWD' in desc:
+                awd_sub_fees += total
+            elif 'FBA Inventory Storage Fee' in desc:
+                fba_storage_fee_trans += total
                 
-            elif ttype == 'FBA Transaction fees':
-                if 'AWD' in desc:
-                    awd_sub_fees += total
-                elif 'FBA Inventory Storage Fee' in desc:
-                    fba_storage_fee_trans += total
-                    
-            elif ttype == 'Service Fee':
-                if 'Subscription' in desc:
-                    awd_sub_fees += total
-                    
+        elif ttype == 'Service Fee':
+            if 'Subscription' in desc:
+                awd_sub_fees += total
+                
     if unmapped_transactions:
         print("\n⚠️ [GIAO DỊCH CHỨA MÃ CHƯA MAP ĐƯỢC VỚI BẢNG MÃ]:")
         for (tp, code), amt in unmapped_transactions.items():
             print(f"  • Loại: {tp} | Mã: '{code}' | Số tiền: ${amt:.2f}")
 
-    return sku_trans, settled_order_ids, awd_sub_fees, fba_storage_fee_trans
+    return sku_trans, settled_order_ids, awd_sub_fees, fba_storage_fee_trans, vat_tax_adjustment
 
 def parse_ads(ads_file, valid_skus):
     sku_ads = defaultdict(lambda: {'spend': 0.0, 'sales': 0.0, 'tax': 0.0})
@@ -523,7 +644,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     if exists and not force and not dry_run:
         print(f"⚠️ Kỳ {period} đã tồn tại trong cơ sở dữ liệu. Bỏ qua để bảo vệ số liệu lịch sử (Dùng --force để ghi đè).")
         conn.close()
-        return
+        return False
         
     download_dir = raw_dir or os.path.join(DEFAULT_DOWNLOAD_ROOT, period, store_name)
     if not os.path.exists(download_dir):
@@ -531,7 +652,9 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         
     print(f"📁 Reading raw crawler reports from: {download_dir}")
     
-    # 1. Load catalog & basecosts from DB
+    # 1. Load catalog & basecosts from DB (đợi worker tính xong Base Cost nếu vừa có thay đổi hàng ra kho / lô hàng)
+    if not wait_for_base_cost_resync(conn, store_id):
+        print("⚠️ Base Cost đang được tính lại quá lâu (worker server chưa xong) — giá vốn kỳ này có thể chưa mới nhất.")
     sku_master, asin_to_sku, fnsku_to_sku = load_sku_catalog(conn, store_id)
     basecosts = load_monthly_basecosts_from_db(conn, store_id, period)
     print(f"📦 Loaded {len(sku_master)} valid SKUs from master, {len(basecosts)} basecosts for period {period}.")
@@ -543,11 +666,27 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     
     # 3. Parse Transactions
     trans_file = find_file(download_dir, "15_DateRangeTransactions")
-    sku_trans, settled_order_ids, awd_sub_fees, fba_storage_trans = parse_transactions(
+    sku_trans, settled_order_ids, awd_sub_fees, fba_storage_trans, vat_tax_adjustment = parse_transactions(
         trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids
     )
     print(f"💳 Settled {len(settled_order_ids)} orders in transactions. AWD/Sub fees = {awd_sub_fees:.2f}")
-    
+
+    # 3b. Đơn tháng này nhưng thanh toán ở các tháng sau → lấy phí thật thay vì phí ước tính
+    later_trans_files = find_later_trans_files(download_dir, year, month)
+    late_fees, late_settled = parse_late_order_fees(later_trans_files, sku_master, asin_to_sku, fnsku_to_sku, month_order_ids)
+    for sku, fee in late_fees.items():
+        sku_trans[sku]['amazon_fee_trans'] += fee
+    settled_order_ids |= late_settled
+    if later_trans_files:
+        print(f"💳 +{len(late_settled)} đơn thanh toán muộn từ: {', '.join(os.path.basename(f) for f in later_trans_files)}")
+
+    # 3c. Hàng ra kho trong tháng (cột 'Đã bán' của BASECOST THÁNG) → quyết định tồn đầu kỳ tháng sau
+    outflow = compute_outflow_by_sku(
+        orders_file, trans_file, find_file(download_dir, "11_RemovalOrderDetail"), period,
+        sku_master, asin_to_sku, fnsku_to_sku,
+    )
+    print(f"📦 Hàng ra kho {period}: {sum(outflow.values()):.0f} sản phẩm")
+
     # 4. Parse Orders with settlement status
     sku_orders = parse_all_orders(orders_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, settled_order_ids)
     
@@ -562,7 +701,10 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     storage_month = f"{prev_year}-{prev_month:02d}"
     download_root = os.path.dirname(os.path.dirname(os.path.normpath(download_dir)))
     storage_dir = os.path.join(download_root, storage_month, os.path.basename(os.path.normpath(download_dir)))
-    storage_file = find_file(storage_dir, "14_MonthlyStorageFees")
+    # Crawler mới để file phí lưu kho tháng M-1 ngay trong thư mục tháng M (tên file mang tháng M-1);
+    # thư mục cũ chỉ có file của chính tháng đó → chỉ nhận file đúng tên tháng, không thì tìm ở thư mục tháng M-1.
+    storage_file = (find_file(download_dir, f"14_MonthlyStorageFees_{storage_month}")
+                    or find_file(storage_dir, "14_MonthlyStorageFees"))
     
     if storage_file:
         print(f"🏬 Lưu kho kỳ {period} lấy từ báo cáo tháng {storage_month}: {storage_file}")
@@ -702,6 +844,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     print(f"Total Removal                  : ${tot['removal']:>14.2f}")
     print(f"Total SKU Profit               : ${tot['sku_profit']:>14.2f}")
     print(f"AWD / Subscription Fees        : ${awd_sub_fees:>14.2f}")
+    print(f"VAT/Tax Adjustment (ngoài LN)  : ${vat_tax_adjustment:>14.2f}")
     print(f"Net Profit (Store Total)       : ${net_profit:>14.2f}")
     print(f"Revenue Ads                    : ${tot['revenue_ads']:>14.2f}")
     print(f"Store TACoS                    : {store_tacos:>14.2%}")
@@ -714,7 +857,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     if dry_run:
         print("\n⚡ DRY RUN: Skipped database write.")
         conn.close()
-        return
+        return False
 
     # 8. Upsert into database
     print(f"\n💾 Upserting {len(sku_rows)} genuine SKUs into accounting_sku_monthly...")
@@ -789,7 +932,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
             total_amazon_fee_unrecognized, total_amazon_fee_trans, total_thue, total_return_amount,
             total_adjustment, total_storage_fee, total_placement_fee, total_long_term_fee,
             total_fba_customer_return_fee, total_liquidations, total_basecost_return_adj,
-            basecost_adjustment, total_removal, awd_subscription_fees, total_sku_profit, net_profit,
+            basecost_adjustment, total_removal, awd_subscription_fees, vat_tax_adjustment, total_sku_profit, net_profit,
             total_revenue_ads, tacos, acos, margin, roi, active_sku_count, total_sku_count,
             created_at, updated_at
         ) VALUES (
@@ -797,7 +940,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
             %s, %s, %s, %s,
             %s, %s, %s, %s,
             %s, %s, %s,
-            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s,
             NOW(), NOW()
         )
@@ -820,6 +963,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
             basecost_adjustment = EXCLUDED.basecost_adjustment,
             total_removal = EXCLUDED.total_removal,
             awd_subscription_fees = EXCLUDED.awd_subscription_fees,
+            vat_tax_adjustment = EXCLUDED.vat_tax_adjustment,
             total_sku_profit = EXCLUDED.total_sku_profit,
             net_profit = EXCLUDED.net_profit,
             total_revenue_ads = EXCLUDED.total_revenue_ads,
@@ -835,13 +979,78 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         tot['amazon_fee_unrec'], tot['amazon_fee_trans'], tot['thue'], tot['return'],
         tot['adjustment'], tot['storage'], tot['placement'], tot['longterm'],
         tot['fba_ret'], tot['liquidations'], tot['basecost_return_adj'], tot['basecost_adjustment'],
-        tot['removal'], awd_sub_fees, tot['sku_profit'], net_profit,
+        tot['removal'], awd_sub_fees, vat_tax_adjustment, tot['sku_profit'], net_profit,
         tot['revenue_ads'], store_tacos, store_acos, store_margin, store_roi, active_skus, len(sku_rows)
     ))
-    
+
+    # Ghi hàng ra kho vào Base Cost tháng; số thay đổi thì worker tính lại Base Cost từ tháng sau
+    cur.execute("""
+        SELECT sku, sl_ra_kho::float FROM accounting_monthly_base_cost
+        WHERE store_id = %s AND period = %s AND deleted_at IS NULL
+    """, (store_id, period))
+    current_outflow = {r[0]: r[1] for r in cur.fetchall()}
+    changed = [(qty, sku) for sku, qty in outflow.items()
+               if sku in current_outflow and (current_outflow[sku] is None or abs(current_outflow[sku] - qty) > 1e-9)]
+    for qty, sku in changed:
+        cur.execute("""
+            UPDATE accounting_monthly_base_cost
+            SET sl_ra_kho = %s, last_changed_by = 'monthly-ingest', updated_at = NOW()
+            WHERE store_id = %s AND period = %s AND sku = %s AND deleted_at IS NULL
+        """, (qty, store_id, period, sku))
+    missing = [sku for sku in outflow if sku not in current_outflow]
+    if missing:
+        print(f"⚠️ {len(missing)} SKU chưa có dòng Base Cost kỳ {period} (chưa ghi hàng ra kho): {missing[:5]}...")
+    if changed:
+        next_period = f"{year}-{month + 1:02d}" if month < 12 else f"{year + 1}-01"
+        cur.execute("SELECT accounting_enqueue_base_cost_resync(%s::uuid, %s)", (store_id, next_period))
+        print(f"📦 Cập nhật hàng ra kho cho {len(changed)} SKU → Base Cost tự tính lại từ {next_period}")
+
     conn.commit()
     conn.close()
     print("✅ Monthly ingestion completed successfully!\n")
+    return True
+
+def month_exists(store_name_or_id, period):
+    year, month = [int(p) for p in period.split('-')]
+    conn = get_db_connection()
+    store_id, _ = resolve_store(conn, store_name_or_id)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT count(*) FROM accounting_monthly_store_summary WHERE store_id = %s AND year = %s AND month = %s",
+        (store_id, year, month),
+    )
+    exists = cur.fetchone()[0] > 0
+    conn.close()
+    return exists
+
+def refresh_previous_month(store_name_or_id, period, raw_dir=None):
+    """
+    File giao dịch tháng M chứa phí thật của các đơn cuối tháng M-1 (thanh toán muộn).
+    Trước khi nạp tháng M, tính lại tháng M-1 để thay phí ước tính bằng phí thật — giống Excel tự cập nhật
+    cột J khi dán Trans Rp tháng mới. Chỉ chạy khi tháng M-1 đã có trong DB và còn file thô.
+    """
+    year, month = [int(p) for p in period.split('-')]
+    prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
+    prev_period = f"{prev_year}-{prev_month:02d}"
+    store_folder = os.path.basename(os.path.normpath(raw_dir)) if raw_dir else None
+    if raw_dir:
+        prev_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.normpath(raw_dir))), prev_period, store_folder)
+    else:
+        prev_dir = None
+    conn = get_db_connection()
+    store_id, store_name = resolve_store(conn, store_name_or_id)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT count(*) FROM accounting_monthly_store_summary WHERE store_id = %s AND year = %s AND month = %s",
+        (store_id, prev_year, prev_month),
+    )
+    exists = cur.fetchone()[0] > 0
+    conn.close()
+    prev_dir = prev_dir or os.path.join(DEFAULT_DOWNLOAD_ROOT, prev_period, store_name)
+    if not exists or not os.path.exists(prev_dir):
+        return
+    print(f"🔁 Tính lại kỳ {prev_period} để cập nhật phí Amazon của đơn thanh toán muộn trong kỳ {period}...")
+    ingest_monthly(store_name_or_id, prev_period, raw_dir=prev_dir, force=True)
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest monthly accounting data from raw crawler reports.")
@@ -850,8 +1059,13 @@ def main():
     parser.add_argument("--dir", required=False, help="Custom download directory path")
     parser.add_argument("--dry-run", action="store_true", help="Calculate without writing to database")
     parser.add_argument("--force", action="store_true", help="Force overwrite even if month already exists in DB")
+    parser.add_argument("--no-refresh-prev", action="store_true", help="Không tính lại tháng trước sau khi nạp tháng này")
     
     args = parser.parse_args()
+    # Tháng trước tính lại TRƯỚC: phí thanh toán muộn nằm trong file tháng này, và hàng ra kho tháng trước
+    # quyết định tồn đầu kỳ → Base Cost tháng này.
+    if not args.dry_run and not args.no_refresh_prev and (args.force or not month_exists(args.store, args.month)):
+        refresh_previous_month(args.store, args.month, raw_dir=args.dir)
     ingest_monthly(args.store, args.month, raw_dir=args.dir, dry_run=args.dry_run, force=args.force)
 
 if __name__ == '__main__':

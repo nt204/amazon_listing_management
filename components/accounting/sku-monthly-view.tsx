@@ -24,8 +24,10 @@ import {
   EyeIcon,
   FileTextIcon,
   CalculatorIcon,
+  StorefrontIcon,
 } from "@phosphor-icons/react";
 import type { SkuMonthlyItem, SkuMonthlyStoreSummary, AvailableMonthOption } from "@/lib/accounting/sku-monthly-db";
+import { AccountingTopProgressBar, AccountingTableSkeletonRows } from "./accounting-skeleton";
 
 interface SkuMonthlyViewProps {
   storeId?: string;
@@ -234,63 +236,42 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
   };
 
   return (
-    <div className="w-full space-y-5 px-3 py-4 sm:px-6 sm:py-6 max-w-[1720px] mx-auto">
-      {/* 1. Header Bar */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-xs">
-              <CalendarBlankIcon size={22} weight="bold" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                  BÁO CÁO THÁNG SKU (SKU-MONTHLY)
-                </h1>
-                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 border border-indigo-200/60">
-                  {currentStoreName}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700 border border-emerald-200/60">
-                  So khớp Excel 100%
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Báo cáo P&L toàn diện theo SKU, khớp từng con số với sheet SKU-monthly trong file kế toán
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-2.5">
+    <div className="w-full h-full flex flex-col bg-slate-50 overflow-hidden font-accounting-system">
+      {/* 1. TOP TOOLBAR: Store, Month, Mode, Actions */}
+      <div className="bg-slate-200/80 px-3 py-1.5 border-b border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0 select-none">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Store Selector */}
           {stores.length > 0 && (
-            <select
-              value={selectedStoreId}
-              onChange={(e) => {
-                setSelectedStoreId(e.target.value);
-                localStorage.setItem("acc_selected_store_id", e.target.value);
-                window.dispatchEvent(new Event("acc_store_changed"));
-              }}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 focus:bg-white cursor-pointer shadow-2xs"
-            >
-              {stores.map((st) => (
-                <option key={st.id} value={st.id}>
-                  Store: {st.name}
-                </option>
-              ))}
-            </select>
+            <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
+              <StorefrontIcon size={14} weight="bold" className="text-indigo-600 mr-1.5 shrink-0" />
+              <select
+                value={selectedStoreId}
+                onChange={(e) => {
+                  setSelectedStoreId(e.target.value);
+                  localStorage.setItem("acc_selected_store_id", e.target.value);
+                  window.dispatchEvent(new Event("acc_store_changed"));
+                }}
+                className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
+              >
+                {stores.map((st) => (
+                  <option key={st.id} value={st.id}>
+                    Store: {st.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
           {/* Month Selector */}
-          <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 shadow-2xs">
+          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
+            <CalendarBlankIcon size={14} weight="bold" className="text-indigo-600 mr-1.5 shrink-0" />
             <select
               value={selectedMonth}
               onChange={(e) => {
                 const val = e.target.value === "all" ? "all" : parseInt(e.target.value, 10);
                 setSelectedMonth(val);
               }}
-              className="bg-transparent px-2.5 py-1 text-xs font-bold text-slate-900 outline-none cursor-pointer"
+              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
             >
               {availableMonths.length > 0 ? (
                 availableMonths.map((m) => (
@@ -316,39 +297,34 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
           </div>
 
           {/* View mode toggle */}
-          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
+          <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs">
             <button
               type="button"
               onClick={() => setViewMode("standard")}
-              className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                viewMode === "standard" ? "bg-white text-indigo-700 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+              className={`rounded px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
+                viewMode === "standard"
+                  ? "bg-indigo-600 text-white shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              Tiêu chuẩn
+              Tiêu chuẩn (14 cột)
             </button>
             <button
               type="button"
               onClick={() => setViewMode("full")}
-              className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                viewMode === "full" ? "bg-white text-indigo-700 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+              className={`rounded px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
+                viewMode === "full"
+                  ? "bg-indigo-600 text-white shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              Đầy đủ 25+ cột
+              Đầy đủ (27 cột)
             </button>
           </div>
+        </div>
 
-          {/* Export Button */}
-          <a
-            href={`/api/accounting/financials/sku-monthly/export?storeId=${selectedStoreId}&month=${selectedMonth}&year=${selectedYear}&search=${encodeURIComponent(
-              search
-            )}`}
-            download
-            className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-bold text-white shadow-2xs hover:bg-slate-800 transition cursor-pointer"
-          >
-            <DownloadSimpleIcon size={15} weight="bold" />
-            <span>Xuất Excel/CSV</span>
-          </a>
-
+        {/* Right Actions */}
+        <div className="flex items-center gap-1.5">
           {/* Recalculate Button */}
           <button
             type="button"
@@ -360,59 +336,76 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
               setShowRecalcModal(true);
             }}
             disabled={recalculating || selectedMonth === "all"}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2 text-xs font-bold text-indigo-700 shadow-2xs hover:bg-indigo-100 transition cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 shadow-2xs hover:bg-indigo-100 transition cursor-pointer disabled:opacity-50"
             title="Tính toán lại P&L từ các file thô crawler tải về"
           >
-            <CalculatorIcon size={15} weight="bold" className={recalculating ? "animate-spin text-indigo-600" : ""} />
+            <CalculatorIcon
+              size={14}
+              weight="bold"
+              className={recalculating ? "animate-spin text-indigo-600" : ""}
+            />
             <span>{recalculating ? "Đang tính..." : "Tính từ file thô"}</span>
           </button>
+
+          {/* Export Button */}
+          <a
+            href={`/api/accounting/financials/sku-monthly/export?storeId=${selectedStoreId}&month=${selectedMonth}&year=${selectedYear}&search=${encodeURIComponent(
+              search
+            )}`}
+            download
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white shadow-2xs hover:bg-emerald-700 transition cursor-pointer"
+          >
+            <DownloadSimpleIcon size={14} weight="bold" />
+            <span>Xuất Excel</span>
+          </a>
 
           {/* Refresh Button */}
           <button
             type="button"
             onClick={() => fetchData()}
             disabled={loading}
-            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50 transition cursor-pointer shadow-2xs disabled:opacity-50"
+            className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white p-1 text-slate-700 hover:bg-slate-50 transition cursor-pointer shadow-2xs disabled:opacity-50"
             title="Làm mới dữ liệu"
           >
-            <ArrowsClockwiseIcon size={16} weight="bold" className={loading ? "animate-spin text-indigo-600" : ""} />
+            <ArrowsClockwiseIcon
+              size={15}
+              weight="bold"
+              className={loading ? "animate-spin text-indigo-600" : ""}
+            />
           </button>
         </div>
       </div>
 
+      {/* 2. SEARCH & FILTER BAR */}
+      <div className="bg-white px-3 py-1.5 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap shrink-0 text-xs select-none">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Search */}
+          <div className="relative flex items-center">
+            <MagnifyingGlassIcon
+              size={14}
+              weight="bold"
+              className="absolute left-2.5 text-slate-400 pointer-events-none"
+            />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm SKU, ASIN, Product Type..."
+              className="w-56 rounded-lg border border-slate-300 bg-white pl-8 pr-6 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-hidden shadow-2xs"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2 text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                ×
+              </button>
+            )}
+          </div>
 
-
-      {/* 3. Filter and Search Tool Bar */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs">
-        {/* Search */}
-        <div className="relative flex-1 max-w-md">
-          <MagnifyingGlassIcon
-            size={16}
-            weight="bold"
-            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-          />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm theo SKU, ASIN hoặc Product Type..."
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-400 outline-none focus:border-indigo-500 focus:bg-white transition"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-700"
-            >
-              ×
-            </button>
-          )}
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* SKU Type quick filter */}
-          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
+          {/* SKU Type quick filter tabs */}
+          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
             {[
               { key: "all", label: "Tất cả" },
               { key: "active", label: "Có phát sinh" },
@@ -423,8 +416,10 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                 key={tab.key}
                 type="button"
                 onClick={() => setSkuType(tab.key as any)}
-                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
-                  skuType === tab.key ? "bg-white text-indigo-700 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                className={`rounded px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
+                  skuType === tab.key
+                    ? "bg-white text-indigo-700 shadow-2xs border border-slate-200"
+                    : "text-slate-600 hover:text-slate-900"
                 }`}
               >
                 {tab.label}
@@ -436,9 +431,9 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
           <select
             value={productType}
             onChange={(e) => setProductType(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none cursor-pointer"
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none cursor-pointer shadow-2xs"
           >
-            <option value="all">Mọi Product Type ({productTypes.length})</option>
+            <option value="all">Mọi Loại SP ({productTypes.length})</option>
             {productTypes.map((pt) => (
               <option key={pt} value={pt}>
                 {pt}
@@ -450,7 +445,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none cursor-pointer"
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none cursor-pointer shadow-2xs"
           >
             <option value="all">Mọi Trạng Thái ({statuses.length})</option>
             {statuses.map((st) => (
@@ -459,267 +454,411 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
               </option>
             ))}
           </select>
+
+          {/* Reset filter button if any active filter */}
+          {(search || productType !== "all" || status !== "all" || skuType !== "all") && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                setProductType("all");
+                setStatus("all");
+                setSkuType("all");
+              }}
+              className="text-[11px] font-bold text-rose-600 hover:text-rose-800 underline cursor-pointer"
+            >
+              Xóa bộ lọc
+            </button>
+          )}
+        </div>
+
+        {/* Right count info */}
+        <div className="flex items-center gap-2 text-slate-500 font-medium">
+          <span>
+            Hiển thị <strong className="text-slate-900 font-bold">{items.length}</strong> SKU
+          </span>
         </div>
       </div>
 
-      {/* 4. Main Interactive Data Table */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-xs overflow-hidden">
-        {loading ? (
-          <div className="py-20 flex flex-col items-center justify-center gap-3 text-slate-500">
-            <ArrowsClockwiseIcon size={28} className="animate-spin text-indigo-600" />
-            <p className="text-xs font-bold">Đang tải và tính toán số liệu báo cáo tháng...</p>
+      {/* 3. KEY METRICS SUMMARY RIBBON */}
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 px-3 py-1.5 bg-slate-100/70 border-b border-slate-200 shrink-0 select-none">
+          {/* 1. Doanh thu */}
+          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+              <span>Doanh Thu</span>
+              <CurrencyDollarIcon size={14} className="text-indigo-600" />
+            </div>
+            <div className="text-sm font-bold text-slate-900 mt-0.5 tabular-nums">
+              {fmtCurrency(summary.total_revenue)}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              Đã bán: <b className="text-slate-800 font-mono">{fmtInt(summary.total_quantity)}</b> items
+            </div>
           </div>
-        ) : error ? (
+
+          {/* 2. Lợi nhuận ròng */}
+          <div
+            className={`rounded-lg px-3 py-1.5 border shadow-2xs ${
+              summary.net_profit >= 0 ? "bg-emerald-50/60 border-emerald-200" : "bg-rose-50/60 border-rose-200"
+            }`}
+          >
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
+              <span>Lợi Nhuận Ròng</span>
+              <TrendUpIcon size={14} className={summary.net_profit >= 0 ? "text-emerald-600" : "text-rose-600"} />
+            </div>
+            <div
+              className={`text-sm font-bold mt-0.5 tabular-nums ${
+                summary.net_profit >= 0 ? "text-emerald-700" : "text-rose-600"
+              }`}
+            >
+              {fmtCurrency(summary.net_profit)}
+            </div>
+            <div className="text-[10px] text-slate-600 mt-0.5">
+              Biên LN: <b className="font-mono">{fmtPercent(summary.margin)}</b>
+            </div>
+          </div>
+
+          {/* 3. Chi phí Ads */}
+          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+              <span>Chi Phí Ads</span>
+              <MegaphoneIcon size={14} className="text-rose-500" />
+            </div>
+            <div className="text-sm font-bold text-rose-600 mt-0.5 tabular-nums">
+              {fmtCurrency(summary.total_ads_fee)}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              T-ACOS: <b className="text-slate-800 font-mono">{fmtPercent(summary.tacos)}</b>
+            </div>
+          </div>
+
+          {/* 4. Phí sàn Amazon */}
+          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+              <span>Phí Sàn Amazon</span>
+              <ShoppingBagIcon size={14} className="text-amber-500" />
+            </div>
+            <div className="text-sm font-bold text-slate-900 mt-0.5 tabular-nums">
+              {fmtCurrency(summary.total_amazon_fee)}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              FBA, Ref, Storage...
+            </div>
+          </div>
+
+          {/* 5. Giá vốn hàng bán */}
+          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+              <span>Giá Vốn (Basecost)</span>
+              <PackageIcon size={14} className="text-slate-500" />
+            </div>
+            <div className="text-sm font-bold text-slate-900 mt-0.5 tabular-nums">
+              {fmtCurrency(summary.total_basecost)}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              Giá vốn xuất bán
+            </div>
+          </div>
+
+          {/* 6. Tồn kho & Hoạt động */}
+          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+              <span>Tồn Kho Hiện Tại</span>
+              <PackageIcon size={14} className="text-indigo-500" />
+            </div>
+            <div className="text-sm font-bold text-indigo-700 mt-0.5 tabular-nums">
+              {fmtInt(summary.total_available_now)} <span className="text-xs font-normal text-slate-500">pcs</span>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              <b className="text-emerald-700">{summary.active_sku_count}</b> SKU phát sinh
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. MAIN INTERACTIVE DATA TABLE */}
+      <div className="flex-1 min-h-0 overflow-auto bg-white relative">
+        <AccountingTopProgressBar loading={loading} variant="indigo" />
+
+        {error ? (
           <div className="py-16 flex flex-col items-center justify-center gap-2 text-rose-600">
             <WarningCircleIcon size={32} weight="bold" />
             <p className="text-sm font-bold">{error}</p>
           </div>
-        ) : items.length === 0 ? (
-          <div className="py-16 text-center text-slate-500">
-            <FileTextIcon size={36} className="mx-auto text-slate-300 mb-2" />
-            <p className="text-sm font-bold text-slate-700">Không tìm thấy dữ liệu SKU phù hợp</p>
-            <p className="text-xs text-slate-400 mt-1">Thử thay đổi bộ lọc tìm kiếm hoặc chọn tháng khác</p>
-          </div>
         ) : (
-          <div className="overflow-x-auto max-h-[750px] overflow-y-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              {/* Table Header */}
-              <thead className="bg-slate-50 sticky top-0 z-20 border-b border-slate-200 shadow-2xs">
-                <tr>
-                  <th className="py-3 px-3 font-bold text-slate-700 whitespace-nowrap">#</th>
-                  <th className="py-3 px-3 font-bold text-slate-700 whitespace-nowrap">Ảnh</th>
-                  <th
-                    onClick={() => handleSort("sku")}
-                    className="py-3 px-3 font-bold text-slate-700 whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center gap-1">
-                      <span>SKU</span>
-                      {sortField === "sku" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th className="py-3 px-3 font-bold text-slate-700 whitespace-nowrap">Product Type</th>
-                  <th
-                    onClick={() => handleSort("revenue")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Revenue</span>
-                      {sortField === "revenue" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("quantity")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Quantity</span>
-                      {sortField === "quantity" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("ads_fee")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Ads Fee</span>
-                      {sortField === "ads_fee" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("basecost")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Basecost</span>
-                      {sortField === "basecost" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("amazon_fee_total")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Amazon Fee</span>
-                      {sortField === "amazon_fee_total" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("profit")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Profit</span>
-                      {sortField === "profit" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("margin")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Margin</span>
-                      {sortField === "margin" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("tacos")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>TACOS</span>
-                      {sortField === "tacos" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort("available_now")}
-                    className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Tồn kho</span>
-                      {sortField === "available_now" &&
-                        (sortDirection === "asc" ? <CaretUpIcon size={12} /> : <CaretDownIcon size={12} />)}
-                    </div>
-                  </th>
+          <table className="acc-financial-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
+            {/* Table Header */}
+            <thead className="sticky top-0 z-20 select-none">
+              <tr className="bg-slate-100 text-slate-800 text-[11.5px] font-bold border-b border-slate-300 shadow-2xs">
+                <th className="py-2 px-2.5 whitespace-nowrap text-center w-10 border-r border-slate-200 bg-slate-100">#</th>
+                <th className="py-2 px-2 whitespace-nowrap text-center w-12 border-r border-slate-200 bg-slate-100">Ảnh</th>
+                <th
+                  onClick={() => handleSort("sku")}
+                  className="py-2 px-2.5 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>SKU</span>
+                    {sortField === "sku" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th className="py-2 px-2.5 whitespace-nowrap border-r border-slate-200 bg-slate-100">Product Type</th>
+                <th
+                  onClick={() => handleSort("revenue")}
+                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Doanh Thu</span>
+                    {sortField === "revenue" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("quantity")}
+                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Số Lượng</span>
+                    {sortField === "quantity" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("ads_fee")}
+                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Phí Ads</span>
+                    {sortField === "ads_fee" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("basecost")}
+                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Giá Vốn</span>
+                    {sortField === "basecost" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("amazon_fee_total")}
+                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Phí Amazon</span>
+                    {sortField === "amazon_fee_total" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("profit")}
+                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Lợi Nhuận</span>
+                    {sortField === "profit" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("margin")}
+                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Margin</span>
+                    {sortField === "margin" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("tacos")}
+                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>TACOS</span>
+                    {sortField === "tacos" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("available_now")}
+                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Tồn Kho</span>
+                    {sortField === "available_now" &&
+                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
+                  </div>
+                </th>
 
-                  {/* Extended columns in Full view mode */}
+                {/* Extended columns in Full view mode */}
+                {viewMode === "full" && (
+                  <>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Thuế</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Return</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Adjustment</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Lưu kho</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Placement</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Long-Term</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">FBA Return</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Liquidations</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">BC Ret/Adj</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Removal</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Rev Ads</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">ACOS</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">ROI</th>
+                  </>
+                )}
+                <th className="py-2 px-2 text-center whitespace-nowrap w-16 bg-slate-100">Chi Tiết</th>
+              </tr>
+
+              {/* Sticky Summary Row */}
+              {summary && (
+                <tr className="bg-amber-50/90 text-slate-900 border-b border-amber-300 font-bold text-xs select-none shadow-2xs">
+                  <td className="py-1.5 px-2.5 text-center font-black text-amber-800 border-r border-amber-200/80 bg-amber-50">∑</td>
+                  <td className="py-1.5 px-2 border-r border-amber-200/80 bg-amber-50"></td>
+                  <td className="py-1.5 px-2.5 font-bold text-slate-900 border-r border-amber-200/80 bg-amber-50">TỔNG KỲ</td>
+                  <td className="py-1.5 px-2.5 text-indigo-700 font-bold border-r border-amber-200/80 bg-amber-50">
+                    {summary.active_sku_count} active
+                  </td>
+                  <td className="py-1.5 px-2.5 text-right font-bold text-slate-900 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtCurrency(summary.total_revenue)}
+                  </td>
+                  <td className="py-1.5 px-2 text-right font-bold text-slate-900 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtInt(summary.total_quantity)}
+                  </td>
+                  <td className="py-1.5 px-2.5 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtCurrency(summary.total_ads_fee)}
+                  </td>
+                  <td className="py-1.5 px-2.5 text-right font-bold text-slate-800 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtCurrency(summary.total_basecost)}
+                  </td>
+                  <td className="py-1.5 px-2.5 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtCurrency(summary.total_amazon_fee)}
+                  </td>
+                  <td
+                    className={`py-1.5 px-2.5 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50 ${
+                      summary.net_profit >= 0 ? "text-emerald-700" : "text-rose-600"
+                    }`}
+                  >
+                    {fmtCurrency(summary.net_profit)}
+                  </td>
+                  <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtPercent(summary.margin)}
+                  </td>
+                  <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtPercent(summary.tacos)}
+                  </td>
+                  <td className="py-1.5 px-2 text-right font-bold text-indigo-800 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                    {fmtInt(summary.total_available_now)}
+                  </td>
+
                   {viewMode === "full" && (
                     <>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Thuế</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Return</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Adjustment</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Lưu kho</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Placement</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Long-Term</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">FBA Return Fee</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Liquidations</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">BC Ret/Adj</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Removal</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">Revenue Ads</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">ACOS</th>
-                      <th className="py-3 px-3 font-bold text-slate-700 text-right whitespace-nowrap">ROI</th>
+                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_thue)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_return_amount)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_adjustment)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_storage_fee)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_placement_fee)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_long_term_fee)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_fba_customer_return_fee)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-emerald-700 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_liquidations)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-emerald-700 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_basecost_return_adj)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_removal)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtCurrency(summary.total_revenue_ads)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtPercent(summary.acos)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
+                        {fmtPercent(summary.roi)}
+                      </td>
                     </>
                   )}
-                  <th className="py-3 px-3 font-bold text-slate-700 text-center whitespace-nowrap">Chi tiết</th>
+                  <td className="py-1.5 px-2 bg-amber-50"></td>
                 </tr>
+              )}
+            </thead>
 
-                {/* Sticky Summary Row (Row 2 in Excel) */}
-                {summary && (
-                  <tr className="bg-indigo-50/80 font-black text-slate-900 border-b-2 border-indigo-200">
-                    <td className="py-2.5 px-3">∑</td>
-                    <td className="py-2.5 px-3"></td>
-                    <td className="py-2.5 px-3">SUM =&gt;</td>
-                    <td className="py-2.5 px-3 text-indigo-700 font-extrabold">{summary.active_sku_count} active</td>
-                    <td className="py-2.5 px-3 text-right font-black text-slate-900">
-                      {fmtCurrency(summary.total_revenue)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-black text-slate-900">
-                      {fmtInt(summary.total_quantity)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-black text-rose-600">
-                      {fmtCurrency(summary.total_ads_fee)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-black text-slate-800">
-                      {fmtCurrency(summary.total_basecost)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-black text-rose-600">
-                      {fmtCurrency(summary.total_amazon_fee)}
-                    </td>
-                    <td
-                      className={`py-2.5 px-3 text-right font-black ${
-                        summary.net_profit >= 0 ? "text-emerald-700" : "text-rose-600"
-                      }`}
-                    >
-                      {fmtCurrency(summary.net_profit)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-black">{fmtPercent(summary.margin)}</td>
-                    <td className="py-2.5 px-3 text-right font-black">{fmtPercent(summary.tacos)}</td>
-                    <td className="py-2.5 px-3 text-right font-black">{fmtInt(summary.total_available_now)}</td>
-
-                    {viewMode === "full" && (
-                      <>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-700">
-                          {fmtCurrency(summary.total_thue)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-rose-600">
-                          {fmtCurrency(summary.total_return_amount)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-700">
-                          {fmtCurrency(summary.total_adjustment)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-rose-600">
-                          {fmtCurrency(summary.total_storage_fee)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-rose-600">
-                          {fmtCurrency(summary.total_placement_fee)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-rose-600">
-                          {fmtCurrency(summary.total_long_term_fee)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-rose-600">
-                          {fmtCurrency(summary.total_fba_customer_return_fee)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-emerald-700">
-                          {fmtCurrency(summary.total_liquidations)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-emerald-700">
-                          {fmtCurrency(summary.total_basecost_return_adj)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-rose-600">
-                          {fmtCurrency(summary.total_removal)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-800">
-                          {fmtCurrency(summary.total_revenue_ads)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold">{fmtPercent(summary.acos)}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">{fmtPercent(summary.roi)}</td>
-                      </>
-                    )}
-                    <td className="py-2.5 px-3"></td>
-                  </tr>
-                )}
-              </thead>
-
-              {/* Table Body */}
-              <tbody className="divide-y divide-slate-100">
-                {items.map((item, idx) => {
+            {/* Table Body */}
+            <tbody className="divide-y divide-slate-100">
+              {loading && items.length === 0 ? (
+                <AccountingTableSkeletonRows
+                  rows={10}
+                  colSpan={viewMode === "full" ? 27 : 14}
+                  rowHeightClass="h-[38px]"
+                />
+              ) : items.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={viewMode === "full" ? 27 : 14}
+                    className="py-16 text-center text-slate-500"
+                  >
+                    <FileTextIcon size={36} className="mx-auto text-slate-300 mb-2" />
+                    <p className="text-sm font-bold text-slate-700">Không tìm thấy dữ liệu SKU phù hợp</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Thử thay đổi bộ lọc tìm kiếm hoặc chọn tháng khác
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                items.map((item, idx) => {
                   const isPositiveProfit = item.profit >= 0;
                   return (
                     <tr
                       key={item.id}
-                      className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
+                      className="hover:bg-indigo-50/30 transition-colors group cursor-pointer text-xs"
                       onClick={() => setSelectedSkuDetail(item)}
                     >
-                      <td className="py-2.5 px-3 text-slate-400 font-medium">{idx + 1}</td>
-                      <td className="py-2 px-3">
-                        <div className="relative h-9 w-9 rounded-lg bg-slate-100 overflow-hidden border border-slate-200 shrink-0">
+                      <td className="py-2 px-2.5 text-center text-slate-400 font-medium border-r border-slate-100">
+                        {idx + 1}
+                      </td>
+                      <td className="py-1.5 px-2 border-r border-slate-100 text-center">
+                        <div className="relative mx-auto h-7 w-7 rounded bg-slate-100 overflow-hidden border border-slate-200 shrink-0">
                           {item.mockup_url ? (
                             <Image
                               src={item.mockup_url}
                               alt={item.sku}
                               fill
-                              sizes="36px"
+                              sizes="28px"
                               className="object-cover"
                               unoptimized
                             />
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center text-[10px] font-bold text-slate-400">
-                              No pic
+                            <div className="flex h-full w-full items-center justify-center text-[9px] font-bold text-slate-400">
+                              —
                             </div>
                           )}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 whitespace-nowrap">
+                      <td className="py-2 px-2.5 whitespace-nowrap border-r border-slate-100">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-extrabold text-slate-900 group-hover:text-indigo-600 transition">
+                          <span className="font-bold text-slate-900 group-hover:text-indigo-600 transition">
                             {item.sku}
                           </span>
                           <button
@@ -731,126 +870,143 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                             className="text-slate-400 hover:text-slate-700 transition"
                             title="Copy SKU"
                           >
-                            <CopyIcon size={13} />
+                            <CopyIcon size={12} />
                           </button>
                         </div>
                         {item.asin && (
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          <div className="text-[10px] text-slate-400 font-mono">
                             ASIN: {item.asin}
                           </div>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
-                        <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                      <td className="py-2 px-2.5 text-slate-600 whitespace-nowrap border-r border-slate-100">
+                        <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
                           {item.product_type || "Chưa phân loại"}
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-black text-slate-900 whitespace-nowrap">
+                      <td className="py-2 px-2.5 text-right font-bold text-slate-900 whitespace-nowrap tabular-nums border-r border-slate-100">
                         {fmtCurrency(item.revenue)}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-700 whitespace-nowrap">
+                      <td className="py-2 px-2 text-right font-semibold text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
                         {fmtInt(item.quantity)}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-rose-600 whitespace-nowrap">
-                        {item.ads_fee !== 0 ? fmtCurrency(item.ads_fee) : "—"}
+                      <td className="py-2 px-2.5 text-right font-medium text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                        {item.ads_fee !== 0 ? fmtCurrency(item.ads_fee) : <span className="text-slate-300 font-normal">—</span>}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-700 whitespace-nowrap">
-                        {item.basecost !== 0 ? fmtCurrency(item.basecost) : "—"}
+                      <td className="py-2 px-2.5 text-right font-medium text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
+                        {item.basecost !== 0 ? fmtCurrency(item.basecost) : <span className="text-slate-300 font-normal">—</span>}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-rose-600 whitespace-nowrap">
-                        {item.amazon_fee_total !== 0 ? fmtCurrency(item.amazon_fee_total) : "—"}
+                      <td className="py-2 px-2.5 text-right font-medium text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                        {item.amazon_fee_total !== 0 ? fmtCurrency(item.amazon_fee_total) : <span className="text-slate-300 font-normal">—</span>}
                       </td>
                       <td
-                        className={`py-2.5 px-3 text-right font-black whitespace-nowrap ${
+                        className={`py-2 px-2.5 text-right font-bold whitespace-nowrap tabular-nums border-r border-slate-100 ${
                           isPositiveProfit ? "text-emerald-700" : "text-rose-600"
                         }`}
                       >
                         {fmtCurrency(item.profit)}
                       </td>
                       <td
-                        className={`py-2.5 px-3 text-right font-bold whitespace-nowrap ${
+                        className={`py-2 px-2 text-right font-semibold whitespace-nowrap tabular-nums border-r border-slate-100 ${
                           (item.margin || 0) >= 0 ? "text-emerald-700" : "text-rose-600"
                         }`}
                       >
                         {fmtPercent(item.margin)}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-semibold text-slate-600 whitespace-nowrap">
+                      <td className="py-2 px-2 text-right font-medium text-slate-600 whitespace-nowrap tabular-nums border-r border-slate-100">
                         {fmtPercent(item.tacos)}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-indigo-700 whitespace-nowrap">
+                      <td className="py-2 px-2 text-right font-semibold text-indigo-700 whitespace-nowrap tabular-nums border-r border-slate-100">
                         {fmtInt(item.available_now)}
                       </td>
 
                       {/* Extended columns in Full view mode */}
                       {viewMode === "full" && (
                         <>
-                          <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
-                            {item.thue !== 0 ? fmtCurrency(item.thue) : "—"}
+                          <td className="py-2 px-2 text-right text-slate-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.thue !== 0 ? fmtCurrency(item.thue) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-rose-600 whitespace-nowrap">
-                            {item.return_amount !== 0 ? fmtCurrency(item.return_amount) : "—"}
+                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.return_amount !== 0 ? fmtCurrency(item.return_amount) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap">
-                            {item.adjustment !== 0 ? fmtCurrency(item.adjustment) : "—"}
+                          <td className="py-2 px-2 text-right text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.adjustment !== 0 ? fmtCurrency(item.adjustment) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-rose-600 whitespace-nowrap">
-                            {item.storage_fee !== 0 ? fmtCurrency(item.storage_fee) : "—"}
+                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.storage_fee !== 0 ? fmtCurrency(item.storage_fee) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-rose-600 whitespace-nowrap">
-                            {item.placement_fee !== 0 ? fmtCurrency(item.placement_fee) : "—"}
+                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.placement_fee !== 0 ? fmtCurrency(item.placement_fee) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-rose-600 whitespace-nowrap">
-                            {item.long_term_fee !== 0 ? fmtCurrency(item.long_term_fee) : "—"}
+                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.long_term_fee !== 0 ? fmtCurrency(item.long_term_fee) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-rose-600 whitespace-nowrap">
-                            {item.fba_customer_return_fee !== 0 ? fmtCurrency(item.fba_customer_return_fee) : "—"}
+                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.fba_customer_return_fee !== 0 ? fmtCurrency(item.fba_customer_return_fee) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-emerald-700 whitespace-nowrap">
-                            {item.liquidations !== 0 ? fmtCurrency(item.liquidations) : "—"}
+                          <td className="py-2 px-2 text-right text-emerald-700 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.liquidations !== 0 ? fmtCurrency(item.liquidations) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-emerald-700 whitespace-nowrap">
+                          <td className="py-2 px-2 text-right text-emerald-700 whitespace-nowrap tabular-nums border-r border-slate-100">
                             {item.basecost_return_adjustment !== 0
                               ? fmtCurrency(item.basecost_return_adjustment)
-                              : "—"}
+                              : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-rose-600 whitespace-nowrap">
-                            {item.removal !== 0 ? fmtCurrency(item.removal) : "—"}
+                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.removal !== 0 ? fmtCurrency(item.removal) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-bold text-slate-800 whitespace-nowrap">
-                            {item.revenue_ads > 0 ? fmtCurrency(item.revenue_ads) : "—"}
+                          <td className="py-2 px-2 text-right font-medium text-slate-800 whitespace-nowrap tabular-nums border-r border-slate-100">
+                            {item.revenue_ads > 0 ? fmtCurrency(item.revenue_ads) : <span className="text-slate-300 font-normal">—</span>}
                           </td>
-                          <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                          <td className="py-2 px-2 text-right text-slate-600 whitespace-nowrap tabular-nums border-r border-slate-100">
                             {fmtPercent(item.acos)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-bold text-slate-700 whitespace-nowrap">
+                          <td className="py-2 px-2 text-right font-medium text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
                             {fmtPercent(item.roi)}
                           </td>
                         </>
                       )}
 
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                      <td className="py-1.5 px-2 text-center whitespace-nowrap">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedSkuDetail(item);
                           }}
-                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 transition cursor-pointer"
                         >
-                          <EyeIcon size={13} />
+                          <EyeIcon size={12} />
                           <span>Xem</span>
                         </button>
                       </td>
                     </tr>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
+                })
+              )}
+            </tbody>
+          </table>
         )}
       </div>
 
-      {/* 5. Detailed Breakdown Modal */}
+      {/* 5. BOTTOM STATUS BAR */}
+      <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500 font-medium shrink-0 select-none">
+        <div className="flex items-center gap-2">
+          <span>
+            Hiển thị <strong className="text-slate-900 font-bold">{items.length}</strong> SKU
+            {summary && (
+              <>
+                {" "}— trong đó <strong className="text-emerald-700 font-bold">{summary.active_sku_count}</strong> SKU phát sinh giao dịch
+              </>
+            )}
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-400">
+          Nhấp vào hàng hoặc nút <EyeIcon size={12} className="inline mx-0.5 text-slate-500" /> để xem chi tiết P&L
+        </div>
+      </div>
+
+      {/* 6. Detailed Breakdown Modal */}
       {selectedSkuDetail && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-200"

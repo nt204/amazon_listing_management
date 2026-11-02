@@ -37,7 +37,7 @@ cat <<EOF > "$TARGET_PLIST"
         <string>$SCRIPT_DIR/run_accounting_monthly.sh</string>
     </array>
 
-    <!-- Chạy tự động lúc 04:00 sáng ngày mùng 2 hằng tháng (Day 2, Hour 4, Minute 0) -->
+    <!-- Chạy tự động lúc 04:30 sáng ngày mùng 2 hằng tháng (Day 2, Hour 4, Minute 30) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Day</key>
@@ -45,7 +45,7 @@ cat <<EOF > "$TARGET_PLIST"
         <key>Hour</key>
         <integer>4</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>30</integer>
     </dict>
 
     <key>ProcessType</key>

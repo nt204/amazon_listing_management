@@ -62,8 +62,9 @@ find "$CHECKPOINT_ROOT" -mindepth 1 -maxdepth 1 -type f -name '*.json' -mtime "+
 # 2. Dọn tiến trình trình duyệt mồ côi CHỈ KHI hệ thống hoàn toàn rảnh rỗi (không có crawler nào đang chạy)
 PPC_LOCK="$HOME/Library/Application Support/AmazonPpcCrawler/run.lock"
 ACC_LOCK="$HOME/Library/Application Support/AmazonAccounting/accounting_run.lock"
+MONTHLY_LOCK="$HOME/Library/Application Support/AmazonAccounting/monthly_run.lock"
 
-if [ ! -f "$PPC_LOCK" ] && [ ! -f "$ACC_LOCK" ]; then
+if [ ! -f "$PPC_LOCK" ] && [ ! -f "$ACC_LOCK" ] && [ ! -f "$MONTHLY_LOCK" ]; then
   ACTIVE_PORTS="$(curl -s http://127.0.0.1:50325/api/v1/browser/local-active 2>/dev/null | grep -o '\"debug_port\"' || true)"
   if [ -z "$ACTIVE_PORTS" ]; then
     pkill -9 -f SunBrowser 2>/dev/null || true

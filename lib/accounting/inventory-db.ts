@@ -4286,6 +4286,16 @@ export async function syncMonthlyBaseCostFromInbound(
   const sql = await getDatabaseClient();
   const errors: string[] = [];
 
+  // Store đã có số "hàng ra kho" (pipeline kế toán tháng ghi sl_ra_kho) thì tính y như sheet BASECOST THÁNG:
+  // tồn đầu kỳ = tồn cuối tháng trước theo sổ, số nhập = Amazon Received. Store chưa có thì giữ cách cũ.
+  const [modeRow] = await sql<{ book_mode: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM accounting_monthly_base_cost
+      WHERE store_id = ${storeId} AND deleted_at IS NULL AND sl_ra_kho IS NOT NULL
+    ) AS book_mode
+  `;
+  const bookMode = Boolean(modeRow?.book_mode);
+
   // 1. Lấy tất cả lô hàng trong tháng period (theo ngay_den)
   const inboundRows = await sql<{
     sku: string;
@@ -4294,11 +4304,13 @@ export async function syncMonthlyBaseCostFromInbound(
     total_qty: number;
     total_cost: number;
   }[]>`
-    SELECT 
+    SELECT
       sku,
       MAX(brand) as brand,
       MAX(product_type) as product_type,
-      COALESCE(SUM(quantity), 0)::float as total_qty,
+      ${bookMode
+        ? sql`COALESCE(SUM(COALESCE(amazon_received, 0)), 0)::float`
+        : sql`COALESCE(SUM(quantity), 0)::float`} as total_qty,
       COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, 0)), 0)::float as total_cost
     FROM accounting_inbound_shipments
     WHERE store_id = ${storeId}
@@ -4358,16 +4370,22 @@ export async function syncMonthlyBaseCostFromInbound(
   const prevMonthRows = await sql<{
     sku: string;
     basecost_thang: number;
+    sl_ton_dau_ky: number;
+    sl_nhap: number;
+    sl_ra_kho: number | null;
   }[]>`
-    SELECT sku, basecost_thang::float
+    SELECT sku, basecost_thang::float, sl_ton_dau_ky::float, sl_nhap::float, sl_ra_kho::float
     FROM accounting_monthly_base_cost
     WHERE store_id = ${storeId}
       AND period = ${prevPeriod}
       AND deleted_at IS NULL
   `;
   const prevMonthMap = new Map<string, number>();
+  // Tồn cuối tháng trước theo sổ (sheet: Hàng tồn cuối tháng = Tồn đầu + Nhập − Hàng ra kho)
+  const prevClosingMap = new Map<string, number>();
   for (const r of prevMonthRows) {
     prevMonthMap.set(r.sku.trim(), r.basecost_thang);
+    prevClosingMap.set(r.sku.trim(), (r.sl_ton_dau_ky || 0) + (r.sl_nhap || 0) - (r.sl_ra_kho || 0));
   }
 
   // 4. Lấy tồn kho thực tế từ báo cáo tồn kho (FBA + AWD) chốt vào cuối tháng trước
@@ -4448,7 +4466,9 @@ export async function syncMonthlyBaseCostFromInbound(
       // Nếu không có trong ledger thì fallback theo số đã lưu (nếu > 0) hoặc 0.
       let slTon = 0;
       const ledgerKey = sku.toUpperCase();
-      if (ledgerStockMap.has(ledgerKey)) {
+      if (bookMode && prevClosingMap.has(sku)) {
+        slTon = prevClosingMap.get(sku)!;
+      } else if (ledgerStockMap.has(ledgerKey)) {
         slTon = ledgerStockMap.get(ledgerKey)!;
       } else if (existing && existing.sl_ton_dau_ky > 0) {
         slTon = existing.sl_ton_dau_ky;
