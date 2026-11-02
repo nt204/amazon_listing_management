@@ -4,6 +4,7 @@ import type postgres from "postgres";
 import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getServiceAccountEmail, parseSpreadsheetId, readSpreadsheetTab } from "@/lib/google/sheets";
+import { syncBaseCostOutflowFromSheet } from "@/lib/accounting/base-cost-sheet-outflow";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 import { storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
 import {
@@ -939,6 +940,16 @@ async function runLink(
   const results: Partial<Record<SheetType, SheetPartOutcome>> = {};
   // Bảng mã chạy trước để Chi tiết đi hàng gắn đúng SKU
   for (const part of parts) results[part] = await runPart(link, part, trigger, actor, preloaded[part], force);
+  // File INVENTORY: nạp "Đã bán" của tab BASECOST THÁNG để Base Cost tự tính đúng công thức sheet (không chặn kết quả đồng bộ)
+  if (link.link_type === "inventory") {
+    await syncBaseCostOutflowFromSheet(link.store_id, link.sheet_url, `google-sheet:${trigger}:${actor}`)
+      .then((r) => {
+        if (r.outflowUpdated || r.unlocked) {
+          console.log(`[InventorySheetSync] ${link.store_id} BASECOST THÁNG: ${r.outflowUpdated} dòng hàng ra kho, mở khóa ${r.unlocked} dòng → tính lại từ ${r.resyncFrom}`);
+        }
+      })
+      .catch((error) => console.error(`[InventorySheetSync] ${link.store_id} BASECOST THÁNG lỗi:`, error instanceof Error ? error.message : error));
+  }
   const errors = parts.filter((p) => !results[p]!.ok).map((p) => `${SHEET_TYPE_LABELS[p]}: ${results[p]!.error}`);
   return { ok: errors.length === 0, parts: results, error: errors.length ? errors.join(" | ") : undefined };
 }

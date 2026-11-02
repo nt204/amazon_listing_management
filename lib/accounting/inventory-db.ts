@@ -4532,7 +4532,9 @@ export async function syncMonthlyBaseCostFromInbound(
             ELSE EXCLUDED.basecost_thang
           END,
           calculation_rule = EXCLUDED.calculation_rule,
-          last_changed_by = ${changedBy},
+          -- Dòng đang khóa giữ người khóa: đồng bộ sheet chỉ tự mở khóa do import, không mở khóa người dùng sửa tay
+          last_changed_by = CASE WHEN accounting_monthly_base_cost.is_overridden
+            THEN accounting_monthly_base_cost.last_changed_by ELSE ${changedBy} END,
           updated_at = NOW()
         WHERE accounting_monthly_base_cost.deleted_at IS NULL
           -- Số liệu không đổi thì bỏ qua, tránh ghi lịch sử thừa mỗi lần tính lại (kể cả tự động)

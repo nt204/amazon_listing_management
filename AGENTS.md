@@ -16,4 +16,4 @@ Mọi agent/người deploy lên VPS (`167.233.26.87`, `/var/www/amazon-listing`
 - **Mỗi lúc chỉ một người deploy.** Script giữ khoá trên server; bị báo "Đang có người khác deploy" thì đợi, không chạy song song.
 - **Chỉ reload app khi build thành công.** Build lỗi thì dừng, app cũ vẫn chạy.
 - Ngày 2026-11-02 app sập 2–3 phút vì hai agent deploy cùng lúc (`npm ci` chạy đúng lúc build, rồi reload trên bản build hỏng).
-- Đổi `mac-crawler/*` hoặc `scripts/ingest_monthly_from_raw.py` thì phải chép sang Mac mini (`ad@100.111.217.54:/Users/ad/mac-crawler`) — crawler hằng tháng chạy bản ở đó.
+- Đổi `scripts/ingest_monthly_from_raw.py` thì chạy thêm `bash scripts/sync-mac-mini.sh` (Mac mini `ad@100.111.217.54:/Users/ad/mac-crawler` chạy crawler + ingest hằng tháng bằng bản chép riêng). Đổi `mac-crawler/*` cũng phải chép sang đó.

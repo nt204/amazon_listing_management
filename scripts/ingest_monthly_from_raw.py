@@ -992,16 +992,24 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
 
     # Ghi hàng ra kho vào Base Cost tháng; số thay đổi thì worker tính lại Base Cost từ tháng sau
     cur.execute("""
-        SELECT sku, sl_ra_kho::float FROM accounting_monthly_base_cost
+        SELECT sku, sl_ra_kho::float, sl_ra_kho_source FROM accounting_monthly_base_cost
         WHERE store_id = %s AND period = %s AND deleted_at IS NULL
     """, (store_id, period))
-    current_outflow = {r[0]: r[1] for r in cur.fetchall()}
+    current_outflow = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+    # Số từ file thô ('ingest') thay số nạp từ sheet và không bị đồng bộ sheet ghi đè về sau
     changed = [(qty, sku) for sku, qty in outflow.items()
-               if sku in current_outflow and (current_outflow[sku] is None or abs(current_outflow[sku] - qty) > 1e-9)]
+               if sku in current_outflow and (current_outflow[sku][0] is None or abs(current_outflow[sku][0] - qty) > 1e-9)]
+    changed_skus = {sku for _, sku in changed}
+    for sku, (_, source) in current_outflow.items():
+        if sku in outflow and source != 'ingest' and sku not in changed_skus:
+            cur.execute("""
+                UPDATE accounting_monthly_base_cost SET sl_ra_kho_source = 'ingest'
+                WHERE store_id = %s AND period = %s AND sku = %s AND deleted_at IS NULL
+            """, (store_id, period, sku))
     for qty, sku in changed:
         cur.execute("""
             UPDATE accounting_monthly_base_cost
-            SET sl_ra_kho = %s, last_changed_by = 'monthly-ingest', updated_at = NOW()
+            SET sl_ra_kho = %s, sl_ra_kho_source = 'ingest', last_changed_by = 'monthly-ingest', updated_at = NOW()
             WHERE store_id = %s AND period = %s AND sku = %s AND deleted_at IS NULL
         """, (qty, store_id, period, sku))
     missing = [sku for sku in outflow if sku not in current_outflow]
