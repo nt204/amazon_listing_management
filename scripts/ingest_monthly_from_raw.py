@@ -693,6 +693,10 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         sku_master, asin_to_sku, fnsku_to_sku,
     )
     print(f"📦 Hàng ra kho {period}: {sum(outflow.values()):.0f} sản phẩm")
+    # Thiếu file đơn hàng / giao dịch thì không ghi hàng ra kho (tránh ghi 0 cho cả kỳ)
+    outflow_complete = bool(orders_file and trans_file)
+    if not outflow_complete:
+        print(f"⚠️  Thiếu 02_AllOrders hoặc 15_DateRangeTransactions → không cập nhật hàng ra kho kỳ {period}")
 
     # 4. Parse Orders with settlement status
     sku_orders = parse_all_orders(orders_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, settled_order_ids)
@@ -997,7 +1001,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     """, (store_id, period))
     current_outflow = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
     # Kỳ đã có file thô thì cả kỳ tính từ file thô: SKU không phát sinh giao dịch = 0, không giữ số nạp từ sheet
-    outflow = {**{sku: 0.0 for sku in current_outflow}, **outflow}
+    outflow = {**{sku: 0.0 for sku in current_outflow}, **outflow} if outflow_complete else {}
     # Số từ file thô ('ingest') thay số nạp từ sheet và không bị đồng bộ sheet ghi đè về sau
     changed = [(qty, sku) for sku, qty in outflow.items()
                if sku in current_outflow and (current_outflow[sku][0] is None or abs(current_outflow[sku][0] - qty) > 1e-9)]
