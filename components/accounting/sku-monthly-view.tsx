@@ -1,33 +1,63 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
+  ArrowClockwiseIcon,
   CalendarBlankIcon,
-  DownloadSimpleIcon,
-  ArrowsClockwiseIcon,
-  MagnifyingGlassIcon,
-  FunnelIcon,
-  CaretUpIcon,
   CaretDownIcon,
-  CurrencyDollarIcon,
-  ShoppingBagIcon,
-  MegaphoneIcon,
-  PackageIcon,
-  TagIcon,
-  TrendUpIcon,
-  PercentIcon,
-  ScalesIcon,
+  CaretUpIcon,
   CheckCircleIcon,
-  WarningCircleIcon,
   CopyIcon,
+  DownloadSimpleIcon,
   EyeIcon,
+  EyeSlashIcon,
   FileTextIcon,
-  CalculatorIcon,
+  LockIcon,
+  LockOpenIcon,
+  MagnifyingGlassIcon,
+  MinusIcon,
+  PencilSimpleIcon,
+  PlusIcon,
+  SlidersHorizontalIcon,
   StorefrontIcon,
+  WarningCircleIcon,
+  CalculatorIcon,
 } from "@phosphor-icons/react";
 import type { SkuMonthlyItem, SkuMonthlyStoreSummary, AvailableMonthOption } from "@/lib/accounting/sku-monthly-db";
-import { AccountingTopProgressBar, AccountingTableSkeletonRows } from "./accounting-skeleton";
+import {
+  type ColumnConfig,
+  DEFAULT_SKU_MONTHLY_COLUMNS,
+  ColumnHeaderCell,
+  ColumnManagerModal,
+  createTextWidthMeasurer,
+} from "./column-manager-modal";
+import {
+  AccountingTableSkeletonRows,
+  AccountingTopProgressBar,
+} from "./accounting-skeleton";
+
+const SKU_MONTHLY_COLUMNS_STORAGE_KEY = "acc_sku_monthly_columns_global";
+const SKU_MONTHLY_FROZEN_STORAGE_KEY = "acc_sku_monthly_frozen_global";
+const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
+
+function formatCurrency(val: number | null | undefined): string {
+  if (val == null || isNaN(val)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(val);
+}
+
+function formatInteger(val: number | null | undefined): string {
+  if (val == null || isNaN(val)) return "0";
+  return new Intl.NumberFormat("en-US").format(Math.round(val));
+}
+
+function formatPercent(val: number | null | undefined): string {
+  if (val == null || isNaN(val)) return "—";
+  return `${(val * 100).toFixed(1)}%`;
+}
 
 interface SkuMonthlyViewProps {
   storeId?: string;
@@ -48,32 +78,273 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [availableMonths, setAvailableMonths] = useState<AvailableMonthOption[]>([]);
 
-  // Filters & Sorting
+  // Search & Sorting
   const [search, setSearch] = useState("");
-  const [productType, setProductType] = useState("all");
-  const [status, setStatus] = useState("all");
-  const [skuType, setSkuType] = useState<"all" | "active" | "win" | "loss">("all");
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [sortField, setSortField] = useState<string>("revenue");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   // Data & UI states
   const [items, setItems] = useState<SkuMonthlyItem[]>([]);
   const [summary, setSummary] = useState<SkuMonthlyStoreSummary | null>(null);
-  const [productTypes, setProductTypes] = useState<string[]>([]);
-  const [statuses, setStatuses] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [copiedSku, setCopiedSku] = useState<string | null>(null);
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMonthlyItem | null>(null);
-  const [viewMode, setViewMode] = useState<"standard" | "full">("standard");
 
   // Recalculate raw data state
   const [recalculating, setRecalculating] = useState<boolean>(false);
   const [showRecalcModal, setShowRecalcModal] = useState<boolean>(false);
   const [recalcFeedback, setRecalcFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
-  // Debounce search input to avoid hitting backend on every keystroke
-  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  // Table zoom
+  const [zoomLevel, setZoomLevel] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(SKU_MONTHLY_ZOOM_STORAGE_KEY);
+      return saved ? Number(saved) : 90;
+    }
+    return 90;
+  });
+
+  const handleZoomChange = (delta: number) => {
+    setZoomLevel((prev) => {
+      const next = Math.min(120, Math.max(70, prev + delta));
+      localStorage.setItem(SKU_MONTHLY_ZOOM_STORAGE_KEY, String(next));
+      return next;
+    });
+  };
+
+  // Columns & Freezing
+  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(SKU_MONTHLY_COLUMNS_STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const defaultMap = new Map(DEFAULT_SKU_MONTHLY_COLUMNS.map((c) => [c.id, c]));
+            const restored = parsed
+              .filter((col: ColumnConfig) => col.id !== "actions")
+              .map((col: ColumnConfig) => {
+                const def = defaultMap.get(col.id);
+                return {
+                  ...col,
+                  label: col.label?.replace(/\s*\(\$\)\s*/g, "").trim() || def?.label || col.id,
+                  defaultLabel: def?.defaultLabel || col.defaultLabel || col.label,
+                  align: col.align || def?.align,
+                  width: col.width || def?.width,
+                };
+              });
+            const restoredIds = new Set(restored.map((col: ColumnConfig) => col.id));
+            return [
+              ...restored,
+              ...DEFAULT_SKU_MONTHLY_COLUMNS.filter((col) => !restoredIds.has(col.id)),
+            ];
+          }
+        } catch {
+          // fallback
+        }
+      }
+    }
+    return DEFAULT_SKU_MONTHLY_COLUMNS;
+  });
+
+  const [frozenColumns, setFrozenColumns] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(SKU_MONTHLY_FROZEN_STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // fallback
+        }
+      }
+    }
+    return ["stt", "sku"];
+  });
+
+  const [showColumnModal, setShowColumnModal] = useState(false);
+  const [headerDragId, setHeaderDragId] = useState<string | null>(null);
+  const [headerDragOverId, setHeaderDragOverId] = useState<string | null>(null);
+  const [columnContextMenu, setColumnContextMenu] = useState<{
+    field: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const columnMenuRef = useRef<HTMLDivElement>(null);
+
+  const visibleColumns = useMemo(
+    () => columns.filter((col) => col.visible !== false),
+    [columns]
+  );
+
+  const handleSaveColumns = (newCols: ColumnConfig[]) => {
+    setColumns(newCols);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(SKU_MONTHLY_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
+    }
+  };
+
+  const handleResetColumns = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(SKU_MONTHLY_COLUMNS_STORAGE_KEY);
+      localStorage.removeItem(SKU_MONTHLY_FROZEN_STORAGE_KEY);
+    }
+    setColumns(DEFAULT_SKU_MONTHLY_COLUMNS);
+    setFrozenColumns(["stt", "sku"]);
+  };
+
+  const handleSetFrozenThrough = useCallback(
+    (colId: string) => {
+      const targetIndex = visibleColumns.findIndex((col) => col.id === colId);
+      if (targetIndex === -1) return;
+
+      const nextFrozenColumns = visibleColumns.slice(0, targetIndex + 1).map((col) => col.id);
+      setFrozenColumns(nextFrozenColumns);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(SKU_MONTHLY_FROZEN_STORAGE_KEY, JSON.stringify(nextFrozenColumns));
+      }
+    },
+    [visibleColumns]
+  );
+
+  const handleResetFrozenColumns = useCallback(() => {
+    const defaultFrozenColumns = ["stt", "sku"];
+    setFrozenColumns(defaultFrozenColumns);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(SKU_MONTHLY_FROZEN_STORAGE_KEY, JSON.stringify(defaultFrozenColumns));
+    }
+  }, []);
+
+  const handleQuickHideColumn = useCallback(
+    (colId: string) => {
+      handleSaveColumns(columns.map((col) => (col.id === colId ? { ...col, visible: false } : col)));
+      setFrozenColumns((current) => {
+        if (!current.includes(colId)) return current;
+        const next = current.filter((id) => id !== colId);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(SKU_MONTHLY_FROZEN_STORAGE_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    },
+    [columns]
+  );
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (columnMenuRef.current && !columnMenuRef.current.contains(event.target as Node)) {
+        setColumnContextMenu(null);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  // Cumulative sticky left offsets for frozen columns
+  const getCellFreezeProps = useCallback(
+    (colId: string, isHeader = false) => {
+      const isFrozen = frozenColumns.includes(colId);
+      if (!isFrozen) {
+        return {
+          isFrozen: false,
+          isBoundary: false,
+          style: {},
+          className: "",
+        };
+      }
+
+      let leftOffset = 0;
+      let isLast = false;
+      const frozenVisible = visibleColumns.filter((c) => frozenColumns.includes(c.id));
+      for (let i = 0; i < frozenVisible.length; i++) {
+        const c = frozenVisible[i];
+        if (c.id === colId) {
+          isLast = i === frozenVisible.length - 1;
+          break;
+        }
+        leftOffset += typeof c.width === "number" ? c.width : 110;
+      }
+
+      return {
+        isFrozen: true,
+        isBoundary: isLast,
+        style: {
+          position: "sticky" as const,
+          left: `${leftOffset}px`,
+          zIndex: isHeader ? 30 : 20,
+        },
+        className: isLast
+          ? isHeader
+            ? "border-r-2 border-r-amber-700/80 shadow-xs"
+            : "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+          : "",
+      };
+    },
+    [frozenColumns, visibleColumns]
+  );
+
+  // Resize Column
+  const handleResizeColumn = useCallback((colId: string, width: number) => {
+    setColumns((prev) => {
+      const updated = prev.map((c) => (c.id === colId ? { ...c, width: Math.max(50, width) } : c));
+      if (typeof window !== "undefined") {
+        localStorage.setItem(SKU_MONTHLY_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+      }
+      return updated;
+    });
+  }, []);
+
+  // Auto-fit Column
+  const handleAutoFitColumn = useCallback(
+    (colId: string) => {
+      const targetCol = columns.find((c) => c.id === colId);
+      if (!targetCol) return;
+      const measureText = createTextWidthMeasurer();
+      let maxContentWidth = 0;
+
+      for (const item of items) {
+        let str = "";
+        const val = (item as any)[colId];
+        if (val != null) {
+          if (typeof val === "number") {
+            str = colId.includes("pct") || colId === "margin" || colId === "roi" || colId === "tacos" || colId === "acos"
+              ? `${(val * 100).toFixed(1)}%`
+              : formatCurrency(val);
+          } else {
+            str = String(val).trim();
+          }
+          const w = measureText(str);
+          maxContentWidth = Math.max(maxContentWidth, w);
+        }
+      }
+
+      const contentWidth = maxContentWidth > 0 ? Math.ceil(maxContentWidth + 28) : 0;
+      const labelWords = targetCol.label.split(/[-_ ]+/).filter(Boolean);
+      const longestWordLength = labelWords.length > 0 ? Math.max(...labelWords.map((w) => w.length)) : 5;
+      const headerWidth = Math.round(longestWordLength * 8.5 + 30);
+      const snugWidth = Math.max(54, Math.max(contentWidth, headerWidth));
+
+      handleResizeColumn(colId, snugWidth);
+    },
+    [columns, items, handleResizeColumn]
+  );
+
+  // Reorder Columns
+  const handleReorderColumns = (sourceId: string, targetId: string) => {
+    const fromIndex = columns.findIndex((c) => c.id === sourceId);
+    const toIndex = columns.findIndex((c) => c.id === targetId);
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+
+    const newCols = [...columns];
+    const [moved] = newCols.splice(fromIndex, 1);
+    newCols.splice(toIndex, 0, moved);
+    handleSaveColumns(newCols);
+  };
+
+  // Debounce search
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search);
@@ -125,9 +396,6 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
         year: String(selectedYear),
         month: String(selectedMonth),
         search: debouncedSearch,
-        productType,
-        status,
-        skuType,
         sortField,
         sortDirection,
       });
@@ -138,8 +406,6 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
       const data = await res.json();
       setItems(data.items || []);
       setSummary(data.summary || null);
-      setProductTypes(data.productTypes || []);
-      setStatuses(data.statuses || []);
       if (data.availableMonths && data.availableMonths.length > 0) {
         setAvailableMonths(data.availableMonths);
       }
@@ -149,7 +415,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [selectedStoreId, selectedYear, selectedMonth, debouncedSearch, productType, status, skuType, sortField, sortDirection]);
+  }, [selectedStoreId, selectedYear, selectedMonth, debouncedSearch, sortField, sortDirection]);
 
   useEffect(() => {
     fetchData();
@@ -207,71 +473,59 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
     setTimeout(() => setCopiedSku(null), 1500);
   };
 
-  const currentStoreName = useMemo(() => {
-    const s = stores.find((st) => st.id === selectedStoreId);
-    return s ? s.name : "WARMSTOREY";
-  }, [stores, selectedStoreId]);
-
-  // Format helpers
-  const fmtCurrency = (val: number | null | undefined, forceSign = false) => {
-    if (val === null || val === undefined || isNaN(val)) return "$0.00";
-    const num = Number(val);
-    const absStr = Math.abs(num).toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    if (num < 0) return `-$${absStr}`;
-    if (forceSign && num > 0) return `+$${absStr}`;
-    return `$${absStr}`;
-  };
-
-  const fmtPercent = (val: number | null | undefined) => {
-    if (val === null || val === undefined || isNaN(val)) return "—";
-    return `${(Number(val) * 100).toFixed(1)}%`;
-  };
-
-  const fmtInt = (val: number | null | undefined) => {
-    if (val === null || val === undefined) return "0";
-    return Number(val).toLocaleString("en-US");
+  const handleStoreSelect = (newStoreId: string) => {
+    if (!newStoreId) return;
+    setSelectedStoreId(newStoreId);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("acc_selected_store_id", newStoreId);
+      window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: newStoreId }));
+    }
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-50 overflow-hidden font-accounting-system">
-      {/* 1. TOP TOOLBAR: Store, Month, Mode, Actions */}
-      <div className="bg-slate-200/80 px-3 py-1.5 border-b border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0 select-none">
+    <div className="flex flex-col h-full overflow-hidden select-none font-accounting-system">
+      {/* 1. TOOLBAR: Store, Month, Search, Zoom, Actions (Đồng bộ 100% với FBA ngày) */}
+      <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0 select-none">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Store Selector */}
-          {stores.length > 0 && (
-            <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
-              <StorefrontIcon size={14} weight="bold" className="text-indigo-600 mr-1.5 shrink-0" />
-              <select
-                value={selectedStoreId}
-                onChange={(e) => {
-                  setSelectedStoreId(e.target.value);
-                  localStorage.setItem("acc_selected_store_id", e.target.value);
-                  window.dispatchEvent(new Event("acc_store_changed"));
-                }}
-                className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
-              >
-                {stores.map((st) => (
-                  <option key={st.id} value={st.id}>
-                    Store: {st.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
+            <StorefrontIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
+            <select
+              value={selectedStoreId}
+              onChange={(e) => handleStoreSelect(e.target.value)}
+              disabled={stores.length === 0}
+              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                backgroundPosition: "right 0 center",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: "1.25em 1.25em",
+              }}
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* Month Selector */}
-          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
-            <CalendarBlankIcon size={14} weight="bold" className="text-indigo-600 mr-1.5 shrink-0" />
+          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
+            <CalendarBlankIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
             <select
               value={selectedMonth}
               onChange={(e) => {
                 const val = e.target.value === "all" ? "all" : parseInt(e.target.value, 10);
                 setSelectedMonth(val);
               }}
-              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
+              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                backgroundPosition: "right 0 center",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: "1.25em 1.25em",
+              }}
             >
               {availableMonths.length > 0 ? (
                 availableMonths.map((m) => (
@@ -296,527 +550,371 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
             </select>
           </div>
 
-          {/* View mode toggle */}
-          <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs">
+          {/* Search SKU, ASIN */}
+          <div className="relative flex items-center">
+            <MagnifyingGlassIcon
+              size={14}
+              className="absolute left-2.5 text-slate-400 pointer-events-none"
+            />
+            <input
+              type="text"
+              placeholder="Tìm SKU, ASIN, Product Type..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-52 rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 py-1 text-xs text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:outline-hidden shadow-2xs"
+            />
+          </div>
+
+          {/* Zoom Controls */}
+          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
             <button
               type="button"
-              onClick={() => setViewMode("standard")}
-              className={`rounded px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
-                viewMode === "standard"
-                  ? "bg-indigo-600 text-white shadow-2xs"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
+              onClick={() => handleZoomChange(-5)}
+              title="Thu nhỏ"
+              className="px-1.5 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
-              Tiêu chuẩn (14 cột)
+              <MinusIcon size={12} weight="bold" />
             </button>
+            <span className="px-1.5 text-[11px] font-mono font-bold text-slate-700 select-none">
+              {zoomLevel}%
+            </span>
             <button
               type="button"
-              onClick={() => setViewMode("full")}
-              className={`rounded px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
-                viewMode === "full"
-                  ? "bg-indigo-600 text-white shadow-2xs"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
+              onClick={() => handleZoomChange(5)}
+              title="Phóng to"
+              className="px-1.5 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
-              Đầy đủ (27 cột)
+              <PlusIcon size={12} weight="bold" />
             </button>
           </div>
         </div>
 
-        {/* Right Actions */}
-        <div className="flex items-center gap-1.5">
+        {/* Right Toolbar Actions */}
+        <div className="flex items-center gap-2">
+          {/* Refresh */}
+          <button
+            type="button"
+            onClick={() => fetchData()}
+            disabled={loading}
+            title="Tải lại dữ liệu"
+            className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+          >
+            <ArrowClockwiseIcon
+              size={14}
+              className={loading ? "animate-spin text-amber-600" : "text-slate-600"}
+            />
+            <span>Làm mới</span>
+          </button>
+
+          {/* Column Manager */}
+          <button
+            type="button"
+            onClick={() => setShowColumnModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+          >
+            <SlidersHorizontalIcon size={14} className="text-slate-600" />
+            <span>Tùy chỉnh cột</span>
+          </button>
+
           {/* Recalculate Button */}
           <button
             type="button"
-            onClick={() => {
-              if (selectedMonth === "all") {
-                alert("Vui lòng chọn một tháng cụ thể để tính toán lại từ file thô.");
-                return;
-              }
-              setShowRecalcModal(true);
-            }}
+            onClick={() => setShowRecalcModal(true)}
             disabled={recalculating || selectedMonth === "all"}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 shadow-2xs hover:bg-indigo-100 transition cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
             title="Tính toán lại P&L từ các file thô crawler tải về"
           >
             <CalculatorIcon
               size={14}
-              weight="bold"
-              className={recalculating ? "animate-spin text-indigo-600" : ""}
+              className={recalculating ? "animate-spin text-indigo-600" : "text-indigo-600"}
             />
             <span>{recalculating ? "Đang tính..." : "Tính từ file thô"}</span>
           </button>
 
-          {/* Export Button */}
+          {/* Export Excel */}
           <a
             href={`/api/accounting/financials/sku-monthly/export?storeId=${selectedStoreId}&month=${selectedMonth}&year=${selectedYear}&search=${encodeURIComponent(
               search
             )}`}
             download
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white shadow-2xs hover:bg-emerald-700 transition cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-700 transition-colors shadow-2xs cursor-pointer"
           >
             <DownloadSimpleIcon size={14} weight="bold" />
             <span>Xuất Excel</span>
           </a>
-
-          {/* Refresh Button */}
-          <button
-            type="button"
-            onClick={() => fetchData()}
-            disabled={loading}
-            className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white p-1 text-slate-700 hover:bg-slate-50 transition cursor-pointer shadow-2xs disabled:opacity-50"
-            title="Làm mới dữ liệu"
-          >
-            <ArrowsClockwiseIcon
-              size={15}
-              weight="bold"
-              className={loading ? "animate-spin text-indigo-600" : ""}
-            />
-          </button>
         </div>
       </div>
 
-      {/* 2. SEARCH & FILTER BAR */}
-      <div className="bg-white px-3 py-1.5 border-b border-slate-200 flex items-center justify-between gap-2 flex-wrap shrink-0 text-xs select-none">
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Search */}
-          <div className="relative flex items-center">
-            <MagnifyingGlassIcon
-              size={14}
-              weight="bold"
-              className="absolute left-2.5 text-slate-400 pointer-events-none"
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm SKU, ASIN, Product Type..."
-              className="w-56 rounded-lg border border-slate-300 bg-white pl-8 pr-6 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-hidden shadow-2xs"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-2 text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
-              >
-                ×
-              </button>
-            )}
-          </div>
-
-          {/* SKU Type quick filter tabs */}
-          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-            {[
-              { key: "all", label: "Tất cả" },
-              { key: "active", label: "Có phát sinh" },
-              { key: "win", label: "SKU Lời" },
-              { key: "loss", label: "SKU Lỗ" },
-            ].map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setSkuType(tab.key as any)}
-                className={`rounded px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
-                  skuType === tab.key
-                    ? "bg-white text-indigo-700 shadow-2xs border border-slate-200"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Product Type dropdown */}
-          <select
-            value={productType}
-            onChange={(e) => setProductType(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none cursor-pointer shadow-2xs"
-          >
-            <option value="all">Mọi Loại SP ({productTypes.length})</option>
-            {productTypes.map((pt) => (
-              <option key={pt} value={pt}>
-                {pt}
-              </option>
-            ))}
-          </select>
-
-          {/* Status dropdown */}
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none cursor-pointer shadow-2xs"
-          >
-            <option value="all">Mọi Trạng Thái ({statuses.length})</option>
-            {statuses.map((st) => (
-              <option key={st} value={st}>
-                {st}
-              </option>
-            ))}
-          </select>
-
-          {/* Reset filter button if any active filter */}
-          {(search || productType !== "all" || status !== "all" || skuType !== "all") && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearch("");
-                setProductType("all");
-                setStatus("all");
-                setSkuType("all");
-              }}
-              className="text-[11px] font-bold text-rose-600 hover:text-rose-800 underline cursor-pointer"
-            >
-              Xóa bộ lọc
-            </button>
-          )}
-        </div>
-
-        {/* Right count info */}
-        <div className="flex items-center gap-2 text-slate-500 font-medium">
-          <span>
-            Hiển thị <strong className="text-slate-900 font-bold">{items.length}</strong> SKU
-          </span>
-        </div>
-      </div>
-
-      {/* 3. KEY METRICS SUMMARY RIBBON */}
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 px-3 py-1.5 bg-slate-100/70 border-b border-slate-200 shrink-0 select-none">
-          {/* 1. Doanh thu */}
-          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
-              <span>Doanh Thu</span>
-              <CurrencyDollarIcon size={14} className="text-indigo-600" />
-            </div>
-            <div className="text-sm font-bold text-slate-900 mt-0.5 tabular-nums">
-              {fmtCurrency(summary.total_revenue)}
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              Đã bán: <b className="text-slate-800 font-mono">{fmtInt(summary.total_quantity)}</b> items
-            </div>
-          </div>
-
-          {/* 2. Lợi nhuận ròng */}
-          <div
-            className={`rounded-lg px-3 py-1.5 border shadow-2xs ${
-              summary.net_profit >= 0 ? "bg-emerald-50/60 border-emerald-200" : "bg-rose-50/60 border-rose-200"
-            }`}
-          >
-            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
-              <span>Lợi Nhuận Ròng</span>
-              <TrendUpIcon size={14} className={summary.net_profit >= 0 ? "text-emerald-600" : "text-rose-600"} />
-            </div>
-            <div
-              className={`text-sm font-bold mt-0.5 tabular-nums ${
-                summary.net_profit >= 0 ? "text-emerald-700" : "text-rose-600"
-              }`}
-            >
-              {fmtCurrency(summary.net_profit)}
-            </div>
-            <div className="text-[10px] text-slate-600 mt-0.5">
-              Biên LN: <b className="font-mono">{fmtPercent(summary.margin)}</b>
-            </div>
-          </div>
-
-          {/* 3. Chi phí Ads */}
-          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
-              <span>Chi Phí Ads</span>
-              <MegaphoneIcon size={14} className="text-rose-500" />
-            </div>
-            <div className="text-sm font-bold text-rose-600 mt-0.5 tabular-nums">
-              {fmtCurrency(summary.total_ads_fee)}
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              T-ACOS: <b className="text-slate-800 font-mono">{fmtPercent(summary.tacos)}</b>
-            </div>
-          </div>
-
-          {/* 4. Phí sàn Amazon */}
-          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
-              <span>Phí Sàn Amazon</span>
-              <ShoppingBagIcon size={14} className="text-amber-500" />
-            </div>
-            <div className="text-sm font-bold text-slate-900 mt-0.5 tabular-nums">
-              {fmtCurrency(summary.total_amazon_fee)}
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              FBA, Ref, Storage...
-            </div>
-          </div>
-
-          {/* 5. Giá vốn hàng bán */}
-          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
-              <span>Giá Vốn (Basecost)</span>
-              <PackageIcon size={14} className="text-slate-500" />
-            </div>
-            <div className="text-sm font-bold text-slate-900 mt-0.5 tabular-nums">
-              {fmtCurrency(summary.total_basecost)}
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              Giá vốn xuất bán
-            </div>
-          </div>
-
-          {/* 6. Tồn kho & Hoạt động */}
-          <div className="bg-white rounded-lg px-3 py-1.5 border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
-              <span>Tồn Kho Hiện Tại</span>
-              <PackageIcon size={14} className="text-indigo-500" />
-            </div>
-            <div className="text-sm font-bold text-indigo-700 mt-0.5 tabular-nums">
-              {fmtInt(summary.total_available_now)} <span className="text-xs font-normal text-slate-500">pcs</span>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              <b className="text-emerald-700">{summary.active_sku_count}</b> SKU phát sinh
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 4. MAIN INTERACTIVE DATA TABLE */}
-      <div className="flex-1 min-h-0 overflow-auto bg-white relative">
-        <AccountingTopProgressBar loading={loading} variant="indigo" />
-
-        {error ? (
-          <div className="py-16 flex flex-col items-center justify-center gap-2 text-rose-600">
-            <WarningCircleIcon size={32} weight="bold" />
-            <p className="text-sm font-bold">{error}</p>
-          </div>
-        ) : (
+      {/* 2. TABLE CONTAINER: Sticky Orange Header & Sticky Amber Total Row */}
+      <div className="flex-1 overflow-auto bg-white relative">
+        <AccountingTopProgressBar loading={loading} variant="amber" />
+        <div
+          style={{
+            zoom: `${zoomLevel}%`,
+          }}
+          className="min-w-full inline-block align-top"
+        >
           <table className="acc-financial-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
-            {/* Table Header */}
-            <thead className="sticky top-0 z-20 select-none">
-              <tr className="bg-slate-100 text-slate-800 text-[11.5px] font-bold border-b border-slate-300 shadow-2xs">
-                <th className="py-2 px-2.5 whitespace-nowrap text-center w-10 border-r border-slate-200 bg-slate-100">#</th>
-                <th className="py-2 px-2 whitespace-nowrap text-center w-12 border-r border-slate-200 bg-slate-100">Ảnh</th>
-                <th
-                  onClick={() => handleSort("sku")}
-                  className="py-2 px-2.5 whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center gap-1">
-                    <span>SKU</span>
-                    {sortField === "sku" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th className="py-2 px-2.5 whitespace-nowrap border-r border-slate-200 bg-slate-100">Product Type</th>
-                <th
-                  onClick={() => handleSort("revenue")}
-                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Doanh Thu</span>
-                    {sortField === "revenue" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("quantity")}
-                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Số Lượng</span>
-                    {sortField === "quantity" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("ads_fee")}
-                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Phí Ads</span>
-                    {sortField === "ads_fee" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("basecost")}
-                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Giá Vốn</span>
-                    {sortField === "basecost" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("amazon_fee_total")}
-                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Phí Amazon</span>
-                    {sortField === "amazon_fee_total" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("profit")}
-                  className="py-2 px-2.5 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Lợi Nhuận</span>
-                    {sortField === "profit" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("margin")}
-                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Margin</span>
-                    {sortField === "margin" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("tacos")}
-                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>TACOS</span>
-                    {sortField === "tacos" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("available_now")}
-                  className="py-2 px-2 text-right whitespace-nowrap cursor-pointer hover:bg-slate-200/70 border-r border-slate-200 bg-slate-100"
-                >
-                  <div className="flex items-center justify-end gap-1">
-                    <span>Tồn Kho</span>
-                    {sortField === "available_now" &&
-                      (sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />)}
-                  </div>
-                </th>
+            {/* THEAD with Header Row + Sticky TOTAL Row (Đúng màu #ff9900 của Amazon / FBA ngày) */}
+            <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
+              {/* ROW 1: COLUMN HEADERS */}
+              <tr className="text-[15px] font-bold shadow-xs">
+                {visibleColumns.map((col) => {
+                  const f = getCellFreezeProps(col.id, true);
+                  const isSorted = sortField === col.id;
+                  const bgStyle = f.isFrozen ? { backgroundColor: "#ff9900" } : {};
 
-                {/* Extended columns in Full view mode */}
-                {viewMode === "full" && (
-                  <>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Thuế</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Return</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Adjustment</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Lưu kho</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Placement</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Long-Term</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">FBA Return</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Liquidations</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">BC Ret/Adj</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Removal</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">Rev Ads</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">ACOS</th>
-                    <th className="py-2 px-2 text-right whitespace-nowrap border-r border-slate-200 bg-slate-100">ROI</th>
-                  </>
-                )}
-                <th className="py-2 px-2 text-center whitespace-nowrap w-16 bg-slate-100">Chi Tiết</th>
+                  return (
+                    <ColumnHeaderCell
+                      key={col.id}
+                      col={col}
+                      isFrozen={f.isFrozen}
+                      isBoundary={f.isBoundary}
+                      style={{ ...f.style, ...bgStyle }}
+                      className="py-2 px-2.5 whitespace-nowrap bg-[#ff9900] text-slate-950"
+                      draggable={true}
+                      isDragging={headerDragId === col.id}
+                      isDragOver={headerDragOverId === col.id}
+                      onDragStart={() => setHeaderDragId(col.id)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setHeaderDragOverId(col.id);
+                      }}
+                      onDragLeave={() => setHeaderDragOverId(null)}
+                      onDrop={() => {
+                        if (headerDragId && headerDragOverId) {
+                          handleReorderColumns(headerDragId, headerDragOverId);
+                        }
+                        setHeaderDragId(null);
+                        setHeaderDragOverId(null);
+                      }}
+                      onDragEnd={() => {
+                        setHeaderDragId(null);
+                        setHeaderDragOverId(null);
+                      }}
+                      onResize={handleResizeColumn}
+                      onAutoFit={handleAutoFitColumn}
+                    >
+                      <div
+                        className={`group/title flex min-h-[38px] w-full items-center gap-1 ${
+                          col.align === "center"
+                            ? "justify-center"
+                            : col.align === "right"
+                            ? "justify-end"
+                            : "justify-start"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSort(col.id)}
+                          className="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate transition-colors hover:text-amber-100"
+                          title={`Bấm để sắp xếp theo ${col.label}`}
+                        >
+                          <span className="truncate">{col.label}</span>
+                          {isSorted && (
+                            <span className="shrink-0 text-white">
+                              {sortDirection === "asc" ? (
+                                <CaretUpIcon size={12} weight="bold" />
+                              ) : (
+                                <CaretDownIcon size={12} weight="bold" />
+                              )}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setColumnContextMenu({
+                              field: col.id,
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }}
+                          className="ml-0.5 shrink-0 cursor-pointer rounded p-0.5 text-slate-900 opacity-0 transition hover:bg-amber-600/40 group-hover/title:opacity-100 focus-visible:opacity-100"
+                          title={`Tùy chọn & Setting cột "${col.label}"`}
+                          aria-label={`Tùy chọn cột ${col.label}`}
+                        >
+                          <SlidersHorizontalIcon size={11} weight="bold" />
+                        </button>
+                      </div>
+                    </ColumnHeaderCell>
+                  );
+                })}
               </tr>
 
-              {/* Sticky Summary Row */}
+              {/* ROW 2: STICKY TOTAL ROW RIGHT BELOW HEADERS */}
               {summary && (
-                <tr className="bg-amber-50/90 text-slate-900 border-b border-amber-300 font-bold text-xs select-none shadow-2xs">
-                  <td className="py-1.5 px-2.5 text-center font-black text-amber-800 border-r border-amber-200/80 bg-amber-50">∑</td>
-                  <td className="py-1.5 px-2 border-r border-amber-200/80 bg-amber-50"></td>
-                  <td className="py-1.5 px-2.5 font-bold text-slate-900 border-r border-amber-200/80 bg-amber-50">TỔNG KỲ</td>
-                  <td className="py-1.5 px-2.5 text-indigo-700 font-bold border-r border-amber-200/80 bg-amber-50">
-                    {summary.active_sku_count} active
-                  </td>
-                  <td className="py-1.5 px-2.5 text-right font-bold text-slate-900 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtCurrency(summary.total_revenue)}
-                  </td>
-                  <td className="py-1.5 px-2 text-right font-bold text-slate-900 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtInt(summary.total_quantity)}
-                  </td>
-                  <td className="py-1.5 px-2.5 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtCurrency(summary.total_ads_fee)}
-                  </td>
-                  <td className="py-1.5 px-2.5 text-right font-bold text-slate-800 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtCurrency(summary.total_basecost)}
-                  </td>
-                  <td className="py-1.5 px-2.5 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtCurrency(summary.total_amazon_fee)}
-                  </td>
-                  <td
-                    className={`py-1.5 px-2.5 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50 ${
-                      summary.net_profit >= 0 ? "text-emerald-700" : "text-rose-600"
-                    }`}
-                  >
-                    {fmtCurrency(summary.net_profit)}
-                  </td>
-                  <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtPercent(summary.margin)}
-                  </td>
-                  <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtPercent(summary.tacos)}
-                  </td>
-                  <td className="py-1.5 px-2 text-right font-bold text-indigo-800 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                    {fmtInt(summary.total_available_now)}
-                  </td>
+                <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
+                  {visibleColumns.map((col) => {
+                    const f = getCellFreezeProps(col.id, true);
+                    const bgStyle = f.isFrozen ? { backgroundColor: "#fffbeb" } : {};
+                    const isProfitCol = col.id === "profit";
 
-                  {viewMode === "full" && (
-                    <>
-                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_thue)}
+                    return (
+                      <td
+                        key={`total-${col.id}`}
+                        style={{ ...f.style, ...bgStyle }}
+                        className={`py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-semibold ${
+                          f.isBoundary
+                            ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+                            : "border-r border-amber-200/80"
+                        } ${
+                          col.align === "center"
+                            ? "text-center"
+                            : col.align === "right"
+                            ? "text-right font-mono"
+                            : "text-left"
+                        }`}
+                      >
+                        {col.id === "stt" && (
+                          <span className="inline-block px-1 py-0.5 rounded bg-amber-200/70 text-amber-950 text-[10px] font-black tracking-wider">
+                            TOTAL
+                          </span>
+                        )}
+                        {col.id === "product_type" && (
+                          <span className="text-slate-700 font-bold">{summary.active_sku_count} active</span>
+                        )}
+                        {col.id === "mockup" && <span className="text-slate-400">—</span>}
+                        {col.id === "sku" && <span className="font-bold text-slate-950">{items.length} SKUs</span>}
+                        {col.id === "asin" && <span className="text-slate-400">—</span>}
+                        {col.id === "revenue" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_revenue)}
+                          </span>
+                        )}
+                        {col.id === "quantity" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatInteger(summary.total_quantity)}
+                          </span>
+                        )}
+                        {col.id === "ads_fee" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_ads_fee)}
+                          </span>
+                        )}
+                        {col.id === "basecost" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_basecost)}
+                          </span>
+                        )}
+                        {col.id === "amazon_fee" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_amazon_fee)}
+                          </span>
+                        )}
+                        {col.id === "thue" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_thue)}
+                          </span>
+                        )}
+                        {col.id === "return_amount" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_return_amount)}
+                          </span>
+                        )}
+                        {col.id === "adjustment" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_adjustment)}
+                          </span>
+                        )}
+                        {col.id === "storage_fee" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_storage_fee)}
+                          </span>
+                        )}
+                        {col.id === "placement_fee" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_placement_fee)}
+                          </span>
+                        )}
+                        {col.id === "long_term_fee" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_long_term_fee)}
+                          </span>
+                        )}
+                        {col.id === "fba_customer_return_fee" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_fba_customer_return_fee)}
+                          </span>
+                        )}
+                        {col.id === "liquidations" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_liquidations)}
+                          </span>
+                        )}
+                        {col.id === "basecost_return_adjustment" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_basecost_return_adj)}
+                          </span>
+                        )}
+                        {col.id === "removal" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_removal)}
+                          </span>
+                        )}
+                        {isProfitCol && (
+                          <span
+                            className={`font-bold tabular-nums ${
+                              summary.net_profit >= 0 ? "text-emerald-700" : "text-rose-600"
+                            }`}
+                          >
+                            {formatCurrency(summary.net_profit)}
+                          </span>
+                        )}
+                        {col.id === "margin" && (
+                          <span
+                            className={`font-bold tabular-nums ${
+                              (summary.margin || 0) >= 0 ? "text-emerald-700" : "text-rose-600"
+                            }`}
+                          >
+                            {formatPercent(summary.margin)}
+                          </span>
+                        )}
+                        {col.id === "tacos" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatPercent(summary.tacos)}
+                          </span>
+                        )}
+                        {col.id === "acos" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatPercent(summary.acos)}
+                          </span>
+                        )}
+                        {col.id === "roi" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatPercent(summary.roi)}
+                          </span>
+                        )}
+                        {col.id === "revenue_ads" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_revenue_ads)}
+                          </span>
+                        )}
+                        {col.id === "available_now" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatInteger(summary.total_available_now)}
+                          </span>
+                        )}
                       </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_return_amount)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_adjustment)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_storage_fee)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_placement_fee)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_long_term_fee)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_fba_customer_return_fee)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-emerald-700 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_liquidations)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-emerald-700 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_basecost_return_adj)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold text-rose-600 tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_removal)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtCurrency(summary.total_revenue_ads)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtPercent(summary.acos)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right font-bold tabular-nums border-r border-amber-200/80 bg-amber-50">
-                        {fmtPercent(summary.roi)}
-                      </td>
-                    </>
-                  )}
-                  <td className="py-1.5 px-2 bg-amber-50"></td>
+                    );
+                  })}
                 </tr>
               )}
             </thead>
 
-            {/* Table Body */}
-            <tbody className="divide-y divide-slate-100">
+            {/* TBODY: Data Rows */}
+            <tbody className="divide-y divide-slate-100 bg-white">
               {loading && items.length === 0 ? (
                 <AccountingTableSkeletonRows
-                  rows={10}
-                  colSpan={viewMode === "full" ? 27 : 14}
-                  rowHeightClass="h-[38px]"
+                  rows={12}
+                  columnsCount={visibleColumns.length}
+                  rowHeightClass="h-[36px]"
                 />
               ) : items.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={viewMode === "full" ? 27 : 14}
+                    colSpan={visibleColumns.length}
                     className="py-16 text-center text-slate-500"
                   >
                     <FileTextIcon size={36} className="mx-auto text-slate-300 mb-2" />
@@ -828,185 +926,388 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                 </tr>
               ) : (
                 items.map((item, idx) => {
-                  const isPositiveProfit = item.profit >= 0;
+                  const isProfit = item.profit >= 0;
+
                   return (
                     <tr
                       key={item.id}
-                      className="hover:bg-indigo-50/30 transition-colors group cursor-pointer text-xs"
                       onClick={() => setSelectedSkuDetail(item)}
+                      className={`hover:bg-amber-50/40 transition-colors cursor-pointer group ${
+                        idx % 2 === 0 ? "bg-white" : "bg-[#f8fafc]/50"
+                      }`}
                     >
-                      <td className="py-2 px-2.5 text-center text-slate-400 font-medium border-r border-slate-100">
-                        {idx + 1}
-                      </td>
-                      <td className="py-1.5 px-2 border-r border-slate-100 text-center">
-                        <div className="relative mx-auto h-7 w-7 rounded bg-slate-100 overflow-hidden border border-slate-200 shrink-0">
-                          {item.mockup_url ? (
-                            <Image
-                              src={item.mockup_url}
-                              alt={item.sku}
-                              fill
-                              sizes="28px"
-                              className="object-cover"
-                              unoptimized
-                            />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-[9px] font-bold text-slate-400">
-                              —
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-2 px-2.5 whitespace-nowrap border-r border-slate-100">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-slate-900 group-hover:text-indigo-600 transition">
-                            {item.sku}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyToClipboard(item.sku);
-                            }}
-                            className="text-slate-400 hover:text-slate-700 transition"
-                            title="Copy SKU"
+                      {visibleColumns.map((col) => {
+                        const f = getCellFreezeProps(col.id, false);
+                        const bgStyle = f.isFrozen
+                          ? { backgroundColor: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }
+                          : {};
+
+                        return (
+                          <td
+                            key={col.id}
+                            style={{ ...f.style, ...bgStyle }}
+                            className={`py-1.5 px-2.5 text-xs border-r border-b border-slate-200 whitespace-nowrap ${
+                              f.isBoundary
+                                ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+                                : ""
+                            } ${
+                              col.align === "center"
+                                ? "text-center"
+                                : col.align === "right"
+                                ? "text-right font-mono"
+                                : "text-left"
+                            }`}
                           >
-                            <CopyIcon size={12} />
-                          </button>
-                        </div>
-                        {item.asin && (
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            ASIN: {item.asin}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-2 px-2.5 text-slate-600 whitespace-nowrap border-r border-slate-100">
-                        <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
-                          {item.product_type || "Chưa phân loại"}
-                        </span>
-                      </td>
-                      <td className="py-2 px-2.5 text-right font-bold text-slate-900 whitespace-nowrap tabular-nums border-r border-slate-100">
-                        {fmtCurrency(item.revenue)}
-                      </td>
-                      <td className="py-2 px-2 text-right font-semibold text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
-                        {fmtInt(item.quantity)}
-                      </td>
-                      <td className="py-2 px-2.5 text-right font-medium text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                        {item.ads_fee !== 0 ? fmtCurrency(item.ads_fee) : <span className="text-slate-300 font-normal">—</span>}
-                      </td>
-                      <td className="py-2 px-2.5 text-right font-medium text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
-                        {item.basecost !== 0 ? fmtCurrency(item.basecost) : <span className="text-slate-300 font-normal">—</span>}
-                      </td>
-                      <td className="py-2 px-2.5 text-right font-medium text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                        {item.amazon_fee_total !== 0 ? fmtCurrency(item.amazon_fee_total) : <span className="text-slate-300 font-normal">—</span>}
-                      </td>
-                      <td
-                        className={`py-2 px-2.5 text-right font-bold whitespace-nowrap tabular-nums border-r border-slate-100 ${
-                          isPositiveProfit ? "text-emerald-700" : "text-rose-600"
-                        }`}
-                      >
-                        {fmtCurrency(item.profit)}
-                      </td>
-                      <td
-                        className={`py-2 px-2 text-right font-semibold whitespace-nowrap tabular-nums border-r border-slate-100 ${
-                          (item.margin || 0) >= 0 ? "text-emerald-700" : "text-rose-600"
-                        }`}
-                      >
-                        {fmtPercent(item.margin)}
-                      </td>
-                      <td className="py-2 px-2 text-right font-medium text-slate-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                        {fmtPercent(item.tacos)}
-                      </td>
-                      <td className="py-2 px-2 text-right font-semibold text-indigo-700 whitespace-nowrap tabular-nums border-r border-slate-100">
-                        {fmtInt(item.available_now)}
-                      </td>
+                            {/* STT */}
+                            {col.id === "stt" && (
+                              <span className="text-slate-500 font-semibold">{idx + 1}</span>
+                            )}
 
-                      {/* Extended columns in Full view mode */}
-                      {viewMode === "full" && (
-                        <>
-                          <td className="py-2 px-2 text-right text-slate-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.thue !== 0 ? fmtCurrency(item.thue) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.return_amount !== 0 ? fmtCurrency(item.return_amount) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.adjustment !== 0 ? fmtCurrency(item.adjustment) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.storage_fee !== 0 ? fmtCurrency(item.storage_fee) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.placement_fee !== 0 ? fmtCurrency(item.placement_fee) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.long_term_fee !== 0 ? fmtCurrency(item.long_term_fee) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.fba_customer_return_fee !== 0 ? fmtCurrency(item.fba_customer_return_fee) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-emerald-700 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.liquidations !== 0 ? fmtCurrency(item.liquidations) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-emerald-700 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.basecost_return_adjustment !== 0
-                              ? fmtCurrency(item.basecost_return_adjustment)
-                              : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-rose-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.removal !== 0 ? fmtCurrency(item.removal) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right font-medium text-slate-800 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {item.revenue_ads > 0 ? fmtCurrency(item.revenue_ads) : <span className="text-slate-300 font-normal">—</span>}
-                          </td>
-                          <td className="py-2 px-2 text-right text-slate-600 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {fmtPercent(item.acos)}
-                          </td>
-                          <td className="py-2 px-2 text-right font-medium text-slate-700 whitespace-nowrap tabular-nums border-r border-slate-100">
-                            {fmtPercent(item.roi)}
-                          </td>
-                        </>
-                      )}
+                            {/* Product Type */}
+                            {col.id === "product_type" && (
+                              <span className="font-semibold text-slate-800">
+                                {item.product_type || "Chưa phân loại"}
+                              </span>
+                            )}
 
-                      <td className="py-1.5 px-2 text-center whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedSkuDetail(item);
-                          }}
-                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 transition cursor-pointer"
-                        >
-                          <EyeIcon size={12} />
-                          <span>Xem</span>
-                        </button>
-                      </td>
+                            {/* Mockup */}
+                            {col.id === "mockup" && (
+                              <div className="relative mx-auto h-7 w-7 rounded bg-slate-100 overflow-hidden border border-slate-200 shrink-0">
+                                {item.mockup_url ? (
+                                  <Image
+                                    src={item.mockup_url}
+                                    alt={item.sku}
+                                    fill
+                                    sizes="28px"
+                                    className="object-cover"
+                                    unoptimized
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[9px] font-bold text-slate-400">
+                                    —
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* SKU */}
+                            {col.id === "sku" && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-slate-900 group-hover:text-amber-700 transition">
+                                  {item.sku}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(item.sku);
+                                  }}
+                                  className="text-slate-400 hover:text-slate-700 transition"
+                                  title="Copy SKU"
+                                >
+                                  <CopyIcon size={12} />
+                                </button>
+                              </div>
+                            )}
+
+                            {/* ASIN */}
+                            {col.id === "asin" && (
+                              <span className="font-mono text-slate-600">{item.asin || "—"}</span>
+                            )}
+
+                            {/* Revenue */}
+                            {col.id === "revenue" && (
+                              <span className="font-bold text-slate-900 tabular-nums">
+                                {formatCurrency(item.revenue)}
+                              </span>
+                            )}
+
+                            {/* Quantity */}
+                            {col.id === "quantity" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatInteger(item.quantity)}
+                              </span>
+                            )}
+
+                            {/* Ads Fee */}
+                            {col.id === "ads_fee" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.ads_fee)}
+                              </span>
+                            )}
+
+                            {/* Base Cost */}
+                            {col.id === "basecost" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.basecost)}
+                              </span>
+                            )}
+
+                            {/* AMZ Fee */}
+                            {col.id === "amazon_fee" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.amazon_fee_total)}
+                              </span>
+                            )}
+
+                            {/* Thuế */}
+                            {col.id === "thue" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.thue)}
+                              </span>
+                            )}
+
+                            {/* Refund */}
+                            {col.id === "return_amount" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.return_amount)}
+                              </span>
+                            )}
+
+                            {/* Adjustment */}
+                            {col.id === "adjustment" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.adjustment)}
+                              </span>
+                            )}
+
+                            {/* Storage fee */}
+                            {col.id === "storage_fee" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.storage_fee)}
+                              </span>
+                            )}
+
+                            {/* Placement fee */}
+                            {col.id === "placement_fee" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.placement_fee)}
+                              </span>
+                            )}
+
+                            {/* Long term fee */}
+                            {col.id === "long_term_fee" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.long_term_fee)}
+                              </span>
+                            )}
+
+                            {/* FBA Return Fee */}
+                            {col.id === "fba_customer_return_fee" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.fba_customer_return_fee)}
+                              </span>
+                            )}
+
+                            {/* Liquidations */}
+                            {col.id === "liquidations" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.liquidations)}
+                              </span>
+                            )}
+
+                            {/* Basecost Return/Adj */}
+                            {col.id === "basecost_return_adjustment" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.basecost_return_adjustment)}
+                              </span>
+                            )}
+
+                            {/* Removal */}
+                            {col.id === "removal" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.removal)}
+                              </span>
+                            )}
+
+                            {/* Profit: Xanh lục nếu dương, đỏ nếu âm */}
+                            {col.id === "profit" && (
+                              <span
+                                className={`font-bold tabular-nums ${
+                                  isProfit ? "text-emerald-700" : "text-rose-600"
+                                }`}
+                              >
+                                {formatCurrency(item.profit)}
+                              </span>
+                            )}
+
+                            {/* Margin % */}
+                            {col.id === "margin" && (
+                              <span
+                                className={`font-semibold tabular-nums ${
+                                  (item.margin || 0) >= 0 ? "text-emerald-700" : "text-rose-600"
+                                }`}
+                              >
+                                {formatPercent(item.margin)}
+                              </span>
+                            )}
+
+                            {/* TACOS */}
+                            {col.id === "tacos" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatPercent(item.tacos)}
+                              </span>
+                            )}
+
+                            {/* ACOS */}
+                            {col.id === "acos" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatPercent(item.acos)}
+                              </span>
+                            )}
+
+                            {/* ROI */}
+                            {col.id === "roi" && (
+                              <span className="font-semibold tabular-nums text-slate-700">
+                                {formatPercent(item.roi)}
+                              </span>
+                            )}
+
+                            {/* Revenue ads */}
+                            {col.id === "revenue_ads" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.revenue_ads)}
+                              </span>
+                            )}
+
+                            {/* Tồn kho */}
+                            {col.id === "available_now" && (
+                              <span className="font-bold tabular-nums text-indigo-700">
+                                {formatInteger(item.available_now)}
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })
               )}
             </tbody>
           </table>
-        )}
+        </div>
       </div>
 
-      {/* 5. BOTTOM STATUS BAR */}
-      <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500 font-medium shrink-0 select-none">
+      {/* 3. FOOTER BAR (Đồng bộ với FBA ngày) */}
+      <div className="bg-slate-100 px-3 py-1.5 border-t border-slate-200 text-xs text-slate-500 flex items-center justify-between shrink-0 select-none">
         <div className="flex items-center gap-2">
           <span>
-            Hiển thị <strong className="text-slate-900 font-bold">{items.length}</strong> SKU
+            Hiển thị <strong>{items.length}</strong> SKU
             {summary && (
               <>
-                {" "}— trong đó <strong className="text-emerald-700 font-bold">{summary.active_sku_count}</strong> SKU phát sinh giao dịch
+                {" "}— trong đó <strong className="text-emerald-700">{summary.active_sku_count}</strong> SKU phát sinh giao dịch
               </>
             )}
           </span>
         </div>
-        <div className="text-[11px] text-slate-400">
-          Nhấp vào hàng hoặc nút <EyeIcon size={12} className="inline mx-0.5 text-slate-500" /> để xem chi tiết P&L
+        <div className="flex items-center gap-3 text-[11px] text-slate-400">
+          <span>Dữ liệu tự động tổng hợp từ sheet SKU-monthly trong file kế toán</span>
         </div>
       </div>
 
-      {/* 6. Detailed Breakdown Modal */}
+      {/* COLUMN CONTEXT MENU (Khóa cột, Ẩn cột, Thu nhỏ tự động) */}
+      {columnContextMenu && (() => {
+        const field = columnContextMenu.field;
+        const col = columns.find((item) => item.id === field);
+        const colLabel = col?.label || field;
+        const visibleIndex = visibleColumns.findIndex((item) => item.id === field);
+        const isCurrentBoundary =
+          visibleIndex >= 0 &&
+          frozenColumns.includes(field) &&
+          !visibleColumns.slice(visibleIndex + 1).some((item) => frozenColumns.includes(item.id));
+
+        return (
+          <div
+            ref={columnMenuRef}
+            className="fixed z-[100] w-56 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-100"
+            style={{
+              left: Math.max(8, Math.min(columnContextMenu.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 232)),
+              top: Math.max(8, Math.min(columnContextMenu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 210)),
+            }}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/90 px-3 py-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tùy chọn cột</span>
+              <span className="max-w-[120px] truncate text-xs font-bold text-slate-900">{colLabel}</span>
+            </div>
+
+            <div className="space-y-0.5 p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  handleAutoFitColumn(field);
+                  setColumnContextMenu(null);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                <SlidersHorizontalIcon size={14} className="shrink-0 text-amber-600" />
+                <span>Thu nhỏ cột</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowColumnModal(true);
+                  setColumnContextMenu(null);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                <PencilSimpleIcon size={14} className="shrink-0 text-slate-500" />
+                <span>Setting cột</span>
+              </button>
+
+              {!isCurrentBoundary ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSetFrozenThrough(field);
+                    setColumnContextMenu(null);
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-left text-xs font-bold text-amber-950 transition hover:bg-amber-100"
+                >
+                  <LockIcon size={14} weight="bold" className="shrink-0 text-amber-600" />
+                  <span>Khóa đến cột này</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleResetFrozenColumns();
+                    setColumnContextMenu(null);
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                >
+                  <LockOpenIcon size={14} weight="bold" className="shrink-0 text-amber-600" />
+                  <span>Về khóa mặc định (SKU)</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleQuickHideColumn(field);
+                  setColumnContextMenu(null);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+              >
+                <EyeSlashIcon size={14} className="shrink-0 text-rose-500" />
+                <span>Ẩn cột này</span>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* COLUMN MANAGER MODAL (Tùy chỉnh cột kéo thả) */}
+      <ColumnManagerModal
+        isOpen={showColumnModal}
+        onClose={() => setShowColumnModal(false)}
+        title="BÁO CÁO THÁNG SKU (SKU-MONTHLY)"
+        columns={columns}
+        onSave={handleSaveColumns}
+        onReset={handleResetColumns}
+      />
+
+      {/* DETAILED BREAKDOWN MODAL */}
       {selectedSkuDetail && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-200"
@@ -1043,8 +1344,12 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                    <span>ASIN: <b className="font-mono text-slate-800">{selectedSkuDetail.asin || "—"}</b></span>
-                    <span>FNSKU: <b className="font-mono text-slate-800">{selectedSkuDetail.fnsku || "—"}</b></span>
+                    <span>
+                      ASIN: <b className="font-mono text-slate-800">{selectedSkuDetail.asin || "—"}</b>
+                    </span>
+                    <span>
+                      FNSKU: <b className="font-mono text-slate-800">{selectedSkuDetail.fnsku || "—"}</b>
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1061,68 +1366,100 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
             <div className="grid grid-cols-3 gap-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Doanh Thu</span>
-                <div className="text-base font-black text-slate-900 mt-1">{fmtCurrency(selectedSkuDetail.revenue)}</div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Số lượng: <b>{selectedSkuDetail.quantity}</b> items</div>
+                <div className="text-base font-black text-slate-900 mt-1">
+                  {formatCurrency(selectedSkuDetail.revenue)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Số lượng: <b>{selectedSkuDetail.quantity}</b> items
+                </div>
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Chi Phí Ads</span>
-                <div className="text-base font-black text-rose-600 mt-1">{fmtCurrency(selectedSkuDetail.ads_fee)}</div>
-                <div className="text-[11px] text-slate-500 mt-0.5">T-ACOS: <b>{fmtPercent(selectedSkuDetail.tacos)}</b></div>
+                <div className="text-base font-black text-rose-600 mt-1">
+                  {formatCurrency(selectedSkuDetail.ads_fee)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  T-ACOS: <b>{formatPercent(selectedSkuDetail.tacos)}</b>
+                </div>
               </div>
 
-              <div className={`rounded-xl border p-3 ${selectedSkuDetail.profit >= 0 ? "border-emerald-200 bg-emerald-50/40" : "border-rose-200 bg-rose-50/40"}`}>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Lợi Nhuận Ròng</span>
-                <div className={`text-base font-black mt-1 ${selectedSkuDetail.profit >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-                  {fmtCurrency(selectedSkuDetail.profit)}
+              <div
+                className={`rounded-xl border p-3 ${
+                  selectedSkuDetail.profit >= 0
+                    ? "border-emerald-200 bg-emerald-50/40"
+                    : "border-rose-200 bg-rose-50/40"
+                }`}
+              >
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                  Lợi Nhuận Ròng
+                </span>
+                <div
+                  className={`text-base font-black mt-1 ${
+                    selectedSkuDetail.profit >= 0 ? "text-emerald-700" : "text-rose-600"
+                  }`}
+                >
+                  {formatCurrency(selectedSkuDetail.profit)}
                 </div>
-                <div className="text-[11px] text-slate-600 mt-0.5">Biên: <b>{fmtPercent(selectedSkuDetail.margin)}</b></div>
+                <div className="text-[11px] text-slate-600 mt-0.5">
+                  Biên: <b>{formatPercent(selectedSkuDetail.margin)}</b>
+                </div>
               </div>
             </div>
 
-            {/* Chi tiết phụ phí sàn & hoàn tất */}
+            {/* Chi tiết phụ phí */}
             <div className="space-y-2">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">Chi tiết các khoản phí</h3>
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
+                Chi tiết các khoản phí
+              </h3>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Giá vốn hàng bán (Basecost):</span>
-                  <span className="font-bold text-slate-900">{fmtCurrency(selectedSkuDetail.basecost)}</span>
+                  <span className="font-bold text-slate-900">{formatCurrency(selectedSkuDetail.basecost)}</span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">Phí sàn Amazon (Trans Rp + Unrec):</span>
-                  <span className="font-bold text-rose-600">{fmtCurrency(selectedSkuDetail.amazon_fee_total)}</span>
+                  <span className="text-slate-600">Phí sàn Amazon:</span>
+                  <span className="font-bold text-rose-600">
+                    {formatCurrency(selectedSkuDetail.amazon_fee_total)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Phí lưu kho (Storage Fee):</span>
-                  <span className="font-bold text-rose-600">{fmtCurrency(selectedSkuDetail.storage_fee)}</span>
+                  <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.storage_fee)}</span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Phí Placement Inbound:</span>
-                  <span className="font-bold text-rose-600">{fmtCurrency(selectedSkuDetail.placement_fee)}</span>
+                  <span className="font-bold text-rose-600">
+                    {formatCurrency(selectedSkuDetail.placement_fee)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Phí Long-Term Storage:</span>
-                  <span className="font-bold text-rose-600">{fmtCurrency(selectedSkuDetail.long_term_fee)}</span>
+                  <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.long_term_fee)}</span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">Thuế (Tax Ads + Order):</span>
-                  <span className="font-bold text-slate-900">{fmtCurrency(selectedSkuDetail.thue)}</span>
+                  <span className="text-slate-600">Thuế (Tax):</span>
+                  <span className="font-bold text-slate-900">{formatCurrency(selectedSkuDetail.thue)}</span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Khách hoàn tiền (Refund / Return):</span>
-                  <span className="font-bold text-rose-600">{fmtCurrency(selectedSkuDetail.return_amount)}</span>
+                  <span className="font-bold text-rose-600">
+                    {formatCurrency(selectedSkuDetail.return_amount)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Điều chỉnh (Adjustment):</span>
-                  <span className="font-bold text-slate-900">{fmtCurrency(selectedSkuDetail.adjustment)}</span>
+                  <span className="font-bold text-slate-900">{formatCurrency(selectedSkuDetail.adjustment)}</span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">FBA Customer Return Fee:</span>
-                  <span className="font-bold text-rose-600">{fmtCurrency(selectedSkuDetail.fba_customer_return_fee)}</span>
+                  <span className="font-bold text-rose-600">
+                    {formatCurrency(selectedSkuDetail.fba_customer_return_fee)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Thu hồi hàng (Removal):</span>
-                  <span className="font-bold text-rose-600">{fmtCurrency(selectedSkuDetail.removal)}</span>
+                  <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.removal)}</span>
                 </div>
               </div>
             </div>
@@ -1140,7 +1477,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
         </div>
       )}
 
-      {/* Recalculate Confirmation Modal */}
+      {/* RECALCULATE MODAL */}
       {showRecalcModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
@@ -1151,7 +1488,8 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Tính toán lại từ Raw Data</h3>
                 <p className="text-xs text-slate-500">
-                  Tháng {selectedMonth}/{selectedYear} - Store: {stores.find((s) => s.id === selectedStoreId)?.name || "Store hiện tại"}
+                  Tháng {selectedMonth}/{selectedYear} - Store:{" "}
+                  {stores.find((s) => s.id === selectedStoreId)?.name || "Store hiện tại"}
                 </p>
               </div>
             </div>
@@ -1187,7 +1525,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
         </div>
       )}
 
-      {/* Recalculate Feedback Notification */}
+      {/* FEEDBACK TOAST */}
       {recalcFeedback && (
         <div className="fixed bottom-6 right-6 z-50 max-w-md rounded-2xl bg-white p-4 shadow-xl border border-slate-200 space-y-2 animate-in slide-in-from-bottom duration-200">
           <div className="flex items-start gap-3">

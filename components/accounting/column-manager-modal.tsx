@@ -389,6 +389,36 @@ export const DEFAULT_FBM_SKU_FIXED_COLUMNS: ColumnConfig[] = [
   ...DEFAULT_SKU_WIN_COLUMNS.filter((c) => !FBM_SKU_FIXED_ORDER.includes(c.id) && c.id !== "shipped_qty").map((c) => ({ ...c })),
 ];
 
+export const DEFAULT_SKU_MONTHLY_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 60 },
+  { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: false, width: 140 },
+  { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: false, align: "center", width: 65 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 180 },
+  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 135 },
+  { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 125 },
+  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 85 },
+  { id: "ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 115 },
+  { id: "basecost", label: "Base Cost", defaultLabel: "Base Cost", visible: true, align: "right", width: 115 },
+  { id: "amazon_fee", label: "AMZ Fee", defaultLabel: "AMZ Fee", visible: true, align: "right", width: 125 },
+  { id: "thue", label: "Thuế", defaultLabel: "Thuế", visible: true, align: "right", width: 100 },
+  { id: "return_amount", label: "Refund", defaultLabel: "Refund", visible: true, align: "right", width: 105 },
+  { id: "adjustment", label: "Adjustment", defaultLabel: "Adjustment", visible: false, align: "right", width: 110 },
+  { id: "storage_fee", label: "Lưu kho", defaultLabel: "Lưu kho", visible: false, align: "right", width: 105 },
+  { id: "placement_fee", label: "Placement", defaultLabel: "Placement", visible: false, align: "right", width: 105 },
+  { id: "long_term_fee", label: "Long-Term", defaultLabel: "Long-Term", visible: false, align: "right", width: 105 },
+  { id: "fba_customer_return_fee", label: "FBA Return Fee", defaultLabel: "FBA Return Fee", visible: false, align: "right", width: 115 },
+  { id: "liquidations", label: "Liquidations", defaultLabel: "Liquidations", visible: false, align: "right", width: 110 },
+  { id: "basecost_return_adjustment", label: "BC Ret/Adj", defaultLabel: "BC Ret/Adj", visible: false, align: "right", width: 110 },
+  { id: "removal", label: "Removal", defaultLabel: "Removal", visible: false, align: "right", width: 105 },
+  { id: "profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 125 },
+  { id: "margin", label: "% Profit", defaultLabel: "% Profit", visible: true, align: "right", width: 95 },
+  { id: "tacos", label: "TACOS (%)", defaultLabel: "TACOS (%)", visible: true, align: "right", width: 95 },
+  { id: "acos", label: "ACOS (%)", defaultLabel: "ACOS (%)", visible: false, align: "right", width: 95 },
+  { id: "roi", label: "ROI (%)", defaultLabel: "ROI (%)", visible: true, align: "right", width: 95 },
+  { id: "revenue_ads", label: "Revenue ads", defaultLabel: "Revenue ads", visible: false, align: "right", width: 120 },
+  { id: "available_now", label: "Tồn kho", defaultLabel: "Tồn kho", visible: true, align: "right", width: 95 },
+];
+
 
 
 export function ColumnHeaderCell({
