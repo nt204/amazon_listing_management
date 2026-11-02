@@ -30,7 +30,7 @@ DEFAULT_DOWNLOAD_ROOT = os.path.expanduser("~/AmazonAccounting/downloads")
 CURRENCY_RATES = {
     'USD': 1.0,
     'CAD': 0.738,
-    'MXN': 0.051
+    'MXN': 0.056
 }
 
 # Phí chủ store (cột AE "AWD/Subscription/Disposal Fee/Phí chủ store" file TỔNG KẾT, từ tháng 9/2026):
@@ -421,7 +421,22 @@ def wait_for_base_cost_resync(conn, store_id, timeout=240, settle=8):
         time.sleep(2)
     return False
 
-def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids):
+def load_removal_order_map(removal_file, sku_master, fnsku_to_sku, asin_to_sku):
+    rem_map = {}
+    if removal_file and os.path.exists(removal_file):
+        with open(removal_file, 'r', encoding='utf-8-sig', errors='replace') as f:
+            for row in csv.DictReader(f):
+                oid = row.get('order-id', '').strip()
+                if not oid:
+                    continue
+                raw_sku = row.get('sku', '').strip()
+                fnsku = row.get('fnsku', '').strip()
+                sku = resolve_sku(raw_sku or fnsku, sku_master, fnsku_to_sku, asin_to_sku)
+                if sku:
+                    rem_map[oid] = sku
+    return rem_map
+
+def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map=None):
     sku_trans = defaultdict(lambda: {
         'amazon_fee_trans': 0.0,
         'return_amount': 0.0,
@@ -454,12 +469,14 @@ def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, baseco
         raw_sku = row.get('sku', '').strip()
         desc = row.get('description', '').strip()
         
-        # Resolve SKU from SKU, FNSKU, or ASIN in description
+        # Resolve SKU from SKU, FNSKU, ASIN in description, or removal order ID
         target_sku = resolve_sku(raw_sku, sku_master, fnsku_to_sku, asin_to_sku)
         if not target_sku and desc:
             m = re.search(r'for ASIN: ([A-Z0-9]+)', desc) or re.search(r'ASIN:?\s*([A-Z0-9]{10})', desc)
             if m:
                 target_sku = asin_to_sku.get(m.group(1), '')
+        if not target_sku and order_id and removal_order_map and order_id in removal_order_map:
+            target_sku = removal_order_map[order_id]
         
         def get_f(col):
             val = row.get(col, '')
@@ -528,6 +545,8 @@ def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, baseco
                 sku_trans[target_sku]['removal_trans'] += total
             else:
                 unmapped_transactions[('Removal', raw_sku or desc[:30])] += total
+                # Giống ô AE2 trong Excel: chi phí removal không gắn được SKU cộng vào chi phí chung của store
+                awd_sub_fees += total
             
         elif ttype == 'FBA Transaction fees':
             if 'AWD' in desc:
@@ -714,9 +733,11 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     print(f"🛒 Identified {len(month_order_ids)} orders placed in {period}.")
     
     # 3. Parse Transactions
+    removal_file = find_file(download_dir, "11_RemovalOrderDetail")
+    removal_order_map = load_removal_order_map(removal_file, sku_master, fnsku_to_sku, asin_to_sku)
     trans_file = find_file(download_dir, "15_DateRangeTransactions")
     sku_trans, settled_order_ids, awd_sub_fees, fba_storage_trans, vat_tax_adjustment = parse_transactions(
-        trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids
+        trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map
     )
     print(f"💳 Settled {len(settled_order_ids)} orders in transactions. AWD/Sub fees = {awd_sub_fees:.2f}")
 
