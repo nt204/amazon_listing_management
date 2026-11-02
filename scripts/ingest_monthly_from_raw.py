@@ -808,7 +808,9 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         tacos = (ads_fee / rev) if rev > 0 else 0.0
         acos = (ads_fee / a_data['sales']) if a_data['sales'] > 0 else 0.0
         margin = (sku_profit / rev) if rev > 0 else 0.0
-        roi = (-sku_profit / bc) if bc != 0 else 0.0
+        # ROI theo chuẩn Excel (cột Z): Profit / (Revenue - Profit)
+        cost = rev - sku_profit
+        roi = (sku_profit / cost) if cost != 0 else 0.0
         profit_per_item = (sku_profit / qty) if qty > 0 else 0.0
         bc_per_item = (bc / qty) if qty > 0 else 0.0
         

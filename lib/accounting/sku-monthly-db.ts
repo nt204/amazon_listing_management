@@ -255,7 +255,8 @@ export async function listSkuMonthly(
     const tacos = revenue > 0 ? ads_fee / revenue : null;
     const acos = revenue_ads > 0 ? ads_fee / revenue_ads : null;
     const margin = revenue > 0 ? profit / revenue : null;
-    const roi = basecost < 0 ? -profit / basecost : null;
+    const cost = revenue - profit;
+    const roi = cost !== 0 ? profit / cost : null;
     const profit_per_item = quantity > 0 ? profit / quantity : null;
     const basecost_per_item = quantity > 0 ? basecost / quantity : null;
 
