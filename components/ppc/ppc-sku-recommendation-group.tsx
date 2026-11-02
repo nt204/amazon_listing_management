@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import type { RequestActor } from "@/lib/auth";
 import { usePpcColumnVisibility } from "./use-ppc-column-visibility";
 import {
@@ -276,7 +276,7 @@ export function PpcSkuRecommendationGroupView({
   const [modalCampaignFilter, setModalCampaignFilter] = useState("ALL");
   // Target đang xem ở panel chi tiết bên phải; null = target đầu tiên
   const [focusedRecId, setFocusedRecId] = useState<string | null>(null);
-  const autoExpandedSkuRef = useRef<string | null>(null);
+  const [modalSkuRecs, setModalSkuRecs] = useState<PpcRecommendation[]>([]);
   const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
   const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
@@ -549,7 +549,8 @@ export function PpcSkuRecommendationGroupView({
     setExpandedCampaigns(new Set());
     setLoadingSkuDetails(true);
     try {
-      await onLoadSkuRecommendations(group.sku);
+      const recs = await onLoadSkuRecommendations(group.sku);
+      setModalSkuRecs(recs || []);
     } catch (error) {
       console.error(error);
       setSelectedSkuGroup(null);
@@ -794,9 +795,10 @@ export function PpcSkuRecommendationGroupView({
   // Recommendations for the currently selected SKU (Modal)
   const skuAllRecs = useMemo(() => {
     if (!selectedSkuGroup) return [];
+    if (modalSkuRecs.length > 0) return modalSkuRecs;
     const sku = selectedSkuGroup.sku.toUpperCase();
     return allRecommendations.filter((r) => (r.sku || "").toUpperCase() === sku);
-  }, [allRecommendations, selectedSkuGroup]);
+  }, [allRecommendations, selectedSkuGroup, modalSkuRecs]);
 
   const modalCampaignOptions = useMemo(
     () => Array.from(new Set(skuAllRecs.map((r) => r.campaignName || "Chưa xác định Campaign"))).sort(),
@@ -895,18 +897,10 @@ export function PpcSkuRecommendationGroupView({
     });
   }, [currentSkuRecs]);
 
-  // Đóng tất cả các thẻ campaign khi đổi SKU / đóng modal; sau khi tải xong sẽ mở sẵn campaign đầu tiên
+  // Đóng tất cả các thẻ campaign khi đổi SKU / đóng modal (mặc định đóng, chỉ mở khi người dùng bấm vào)
   useEffect(() => {
     setExpandedCampaigns(new Set());
-    autoExpandedSkuRef.current = null;
   }, [selectedSkuGroup?.sku]);
-
-  useEffect(() => {
-    if (!selectedSkuGroup || loadingSkuDetails || groupedByCampaign.length === 0) return;
-    if (autoExpandedSkuRef.current === selectedSkuGroup.sku) return;
-    autoExpandedSkuRef.current = selectedSkuGroup.sku;
-    setExpandedCampaigns(new Set([groupedByCampaign[0].campaignName]));
-  }, [selectedSkuGroup, loadingSkuDetails, groupedByCampaign]);
 
   const closeSkuModal = () => {
     setSelectedSkuGroup(null);
@@ -917,6 +911,7 @@ export function PpcSkuRecommendationGroupView({
     setRecentlyApprovedIds(new Set());
     setSelectedRecIds(new Set());
     setExpandedCampaigns(new Set());
+    setModalSkuRecs([]);
   };
 
   const handleCommitFinalBid = (id: string, value: number) => {
@@ -945,25 +940,6 @@ export function PpcSkuRecommendationGroupView({
     }
   };
 
-  const handleToggleSelectCampaign = (campRecs: PpcRecommendation[]) => {
-    const next = new Set(selectedRecIds);
-    const allSelected = campRecs.length > 0 && campRecs.every((r) => next.has(r.id));
-    if (allSelected) {
-      for (const r of campRecs) next.delete(r.id);
-    } else {
-      for (const r of campRecs) next.add(r.id);
-    }
-    setSelectedRecIds(next);
-  };
-
-  // Select all inside SKU Detail
-  const handleToggleSelectAll = () => {
-    if (selectedRecIds.size === currentSkuRecs.length) {
-      setSelectedRecIds(new Set());
-    } else {
-      setSelectedRecIds(new Set(currentSkuRecs.map((r) => r.id)));
-    }
-  };
 
   const handleToggleSelectOne = (id: string) => {
     const next = new Set(selectedRecIds);
@@ -1055,7 +1031,46 @@ export function PpcSkuRecommendationGroupView({
     return set;
   }, [actionQueue]);
 
-  // Approve selected into Action Queue
+  // Check if a recommendation is approved (either recently in this session or already in actionQueue)
+  const isTargetApproved = useCallback(
+    (rec: PpcRecommendation) => {
+      if (recentlyApprovedIds.has(rec.id)) return true;
+      if (!queuedTargetSet || queuedTargetSet.size === 0) return false;
+      if (queuedTargetSet.has(rec.id)) return true;
+      if (rec.keywordId && queuedTargetSet.has(String(rec.keywordId))) return true;
+      if (rec.keyword && rec.campaignId && queuedTargetSet.has(`${rec.campaignId}___${rec.keyword.trim().toLowerCase()}`)) return true;
+      return false;
+    },
+    [recentlyApprovedIds, queuedTargetSet],
+  );
+
+  const unapprovedSkuRecs = useMemo(() => {
+    return currentSkuRecs.filter((r) => !isTargetApproved(r));
+  }, [currentSkuRecs, isTargetApproved]);
+
+  const handleToggleSelectCampaign = (campRecs: PpcRecommendation[]) => {
+    const unapproved = campRecs.filter((r) => !isTargetApproved(r));
+    const next = new Set(selectedRecIds);
+    const allSelected = unapproved.length > 0 && unapproved.every((r) => next.has(r.id));
+    if (allSelected) {
+      for (const r of unapproved) next.delete(r.id);
+    } else {
+      for (const r of unapproved) next.add(r.id);
+    }
+    setSelectedRecIds(next);
+  };
+
+  // Select all inside SKU Detail (only unapproved items)
+  const handleToggleSelectAll = () => {
+    const allSelected = unapprovedSkuRecs.length > 0 && unapprovedSkuRecs.every((r) => selectedRecIds.has(r.id));
+    if (allSelected || unapprovedSkuRecs.length === 0) {
+      setSelectedRecIds(new Set());
+    } else {
+      setSelectedRecIds(new Set(unapprovedSkuRecs.map((r) => r.id)));
+    }
+  };
+
+  // Approve selected into Action Queue (vẫn ở lại modal để người dùng xem kết quả)
   const handleApproveSelected = async () => {
     if (selectedRecIds.size === 0 || isStoreSwitching) return;
     try {
@@ -1091,7 +1106,7 @@ export function PpcSkuRecommendationGroupView({
     }
   };
 
-  // Approve single
+  // Approve single (vẫn ở lại modal)
   const handleApproveSingle = async (rec: PpcRecommendation) => {
     if (isStoreSwitching) return;
     try {
@@ -1113,6 +1128,11 @@ export function PpcSkuRecommendationGroupView({
         },
       ]);
       setRecentlyApprovedIds((prev) => new Set([...prev, rec.id]));
+      setSelectedRecIds((prev) => {
+        const next = new Set(prev);
+        next.delete(rec.id);
+        return next;
+      });
     } catch (err) {
       alert("Lỗi khi duyệt đề xuất: " + String(err));
     } finally {
@@ -2101,15 +2121,19 @@ export function PpcSkuRecommendationGroupView({
                     <button
                       type="button"
                       onClick={handleToggleSelectAll}
-                      disabled={loadingSkuDetails || currentSkuRecs.length === 0}
+                      disabled={loadingSkuDetails || unapprovedSkuRecs.length === 0}
                       className="inline-flex items-center gap-1.5 font-semibold hover:text-slate-800 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      {selectedRecIds.size === currentSkuRecs.length && currentSkuRecs.length > 0 ? (
+                      {unapprovedSkuRecs.length === 0 && currentSkuRecs.length > 0 ? (
+                        <CheckSquare size={15} className="text-emerald-600" weight="fill" />
+                      ) : selectedRecIds.size > 0 && selectedRecIds.size === unapprovedSkuRecs.length ? (
                         <CheckSquare size={15} className="text-indigo-600" weight="fill" />
                       ) : (
                         <Square size={15} />
                       )}
-                      Chọn tất cả ({currentSkuRecs.length})
+                      {unapprovedSkuRecs.length === 0 && currentSkuRecs.length > 0
+                        ? `Đã duyệt tất cả (${currentSkuRecs.length})`
+                        : `Chọn tất cả (${unapprovedSkuRecs.length})`}
                     </button>
                     <button
                       type="button"
@@ -2168,28 +2192,68 @@ export function PpcSkuRecommendationGroupView({
                     </p>
                   </div>
                 ) : groupedByCampaign.length === 0 ? (
-                  <div className="py-12 text-center text-sm text-slate-400 rounded-xl border border-slate-200">
-                    {modalSearch || modalActionFilter !== "ALL" || modalCampTypeFilter !== "ALL" || modalCampaignFilter !== "ALL"
-                      ? "Không tìm thấy đề xuất nào phù hợp với bộ lọc hiện tại."
-                      : "Không có đề xuất nào cho SKU này trong kỳ dữ liệu đã chọn."}
-                  </div>
+                  recentlyApprovedIds.size > 0 ? (
+                    <div className="py-12 flex flex-col items-center justify-center gap-3 text-center rounded-xl border border-emerald-200 bg-emerald-50/50">
+                      <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+                        <CheckCircle size={28} weight="fill" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-bold text-slate-800">
+                          Đã duyệt toàn bộ {recentlyApprovedIds.size} đề xuất vào Action Queue!
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-1 max-w-md">
+                          Các đề xuất đã sẵn sàng để kiểm tra trùng lặp và xuất Amazon Bulk File.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={closeSkuModal}
+                          className="px-4 py-2 rounded-lg bg-white border border-slate-200 text-slate-700 font-semibold text-xs hover:bg-slate-50 cursor-pointer shadow-2xs"
+                        >
+                          Đóng cửa sổ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleOpenActionQueueModal}
+                          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-2xs flex items-center gap-1.5"
+                        >
+                          <Lightning size={14} weight="fill" className="text-amber-300" />
+                          Mở Action Queue ({recentlyApprovedIds.size})
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-sm text-slate-400 rounded-xl border border-slate-200">
+                      {modalSearch || modalActionFilter !== "ALL" || modalCampTypeFilter !== "ALL" || modalCampaignFilter !== "ALL"
+                        ? "Không tìm thấy đề xuất nào phù hợp với bộ lọc hiện tại."
+                        : "Không có đề xuất nào cho SKU này trong kỳ dữ liệu đã chọn."}
+                    </div>
+                  )
                 ) : (
                   <div className="space-y-3">
                     {groupedByCampaign.map((cg) => {
-                      const isCampaignAllSelected = cg.recs.length > 0 && cg.recs.every((r) => selectedRecIds.has(r.id));
-                      const isCampaignSomeSelected = !isCampaignAllSelected && cg.recs.some((r) => selectedRecIds.has(r.id));
+                      const unapprovedInCamp = cg.recs.filter((r) => !isTargetApproved(r));
+                      const isCampaignAllApproved = cg.recs.length > 0 && unapprovedInCamp.length === 0;
+                      const isCampaignAllSelected = unapprovedInCamp.length > 0 && unapprovedInCamp.every((r) => selectedRecIds.has(r.id));
+                      const isCampaignSomeSelected = !isCampaignAllSelected && unapprovedInCamp.some((r) => selectedRecIds.has(r.id));
                       const isExpanded = expandedCampaigns.has(cg.campaignName);
                       const campaignCheckbox = (
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleToggleSelectCampaign(cg.recs);
+                            if (!isCampaignAllApproved) {
+                              handleToggleSelectCampaign(cg.recs);
+                            }
                           }}
-                          className="text-slate-400 hover:text-slate-700 cursor-pointer"
-                          title={isCampaignAllSelected ? "Bỏ chọn campaign này" : "Chọn tất cả trong campaign này"}
+                          disabled={isCampaignAllApproved}
+                          className={`text-slate-400 hover:text-slate-700 ${isCampaignAllApproved ? "cursor-default" : "cursor-pointer"}`}
+                          title={isCampaignAllApproved ? "Toàn bộ target trong campaign này đã được duyệt" : isCampaignAllSelected ? "Bỏ chọn campaign này" : "Chọn các mục chưa duyệt trong campaign này"}
                         >
-                          {isCampaignAllSelected ? (
+                          {isCampaignAllApproved ? (
+                            <CheckSquare size={17} className="text-emerald-600" weight="fill" />
+                          ) : isCampaignAllSelected ? (
                             <CheckSquare size={17} className="text-indigo-600" weight="fill" />
                           ) : isCampaignSomeSelected ? (
                             <div className="w-[15px] h-[15px] m-px rounded-[3px] border-2 border-indigo-600 flex items-center justify-center bg-indigo-50">
@@ -2294,7 +2358,7 @@ export function PpcSkuRecommendationGroupView({
                                     const isSelected = selectedRecIds.has(rec.id);
                                     const isFocused = focusedRec?.id === rec.id;
                                     const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
-                                    const isApproved = recentlyApprovedIds.has(rec.id);
+                                    const isApproved = isTargetApproved(rec);
                                     const suggestedTone = rec.recType === "BID_INCREASE"
                                       ? "text-emerald-600"
                                       : rec.recType === "BID_DECREASE"
@@ -2308,20 +2372,29 @@ export function PpcSkuRecommendationGroupView({
                                         className={`cursor-pointer transition ${isFocused ? "bg-indigo-50/70" : isSelected ? "bg-indigo-50/30" : "hover:bg-slate-50"}`}
                                       >
                                         <td className="py-2.5 pl-4 pr-2">
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleToggleSelectOne(rec.id);
-                                            }}
-                                            className="text-slate-400 hover:text-slate-700 cursor-pointer"
-                                          >
-                                            {isSelected ? (
-                                              <CheckSquare size={17} className="text-indigo-600" weight="fill" />
-                                            ) : (
-                                              <Square size={17} />
-                                            )}
-                                          </button>
+                                          {isApproved ? (
+                                            <div
+                                              className="text-emerald-600 flex items-center justify-center cursor-default"
+                                              title="Target này đã được duyệt vào Action Queue"
+                                            >
+                                              <CheckSquare size={17} weight="fill" />
+                                            </div>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleToggleSelectOne(rec.id);
+                                              }}
+                                              className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                                            >
+                                              {isSelected ? (
+                                                <CheckSquare size={17} className="text-indigo-600" weight="fill" />
+                                              ) : (
+                                                <Square size={17} />
+                                              )}
+                                            </button>
+                                          )}
                                         </td>
                                         <td className="py-2.5 px-3 col-primary">
                                           <div className="font-semibold text-[13px] text-slate-900 break-words">{rec.keyword}</div>
@@ -2410,8 +2483,10 @@ export function PpcSkuRecommendationGroupView({
               {/* RIGHT: target detail */}
               <aside className="lg:w-[300px] shrink-0 overflow-y-auto border-t lg:border-t-0 lg:border-l border-slate-100 bg-slate-50/50 p-4">
                 {loadingSkuDetails ? null : !focusedRec ? (
-                  <div className="h-full flex items-center justify-center text-center text-xs text-slate-400">
-                    Chọn một target để xem chi tiết
+                  <div className="h-full flex items-center justify-center text-center text-xs text-slate-400 p-4">
+                    {recentlyApprovedIds.size > 0
+                      ? `Đã duyệt ${recentlyApprovedIds.size} đề xuất vào Action Queue`
+                      : "Chọn một target để xem chi tiết"}
                   </div>
                 ) : (() => {
                   const rec = focusedRec;
@@ -2424,7 +2499,7 @@ export function PpcSkuRecommendationGroupView({
                   const isPause = rec.recType === "PAUSE_TARGET";
                   const changePct = currentBid > 0 && !isPause ? ((suggestedBid - currentBid) / currentBid) * 100 : null;
                   const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
-                  const isApproved = recentlyApprovedIds.has(rec.id);
+                  const isApproved = isTargetApproved(rec);
                   const cpc = rec.cpc ?? (clicks > 0 ? spend / clicks : 0);
                   const isPaused = (rec.campaignState || "").toLowerCase() === "paused";
 

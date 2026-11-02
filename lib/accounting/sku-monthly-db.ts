@@ -40,7 +40,13 @@ export interface SkuMonthlyItem {
   roi: number | null;
   profit_per_item: number | null;
   basecost_per_item: number | null;
+  vat_tax_adjustment: number;
+  removal_qty_2024: number;
+  awd_subscription_fees: number;
+  basecost_adjustment: number;
   revenue_ads: number;
+  listing_month: string | null;
+  review_month: string | null;
 }
 
 export interface SkuMonthlyStoreSummary {
@@ -170,7 +176,13 @@ export async function listSkuMonthly(
         SUM(removal) as removal,
         SUM(profit) as profit,
         MAX(available_now) as available_now,
-        SUM(revenue_ads) as revenue_ads
+        SUM(revenue_ads) as revenue_ads,
+        SUM(vat_tax_adjustment) as vat_tax_adjustment,
+        SUM(removal_qty_2024) as removal_qty_2024,
+        SUM(awd_subscription_fees) as awd_subscription_fees,
+        SUM(basecost_adjustment) as basecost_adjustment,
+        MAX(listing_month) as listing_month,
+        MAX(review_month) as review_month
       FROM accounting_sku_monthly
       WHERE store_id = ${storeId} AND year = ${year}
       GROUP BY sku
@@ -185,7 +197,10 @@ export async function listSkuMonthly(
         fba_customer_return_fee, liquidations,
         basecost_return_adjustment, removal, profit,
         available_now, tacos, acos, margin, roi,
-        profit_per_item, basecost_per_item, revenue_ads
+        profit_per_item, basecost_per_item, revenue_ads,
+        vat_tax_adjustment, removal_qty_2024,
+        awd_subscription_fees, basecost_adjustment,
+        listing_month, review_month
       FROM accounting_sku_monthly
       WHERE store_id = ${storeId} AND year = ${year} AND month = ${monthNum}
     `;
@@ -262,7 +277,13 @@ export async function listSkuMonthly(
       roi,
       profit_per_item,
       basecost_per_item,
+      vat_tax_adjustment: Number(r.vat_tax_adjustment || 0),
+      removal_qty_2024: Number(r.removal_qty_2024 || 0),
+      awd_subscription_fees: Number(r.awd_subscription_fees || 0),
+      basecost_adjustment: Number(r.basecost_adjustment || 0),
       revenue_ads,
+      listing_month: r.listing_month || null,
+      review_month: r.review_month || null,
     };
   });
 
@@ -451,9 +472,9 @@ function calculateSummaryFromItems(
     total_liquidations,
     total_basecost_return_adj,
     total_removal,
-    vat_tax_adjustment: 0,
-    awd_subscription_fees: 0,
-    basecost_adjustment: 0,
+    vat_tax_adjustment: items.reduce((s, i) => s + (i.vat_tax_adjustment || 0), 0),
+    awd_subscription_fees: items.reduce((s, i) => s + (i.awd_subscription_fees || 0), 0),
+    basecost_adjustment: items.reduce((s, i) => s + (i.basecost_adjustment || 0), 0),
     total_sku_profit,
     net_profit,
     total_available_now,

@@ -37,8 +37,8 @@ import {
   AccountingTopProgressBar,
 } from "./accounting-skeleton";
 
-const SKU_MONTHLY_COLUMNS_STORAGE_KEY = "acc_sku_monthly_columns_global";
-const SKU_MONTHLY_FROZEN_STORAGE_KEY = "acc_sku_monthly_frozen_global";
+const SKU_MONTHLY_COLUMNS_STORAGE_KEY = "acc_sku_monthly_columns_v3";
+const SKU_MONTHLY_FROZEN_STORAGE_KEY = "acc_sku_monthly_frozen_v3";
 const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
 
 function formatCurrency(val: number | null | undefined): string {
@@ -798,6 +798,16 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                             {formatCurrency(summary.total_basecost)}
                           </span>
                         )}
+                        {col.id === "amazon_fee_unrecognized" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_amazon_fee_unrecognized)}
+                          </span>
+                        )}
+                        {col.id === "amazon_fee_trans" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_amazon_fee_trans)}
+                          </span>
+                        )}
                         {col.id === "amazon_fee" && (
                           <span className="font-bold text-slate-950 tabular-nums">
                             {formatCurrency(summary.total_amazon_fee)}
@@ -886,6 +896,36 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                             {formatPercent(summary.roi)}
                           </span>
                         )}
+                        {col.id === "profit_per_item" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {summary.total_quantity > 0 ? formatCurrency(summary.net_profit / summary.total_quantity) : "—"}
+                          </span>
+                        )}
+                        {col.id === "basecost_per_item" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {summary.total_quantity > 0 ? formatCurrency(summary.total_basecost / summary.total_quantity) : "—"}
+                          </span>
+                        )}
+                        {col.id === "vat_tax_adjustment" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.vat_tax_adjustment)}
+                          </span>
+                        )}
+                        {col.id === "removal_qty_2024" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatInteger(items.reduce((s, i) => s + (i.removal_qty_2024 || 0), 0))}
+                          </span>
+                        )}
+                        {col.id === "awd_subscription_fees" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.awd_subscription_fees)}
+                          </span>
+                        )}
+                        {col.id === "basecost_adjustment" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.basecost_adjustment)}
+                          </span>
+                        )}
                         {col.id === "revenue_ads" && (
                           <span className="font-bold text-slate-950 tabular-nums">
                             {formatCurrency(summary.total_revenue_ads)}
@@ -895,6 +935,9 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                           <span className="font-bold text-slate-950 tabular-nums">
                             {formatInteger(summary.total_available_now)}
                           </span>
+                        )}
+                        {(col.id === "listing_month" || col.id === "review_month" || col.id === "status" || col.id === "fnsku") && (
+                          <span className="text-slate-400">—</span>
                         )}
                       </td>
                     );
@@ -1043,6 +1086,20 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                               </span>
                             )}
 
+                            {/* Amazon Fee (chưa ghi nhận) */}
+                            {col.id === "amazon_fee_unrecognized" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.amazon_fee_unrecognized)}
+                              </span>
+                            )}
+
+                            {/* Amazon fee (transperance report) */}
+                            {col.id === "amazon_fee_trans" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.amazon_fee_trans)}
+                              </span>
+                            )}
+
                             {/* AMZ Fee */}
                             {col.id === "amazon_fee" && (
                               <span className="tabular-nums text-slate-700">
@@ -1163,6 +1220,54 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                               </span>
                             )}
 
+                            {/* Profit/Item */}
+                            {col.id === "profit_per_item" && (
+                              <span
+                                className={`tabular-nums font-medium ${
+                                  item.profit_per_item != null && item.profit_per_item >= 0
+                                    ? "text-emerald-700"
+                                    : "text-rose-600"
+                                }`}
+                              >
+                                {formatCurrency(item.profit_per_item)}
+                              </span>
+                            )}
+
+                            {/* Basecost/Item */}
+                            {col.id === "basecost_per_item" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.basecost_per_item)}
+                              </span>
+                            )}
+
+                            {/* VAT/Tax Adjustment */}
+                            {col.id === "vat_tax_adjustment" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.vat_tax_adjustment)}
+                              </span>
+                            )}
+
+                            {/* SL đã removal 2024 */}
+                            {col.id === "removal_qty_2024" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatInteger(item.removal_qty_2024)}
+                              </span>
+                            )}
+
+                            {/* AWD/Subscription/Amazon Fees/Disposal Fee */}
+                            {col.id === "awd_subscription_fees" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.awd_subscription_fees)}
+                              </span>
+                            )}
+
+                            {/* Basecost Adjustment */}
+                            {col.id === "basecost_adjustment" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.basecost_adjustment)}
+                              </span>
+                            )}
+
                             {/* Revenue ads */}
                             {col.id === "revenue_ads" && (
                               <span className="tabular-nums text-slate-700">
@@ -1175,6 +1280,42 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                               <span className="font-bold tabular-nums text-indigo-700">
                                 {formatInteger(item.available_now)}
                               </span>
+                            )}
+
+                            {/* Tháng listing */}
+                            {col.id === "listing_month" && (
+                              <span className="text-slate-600 text-xs">
+                                {item.listing_month || "—"}
+                              </span>
+                            )}
+
+                            {/* Tháng đánh giá */}
+                            {col.id === "review_month" && (
+                              <span className="text-slate-600 text-xs">
+                                {item.review_month || "—"}
+                              </span>
+                            )}
+
+                            {/* Trạng thái */}
+                            {col.id === "status" && (
+                              item.status ? (
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700">
+                                  {item.status}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )
+                            )}
+
+                            {/* FNSKU */}
+                            {col.id === "fnsku" && (
+                              item.fnsku ? (
+                                <span className="font-mono text-[11px] text-slate-600">
+                                  {item.fnsku}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )
                             )}
                           </td>
                         );

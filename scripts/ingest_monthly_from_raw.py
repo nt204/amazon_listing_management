@@ -183,7 +183,8 @@ def parse_all_orders(orders_file, sku_master, asin_to_sku, fnsku_to_sku, basecos
             if not sku and asin in asin_to_sku:
                 sku = asin_to_sku[asin]
 
-            currency = row.get('currency', '').strip() or 'USD'
+            raw_currency = row.get('currency', '').strip()
+            currency = raw_currency or 'USD'
             fulfillment = row.get('fulfillment-channel', '').strip()
             
             try: qty = int(row.get('quantity', 0) or 0)
@@ -217,7 +218,8 @@ def parse_all_orders(orders_file, sku_master, asin_to_sku, fnsku_to_sku, basecos
                 unrec_fee = 0.0
                 sku_orders[sku]['settled_count'] += 1
             else:
-                unrec_fee = -(std_fba_fee * qty + referral_pct * sales)
+                # Sheet Basecost cột O: đơn chưa có giá (currency trống / item-price = 0) không ước tính phí
+                unrec_fee = -(std_fba_fee * qty + referral_pct * sales) if (raw_currency and price != 0) else 0.0
                 tax = -(sales * referral_pct * 0.10 + sales * 0.01)
                 sku_orders[sku]['unrec_count'] += 1
             
@@ -558,7 +560,7 @@ def parse_ads(ads_file, valid_skus):
             
     return sku_ads
 
-def parse_auxiliary_fees(download_dir, sku_master, asin_to_sku, fnsku_to_sku, basecosts, storage_file=None, storage_month=None):
+def parse_auxiliary_fees(download_dir, sku_master, asin_to_sku, fnsku_to_sku, basecosts, storage_file=None, storage_month=None, period=None):
     # Placement
     placement_file = find_file(download_dir, "12_InboundPlacementFees")
     sku_placement = defaultdict(float)
@@ -602,8 +604,13 @@ def parse_auxiliary_fees(download_dir, sku_master, asin_to_sku, fnsku_to_sku, ba
                 raw_sku = row.get('sku', '').strip()
                 fnsku = row.get('fnsku', '').strip()
                 sku = resolve_sku(raw_sku or fnsku, sku_master, fnsku_to_sku, asin_to_sku)
-                try: qty = int(row.get('shipped-quantity', 0) or 0)
-                except: qty = 0
+                # Giống sheet Removal RP: SL = requested − cancelled (tính cả yêu cầu đang Pending),
+                # bỏ yêu cầu Cancelled, chỉ lấy yêu cầu tạo trong kỳ
+                if row.get('order-status', '').strip() == 'Cancelled':
+                    continue
+                if period and (row.get('request-date') or '')[:7] != period:
+                    continue
+                qty = to_float(row.get('requested-quantity')) - to_float(row.get('cancelled-quantity'))
                 bc_unit = basecosts.get(sku, 0.0)
                 if sku and sku in sku_master:
                     sku_removal[sku] += bc_unit * qty
@@ -716,7 +723,7 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
             print(f"   ℹ️ Phát hiện phí lưu kho thực tế trong DateRangeTransactions: ${fba_storage_trans:.2f}")
 
     sku_placement, sku_longterm, sku_removal, sku_storage = parse_auxiliary_fees(
-        download_dir, sku_master, asin_to_sku, fnsku_to_sku, basecosts, storage_file, storage_month
+        download_dir, sku_master, asin_to_sku, fnsku_to_sku, basecosts, storage_file, storage_month, period
     )
     
     # 7. Aggregate SKU level and Store level (strictly within sku_master)

@@ -1350,7 +1350,7 @@ export function PpcDashboard({
         lastLoadedRecKeyRef.current = currentKey;
         setLoadedRecommendationWindowDays(selectedDays);
         setSkuRecGroups(data.data.groups);
-        if (Array.isArray(data?.data?.allRecommendations)) {
+        if (Array.isArray(data?.data?.allRecommendations) && data.data.allRecommendations.length > 0) {
           setSkuRecAllRecs(data.data.allRecommendations);
         }
       }
