@@ -121,9 +121,18 @@ export async function listSkuMonthly(
   const sql = await getDatabaseClient();
 
   const year = options.year || 2026;
-  const monthOpt = options.month !== undefined ? options.month : 9; // Default to latest complete month (Tháng 9)
+  let monthOpt = options.month;
+  if (monthOpt === undefined) {
+    const [latest] = await sql<{ month: number }[]>`
+      SELECT month FROM accounting_monthly_store_summary
+      WHERE store_id = ${storeId} AND year = ${year}
+      ORDER BY month DESC
+      LIMIT 1
+    `;
+    monthOpt = latest ? latest.month : 10;
+  }
   const isAllMonths = monthOpt === "all";
-  const monthNum = typeof monthOpt === "number" ? monthOpt : 9;
+  const monthNum = typeof monthOpt === "number" ? monthOpt : 10;
 
   const search = options.search?.trim() || "";
   const productType = options.productType?.trim() || "";

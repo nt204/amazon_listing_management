@@ -74,8 +74,21 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
   });
 
   const [stores, setStores] = useState<{ id: string; name: string }[]>([]);
-  const [selectedMonth, setSelectedMonth] = useState<number | "all">(9); // Default to month 9
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
+  const [selectedMonth, setSelectedMonth] = useState<number | "all">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("acc_selected_month");
+      if (saved === "all") return "all";
+      if (saved && !isNaN(Number(saved))) return Number(saved);
+    }
+    return 10; // Default to latest complete month (Tháng 10)
+  });
+  const [selectedYear, setSelectedYear] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("acc_selected_year");
+      if (saved && !isNaN(Number(saved))) return Number(saved);
+    }
+    return 2026;
+  });
   const [availableMonths, setAvailableMonths] = useState<AvailableMonthOption[]>([]);
 
   // Search & Sorting
@@ -518,6 +531,9 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
               onChange={(e) => {
                 const val = e.target.value === "all" ? "all" : parseInt(e.target.value, 10);
                 setSelectedMonth(val);
+                if (typeof window !== "undefined") {
+                  localStorage.setItem("acc_selected_month", String(val));
+                }
               }}
               className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
               style={{
