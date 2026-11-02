@@ -30,6 +30,14 @@ CURRENCY_RATES = {
     'MXN': 0.051
 }
 
+# Phí chủ store (cột AE "AWD/Subscription/Disposal Fee/Phí chủ store" file TỔNG KẾT, từ tháng 9/2026):
+# -IF(C1>=9, IF(E2>20000, E2*0.5%, 1000000/$AF$1), 0) — 0.5% doanh thu nếu > 20,000 USD, không thì 1,000,000 VND
+OWNER_FEE_FROM = (2026, 9)
+OWNER_FEE_RATE = 0.005
+OWNER_FEE_REVENUE_THRESHOLD = 20000.0
+OWNER_FEE_MIN_VND = 1_000_000
+USD_VND_RATE = 25000.0  # ô AF1 sheet SKU-monthly
+
 def get_db_connection():
     db_urls = [
         os.getenv("DATABASE_URL"),
@@ -824,6 +832,13 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
         tot['sku_profit'] += sku_profit
         tot['revenue_ads'] += a_data['sales']
 
+    owner_fee = 0.0
+    if (year, month) >= OWNER_FEE_FROM:
+        owner_fee = -(tot['revenue'] * OWNER_FEE_RATE if tot['revenue'] > OWNER_FEE_REVENUE_THRESHOLD
+                      else OWNER_FEE_MIN_VND / USD_VND_RATE)
+        print(f"👤 Phí chủ store {period}: {owner_fee:.2f}")
+    awd_sub_fees += owner_fee
+    tot['awd_subscription_fees'] = awd_sub_fees
     net_profit = tot['sku_profit'] + awd_sub_fees
     
     store_tacos = (tot['ads_fee'] / tot['revenue']) if tot['revenue'] > 0 else 0.0
