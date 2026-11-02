@@ -152,57 +152,66 @@ export async function listSkuMonthly(
   const itemsPromise = isAllMonths
     ? sql<Record<string, any>[]>`
       SELECT 
-        sku,
-        MAX(asin) as asin,
-        MAX(product_type) as product_type,
-        MAX(mockup_url) as mockup_url,
-        MAX(fnsku) as fnsku,
-        MAX(status) as status,
-        SUM(revenue) as revenue,
-        SUM(quantity) as quantity,
-        SUM(ads_fee) as ads_fee,
-        SUM(basecost) as basecost,
-        SUM(amazon_fee_unrecognized) as amazon_fee_unrecognized,
-        SUM(amazon_fee_trans) as amazon_fee_trans,
-        SUM(thue) as thue,
-        SUM(return_amount) as return_amount,
-        SUM(adjustment) as adjustment,
-        SUM(storage_fee) as storage_fee,
-        SUM(placement_fee) as placement_fee,
-        SUM(long_term_fee) as long_term_fee,
-        SUM(fba_customer_return_fee) as fba_customer_return_fee,
-        SUM(liquidations) as liquidations,
-        SUM(basecost_return_adjustment) as basecost_return_adjustment,
-        SUM(removal) as removal,
-        SUM(profit) as profit,
-        MAX(available_now) as available_now,
-        SUM(revenue_ads) as revenue_ads,
-        SUM(vat_tax_adjustment) as vat_tax_adjustment,
-        SUM(removal_qty_2024) as removal_qty_2024,
-        SUM(awd_subscription_fees) as awd_subscription_fees,
-        SUM(basecost_adjustment) as basecost_adjustment,
-        MAX(listing_month) as listing_month,
-        MAX(review_month) as review_month
-      FROM accounting_sku_monthly
-      WHERE store_id = ${storeId} AND year = ${year}
-      GROUP BY sku
+        sm.sku,
+        MAX(COALESCE(sm.asin, m.asin)) as asin,
+        MAX(COALESCE(sm.product_type, m.product_type)) as product_type,
+        MAX(COALESCE(sm.mockup_url, m.mockup_url)) as mockup_url,
+        MAX(COALESCE(sm.fnsku, m.fnsku)) as fnsku,
+        MAX(COALESCE(sm.status, m.status)) as status,
+        SUM(sm.revenue) as revenue,
+        SUM(sm.quantity) as quantity,
+        SUM(sm.ads_fee) as ads_fee,
+        SUM(sm.basecost) as basecost,
+        SUM(sm.amazon_fee_unrecognized) as amazon_fee_unrecognized,
+        SUM(sm.amazon_fee_trans) as amazon_fee_trans,
+        SUM(sm.thue) as thue,
+        SUM(sm.return_amount) as return_amount,
+        SUM(sm.adjustment) as adjustment,
+        SUM(sm.storage_fee) as storage_fee,
+        SUM(sm.placement_fee) as placement_fee,
+        SUM(sm.long_term_fee) as long_term_fee,
+        SUM(sm.fba_customer_return_fee) as fba_customer_return_fee,
+        SUM(sm.liquidations) as liquidations,
+        SUM(sm.basecost_return_adjustment) as basecost_return_adjustment,
+        SUM(sm.removal) as removal,
+        SUM(sm.profit) as profit,
+        MAX(COALESCE(NULLIF(sm.available_now, 0), m.ton_kho, m.ending_warehouse_balance, 0)) as available_now,
+        SUM(sm.revenue_ads) as revenue_ads,
+        SUM(sm.vat_tax_adjustment) as vat_tax_adjustment,
+        SUM(sm.removal_qty_2024) as removal_qty_2024,
+        SUM(sm.awd_subscription_fees) as awd_subscription_fees,
+        SUM(sm.basecost_adjustment) as basecost_adjustment,
+        MAX(COALESCE(sm.listing_month, m.thang_listing)) as listing_month,
+        MAX(COALESCE(sm.review_month, m.thang_danh_gia)) as review_month
+      FROM accounting_sku_monthly sm
+      LEFT JOIN accounting_sku_master m ON m.store_id = sm.store_id AND m.sku = sm.sku
+      WHERE sm.store_id = ${storeId} AND sm.year = ${year}
+      GROUP BY sm.sku
     `
     : sql<Record<string, any>[]>`
       SELECT 
-        id, sku, asin, product_type, mockup_url, fnsku, status,
-        revenue, quantity, ads_fee, basecost,
-        amazon_fee_unrecognized, amazon_fee_trans,
-        thue, return_amount, adjustment,
-        storage_fee, placement_fee, long_term_fee,
-        fba_customer_return_fee, liquidations,
-        basecost_return_adjustment, removal, profit,
-        available_now, tacos, acos, margin, roi,
-        profit_per_item, basecost_per_item, revenue_ads,
-        vat_tax_adjustment, removal_qty_2024,
-        awd_subscription_fees, basecost_adjustment,
-        listing_month, review_month
-      FROM accounting_sku_monthly
-      WHERE store_id = ${storeId} AND year = ${year} AND month = ${monthNum}
+        sm.id, sm.sku,
+        COALESCE(sm.asin, m.asin) as asin,
+        COALESCE(sm.product_type, m.product_type) as product_type,
+        COALESCE(sm.mockup_url, m.mockup_url) as mockup_url,
+        COALESCE(sm.fnsku, m.fnsku) as fnsku,
+        COALESCE(sm.status, m.status) as status,
+        sm.revenue, sm.quantity, sm.ads_fee, sm.basecost,
+        sm.amazon_fee_unrecognized, sm.amazon_fee_trans,
+        sm.thue, sm.return_amount, sm.adjustment,
+        sm.storage_fee, sm.placement_fee, sm.long_term_fee,
+        sm.fba_customer_return_fee, sm.liquidations,
+        sm.basecost_return_adjustment, sm.removal, sm.profit,
+        COALESCE(NULLIF(sm.available_now, 0), m.ton_kho, m.ending_warehouse_balance, 0) as available_now,
+        sm.tacos, sm.acos, sm.margin, sm.roi,
+        sm.profit_per_item, sm.basecost_per_item, sm.revenue_ads,
+        sm.vat_tax_adjustment, sm.removal_qty_2024,
+        sm.awd_subscription_fees, sm.basecost_adjustment,
+        COALESCE(sm.listing_month, m.thang_listing) as listing_month,
+        COALESCE(sm.review_month, m.thang_danh_gia) as review_month
+      FROM accounting_sku_monthly sm
+      LEFT JOIN accounting_sku_master m ON m.store_id = sm.store_id AND m.sku = sm.sku
+      WHERE sm.store_id = ${storeId} AND sm.year = ${year} AND sm.month = ${monthNum}
     `;
 
   const [summaryRows, filterRows, rawItems] = await Promise.all([
