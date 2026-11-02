@@ -381,6 +381,7 @@ export async function executeConfirmBidAction(action: PendingPpcAction) {
     const upload = await executeAutoUploadZeroSpendActions(action.storeId, actionIds, teamId, {
       allowAllSkus: true,
       createdBy: LARK_APPROVER,
+      approvedBy: LARK_APPROVER,
     });
     return {
       uploaded: true,

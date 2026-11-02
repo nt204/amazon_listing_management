@@ -2882,7 +2882,9 @@ export async function executeAutoUploadZeroSpendActions(
   storeId: string,
   selectedActionIds?: string[],
   teamId = "default",
-  options: { allowAllSkus?: boolean; createdBy?: string } = {},
+  // createdBy: user id ghi vào log (worker dùng để báo Lark).
+  // approvedBy: tên người duyệt như lưu ở ppc_actions.approved_by (actor.displayName) — lọc hàng đợi giống màn Action Queue.
+  options: { allowAllSkus?: boolean; createdBy?: string; approvedBy?: string } = {},
 ): Promise<{
   success: boolean;
   log: PpcAutoUploadLog;
@@ -2902,7 +2904,7 @@ export async function executeAutoUploadZeroSpendActions(
   const storeName = storeRows[0].name;
 
   // 1. Get all pending/approved actions in the queue
-  const queueActions = await getActionQueue(storeId, options.createdBy);
+  const queueActions = await getActionQueue(storeId, options.approvedBy);
   let candidateActions = queueActions;
   if (selectedActionIds && selectedActionIds.length > 0) {
     const idSet = new Set(selectedActionIds);
@@ -2943,7 +2945,8 @@ export async function executeAutoUploadZeroSpendActions(
   // 3. Export Bulk file using the canonical Amazon template.
   let exportResult: Awaited<ReturnType<typeof exportBulkFromQueue>>;
   try {
-    exportResult = await exportBulkFromQueue(storeId, uploadActionIds, options.createdBy);
+    // Lịch sử xuất file (bulk_exports.created_by) hiển thị tên người xuất như /api/ppc/bulk-export, không phải user id
+    exportResult = await exportBulkFromQueue(storeId, uploadActionIds, options.approvedBy || options.createdBy);
     await sql`
       UPDATE ppc_auto_upload_logs
       SET file_name = ${exportResult.fileName}, file_status = 'SUCCESS',

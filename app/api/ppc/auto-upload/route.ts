@@ -144,6 +144,8 @@ export async function POST(request: Request) {
       allowAllSkus,
       // Persist the stable user id so the worker can resolve the exact Lark recipient.
       createdBy: actor.userId,
+      // Hàng đợi lưu người duyệt theo tên hiển thị (giống GET /api/ppc/actions), không phải user id
+      approvedBy: actor.displayName || actor.userId,
     });
 
     return Response.json({
