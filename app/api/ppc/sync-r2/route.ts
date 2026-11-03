@@ -103,8 +103,9 @@ export async function POST(request: Request) {
       job = await enqueuePpcIngestion(dataScope(actor), { batchId, batchDate, storeNames }, { force });
     }
 
-    // Tự động kích hoạt nạp dữ liệu ngầm nếu chưa có worker nhận (đặc biệt khi chạy local)
-    if (job.status !== "COMPLETED") {
+    // Chỉ khi chạy local mới tự nạp ngầm trong web process. Production để ppc-ingestion-worker xử lý:
+    // parse file Bulk ~100MB trong next-server chặn event loop và từng làm web bị OOM-kill.
+    if (job.status !== "COMPLETED" && process.env.NODE_ENV !== "production") {
       void (async () => {
         // Đợi 1.5 giây để nhường worker độc lập (nếu có) claim trước
         await new Promise((r) => setTimeout(r, 1500));
