@@ -437,6 +437,27 @@ function roundTo(value: string | number | null, scale: number | undefined) {
   return Math.round(Number(value) * factor) / factor;
 }
 
+/**
+ * Gộp 2 dòng CHI TIẾT ĐI HÀNG cùng SKU + lô thành 1 dòng:
+ * - Quantity, Total Basecost, Amazon Received (SL thực nhận theo SKU, điền khi lô lệch), Discrepancy: cộng các ô có số.
+ * - Số lượng Amazon nhận là số của cả lô, chỉ ghi ở dòng đầu (dòng sau để trống) → lấy ô đầu tiên có số, không cộng.
+ * - Final Basecost = tổng tiền / tổng số lượng; các cột khác lấy ô đầu tiên có giá trị.
+ */
+function mergeInboundLines(first: Row, next: Row): Row {
+  const merged: Row = { ...next };
+  for (const [field, value] of Object.entries(first)) {
+    if (value != null && value !== "") merged[field] = value;
+  }
+  const sum = (field: string) => {
+    const values = [first[field], next[field]].filter((v) => v != null && v !== "");
+    return values.length ? values.reduce<number>((total, v) => total + Number(v), 0) : null;
+  };
+  for (const field of ["quantity", "total_basecost", "amazon_received", "discrepancy"]) merged[field] = sum(field);
+  const quantity = Number(merged.quantity ?? 0);
+  if (quantity > 0 && merged.total_basecost != null) merged.final_basecost = Number(merged.total_basecost) / quantity;
+  return merged;
+}
+
 async function lockOrFail(tx: Tx, storeId: string, type: SheetType) {
   const [{ locked }] = await tx<{ locked: boolean }[]>`
     SELECT pg_try_advisory_xact_lock(hashtext(${`inventory-sheet-sync:${storeId}:${type}`})) AS locked
@@ -585,7 +606,8 @@ async function writeInboundRecords(
   };
 
   // Lớp 1: cùng SKU + Shipment ID (hoặc SKU + Tên lô) chỉ được 1 dòng — đúng ràng buộc
-  // uq_accounting_inbound_active_identity của DB. Trùng trong sheet → giữ dòng sau cùng, báo số dòng.
+  // uq_accounting_inbound_active_identity của DB. Sheet ghi 1 SKU thành nhiều dòng trong cùng lô
+  // (VD 5 thùng × 36) → cộng dồn thành 1 dòng, báo số dòng.
   const byIdentity = new Map<string, Row>();
   const dupRows = new Map<string, number[]>();
   const keyless: Row[] = [];
@@ -596,8 +618,12 @@ async function writeInboundRecords(
       continue;
     }
     const previous = byIdentity.get(identity);
-    if (previous) dupRows.set(identity, [...(dupRows.get(identity) ?? [Number(previous._row)]), Number(r._row)]);
-    byIdentity.set(identity, r);
+    if (previous) {
+      dupRows.set(identity, [...(dupRows.get(identity) ?? [Number(previous._row)]), Number(r._row)]);
+      byIdentity.set(identity, mergeInboundLines(previous, r));
+    } else {
+      byIdentity.set(identity, r);
+    }
   }
   for (const [identity, rowsOfKey] of dupRows) {
     const r = byIdentity.get(identity)!;
@@ -814,7 +840,9 @@ export async function syncSheetToDatabase(
   }
 
   if (result.duplicatesInSheet.length) {
-    result.warnings.push(`${result.duplicatesInSheet.length} dòng trùng trong sheet (giữ dòng sau cùng).`);
+    result.warnings.push(type === "inbound"
+      ? `${result.duplicatesInSheet.length} SKU ghi nhiều dòng trong cùng lô (đã cộng dồn số lượng và tiền).`
+      : `${result.duplicatesInSheet.length} dòng trùng trong sheet (giữ dòng sau cùng).`);
   }
   if (result.missingOnSheet) {
     result.warnings.push(`${result.missingOnSheet} SKU trên web không có trong sheet (không tự xóa).`);
