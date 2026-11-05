@@ -407,6 +407,46 @@ export async function getAccountingFileBuffer(r2Key: string): Promise<Buffer | n
   return null;
 }
 
+/**
+ * Tải file thô kỳ tháng của 1 store từ R2 (<prefix>/<YYYY-MM>/<STORE>/...) về <destRoot>/<YYYY-MM>/<STORE>/,
+ * đúng cấu trúc thư mục ~/AmazonAccounting/downloads mà scripts/ingest_monthly_from_raw.py đọc.
+ * fileFilter cho phép chỉ lấy một số loại báo cáo của kỳ (VD chỉ 11_RemovalOrderDetail). Trả về tên các file đã tải.
+ */
+export async function downloadMonthlyRawFromR2(
+  storeName: string,
+  period: string,
+  destRoot: string,
+  fileFilter?: (fileName: string) => boolean,
+): Promise<string[]> {
+  const r2 = getR2Client();
+  if (!r2) {
+    throw new Error("Chưa cấu hình Cloudflare R2.");
+  }
+  const storeFolder = storeName.toUpperCase().trim();
+  const folderPrefix = `${r2.prefix}/${period}/${storeFolder}/`;
+  const destDir = path.join(destRoot, period, storeFolder);
+  const downloaded: string[] = [];
+
+  let continuationToken: string | undefined;
+  do {
+    const listed = await r2.client.send(
+      new ListObjectsV2Command({ Bucket: r2.bucket, Prefix: folderPrefix, ContinuationToken: continuationToken }),
+    );
+    for (const object of listed.Contents || []) {
+      const fileName = object.Key?.slice(folderPrefix.length) || "";
+      if (!fileName || fileName.includes("/") || (fileFilter && !fileFilter(fileName))) continue;
+      const res = await r2.client.send(new GetObjectCommand({ Bucket: r2.bucket, Key: object.Key }));
+      if (!res.Body) continue;
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.writeFileSync(path.join(destDir, fileName), Buffer.from(await res.Body.transformToByteArray()));
+      downloaded.push(fileName);
+    }
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return downloaded;
+}
+
 export async function ingestAccountingFile(r2Key: string, storeName: string): Promise<{
   success: boolean;
   message: string;

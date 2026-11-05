@@ -4,6 +4,7 @@ import {
   executeAccountingImportJob,
 } from "../lib/accounting/import-jobs";
 import { triggerDailyReportCheckAfterImport } from "../lib/accounting/daily-business-reporter";
+import { processNextSkuMonthlyRecalc } from "../lib/accounting/sku-monthly-recalc";
 
 const workerId = process.env.ACCOUNTING_IMPORT_WORKER_ID || `${os.hostname()}:${process.pid}`;
 const pollMs = Math.max(1_000, Number(process.env.ACCOUNTING_IMPORT_POLL_SECONDS || 3) * 1_000);
@@ -25,7 +26,14 @@ async function main() {
       continue;
     }
     if (!job) {
-      await sleep(pollMs);
+      // Rảnh việc nhập file thì tính lại SKU Monthly đang chờ (giá vốn mới / nút "Tính lại")
+      let recalculated = false;
+      try {
+        recalculated = await processNextSkuMonthlyRecalc();
+      } catch (error) {
+        console.error("[Accounting Import Worker] SKU Monthly recalc failed:", error);
+      }
+      if (!recalculated) await sleep(pollMs);
       continue;
     }
 

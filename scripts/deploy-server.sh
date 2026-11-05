@@ -4,6 +4,7 @@
 #  - Build lỗi thì DỪNG, KHÔNG reload app (app cũ vẫn chạy). Chỉ reload khi build thành công.
 #  - npm ci chỉ chạy khi package-lock.json đổi (npm ci xoá node_modules — chạy song song với build sẽ làm build lỗi).
 #  - Restart cả các worker chạy bằng tsx (chúng chỉ đọc code lúc khởi động).
+#  - Thư viện Python của scripts/*.py (requirements.txt) cài vào .python-deps khi file đó đổi (worker tính lại SKU Monthly dùng).
 #
 # Dùng: bash scripts/deploy-server.sh            (deploy origin/main)
 #       DEPLOY_SERVER=root@host bash scripts/deploy-server.sh
@@ -41,6 +42,11 @@ echo "📦 $(git log --oneline -1)"
 if ! git diff --quiet "$before" "$after" -- package-lock.json; then
   echo "📥 package-lock.json đổi → npm ci"
   npm ci
+fi
+
+if [ ! -d .python-deps ] || ! git diff --quiet "$before" "$after" -- requirements.txt; then
+  echo "🐍 Cài thư viện Python (requirements.txt) vào .python-deps"
+  python3 -m pip install --quiet --upgrade --target .python-deps -r requirements.txt
 fi
 
 npm run db:migrate

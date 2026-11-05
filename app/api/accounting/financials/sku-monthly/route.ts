@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listSkuMonthly } from "@/lib/accounting/sku-monthly-db";
+import { enqueueSkuMonthlyRecalc } from "@/lib/accounting/sku-monthly-recalc";
 
 export async function GET(req: NextRequest) {
   try {
@@ -49,44 +50,23 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { storeId, year, month, force = true } = body;
+    const { storeId, year, month } = body;
 
     if (!storeId || !year || !month) {
       return NextResponse.json({ error: "Thiếu storeId, year hoặc month" }, { status: 400 });
     }
 
     const period = `${year}-${String(month).padStart(2, "0")}`;
-    const path = await import("node:path");
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
-
-    const scriptPath = path.join(process.cwd(), "scripts", "ingest_monthly_from_raw.py");
-    const args = [
-      scriptPath,
-      "--store",
-      storeId,
-      "--month",
-      period,
-    ];
-    if (force) {
-      args.push("--force");
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      return NextResponse.json({ error: "Kỳ không hợp lệ" }, { status: 400 });
     }
 
-    // Thiết lập timeout 120 giây đề phòng script chạy lâu
-    const { stdout, stderr } = await execFileAsync("python3", args, {
-      timeout: 120000,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-
-    if (stderr && stderr.includes("Traceback")) {
-      console.error("[API SKU Monthly Recalculate Error stderr]:", stderr);
-    }
+    // Không chạy script trong web process: accounting-import-worker tải file thô từ R2 rồi tính lại
+    await enqueueSkuMonthlyRecalc(storeId, [period], "sku-monthly-button");
 
     return NextResponse.json({
       success: true,
-      message: `Đã tính toán và ghi nhận xong dữ liệu cho kỳ ${period}`,
-      output: stdout,
+      message: `Đã xếp hàng tính lại kỳ ${period} từ file thô trên R2 — khoảng 1–3 phút nữa tải lại trang để xem số mới`,
     });
   } catch (err: any) {
     console.error("[API SKU Monthly Recalculate] Error:", err);

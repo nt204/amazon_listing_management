@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
 import { syncMonthlyBaseCostFromInbound } from "@/lib/accounting/inventory-db";
+import { enqueueSkuMonthlyRecalcAfterBaseCost } from "@/lib/accounting/sku-monthly-recalc";
 
 // Tự tính lại Base Cost tháng khi lô hàng ở CHI TIẾT ĐI HÀNG thay đổi hoặc khi nạp báo cáo tồn FBA/AWD mới.
 // Trigger DB (migration 117) ghi "store cần tính lại từ tháng nào" vào accounting_base_cost_resync_queue;
@@ -74,6 +75,9 @@ async function processNext(): Promise<boolean> {
       months.push(p);
     }
     console.log(`[BaseCostResync] Store ${job.store_id}: đã tính lại ${months[0]} → ${months[months.length - 1]}`);
+    // Giá vốn mới phải vào cả SKU Monthly của các kỳ đã tính (accounting-import-worker tính lại từ file thô R2)
+    const queued = await enqueueSkuMonthlyRecalcAfterBaseCost(job.store_id, months);
+    if (queued.length) console.log(`[BaseCostResync] Store ${job.store_id}: xếp hàng tính lại SKU Monthly ${queued.join(", ")}`);
   } catch (error) {
     // Trả lại hàng đợi để lượt sau thử lại
     await sql`SELECT accounting_enqueue_base_cost_resync(${job.store_id}::uuid, ${job.from_period})`;
