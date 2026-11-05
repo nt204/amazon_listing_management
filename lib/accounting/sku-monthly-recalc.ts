@@ -51,7 +51,10 @@ export async function enqueueSkuMonthlyRecalc(storeId: string, periods: string[]
   }
 }
 
-/** Sau khi Base Cost các kỳ `periods` được tính lại: xếp hàng tính lại các kỳ đã có SKU Monthly. */
+/**
+ * Sau khi Base Cost các kỳ `periods` được tính lại: xếp hàng tính lại các kỳ đã có SKU Monthly tính từ file thô.
+ * Kỳ nạp từ file TỔNG KẾT (data_source = 'file', migration 134) giữ nguyên số kế toán chốt.
+ */
 export async function enqueueSkuMonthlyRecalcAfterBaseCost(storeId: string, periods: string[]) {
   if (process.env.SKU_MONTHLY_AUTO_RECALC === "off" || !periods.length) return [];
   const sql = await getDatabaseClient();
@@ -59,6 +62,7 @@ export async function enqueueSkuMonthlyRecalcAfterBaseCost(storeId: string, peri
     SELECT year::text || '-' || LPAD(month::text, 2, '0') AS period
     FROM accounting_monthly_store_summary
     WHERE store_id = ${storeId}
+      AND data_source IS DISTINCT FROM 'file'
       AND year::text || '-' || LPAD(month::text, 2, '0') = ANY(${periods})
   `;
   const existing = rows.map((row) => row.period);
@@ -142,6 +146,13 @@ async function recalcFromR2(job: RecalcJob, workDir: string) {
   if (!stdout.includes("Monthly ingestion completed successfully")) {
     throw new Error(`Script không báo hoàn tất: ${stdout.slice(-500)}`);
   }
+  // Kỳ giờ là số từ file thô (kể cả khi trước đó nạp từ file TỔNG KẾT)
+  const [year, month] = job.period.split("-").map(Number);
+  const sql = await getDatabaseClient();
+  await sql`
+    UPDATE accounting_monthly_store_summary SET data_source = NULL
+    WHERE store_id = ${job.store_id} AND year = ${year} AND month = ${month}
+  `;
   const netProfit = stdout.match(/Net Profit \(Store Total\)\s*:\s*\$\s*(-?[\d.]+)/)?.[1];
   console.log(`[SkuMonthlyRecalc] ${job.store_name} ${job.period}: đã tính lại từ R2 (Net Profit ${netProfit ?? "?"})`);
 }
