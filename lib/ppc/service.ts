@@ -1471,15 +1471,15 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     }
 
     const mergedSearchTerms = parsedSearchTerms.flatMap((item) => item.rows);
-    const mergedPerformance = parsedPerformance.flatMap((item) => item.rows);
-    const totalBatchRows = mergedSearchTerms.length + mergedPerformance.length;
+    // upsertPpcSnapshot xả mảng từng file Bulk sau khi nạp, nên giữ số dòng trước khi gọi.
+    const processed = [...parsedSearchTerms, ...parsedPerformance].map((item) => ({ object: item.object, rowCount: item.rows.length }));
+    const totalBatchRows = processed.reduce((sum, item) => sum + item.rowCount, 0);
     console.log(`[R2 Sync] Đang nạp ${totalBatchRows.toLocaleString()} dòng dữ liệu của ${storeName} vào PostgreSQL...`);
-    const saved = await upsertPpcSnapshot(scope, storeName, mergedSearchTerms, mergedPerformance);
+    const saved = await upsertPpcSnapshot(scope, storeName, mergedSearchTerms, parsedPerformance.map((item) => item.rows));
     console.log(`[R2 Sync] ✓ Đã lưu thành công snapshot ${storeName} (${(saved.searchTerms.inserted + saved.performance.inserted).toLocaleString()} mới, ${(saved.searchTerms.updated + saved.performance.updated).toLocaleString()} cập nhật).`);
-    totalParsed += mergedSearchTerms.length + mergedPerformance.length;
+    totalParsed += totalBatchRows;
     totalNew += saved.searchTerms.inserted + saved.performance.inserted;
     totalUpdated += saved.searchTerms.updated + saved.performance.updated;
-    const processed = [...parsedSearchTerms, ...parsedPerformance];
     filesProcessed += processed.length;
     for (const item of processed) {
       await recordPpcSyncLog(scope, {
@@ -1487,8 +1487,8 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
         fileName: item.object.Key || "",
         sourceVersion: r2Version(item.object),
         status: "SUCCESS",
-        count: item.rows.length,
-        message: `Snapshot PPC ${latestBatch} của ${storeName}; ${item.rows.length} dòng nguồn.`,
+        count: item.rowCount,
+        message: `Snapshot PPC ${latestBatch} của ${storeName}; ${item.rowCount} dòng nguồn.`,
       });
     }
   }
