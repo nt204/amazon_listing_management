@@ -5,18 +5,19 @@ from fbm_monthly_engine import ratios
 
 
 def upsert_fbm_month(conn, store_id, year, month, rows, summary, data_source=None):
-    """Thay toàn bộ dòng SKU của kỳ (SKU không còn trong bảng mã bị xóa) và tổng của store. Không commit."""
+    """Thay toàn bộ dòng sản phẩm (SKU + ASIN) của kỳ và tổng của store. Không commit."""
     cur = conn.cursor()
-    skus = [r['sku'] for r in rows]
-    cur.execute(
-        "DELETE FROM accounting_fbm_sku_monthly WHERE store_id = %s AND year = %s AND month = %s AND NOT (sku = ANY(%s))",
-        (store_id, year, month, skus),
-    )
+    # Sản phẩm (SKU + ASIN) không còn trong bảng mã thì xóa khỏi kỳ
+    keys = [f"{r['sku']}\x1f{r.get('asin') or ''}" for r in rows]
+    cur.execute("""
+        DELETE FROM accounting_fbm_sku_monthly
+        WHERE store_id = %s AND year = %s AND month = %s AND NOT ((sku || chr(31) || asin) = ANY(%s))
+    """, (store_id, year, month, keys))
     values = []
     for r in rows:
         x = ratios(r)
         values.append((
-            store_id, year, month, r['sku'], r.get('asin'), r.get('product_type'), r.get('status'),
+            store_id, year, month, r['sku'], r.get('asin') or '', r.get('product_type'), r.get('status'),
             r['revenue'], round(r['quantity']), r['ads_fee'], r['basecost'], r['amazon_fee_unrecognized'],
             r['amazon_fee_trans'], r['thue'], r['return_amount'], r['a_to_z_claim'], r['chargeback_refund'],
             r['profit'], r['revenue_ads'], x['tacos'], x['acos'], x['margin'], x['roi'], x['profit_per_item'],
@@ -30,8 +31,8 @@ def upsert_fbm_month(conn, store_id, year, month, rows, summary, data_source=Non
               amazon_fee_trans, thue, return_amount, a_to_z_claim, chargeback_refund,
               profit, revenue_ads, tacos, acos, margin, roi, profit_per_item, basecost_per_item
             ) VALUES %s
-            ON CONFLICT (store_id, year, month, sku) DO UPDATE SET
-              asin = EXCLUDED.asin, product_type = EXCLUDED.product_type, status = EXCLUDED.status,
+            ON CONFLICT (store_id, year, month, sku, asin) DO UPDATE SET
+              product_type = EXCLUDED.product_type, status = EXCLUDED.status,
               revenue = EXCLUDED.revenue, quantity = EXCLUDED.quantity, ads_fee = EXCLUDED.ads_fee,
               basecost = EXCLUDED.basecost, amazon_fee_unrecognized = EXCLUDED.amazon_fee_unrecognized,
               amazon_fee_trans = EXCLUDED.amazon_fee_trans, thue = EXCLUDED.thue,

@@ -18,7 +18,7 @@ import os
 import re
 from collections import defaultdict
 
-from fbm_monthly_engine import FBM_OWNER_FEE_STORES, compute_fbm_month, dedupe_rows, summarize
+from fbm_monthly_engine import FBM_OWNER_FEE_STORES, compute_fbm_products
 
 CURRENCY_RATES = {'USD': 1.0, 'CAD': 0.738, 'MXN': 0.056}
 
@@ -32,13 +32,15 @@ def load_fbm_catalog(conn, store_id):
           AND UPPER(TRIM(COALESCE(loai, 'FBM'))) = 'FBM'
         ORDER BY row_order NULLS LAST, created_at
     """, (store_id,))
+    # % Referal / Total cost theo SKU + ASIN (cùng SKU khác ASIN là 2 sản phẩm), khóa (SKU, '') = dòng đầu của SKU
     skus, referral, cost = [], {}, {}
     for sku, asin, product_type, status, pct, total_cost in cur.fetchall():
-        k = sku.strip().upper()
+        k, a = sku.strip().upper(), (asin or '').strip().upper()
         skus.append({'sku': sku.strip(), 'asin': (asin or '').strip() or None, 'product_type': product_type,
                      'status': status})
-        referral.setdefault(k, float(pct) if pct is not None else 0.15)
-        cost.setdefault(k, float(total_cost or 0))
+        for key in ((k, a), (k, '')):
+            referral.setdefault(key, float(pct) if pct is not None else 0.15)
+            cost.setdefault(key, float(total_cost or 0))
     return skus, referral, cost
 
 
@@ -98,6 +100,7 @@ def build_trans_rows(trans_file, later_files, month, month_order_ids, read_trans
                 'month': month if is_current else None,
                 'order_month': month if in_month else None,
                 'order_fee': trans_order_fee(r) if ttype == 'Order' else 0.0,
+                'order_id': oid,
             })
     return rows, settled
 
@@ -107,7 +110,8 @@ def build_basecost_rows(orders, month, referral, cost, pw, settled):
     for r in orders:
         oid = r.get('amazon-order-id', '').strip()
         sku = r.get('sku', '').strip()
-        k = sku.upper()
+        a = r.get('asin', '').strip().upper()
+        k = (sku.upper(), a) if (sku.upper(), a) in cost else (sku.upper(), '')
         currency = r.get('currency', '').strip()
         price, ship = _f(r.get('item-price')), _f(r.get('shipping-price'))
         qty = _f(r.get('quantity'))
@@ -124,7 +128,7 @@ def build_basecost_rows(orders, month, referral, cost, pw, settled):
         else:
             basecost = 0.0
         rows.append({
-            'month': month, 'sku': sku, 'sales': sales, 'qty': qty,
+            'month': month, 'sku': sku, 'asin': r.get('asin', '').strip(), 'order_id': oid, 'sales': sales, 'qty': qty,
             'amz_fee': -(sales * pct) if (currency and price != 0) else 0.0,
             'tax': -(sales * 0.01) if ghi_nhan else -(sales * pct * 0.10 + sales * 0.01),
             'basecost': basecost,
@@ -167,6 +171,5 @@ def compute_fbm_from_raw(conn, store_id, store_name, year, month, orders_file, t
     fbm_keys = {s['sku'].upper(): s['sku'] for s in skus}
     ads_rows = build_ads_rows(ads_file, month, fbm_keys, ads_tax_rate(conn, store_id))
     owner_fee = (store_name or '').strip().upper() in FBM_OWNER_FEE_STORES
-    rows, _ = compute_fbm_month(skus, basecost_rows, trans_rows, ads_rows, month, owner_fee)
-    rows, dropped = dedupe_rows(rows)
-    return rows, summarize(rows, month, owner_fee), dropped
+    rows, summary = compute_fbm_products(skus, basecost_rows, trans_rows, ads_rows, month, owner_fee)
+    return rows, summary

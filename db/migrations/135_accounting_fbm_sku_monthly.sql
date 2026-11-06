@@ -4,6 +4,7 @@
 -- kỳ có file thô tính từ R2 (scripts/ingest_monthly_from_raw.py → fbm_monthly_raw.py, data_source = NULL).
 -- Profit = Revenue + Ads + Basecost + Amazon fee (2 loại) + Thuế + Return + A-to-z + Chargeback;
 -- net_profit của store = tổng Profit SKU + owner_fee (phí chủ store, chỉ store có ô V2 trên tab — FASTPEACE).
+-- Mỗi dòng = 1 sản phẩm SKU + ASIN: cùng SKU khác ASIN là 2 sản phẩm (asin '' khi bảng mã không có ASIN).
 
 CREATE TABLE IF NOT EXISTS accounting_fbm_sku_monthly (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -11,7 +12,7 @@ CREATE TABLE IF NOT EXISTS accounting_fbm_sku_monthly (
   year INT NOT NULL,
   month INT NOT NULL CHECK (month BETWEEN 1 AND 12),
   sku TEXT NOT NULL,
-  asin TEXT,
+  asin TEXT NOT NULL DEFAULT '',
   product_type TEXT,
   status TEXT,
 
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS accounting_fbm_sku_monthly (
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_accounting_fbm_sku_monthly UNIQUE (store_id, year, month, sku)
+  CONSTRAINT uq_accounting_fbm_sku_monthly UNIQUE (store_id, year, month, sku, asin)
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounting_fbm_sku_monthly_store_ym

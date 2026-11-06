@@ -1241,9 +1241,7 @@ def ingest_fbm_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, ov
         print(f"ℹ️ {store_name} không có BẢNG MÃ FBM — bỏ qua SKU FBM-monthly")
         conn.close()
         return False
-    rows, summary, dropped = result
-    if dropped:
-        print(f"⚠️ FBM: bỏ {len(dropped)} dòng SKU lặp trong BẢNG MÃ FBM: {dropped[:5]}")
+    rows, summary = result
     print(f"📊 FBM {store_name} {period}: Revenue ${summary['revenue']:.2f} | Qty {summary['quantity']:.0f} | "
           f"SKU Profit ${summary['profit']:.2f} | Phí chủ store ${summary['owner_fee']:.2f}")
     print(f"FBM Net Profit (Store Total)   : ${summary['net_profit']:>14.2f}")

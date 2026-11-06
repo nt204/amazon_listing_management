@@ -28,7 +28,7 @@ function toItem(r: Row, storeId: string, year: number, month: number): SkuMonthl
   const profit = n(r.profit);
   const revenue_ads = n(r.revenue_ads);
   return {
-    id: str(r.id) || `${storeId}_${year}_${month}_${r.sku}`,
+    id: str(r.id) || `${storeId}_${year}_${month}_${r.sku}_${r.asin ?? ""}`,
     store_id: storeId,
     year,
     month,
@@ -154,11 +154,11 @@ export async function listFbmSkuMonthly(
   const isAllMonths = monthOpt === "all";
   const monthNum = typeof monthOpt === "number" ? monthOpt : 0;
 
-  // Mockup lấy từ BẢNG MÃ FBM (dòng đầu của SKU)
+  // Mỗi dòng = 1 sản phẩm SKU + ASIN. Mockup lấy từ BẢNG MÃ FBM (dòng cùng ASIN, không có thì dòng đầu của SKU)
   const rawItems = isAllMonths
     ? await sql<Row[]>`
-        SELECT sm.sku,
-          MAX(sm.asin) AS asin, MAX(sm.product_type) AS product_type, MAX(sm.status) AS status,
+        SELECT sm.sku, sm.asin,
+          MAX(sm.product_type) AS product_type, MAX(sm.status) AS status,
           MAX(m.mockup_url) AS mockup_url,
           SUM(sm.revenue) AS revenue, SUM(sm.quantity) AS quantity, SUM(sm.ads_fee) AS ads_fee,
           SUM(sm.basecost) AS basecost, SUM(sm.amazon_fee_unrecognized) AS amazon_fee_unrecognized,
@@ -170,10 +170,10 @@ export async function listFbmSkuMonthly(
         LEFT JOIN LATERAL (
           SELECT mockup_url FROM accounting_sku_master_fbm f
           WHERE f.store_id = sm.store_id AND UPPER(TRIM(f.sku)) = UPPER(sm.sku) AND f.deleted_at IS NULL
-          ORDER BY f.row_order NULLS LAST LIMIT 1
+          ORDER BY UPPER(TRIM(COALESCE(f.asin, ''))) = UPPER(sm.asin) DESC, f.row_order NULLS LAST LIMIT 1
         ) m ON true
         WHERE sm.store_id = ${storeId} AND sm.year = ${year}
-        GROUP BY sm.sku
+        GROUP BY sm.sku, sm.asin
       `
     : await sql<Row[]>`
         SELECT sm.*, m.mockup_url
@@ -181,7 +181,7 @@ export async function listFbmSkuMonthly(
         LEFT JOIN LATERAL (
           SELECT mockup_url FROM accounting_sku_master_fbm f
           WHERE f.store_id = sm.store_id AND UPPER(TRIM(f.sku)) = UPPER(sm.sku) AND f.deleted_at IS NULL
-          ORDER BY f.row_order NULLS LAST LIMIT 1
+          ORDER BY UPPER(TRIM(COALESCE(f.asin, ''))) = UPPER(sm.asin) DESC, f.row_order NULLS LAST LIMIT 1
         ) m ON true
         WHERE sm.store_id = ${storeId} AND sm.year = ${year} AND sm.month = ${monthNum}
       `;

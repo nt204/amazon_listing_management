@@ -18,6 +18,7 @@ Công thức tab "SKU FBM-monthly" của file TỔNG KẾT CUỐI THÁNG (dòng 
 
 Dùng chung cho 2 nguồn: tab thô của Google Sheet (load_fbm_monthly_from_sheet.py, tháng 1–8) và file thô Amazon
 (ingest_monthly_from_raw.py, tháng 9 trở đi) — mỗi nguồn tự dựng các dòng Basecost / Trans Rp / Ads tương đương.
+compute_fbm_month = đúng công thức tab (để đối chiếu); compute_fbm_products = số lưu DB, tách SKU theo ASIN.
 SUMIFS không phân biệt hoa thường và so khớp nguyên văn (kể cả ký tự \\r) nên khóa = UPPER, không TRIM.
 """
 from collections import defaultdict
@@ -140,23 +141,93 @@ def summarize(rows, month, owner_fee):
     return tot
 
 
-def dedupe_rows(rows):
+def _clean(v):
+    return '' if v is None else str(v).strip().upper()
+
+
+def compute_fbm_products(skus, basecost_rows, trans_rows, ads_rows, month, owner_fee=False):
     """
-    BẢNG MÃ có thể lặp SKU (cùng SKU 2 dòng, hoặc dính ký tự \\r cuối). DB lưu 1 dòng/SKU (đã TRIM):
-    giữ dòng đầu có số liệu, các dòng trùng còn lại bỏ đi. Trả về (rows_unique, dropped_skus).
+    Số lưu DB: mỗi sản phẩm = 1 cặp SKU + ASIN của BẢNG MÃ (cùng SKU khác ASIN là 2 sản phẩm; dòng trùng cả SKU lẫn
+    ASIN — kể cả dính ký tự \r — gộp làm 1). Khác tab sheet (SUMIFS chỉ theo SKU nên SKU 2 ASIN bị cộng 2 lần):
+      - dòng đơn (Basecost) theo SKU + ASIN của đơn; ASIN không có trong bảng mã → sản phẩm đầu tiên của SKU
+      - Trans Rp theo Order ID → sản phẩm của đơn; không có đơn → sản phẩm đầu tiên của SKU
+      - Ads, Revenue ads (chỉ biết SKU) → sản phẩm đầu tiên của SKU
+    basecost_rows cần thêm 'asin', 'order_id'; trans_rows cần thêm 'order_id'.
     """
-    out = {}
-    dropped = []
-    for r in rows:
-        k = str(r['sku']).strip().upper()
-        clean = {**r, 'sku': str(r['sku']).strip(), 'asin': (str(r['asin']).strip() if r.get('asin') else None)}
-        if k not in out:
-            out[k] = clean
+    products, first_of_sku = {}, {}
+    for s in skus:
+        sku_k, asin_k = _clean(s['sku']), _clean(s.get('asin'))
+        if not sku_k or (sku_k, asin_k) in products:
             continue
-        dropped.append(clean['sku'])
-        if not any(out[k][c] for c in SUM_COLS) and any(clean[c] for c in SUM_COLS):
-            out[k] = clean
-    return list(out.values()), dropped
+        products[(sku_k, asin_k)] = {
+            'sku': str(s['sku']).strip(), 'asin': str(s['asin']).strip() if s.get('asin') else None,
+            'product_type': s.get('product_type'), 'status': s.get('status'),
+        }
+        first_of_sku.setdefault(sku_k, (sku_k, asin_k))
+
+    acc = defaultdict(lambda: defaultdict(float))
+    order_product = {}
+
+    def product_of(sku, asin=None):
+        sku_k = _clean(sku)
+        pk = (sku_k, _clean(asin))
+        return pk if pk in products else first_of_sku.get(sku_k)
+
+    for r in basecost_rows:
+        pk = product_of(r['sku'], r.get('asin'))
+        if pk is None:
+            continue
+        if r.get('order_id'):
+            order_product.setdefault((r['order_id'], pk[0]), pk)
+        if r['month'] != month:
+            continue
+        a = acc[pk]
+        a['revenue'] += r['sales']
+        a['quantity'] += r['qty']
+        a['basecost'] += r['basecost']
+        a['tax_order'] += r['tax']
+        if r['trans_status'] == 'chưa ghi nhận':
+            a['amazon_fee_unrecognized'] += r['amz_fee']
+    for r in trans_rows:
+        pk = order_product.get((r.get('order_id'), _clean(r['sku']))) or first_of_sku.get(_clean(r['sku']))
+        if pk is None:
+            continue
+        a = acc[pk]
+        if r['type'] == 'Order' and r['order_month'] == month:
+            a['amazon_fee_trans'] += r['order_fee']
+        if r['month'] == month:
+            if r['type'] == 'Refund':
+                a['return_amount'] += r['total']
+            elif r['type'] == 'A-to-z Guarantee Claim':
+                a['a_to_z_claim'] += r['total']
+            elif r['type'] == 'Chargeback Refund':
+                a['chargeback_refund'] += r['total']
+    month_ads = [r for r in ads_rows if r['month'] == month]
+    for r in month_ads:
+        pk = first_of_sku.get(_clean(r['sku']))
+        if pk is not None:
+            acc[pk]['ads_fee'] -= r['spend']
+            acc[pk]['ads_tax'] += r['tax']
+    for sku_k, pk in first_of_sku.items():
+        acc[pk]['revenue_ads'] = sum(r['sales'] for r in month_ads if sku_k in _clean(r['portfolio']))
+
+    rows = []
+    for pk, info in products.items():
+        a = acc.get(pk, {})
+        g = lambda name: a.get(name, 0.0)
+        row = {
+            **info,
+            'revenue': g('revenue'), 'quantity': g('quantity'), 'ads_fee': g('ads_fee'), 'basecost': g('basecost'),
+            'amazon_fee_unrecognized': g('amazon_fee_unrecognized'), 'amazon_fee_trans': g('amazon_fee_trans'),
+            'thue': -g('ads_tax') + g('tax_order'), 'return_amount': g('return_amount'),
+            'a_to_z_claim': g('a_to_z_claim'), 'chargeback_refund': g('chargeback_refund'),
+            'revenue_ads': g('revenue_ads'),
+        }
+        row['profit'] = row['revenue'] + sum(row[c] for c in (
+            'ads_fee', 'basecost', 'amazon_fee_unrecognized', 'amazon_fee_trans', 'thue',
+            'return_amount', 'a_to_z_claim', 'chargeback_refund'))
+        rows.append(row)
+    return rows, summarize(rows, month, owner_fee)
 
 
 def ratios(row):

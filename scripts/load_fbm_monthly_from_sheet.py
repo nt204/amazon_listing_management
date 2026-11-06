@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fbm_monthly_engine import (  # noqa: E402
-    FBM_OWNER_FEE_STORES, compute_fbm_month, dedupe_rows, month_of, num, summarize,
+    FBM_OWNER_FEE_STORES, compute_fbm_month, compute_fbm_products, month_of, num,
 )
 from google_sheets_client import parse_spreadsheet_id, read_columns, read_ranges  # noqa: E402
 
@@ -45,16 +45,16 @@ def load_env_file(path):
 
 def read_sources(sid):
     print('📥 Đọc tab Basecost / Trans Rp / Ads / BẢNG MÃ...')
-    basecost = read_columns(sid, 'Basecost', ['A', 'D', 'E', 'L', 'M', 'P', 'Q', 'U', 'X'])
-    trans = read_columns(sid, 'Trans Rp', ['C', 'E', 'AD', 'AE', 'AI', 'AM'])
+    basecost = read_columns(sid, 'Basecost', ['A', 'D', 'E', 'L', 'M', 'P', 'Q', 'U', 'X', 'B'])
+    trans = read_columns(sid, 'Trans Rp', ['C', 'E', 'AD', 'AE', 'AI', 'AM', 'D'])
     ads = read_columns(sid, 'Ads', ['A', 'B', 'L', 'O', 'X', 'AD'])
     bangma = read_columns(sid, 'BẢNG MÃ', ['A', 'B', 'D', 'E', 'J', 'M'])
     return (
-        [{'month': month_of(r[0]), 'sku': r[1], 'sales': num(r[3]), 'qty': num(r[4]),
+        [{'month': month_of(r[0]), 'sku': r[1], 'asin': r[2], 'order_id': r[9], 'sales': num(r[3]), 'qty': num(r[4]),
           'amz_fee': num(r[5]), 'tax': num(r[6]), 'basecost': num(r[7]),
           'trans_status': str(r[8] or '').lower()} for r in basecost[1:]],
         [{'type': str(r[0] or ''), 'sku': r[1], 'total': num(r[2]), 'month': month_of(r[3]),
-          'order_month': month_of(r[4]), 'order_fee': num(r[5])} for r in trans[1:]],
+          'order_month': month_of(r[4]), 'order_fee': num(r[5]), 'order_id': r[6]} for r in trans[1:]],
         [{'month': month_of(r[0]), 'portfolio': r[1], 'spend': num(r[2]), 'sales': num(r[3]), 'sku': r[4],
           'tax': num(r[5])} for r in ads[1:]],
         bangma,
@@ -68,7 +68,7 @@ def fbm_skus(bangma, store):
         if str(r[0] or '').strip().upper() == store and r[2] not in (None, ''):
             first_asin.setdefault(str(r[2]).upper(), r[3])
     return [
-        {'sku': r[2], 'asin': first_asin.get(str(r[2]).upper()), 'product_type': r[1], 'status': r[5]}
+        {'sku': r[2], 'asin': first_asin.get(str(r[2]).upper()), 'row_asin': r[3], 'product_type': r[1], 'status': r[5]}
         for r in bangma[1:]
         if str(r[0] or '').strip().upper() == store and str(r[4] or '').strip().upper() == 'FBM' and r[2] not in (None, '')
     ]
@@ -148,12 +148,10 @@ def main():
             raise SystemExit(f'Không có store {store} trong DB')
         store_id = found[0]
 
+    # Lưu DB theo sản phẩm SKU + ASIN của chính dòng BẢNG MÃ (cột ASIN trên tab là XLOOKUP dòng đầu của SKU)
+    products = [{**s, 'asin': s['row_asin']} for s in skus]
     for month in months:
-        rows, summary = compute_fbm_month(skus, *sources[:3], month, owner_fee)
-        unique, dropped = dedupe_rows(rows)
-        if dropped:
-            print(f'   ⚠️ Tháng {month}: bỏ {len(dropped)} dòng SKU lặp trong BẢNG MÃ: {dropped[:5]}')
-        summary = summarize(unique, month, owner_fee)
+        unique, summary = compute_fbm_products(products, *sources[:3], month, owner_fee)
         print(f'📊 {store} {YEAR}-{month:02d}: Revenue {summary["revenue"]:.2f} | Qty {summary["quantity"]:.0f} | '
               f'Profit {summary["profit"]:.2f} | Phí chủ {summary["owner_fee"]:.2f} | Net {summary["net_profit"]:.2f} | '
               f'{summary["active_sku_count"]} SKU có phát sinh')
