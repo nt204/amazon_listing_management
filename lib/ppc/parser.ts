@@ -659,7 +659,8 @@ export async function cleanupOrphanedPpcBulkTempDirs(maxAgeMs = ORPHANED_PPC_BUL
   const entries = await fs.readdir(tmpDir, { withFileTypes: true }).catch(() => []);
   let removed = 0;
   for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith("ppc-bulk-")) continue;
+    // ppc-r2-bulk-*: file Bulk tải từ R2 chờ parse stream (lib/ppc/service.ts syncPpcReportsFromR2).
+    if (!entry.isDirectory() || !/^ppc-(r2-)?bulk-/.test(entry.name)) continue;
     const fullPath = path.join(tmpDir, entry.name);
     try {
       const stats = await fs.stat(fullPath);

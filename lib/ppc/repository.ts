@@ -1948,6 +1948,88 @@ export async function refreshPpcSnapshotSummary(
   return options.transaction ? operation(options.transaction) : sql.begin(operation);
 }
 
+/** Ghi một lô (≤ 500 dòng, đã dedupe theo identity) vào ppc_performance_facts. */
+async function upsertPerformanceFactChunk(
+  transaction: PpcTransaction,
+  storeId: string,
+  rows: PpcPerformanceRow[],
+): Promise<{ inserted: number; updated: number }> {
+  const chunk = rows.map((row) => ({
+    store_id: storeId,
+    snapshot_date: safeSqlString(row.snapshotDate),
+    report_start_date: safeSqlString(row.reportStartDate),
+    report_end_date: safeSqlString(row.reportEndDate),
+    report_granularity: safeSqlString(row.reportGranularity),
+    ad_type: safeSqlString(row.adType),
+    grain: safeSqlString(row.grain),
+    identity_key: performanceIdentity(row),
+    entity_id: safeSqlString(row.entityId),
+    campaign_id: safeSqlString(row.campaignId),
+    campaign_name: safeSqlString(row.campaignName),
+    ad_group_id: safeSqlString(row.adGroupId),
+    ad_group_name: safeSqlString(row.adGroupName),
+    target_id: safeSqlString(row.targetId),
+    target_expression: safeSqlString(row.targetExpression),
+    match_type: safeSqlString(row.matchType),
+    portfolio_name: safeSqlString(row.portfolioName),
+    sku: safeSqlString(row.sku),
+    asin: safeSqlString(row.asin),
+    state: safeSqlString(row.state),
+    campaign_state: safeSqlString(row.campaignState),
+    ad_group_state: safeSqlString(row.adGroupState),
+    targeting_type: safeSqlString(row.targetingType),
+    bidding_strategy: safeSqlString(row.biddingStrategy),
+    placement: safeSqlString(row.placement),
+    daily_budget: row.dailyBudget,
+    bid: row.bid,
+    placement_adjustment: row.placementAdjustment,
+    is_negative: row.isNegative,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    spend: row.spend,
+    sales: row.sales,
+    orders: row.orders,
+    units: row.units,
+  }));
+  const saved = await transaction<{ inserted: boolean }[]>`
+    INSERT INTO ppc_performance_facts ${transaction(chunk)}
+    ON CONFLICT (store_id, snapshot_date, report_start_date, report_end_date, ad_type, grain, identity_key)
+    DO UPDATE SET
+      entity_id = EXCLUDED.entity_id,
+      campaign_id = EXCLUDED.campaign_id,
+      campaign_name = EXCLUDED.campaign_name,
+      ad_group_id = EXCLUDED.ad_group_id,
+      ad_group_name = EXCLUDED.ad_group_name,
+      target_id = EXCLUDED.target_id,
+      target_expression = EXCLUDED.target_expression,
+      match_type = EXCLUDED.match_type,
+      portfolio_name = EXCLUDED.portfolio_name,
+      sku = EXCLUDED.sku,
+      asin = EXCLUDED.asin,
+      state = EXCLUDED.state,
+      campaign_state = EXCLUDED.campaign_state,
+      ad_group_state = EXCLUDED.ad_group_state,
+      targeting_type = EXCLUDED.targeting_type,
+      bidding_strategy = EXCLUDED.bidding_strategy,
+      placement = EXCLUDED.placement,
+      daily_budget = EXCLUDED.daily_budget,
+      bid = EXCLUDED.bid,
+      placement_adjustment = EXCLUDED.placement_adjustment,
+      is_negative = EXCLUDED.is_negative,
+      impressions = EXCLUDED.impressions,
+      clicks = EXCLUDED.clicks,
+      spend = EXCLUDED.spend,
+      sales = EXCLUDED.sales,
+      orders = EXCLUDED.orders,
+      units = EXCLUDED.units,
+      updated_at = NOW()
+    RETURNING (xmax = 0) AS inserted
+  `;
+  const inserted = saved.filter((row: { inserted: boolean }) => row.inserted).length;
+  const updated = saved.filter((row: { inserted: boolean }) => !row.inserted).length;
+  return { inserted, updated };
+}
+
 export async function upsertPpcPerformance(
   scope: DataScope,
   storeName: string,
@@ -1990,79 +2072,9 @@ export async function upsertPpcPerformance(
     let inserted = 0;
     let updated = 0;
     for (let start = 0; start < uniqueRows.length; start += 500) {
-      const chunk = uniqueRows.slice(start, start + 500).map((row) => ({
-        store_id: storeId,
-        snapshot_date: safeSqlString(row.snapshotDate),
-        report_start_date: safeSqlString(row.reportStartDate),
-        report_end_date: safeSqlString(row.reportEndDate),
-        report_granularity: safeSqlString(row.reportGranularity),
-        ad_type: safeSqlString(row.adType),
-        grain: safeSqlString(row.grain),
-        identity_key: performanceIdentity(row),
-        entity_id: safeSqlString(row.entityId),
-        campaign_id: safeSqlString(row.campaignId),
-        campaign_name: safeSqlString(row.campaignName),
-        ad_group_id: safeSqlString(row.adGroupId),
-        ad_group_name: safeSqlString(row.adGroupName),
-        target_id: safeSqlString(row.targetId),
-        target_expression: safeSqlString(row.targetExpression),
-        match_type: safeSqlString(row.matchType),
-        portfolio_name: safeSqlString(row.portfolioName),
-        sku: safeSqlString(row.sku),
-        asin: safeSqlString(row.asin),
-        state: safeSqlString(row.state),
-        campaign_state: safeSqlString(row.campaignState),
-        ad_group_state: safeSqlString(row.adGroupState),
-        targeting_type: safeSqlString(row.targetingType),
-        bidding_strategy: safeSqlString(row.biddingStrategy),
-        placement: safeSqlString(row.placement),
-        daily_budget: row.dailyBudget,
-        bid: row.bid,
-        placement_adjustment: row.placementAdjustment,
-        is_negative: row.isNegative,
-        impressions: row.impressions,
-        clicks: row.clicks,
-        spend: row.spend,
-        sales: row.sales,
-        orders: row.orders,
-        units: row.units,
-      }));
-      const saved = await transaction<{ inserted: boolean }[]>`
-        INSERT INTO ppc_performance_facts ${transaction(chunk)}
-        ON CONFLICT (store_id, snapshot_date, report_start_date, report_end_date, ad_type, grain, identity_key)
-        DO UPDATE SET
-          entity_id = EXCLUDED.entity_id,
-          campaign_id = EXCLUDED.campaign_id,
-          campaign_name = EXCLUDED.campaign_name,
-          ad_group_id = EXCLUDED.ad_group_id,
-          ad_group_name = EXCLUDED.ad_group_name,
-          target_id = EXCLUDED.target_id,
-          target_expression = EXCLUDED.target_expression,
-          match_type = EXCLUDED.match_type,
-          portfolio_name = EXCLUDED.portfolio_name,
-          sku = EXCLUDED.sku,
-          asin = EXCLUDED.asin,
-          state = EXCLUDED.state,
-          campaign_state = EXCLUDED.campaign_state,
-          ad_group_state = EXCLUDED.ad_group_state,
-          targeting_type = EXCLUDED.targeting_type,
-          bidding_strategy = EXCLUDED.bidding_strategy,
-          placement = EXCLUDED.placement,
-          daily_budget = EXCLUDED.daily_budget,
-          bid = EXCLUDED.bid,
-          placement_adjustment = EXCLUDED.placement_adjustment,
-          is_negative = EXCLUDED.is_negative,
-          impressions = EXCLUDED.impressions,
-          clicks = EXCLUDED.clicks,
-          spend = EXCLUDED.spend,
-          sales = EXCLUDED.sales,
-          orders = EXCLUDED.orders,
-          units = EXCLUDED.units,
-          updated_at = NOW()
-        RETURNING (xmax = 0) AS inserted
-      `;
-      inserted += saved.filter((row: { inserted: boolean }) => row.inserted).length;
-      updated += saved.filter((row: { inserted: boolean }) => !row.inserted).length;
+      const saved = await upsertPerformanceFactChunk(transaction, storeId, uniqueRows.slice(start, start + 500));
+      inserted += saved.inserted;
+      updated += saved.updated;
     }
 
     const scopes = new Set(uniqueRows.map((row) => [
@@ -2097,17 +2109,68 @@ export async function upsertPpcSnapshot(
       replaceExisting: true,
       transaction,
     });
-    // Bulk đi qua bảng staging theo từng lô nhỏ: giữ cả batch FASTPEACE (4,2 triệu dòng)
-    // trong RAM làm worker vượt heap rồi bị OOM killer của VPS giết (2026-11-06).
-    const saved = await ingestPpcPerformanceStream(scope, storeName, streamPerformance, {
-      replaceExisting: true,
-      transaction,
-    });
-    return {
-      searchTerms: searchResult,
-      performance: { inserted: saved.inserted, updated: saved.updated, deduplicated: saved.deduplicated },
-    };
+    const performanceResult = await streamPpcPerformanceIntoFacts(scope, storeName, streamPerformance, transaction);
+    return { searchTerms: searchResult, performance: performanceResult };
   });
+}
+
+/**
+ * Nạp Bulk dạng stream thẳng vào ppc_performance_facts theo lô 500 dòng. Giữ cả batch FASTPEACE
+ * (4,2 triệu dòng) trong RAM làm worker bị OOM killer giết; còn đi qua bảng staging + DISTINCT ON
+ * thì ghi đĩa gần 3 lần và làm đầy đĩa VPS (2026-11-06). Mỗi phạm vi (khoảng ngày + ad type) chỉ đến
+ * từ một file nên xoá dữ liệu cũ của phạm vi khi gặp nó lần đầu; summary làm mới một lần ở cuối.
+ */
+async function streamPpcPerformanceIntoFacts(
+  scope: DataScope,
+  storeName: string,
+  streamPerformance: (pushBatch: (rows: PpcPerformanceRow[]) => Promise<void>) => Promise<number>,
+  transaction: PpcTransaction,
+): Promise<{ inserted: number; updated: number; deduplicated: number }> {
+  const teamId = (scope as any)?.teamId || "default";
+  const storeRows = await transaction<StoreRow[]>`
+    INSERT INTO ppc_stores (team_id, name)
+    VALUES (${teamId}, ${storeName})
+    ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
+    RETURNING id, name, marketplace, target_acos, daily_budget, status
+  `;
+  const storeId = storeRows[0].id;
+  const replacedScopes = new Set<string>();
+  const summaryScopes = new Set<string>();
+  let emitted = 0;
+  let inserted = 0;
+  let updated = 0;
+
+  await streamPerformance(async (rows) => {
+    emitted += rows.length;
+    const uniqueByKey = new Map<string, PpcPerformanceRow>();
+    for (const row of rows) {
+      uniqueByKey.set([row.snapshotDate, row.reportStartDate, row.reportEndDate, row.adType, row.grain, performanceIdentity(row)].join(":::"), row);
+      summaryScopes.add([row.snapshotDate, row.reportStartDate, row.reportEndDate].join(":::"));
+      const replaceKey = [row.snapshotDate, row.reportStartDate, row.reportEndDate, row.adType].join(":::");
+      if (!replacedScopes.has(replaceKey)) {
+        replacedScopes.add(replaceKey);
+        await transaction`
+          DELETE FROM ppc_performance_facts
+          WHERE store_id = ${storeId} AND snapshot_date = ${row.snapshotDate}
+            AND report_start_date = ${row.reportStartDate} AND report_end_date = ${row.reportEndDate}
+            AND ad_type = ${row.adType}
+        `;
+      }
+    }
+    const uniqueRows = Array.from(uniqueByKey.values());
+    for (let start = 0; start < uniqueRows.length; start += 500) {
+      const saved = await upsertPerformanceFactChunk(transaction, storeId, uniqueRows.slice(start, start + 500));
+      inserted += saved.inserted;
+      updated += saved.updated;
+    }
+  });
+
+  for (const item of summaryScopes) {
+    const [snapshotDate, startDate, endDate] = item.split(":::");
+    await refreshPpcSnapshotSummary(scope, storeId, snapshotDate, startDate, endDate, { transaction });
+  }
+  await refreshPpcDailySummary(scope, storeId, transaction);
+  return { inserted, updated, deduplicated: Math.max(0, emitted - inserted - updated) };
 }
 
 export async function ingestPpcPerformanceStream(
