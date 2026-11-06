@@ -2,7 +2,8 @@
 // Search volume (Helium 10) cho Target / Search Term:
 // - Cerebro theo nhóm ASIN đang chạy ads → mỗi lượt trả hàng trăm keyword kèm volume (nguồn chính)
 // - Magnet theo từng keyword để lấp các keyword tốn spend nhất còn thiếu
-// Volume được cache trong keyword_search_volumes, mỗi keyword chỉ làm mới sau SEARCH_VOLUME_TTL_DAYS.
+// Volume được cache trong keyword_search_volumes, làm mới theo tháng lịch: dữ liệu lấy trước ngày 1 của tháng này
+// coi như cũ → lượt chạy đầu tháng quét lại toàn bộ (khớp chu kỳ hạn mức Cerebro/Magnet, cũng tính theo tháng lịch).
 import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import {
@@ -20,7 +21,6 @@ const envInt = (name: string, fallback: number) => {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 };
 
-const SEARCH_VOLUME_TTL_DAYS = envInt("PPC_SEARCH_VOLUME_TTL_DAYS", 30);
 const LOOKBACK_DAYS = envInt("PPC_SEARCH_VOLUME_LOOKBACK_DAYS", 60);
 const CEREBRO_ASINS_PER_CALL = Math.max(1, envInt("PPC_SEARCH_VOLUME_ASINS_PER_CALL", 10));
 const CEREBRO_ROWS_PER_CALL = 1000;
@@ -33,7 +33,7 @@ const MAGNET_PER_RUN = envInt("PPC_SEARCH_VOLUME_MAGNET_PER_RUN", 25);
 const CALL_DELAY_MS = envInt("PPC_SEARCH_VOLUME_CALL_DELAY_MS", 1500);
 // Không có heartbeat trong khoảng này → coi như process đã chết (1 lượt Cerebro chậm nhất ~4 phút)
 const STALE_RUN_MINUTES = envInt("PPC_SEARCH_VOLUME_STALE_MINUTES", 15);
-// ASIN lỗi được thử lại tối đa bấy nhiêu lần trong 1 chu kỳ TTL (lô nhỏ dần 10 → 5 → 2 → 1)
+// ASIN lỗi được thử lại tối đa bấy nhiêu lần trong 1 tháng (lô nhỏ dần 10 → 5 → 2 → 1)
 const MAX_ASIN_ATTEMPTS = 4;
 const MAX_CONSECUTIVE_FAILURES = 5;
 
@@ -166,7 +166,7 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
 // ---------------------------------------------------------------------------
 // Sync job
 // ---------------------------------------------------------------------------
-// Checkpoint theo từng ASIN (keyword_search_volume_asin_queries): mỗi lượt chỉ quét ASIN chưa xong trong TTL,
+// Checkpoint theo từng ASIN (keyword_search_volume_asin_queries): mỗi lượt chỉ quét ASIN chưa xong trong tháng này,
 // nên dừng / hết quota / server restart đều chạy tiếp được từ chỗ cũ mà không tốn lại lượt Cerebro.
 
 export type SearchVolumeSyncRun = {
@@ -293,7 +293,7 @@ async function findFreshKeywords(sql: Sql, keywords: string[], marketplace: stri
       SELECT keyword_norm FROM keyword_search_volumes
       WHERE marketplace = ${marketplace}
         AND keyword_norm IN ${sql(chunk)}
-        AND fetched_at >= NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS})
+        AND fetched_at >= date_trunc('month', NOW())
     `;
     for (const row of rows) fresh.add(row.keyword_norm);
   }
@@ -306,7 +306,7 @@ type AsinQueueRow = { asin: string; attempts: number; done: boolean; failed: boo
  * ASIN đang chạy ads (không paused/archived) VÀ có tiêu tiền trong LOOKBACK_DAYS ngày, gộp mọi store cùng marketplace,
  * xếp theo spend trong khoảng đó (ASIN đang tiêu nhiều nhất quét trước, không phụ thuộc store).
  * Không tính spend toàn lịch sử: ASIN từng tiêu nhiều nhưng nay gần như không chạy sẽ chiếm hạn mức Cerebro.
- * done = đã quét thành công trong TTL, hoặc đã thử đủ MAX_ASIN_ATTEMPTS lần mà vẫn lỗi (bỏ qua tới hết TTL).
+ * done = đã quét thành công trong tháng này, hoặc đã thử đủ MAX_ASIN_ATTEMPTS lần mà vẫn lỗi (bỏ qua tới tháng sau).
  */
 async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) {
   return sql<AsinQueueRow[]>`
@@ -324,7 +324,7 @@ async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) 
       HAVING SUM(p.spend) > 0
     ), checkpoint AS (
       SELECT a.asin, a.spend, a.last_date, q.status,
-        COALESCE(q.queried_at >= NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS}), false) AS fresh,
+        COALESCE(q.queried_at >= date_trunc('month', NOW()), false) AS fresh,
         COALESCE(q.attempts, 0) AS attempts
       FROM active a
       LEFT JOIN keyword_search_volume_asin_queries q ON q.marketplace = ${marketplace} AND q.asin = a.asin
@@ -372,7 +372,7 @@ async function saveAsinCheckpoint(
       last_error = EXCLUDED.last_error,
       attempts = CASE
         WHEN EXCLUDED.status = 'ok' THEN 0
-        WHEN keyword_search_volume_asin_queries.queried_at < NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS}) THEN 1
+        WHEN keyword_search_volume_asin_queries.queried_at < date_trunc('month', NOW()) THEN 1
         ELSE keyword_search_volume_asin_queries.attempts + 1
       END
   `;
@@ -732,7 +732,7 @@ async function runSearchVolumeSync(
         keywordsUpserted += saved.length;
         for (const item of saved) missing.delete(marketKey(marketplace, item));
         if (missing.has(key)) {
-          // Helium 10 không có volume cho keyword này → lưu null để không tra lại trong TTL
+          // Helium 10 không có volume cho keyword này → lưu null để không tra lại trong tháng
           await upsertVolumes(sql, marketplace, "helium10_magnet_miss", [{
             keyword, search_volume: null, iq_score: null, cpc: null, organic_rank: null, sponsored_rank: null,
             competing_products: null, cpr: null, title_density: null,
@@ -760,7 +760,7 @@ async function runSearchVolumeSync(
   await tick(summary, { status: stopReason ? "interrupted" : "completed" });
 }
 
-/** Số liệu thật tính từ DB (keyword còn hạn TTL + checkpoint ASIN + ASIN có rank), cộng dồn qua các marketplace. */
+/** Số liệu thật tính từ DB (keyword đã lấy trong tháng + checkpoint ASIN + ASIN có rank), cộng dồn qua các marketplace. */
 async function computeCoverage(sql: Sql, stores: Array<{ id: string; marketplace: string }>) {
   const coverage = { keywords: 0, withVolume: 0, missing: 0 };
   const asins = { total: 0, done: 0, pending: 0, failed: 0, withRank: 0 };
