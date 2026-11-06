@@ -242,6 +242,22 @@ async function resolveStores(sql: Sql, teamId: string, storeName: string) {
 const runScopeStoreId = (storeName: string, stores: Array<{ id: string }>) =>
   storeName.toUpperCase() === "ALL" ? null : stores[0].id;
 
+/** Gom store theo marketplace: ASIN / keyword phải tra đúng chợ của store (ALL có thể lẫn US, UK, DE...). */
+function groupStoresByMarketplace(stores: Array<{ id: string; marketplace: string }>) {
+  const groups = new Map<Marketplace, string[]>();
+  for (const store of stores) {
+    const marketplace = (store.marketplace || "US").toUpperCase() as Marketplace;
+    groups.set(marketplace, [...(groups.get(marketplace) || []), store.id]);
+  }
+  return groups;
+}
+
+const marketKey = (marketplace: string, keyword: string) => `${marketplace}|${keyword}`;
+function splitMarketKey(key: string) {
+  const sep = key.indexOf("|");
+  return { marketplace: key.slice(0, sep) as Marketplace, keyword: key.slice(sep + 1) };
+}
+
 /** Keyword (target dạng keyword + search term) của các store, xếp theo spend để ưu tiên lấp volume. */
 async function collectKeywordSpend(sql: Sql, storeIds: string[]) {
   const rows = await sql<Array<{ keyword: string; spend: string }>>`
@@ -287,7 +303,9 @@ async function findFreshKeywords(sql: Sql, keywords: string[], marketplace: stri
 type AsinQueueRow = { asin: string; attempts: number; done: boolean; failed: boolean };
 
 /**
- * Toàn bộ ASIN đang chạy ads (không paused/archived) của các store kèm trạng thái checkpoint, xếp theo spend.
+ * ASIN đang chạy ads (không paused/archived) VÀ có tiêu tiền trong LOOKBACK_DAYS ngày, gộp mọi store cùng marketplace,
+ * xếp theo spend trong khoảng đó (ASIN đang tiêu nhiều nhất quét trước, không phụ thuộc store).
+ * Không tính spend toàn lịch sử: ASIN từng tiêu nhiều nhưng nay gần như không chạy sẽ chiếm hạn mức Cerebro.
  * done = đã quét thành công trong TTL, hoặc đã thử đủ MAX_ASIN_ATTEMPTS lần mà vẫn lỗi (bỏ qua tới hết TTL).
  */
 async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) {
@@ -298,10 +316,12 @@ async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) 
       WHERE p.store_id IN ${sql(storeIds)}
         AND p.grain = 'PRODUCT'
         AND p.asin ~* '^[A-Z0-9]{10}$'
+        AND p.report_end_date >= CURRENT_DATE - ${LOOKBACK_DAYS}::integer
         AND lower(COALESCE(p.state, 'enabled')) NOT IN ('paused', 'archived')
         AND lower(COALESCE(p.campaign_state, 'enabled')) NOT IN ('paused', 'archived')
         AND lower(COALESCE(p.ad_group_state, 'enabled')) NOT IN ('paused', 'archived')
       GROUP BY upper(p.asin)
+      HAVING SUM(p.spend) > 0
     ), checkpoint AS (
       SELECT a.asin, a.spend, a.last_date, q.status,
         COALESCE(q.queried_at >= NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS}), false) AS fresh,
@@ -593,19 +613,28 @@ async function runSearchVolumeSync(
   stores: Array<{ id: string; name: string; marketplace: string }>,
   usage: { cerebro: number; magnet: number },
 ) {
-  const marketplace = (stores[0].marketplace || "US").toUpperCase() as Marketplace;
-  const storeIds = stores.map((store) => store.id);
-
-  const spendByKeyword = await collectKeywordSpend(sql, storeIds);
-  const fresh = await findFreshKeywords(sql, Array.from(spendByKeyword.keys()), marketplace);
-  const missing = new Set(Array.from(spendByKeyword.keys()).filter((keyword) => !fresh.has(keyword)));
+  // Mỗi marketplace quét riêng (ASIN / keyword tra đúng chợ); store cùng marketplace gộp chung 1 hàng đợi theo spend.
+  // Keyword được khóa "marketplace|keyword" vì cùng một keyword ở 2 chợ là 2 volume khác nhau.
+  const spendByKeyword = new Map<string, number>();
+  const missing = new Set<string>();
+  const batches: Array<{ asins: string[]; attempts: number; marketplace: Marketplace }> = [];
+  let asinsTotal = 0;
+  let asinsDone = 0;
+  for (const [marketplace, storeIds] of groupStoresByMarketplace(stores)) {
+    const spend = await collectKeywordSpend(sql, storeIds);
+    const fresh = await findFreshKeywords(sql, Array.from(spend.keys()), marketplace);
+    for (const [keyword, value] of spend) {
+      const key = marketKey(marketplace, keyword);
+      spendByKeyword.set(key, value);
+      if (!fresh.has(keyword)) missing.add(key);
+    }
+    const queue = await loadAsinQueue(sql, storeIds, marketplace);
+    for (const batch of buildAsinBatches(queue)) batches.push({ ...batch, marketplace });
+    asinsTotal += queue.length;
+    asinsDone += queue.filter((row) => row.done).length;
+  }
   const missingBefore = missing.size;
   const keywordsTotal = spendByKeyword.size;
-
-  const queue = await loadAsinQueue(sql, storeIds, marketplace);
-  const batches = buildAsinBatches(queue);
-  const asinsTotal = queue.length;
-  let asinsDone = queue.filter((row) => row.done).length;
 
   let cerebroCalls = 0;
   let magnetCalls = 0;
@@ -653,6 +682,7 @@ async function runSearchVolumeSync(
     }
     if (!(await tick(`Cerebro lượt ${index + 1}/${batches.length} (${batch.asins.length} ASIN) · đã xong ${asinsDone}/${asinsTotal} ASIN`))) return;
 
+    const { marketplace } = batch;
     try {
       const result = await callHelium10(() => mineHelium10Keywords({
         asins: batch.asins,
@@ -664,7 +694,7 @@ async function runSearchVolumeSync(
       const saved = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
       await upsertRankings(sql, marketplace, batch.asins, result.keywords);
       keywordsUpserted += saved.length;
-      for (const keyword of saved) missing.delete(keyword);
+      for (const keyword of saved) missing.delete(marketKey(marketplace, keyword));
       await saveAsinCheckpoint(sql, marketplace, batch.asins, { ok: true, keywordCount: saved.length });
       asinsQueried += batch.asins.length;
       asinsDone += batch.asins.length;
@@ -692,21 +722,22 @@ async function runSearchVolumeSync(
     const gapKeywords = Array.from(missing)
       .sort((a, b) => (spendByKeyword.get(b) || 0) - (spendByKeyword.get(a) || 0))
       .slice(0, magnetAllowance);
-    for (const [index, keyword] of gapKeywords.entries()) {
+    for (const [index, key] of gapKeywords.entries()) {
+      const { marketplace, keyword } = splitMarketKey(key);
       if (!(await tick(`Magnet lượt ${index + 1}/${gapKeywords.length}: "${keyword}"...`))) return;
       try {
         const result = await callHelium10(() => mineHelium10Keywords({ keyword, marketplace, limit: 200, directApiOnly: true }));
         magnetCalls++;
         const saved = await upsertVolumes(sql, marketplace, "helium10_magnet", result.keywords);
         keywordsUpserted += saved.length;
-        for (const item of saved) missing.delete(item);
-        if (missing.has(keyword)) {
+        for (const item of saved) missing.delete(marketKey(marketplace, item));
+        if (missing.has(key)) {
           // Helium 10 không có volume cho keyword này → lưu null để không tra lại trong TTL
           await upsertVolumes(sql, marketplace, "helium10_magnet_miss", [{
             keyword, search_volume: null, iq_score: null, cpc: null, organic_rank: null, sponsored_rank: null,
             competing_products: null, cpr: null, title_density: null,
           }]);
-          missing.delete(keyword);
+          missing.delete(key);
         }
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
@@ -729,40 +760,39 @@ async function runSearchVolumeSync(
   await tick(summary, { status: stopReason ? "interrupted" : "completed" });
 }
 
-/** Số liệu thật tính từ DB (keyword còn hạn TTL + checkpoint ASIN + ASIN có rank). */
-async function computeCoverage(sql: Sql, storeIds: string[], marketplace: string) {
-  const spendByKeyword = await collectKeywordSpend(sql, storeIds);
-  const keywords = Array.from(spendByKeyword.keys());
-  const fresh = await findFreshKeywords(sql, keywords, marketplace);
-  const queue = await loadAsinQueue(sql, storeIds, marketplace);
+/** Số liệu thật tính từ DB (keyword còn hạn TTL + checkpoint ASIN + ASIN có rank), cộng dồn qua các marketplace. */
+async function computeCoverage(sql: Sql, stores: Array<{ id: string; marketplace: string }>) {
+  const coverage = { keywords: 0, withVolume: 0, missing: 0 };
+  const asins = { total: 0, done: 0, pending: 0, failed: 0, withRank: 0 };
+  for (const [marketplace, storeIds] of groupStoresByMarketplace(stores)) {
+    const keywords = Array.from((await collectKeywordSpend(sql, storeIds)).keys());
+    const fresh = await findFreshKeywords(sql, keywords, marketplace);
+    const queue = await loadAsinQueue(sql, storeIds, marketplace);
 
-  let withRank = 0;
-  const asinList = queue.map((row) => row.asin);
-  for (let i = 0; i < asinList.length; i += 5000) {
-    const [row] = await sql<Array<{ n: number }>>`
-      SELECT COUNT(DISTINCT asin)::integer AS n FROM ppc_asin_keyword_rankings
-      WHERE marketplace = ${marketplace} AND asin IN ${sql(asinList.slice(i, i + 5000))}
-    `;
-    withRank += row?.n || 0;
+    const asinList = queue.map((row) => row.asin);
+    for (let i = 0; i < asinList.length; i += 5000) {
+      const [row] = await sql<Array<{ n: number }>>`
+        SELECT COUNT(DISTINCT asin)::integer AS n FROM ppc_asin_keyword_rankings
+        WHERE marketplace = ${marketplace} AND asin IN ${sql(asinList.slice(i, i + 5000))}
+      `;
+      asins.withRank += row?.n || 0;
+    }
+
+    const done = queue.filter((row) => row.done).length;
+    coverage.keywords += keywords.length;
+    coverage.withVolume += fresh.size;
+    coverage.missing += keywords.length - fresh.size;
+    asins.total += queue.length;
+    asins.done += done;
+    asins.pending += queue.length - done;
+    asins.failed += queue.filter((row) => row.failed).length;
   }
-
-  const done = queue.filter((row) => row.done).length;
-  return {
-    coverage: { keywords: keywords.length, withVolume: fresh.size, missing: keywords.length - fresh.size } as SearchVolumeCoverage,
-    asins: {
-      total: queue.length,
-      done,
-      pending: queue.length - done,
-      failed: queue.filter((row) => row.failed).length,
-      withRank,
-    } as SearchVolumeAsinCoverage,
-  };
+  return { coverage: coverage as SearchVolumeCoverage, asins: asins as SearchVolumeAsinCoverage };
 }
 
 export async function getSearchVolumeStatus(teamId: string, storeName: string): Promise<SearchVolumeStatus> {
   const sql = await getDatabaseClient();
   const stores = await resolveStores(sql, teamId, storeName);
-  const marketplace = (stores[0].marketplace || "US").toUpperCase();
   const scopeStoreId = runScopeStoreId(storeName, stores);
 
   await markStaleRuns(sql);
@@ -804,9 +834,9 @@ export async function getSearchVolumeStatus(teamId: string, storeName: string): 
     try {
       const { getCachedOrFetch } = await import("@/lib/redis");
       // Khóa theo lượt chạy gần nhất → có lượt mới kết thúc là tính lại ngay
-      const cacheKey = `ppc:sv-coverage:v2:${teamId}:${storeName}:${latestRun?.id ?? "none"}:${latestRun?.finished_at ?? ""}`;
+      const cacheKey = `ppc:sv-coverage:v3:${teamId}:${storeName}:${latestRun?.id ?? "none"}:${latestRun?.finished_at ?? ""}`;
       ({ coverage, asins } = await getCachedOrFetch(cacheKey, 600, () =>
-        computeCoverage(sql, stores.map((store) => store.id), marketplace),
+        computeCoverage(sql, stores),
       ));
     } catch (error) {
       console.error("[Search Volume] Coverage failed:", error);

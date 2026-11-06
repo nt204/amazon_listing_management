@@ -1,20 +1,21 @@
 #!/bin/bash
 # scripts/ppc-search-volume-monthly.sh
-# Lên lịch chạy đồng bộ Search Volume tự động 1 tháng / 1 lần vào lúc 03:00 sáng ngày mùng 3 hàng tháng
-# Crontab:
-# 0 3 3 * * /Users/macbook/Desktop/Amazon\ Listing\ Management/scripts/ppc-search-volume-monthly.sh >> /Users/macbook/Desktop/Amazon\ Listing\ Management/ppc-search-volume-monthly.log 2>&1
+# Đồng bộ Search Volume (Helium 10) cho TẤT CẢ store, 1 lần/tháng — chạy trên VPS production.
+# Crontab của root trên VPS (giờ server = +07):
+#   0 3 3 * * /bin/bash /var/www/amazon-listing/scripts/ppc-search-volume-monthly.sh >> /var/log/ppc_search_volume.log 2>&1
+# Chạy tiến trình riêng với ưu tiên CPU/IO thấp để không ảnh hưởng web app.
 
-set -e
+set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
-echo "=========================================================="
-echo "⏰ [$(date '+%Y-%m-%d %H:%M:%S')] Bắt đầu Job đồng bộ Search Volume hàng tháng (Ngày 03 hàng tháng)"
-echo "=========================================================="
+# Không chạy chồng nếu lượt trước còn đang chạy (lượt dài nhất ~vài giờ)
+exec 9>/tmp/ppc-search-volume-monthly.lock
+if ! flock -n 9; then
+  echo "[$(date '+%F %T')] Lượt trước vẫn đang chạy, bỏ qua."
+  exit 0
+fi
 
-# Chạy đồng bộ Search Volume cho các store
-npm run ppc:sync-search-volume
-npm run ppc:sync-search-volume:limima
-
-echo "✅ [$(date '+%Y-%m-%d %H:%M:%S')] Kết thúc Job thành công."
+nice -n 10 ionice -c3 npm run --silent ppc:sync-search-volume
