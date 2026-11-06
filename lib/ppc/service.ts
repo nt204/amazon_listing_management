@@ -27,6 +27,7 @@ import {
 import { generateMockSearchTerms, MOCK_STORES } from "./mock-data-generator";
 import {
   inferPpcReportCoverage,
+  type PpcReportCoverage,
   parseBulkWorkbook,
   parseLargeBulkWorkbook,
   streamLargeBulkWorkbookFile,
@@ -327,6 +328,34 @@ export function reportAdType(reference: string): PpcAdType {
   if (/(?:^|[\s_\-/])SB(?:[\s_\-.]|$)/i.test(reference) || /sponsored brands/i.test(reference)) return "SB";
   if (/(?:^|[\s_\-/])SD(?:[\s_\-.]|$)/i.test(reference) || /sponsored display/i.test(reference)) return "SD";
   return "UNKNOWN";
+}
+
+const EXPLICIT_RANGE_PATTERN = /(?:^|\D)20\d{2}[01]\d[0-3]\d-20\d{2}[01]\d[0-3]\d(?:\D|$)/;
+const PRESET_DAYS_PATTERN = /(?:^|[^0-9])(3|7|14|30|60|90)\s*days?(?:[^a-z]|$)/i;
+
+/**
+ * Khoảng ngày cho từng file Bulk của một batch. Từ 2026-11-06 Amazon đặt tên Bulk SP là
+ * bulk-<guid>.xlsx (không còn ngày), còn Bulk SB vẫn có <start>-<end>. Đoán từ ngày batch thì
+ * lệch 1 ngày (preset "30 Days" của Amazon dài 31 ngày) nên SP và SB rơi vào 2 snapshot khác
+ * nhau và SB biến mất khỏi dashboard; file thiếu ngày lấy khoảng của file cùng preset trong batch.
+ */
+export function alignBulkCoverage(fileNames: string[]): Map<string, PpcReportCoverage> {
+  const presetDays = (fileName: string) => fileName.split("/").pop()?.match(PRESET_DAYS_PATTERN)?.[1] ?? null;
+  const explicitByPreset = new Map<string, PpcReportCoverage>();
+  for (const fileName of fileNames) {
+    const preset = presetDays(fileName);
+    if (preset && EXPLICIT_RANGE_PATTERN.test(fileName.split("/").pop() || "")) {
+      explicitByPreset.set(preset, inferPpcReportCoverage(fileName));
+    }
+  }
+  const result = new Map<string, PpcReportCoverage>();
+  for (const fileName of fileNames) {
+    const preset = presetDays(fileName);
+    const sibling = preset ? explicitByPreset.get(preset) : undefined;
+    const hasOwnRange = EXPLICIT_RANGE_PATTERN.test(fileName.split("/").pop() || "");
+    result.set(fileName, !hasOwnRange && sibling ? sibling : inferPpcReportCoverage(fileName));
+  }
+  return result;
 }
 
 export async function parseBulkFile(
@@ -1480,11 +1509,12 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     const mergedSearchTerms = parsedSearchTerms.flatMap((item) => item.rows);
     console.log(`[R2 Sync] Đang nạp ${mergedSearchTerms.length.toLocaleString()} dòng Search Term + ${stagedBulkFiles.length} file Bulk của ${storeName} vào PostgreSQL...`);
     // Một transaction cho cả batch: file Bulk nào parse lỗi hoặc rỗng thì rollback toàn bộ.
+    const coverageByFile = alignBulkCoverage(stagedBulkFiles.map((item) => item.object.Key || ""));
     const saved = await upsertPpcSnapshot(scope, storeName, mergedSearchTerms, async (pushBatch) => {
       let total = 0;
       for (const [index, item] of stagedBulkFiles.entries()) {
         const fileName = item.object.Key || "";
-        const options = { ...inferPpcReportCoverage(fileName), adType: reportAdType(fileName) };
+        const options = { ...coverageByFile.get(fileName)!, adType: reportAdType(fileName) };
         item.rowCount = await streamLargeBulkWorkbookFile(item.path, storeName, options, pushBatch, 2000);
         if (!item.rowCount) throw new Error(`Không có entity Bulk hợp lệ: ${fileName.split("/").pop()}`);
         console.log(`[R2 Sync] Bulk ${index + 1}/${stagedBulkFiles.length} ✓ Đã đọc ${item.rowCount.toLocaleString()} dòng Bulk Operations.`);
