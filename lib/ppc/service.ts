@@ -2,6 +2,9 @@ import "server-only";
 
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
 import {
   adTypeBreakdownFromFacts,
@@ -1409,8 +1412,12 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
 
     const failuresBeforeStore = failures.length;
     const parsedSearchTerms: Array<{ object: (typeof selectedFiles)[number]; rows: PpcSearchTermRow[] }> = [];
-    const parsedPerformance: Array<{ object: (typeof selectedFiles)[number]; rows: Awaited<ReturnType<typeof parseBulkWorkbook>> }> = [];
+    // File Bulk chỉ được tải về đĩa ở bước này; parse dạng stream lúc nạp DB để không giữ
+    // hàng triệu dòng trong RAM (FASTPEACE 4,2 triệu dòng bị OOM killer giết, 2026-11-06).
+    const stagedBulkFiles: Array<{ object: (typeof selectedFiles)[number]; path: string; rowCount: number }> = [];
+    const bulkTempDirectory = await mkdtemp(path.join(os.tmpdir(), "ppc-r2-bulk-"));
 
+    try {
     let fileIdx = 0;
     for (const object of selectedFiles) {
       fileIdx++;
@@ -1443,10 +1450,10 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
           parsedSearchTerms.push({ object, rows });
         } else {
           if (fileName.toLowerCase().endsWith(".csv")) throw new Error("Bulk Operations cần định dạng .xlsx.");
-          const rows = await parseBulkFile(buffer, storeName, fileName);
-          if (!rows.length) throw new Error("Không có entity Bulk hợp lệ.");
-          console.log(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] ✓ Đã đọc ${rows.length.toLocaleString()} dòng Bulk Operations.`);
-          parsedPerformance.push({ object, rows });
+          const stagedPath = path.join(bulkTempDirectory, `${stagedBulkFiles.length + 1}.xlsx`);
+          await writeFile(stagedPath, buffer);
+          console.log(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] ✓ Đã tải Bulk Operations, sẽ parse khi nạp DB.`);
+          stagedBulkFiles.push({ object, path: stagedPath, rowCount: 0 });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Lỗi không xác định";
@@ -1464,19 +1471,33 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
 
     // Snapshot là đơn vị nguyên tử: một file lỗi thì không thay thế dữ liệu cũ
     // bằng phần còn lại của batch. Hỗ trợ cả batch 6 file cũ lẫn 8 file mới.
-    const isCompleteBatch = parsedSearchTerms.length === 2 && (parsedPerformance.length === 4 || parsedPerformance.length === 6);
+    const isCompleteBatch = parsedSearchTerms.length === 2 && (stagedBulkFiles.length === 4 || stagedBulkFiles.length === 6);
     if (failures.length > failuresBeforeStore || !isCompleteBatch) {
-      console.warn(`[R2 Sync] Giữ nguyên snapshot cũ của ${storeName}: batch mới chưa parse đủ file (ST: ${parsedSearchTerms.length}/2, Perf: ${parsedPerformance.length}/[4|6]).`);
+      console.warn(`[R2 Sync] Giữ nguyên snapshot cũ của ${storeName}: batch mới chưa tải đủ file (ST: ${parsedSearchTerms.length}/2, Perf: ${stagedBulkFiles.length}/[4|6]).`);
       continue;
     }
 
     const mergedSearchTerms = parsedSearchTerms.flatMap((item) => item.rows);
-    // upsertPpcSnapshot xả mảng từng file Bulk sau khi nạp, nên giữ số dòng trước khi gọi.
-    const processed = [...parsedSearchTerms, ...parsedPerformance].map((item) => ({ object: item.object, rowCount: item.rows.length }));
+    console.log(`[R2 Sync] Đang nạp ${mergedSearchTerms.length.toLocaleString()} dòng Search Term + ${stagedBulkFiles.length} file Bulk của ${storeName} vào PostgreSQL...`);
+    // Một transaction cho cả batch: file Bulk nào parse lỗi hoặc rỗng thì rollback toàn bộ.
+    const saved = await upsertPpcSnapshot(scope, storeName, mergedSearchTerms, async (pushBatch) => {
+      let total = 0;
+      for (const [index, item] of stagedBulkFiles.entries()) {
+        const fileName = item.object.Key || "";
+        const options = { ...inferPpcReportCoverage(fileName), adType: reportAdType(fileName) };
+        item.rowCount = await streamLargeBulkWorkbookFile(item.path, storeName, options, pushBatch, 2000);
+        if (!item.rowCount) throw new Error(`Không có entity Bulk hợp lệ: ${fileName.split("/").pop()}`);
+        console.log(`[R2 Sync] Bulk ${index + 1}/${stagedBulkFiles.length} ✓ Đã đọc ${item.rowCount.toLocaleString()} dòng Bulk Operations.`);
+        total += item.rowCount;
+      }
+      return total;
+    });
+    const processed = [
+      ...parsedSearchTerms.map((item) => ({ object: item.object, rowCount: item.rows.length })),
+      ...stagedBulkFiles.map((item) => ({ object: item.object, rowCount: item.rowCount })),
+    ];
     const totalBatchRows = processed.reduce((sum, item) => sum + item.rowCount, 0);
-    console.log(`[R2 Sync] Đang nạp ${totalBatchRows.toLocaleString()} dòng dữ liệu của ${storeName} vào PostgreSQL...`);
-    const saved = await upsertPpcSnapshot(scope, storeName, mergedSearchTerms, parsedPerformance.map((item) => item.rows));
-    console.log(`[R2 Sync] ✓ Đã lưu thành công snapshot ${storeName} (${(saved.searchTerms.inserted + saved.performance.inserted).toLocaleString()} mới, ${(saved.searchTerms.updated + saved.performance.updated).toLocaleString()} cập nhật).`);
+    console.log(`[R2 Sync] ✓ Đã lưu thành công snapshot ${storeName} (${totalBatchRows.toLocaleString()} dòng nguồn; ${(saved.searchTerms.inserted + saved.performance.inserted).toLocaleString()} mới, ${(saved.searchTerms.updated + saved.performance.updated).toLocaleString()} cập nhật).`);
     totalParsed += totalBatchRows;
     totalNew += saved.searchTerms.inserted + saved.performance.inserted;
     totalUpdated += saved.searchTerms.updated + saved.performance.updated;
@@ -1490,6 +1511,9 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
         count: item.rowCount,
         message: `Snapshot PPC ${latestBatch} của ${storeName}; ${item.rowCount} dòng nguồn.`,
       });
+    }
+    } finally {
+      await rm(bulkTempDirectory, { recursive: true, force: true }).catch(() => {});
     }
   }
 

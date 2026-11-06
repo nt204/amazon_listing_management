@@ -1948,18 +1948,12 @@ export async function refreshPpcSnapshotSummary(
   return options.transaction ? operation(options.transaction) : sql.begin(operation);
 }
 
-function performanceSummaryScopes(rows: PpcPerformanceRow[]): Set<string> {
-  const scopes = new Set<string>();
-  for (const row of rows) scopes.add([row.snapshotDate, row.reportStartDate, row.reportEndDate].join(":::"));
-  return scopes;
-}
-
 export async function upsertPpcPerformance(
   scope: DataScope,
   storeName: string,
   rows: PpcPerformanceRow[],
-  options: { replaceExisting?: boolean; transaction?: PpcTransaction; refreshSummaries?: boolean } = {},
-): Promise<{ inserted: number; updated: number; deduplicated: number; storeId: string }> {
+  options: { replaceExisting?: boolean; transaction?: PpcTransaction } = {},
+): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
   const uniqueByKey = new Map<string, PpcPerformanceRow>();
@@ -2071,17 +2065,18 @@ export async function upsertPpcPerformance(
       updated += saved.filter((row: { inserted: boolean }) => !row.inserted).length;
     }
 
-    if (options.refreshSummaries !== false) {
-      for (const item of performanceSummaryScopes(uniqueRows)) {
-        const [snapshotDate, startDate, endDate] = item.split(":::");
-        if (snapshotDate && startDate && endDate) {
-          await refreshPpcSnapshotSummary(scope, storeId, snapshotDate, startDate, endDate, { transaction });
-        }
+    const scopes = new Set(uniqueRows.map((row) => [
+      row.snapshotDate, row.reportStartDate, row.reportEndDate
+    ].join(":::")));
+    for (const item of scopes) {
+      const [snapshotDate, startDate, endDate] = item.split(":::");
+      if (snapshotDate && startDate && endDate) {
+        await refreshPpcSnapshotSummary(scope, storeId, snapshotDate, startDate, endDate, { transaction });
       }
-      await refreshPpcDailySummary(scope, storeId, transaction);
     }
+    await refreshPpcDailySummary(scope, storeId, transaction);
 
-    return { inserted, updated, deduplicated: rows.length - uniqueRows.length, storeId };
+    return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
   };
   return options.transaction ? operation(options.transaction) : sql.begin(operation);
 }
@@ -2091,7 +2086,7 @@ export async function upsertPpcSnapshot(
   scope: DataScope,
   storeName: string,
   searchTerms: PpcSearchTermRow[],
-  performanceBatches: PpcPerformanceRow[][],
+  streamPerformance: (pushBatch: (rows: PpcPerformanceRow[]) => Promise<void>) => Promise<number>,
 ): Promise<{
   searchTerms: { inserted: number; updated: number; deduplicated: number };
   performance: { inserted: number; updated: number; deduplicated: number };
@@ -2102,36 +2097,16 @@ export async function upsertPpcSnapshot(
       replaceExisting: true,
       transaction,
     });
-    // Nạp từng file Bulk rồi xả mảng của file đó: gộp cả batch FASTPEACE (4,2 triệu dòng)
-    // vào một lần upsert làm worker vượt heap 4GB (2026-11-06). Mỗi file là một khoảng ngày
-    // + ad type riêng nên dedupe/replace theo file cho kết quả như gộp chung.
-    // Summary gộp SP + SB theo khoảng ngày, nên chỉ làm mới sau khi đã nạp đủ mọi file.
-    const performanceResult = { inserted: 0, updated: 0, deduplicated: 0 };
-    const summaryScopes = new Set<string>();
-    let storeId: string | undefined;
-    for (const batch of performanceBatches) {
-      for (const item of performanceSummaryScopes(batch)) summaryScopes.add(item);
-      const saved = await upsertPpcPerformance(scope, storeName, batch, {
-        replaceExisting: true,
-        transaction,
-        refreshSummaries: false,
-      });
-      performanceResult.inserted += saved.inserted;
-      performanceResult.updated += saved.updated;
-      performanceResult.deduplicated += saved.deduplicated;
-      storeId = saved.storeId;
-      batch.length = 0;
-    }
-    if (storeId) {
-      for (const item of summaryScopes) {
-        const [snapshotDate, startDate, endDate] = item.split(":::");
-        if (snapshotDate && startDate && endDate) {
-          await refreshPpcSnapshotSummary(scope, storeId, snapshotDate, startDate, endDate, { transaction });
-        }
-      }
-      await refreshPpcDailySummary(scope, storeId, transaction);
-    }
-    return { searchTerms: searchResult, performance: performanceResult };
+    // Bulk đi qua bảng staging theo từng lô nhỏ: giữ cả batch FASTPEACE (4,2 triệu dòng)
+    // trong RAM làm worker vượt heap rồi bị OOM killer của VPS giết (2026-11-06).
+    const saved = await ingestPpcPerformanceStream(scope, storeName, streamPerformance, {
+      replaceExisting: true,
+      transaction,
+    });
+    return {
+      searchTerms: searchResult,
+      performance: { inserted: saved.inserted, updated: saved.updated, deduplicated: saved.deduplicated },
+    };
   });
 }
 
@@ -2139,12 +2114,12 @@ export async function ingestPpcPerformanceStream(
   scope: DataScope,
   storeName: string,
   streamer: (pushBatch: (rows: PpcPerformanceRow[]) => Promise<void>) => Promise<number>,
-  options: { replaceExisting?: boolean } = {},
+  options: { replaceExisting?: boolean; transaction?: PpcTransaction } = {},
 ): Promise<{ totalParsed: number; inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
 
-  return sql.begin(async (transaction) => {
+  const operation = async (transaction: PpcTransaction) => {
     // 1. Ensure store exists
     const storeRows = await transaction<StoreRow[]>`
       INSERT INTO ppc_stores (team_id, name)
@@ -2312,7 +2287,8 @@ export async function ingestPpcPerformanceStream(
       updated: 0,
       deduplicated,
     };
-  });
+  };
+  return options.transaction ? operation(options.transaction) : sql.begin(operation);
 }
 
 export async function replacePpcDataWithMock(
