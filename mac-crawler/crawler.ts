@@ -691,12 +691,16 @@ async function waitForBulkFileDownload(
 async function detectActualBulkWorkbookAdType(filePath: string): Promise<"SP" | "SB" | null> {
   try {
     // Chỉ đọc xl/workbook.xml nên không nạp workbook vào RAM, file lớn cũng kiểm tra được.
-    for (const sheetName of await readWorkbookSheetNames(filePath)) {
-      const name = sheetName.toLowerCase();
-      if (name.includes("sponsored products") || name.includes("sp campaigns")) return "SP";
-      if (name.includes("sponsored brands") || name.includes("sb campaigns") || name.includes("hsa campaigns")) return "SB";
-    }
+    return bulkAdTypeFromSheetNames((await readWorkbookSheetNames(filePath)).join(" ").toLowerCase());
   } catch { }
+  return null;
+}
+
+// Bulk SB của Amazon có cả sheet mẫu "Sponsored Products Campaigns" bên cạnh
+// "Sponsored Brands Campaigns"; Bulk SP thì không có sheet SB. Nên xét SB trước.
+function bulkAdTypeFromSheetNames(sheetNames: string): "SP" | "SB" | null {
+  if (/sponsored brands|sb campaigns|hsa campaigns/.test(sheetNames)) return "SB";
+  if (/sponsored products|sp campaigns/.test(sheetNames)) return "SP";
   return null;
 }
 
@@ -1832,9 +1836,7 @@ export async function validateDownloadedBatch(files: DownloadedFileInfo[]): Prom
           throw new Error(`File ${file.name} chứa sheet "Download error summary" do Amazon Ads bị lỗi kết xuất dữ liệu.`);
         }
         const expectedAdType = file.relativeSubdir;
-        const valid = expectedAdType === "SP"
-          ? /sponsored products|sp campaigns/.test(sheetNames)
-          : /sponsored brands|sb campaigns|hsa campaigns/.test(sheetNames);
+        const valid = bulkAdTypeFromSheetNames(sheetNames) === expectedAdType;
         if (!valid) throw new Error(`Nội dung workbook không khớp ${expectedAdType}: ${file.name}`);
       } else {
         let headerText = "";
