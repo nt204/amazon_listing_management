@@ -303,9 +303,11 @@ async function findFreshKeywords(sql: Sql, keywords: string[], marketplace: stri
 type AsinQueueRow = { asin: string; attempts: number; done: boolean; failed: boolean };
 
 /**
- * ASIN đang chạy ads (không paused/archived) VÀ có tiêu tiền trong LOOKBACK_DAYS ngày, gộp mọi store cùng marketplace,
- * xếp theo spend trong khoảng đó (ASIN đang tiêu nhiều nhất quét trước, không phụ thuộc store).
- * Không tính spend toàn lịch sử: ASIN từng tiêu nhiều nhưng nay gần như không chạy sẽ chiếm hạn mức Cerebro.
+ * MỌI ASIN đang bật ads (không paused/archived, có trong báo cáo LOOKBACK_DAYS ngày), tiêu tiền hay không,
+ * gộp mọi store cùng marketplace. Thứ tự:
+ *  1. ASIN có spend trong LOOKBACK_DAYS ngày, spend cao trước (không phụ thuộc store).
+ *  2. ASIN không tiêu tiền: ASIN lâu chưa quét nhất (hoặc chưa quét bao giờ) trước → khi hạn mức tháng không đủ
+ *     cho tất cả, phần bị thiếu luân phiên giữa các tháng thay vì luôn là cùng những ASIN đó.
  * done = đã quét thành công trong tháng này, hoặc đã thử đủ MAX_ASIN_ATTEMPTS lần mà vẫn lỗi (bỏ qua tới tháng sau).
  */
 async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) {
@@ -321,9 +323,8 @@ async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) 
         AND lower(COALESCE(p.campaign_state, 'enabled')) NOT IN ('paused', 'archived')
         AND lower(COALESCE(p.ad_group_state, 'enabled')) NOT IN ('paused', 'archived')
       GROUP BY upper(p.asin)
-      HAVING SUM(p.spend) > 0
     ), checkpoint AS (
-      SELECT a.asin, a.spend, a.last_date, q.status,
+      SELECT a.asin, a.spend, a.last_date, q.status, q.queried_at,
         COALESCE(q.queried_at >= date_trunc('month', NOW()), false) AS fresh,
         COALESCE(q.attempts, 0) AS attempts
       FROM active a
@@ -334,7 +335,10 @@ async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) 
       (fresh AND (status = 'ok' OR attempts >= ${MAX_ASIN_ATTEMPTS})) AS done,
       (fresh AND status = 'failed' AND attempts >= ${MAX_ASIN_ATTEMPTS}) AS failed
     FROM checkpoint
-    ORDER BY spend DESC NULLS LAST, last_date DESC NULLS LAST
+    ORDER BY (COALESCE(spend, 0) > 0) DESC,
+      CASE WHEN COALESCE(spend, 0) > 0 THEN spend END DESC NULLS LAST,
+      queried_at ASC NULLS FIRST,
+      last_date DESC NULLS LAST
   `;
 }
 
@@ -834,7 +838,7 @@ export async function getSearchVolumeStatus(teamId: string, storeName: string): 
     try {
       const { getCachedOrFetch } = await import("@/lib/redis");
       // Khóa theo lượt chạy gần nhất → có lượt mới kết thúc là tính lại ngay
-      const cacheKey = `ppc:sv-coverage:v3:${teamId}:${storeName}:${latestRun?.id ?? "none"}:${latestRun?.finished_at ?? ""}`;
+      const cacheKey = `ppc:sv-coverage:v4:${teamId}:${storeName}:${latestRun?.id ?? "none"}:${latestRun?.finished_at ?? ""}`;
       ({ coverage, asins } = await getCachedOrFetch(cacheKey, 600, () =>
         computeCoverage(sql, stores),
       ));
