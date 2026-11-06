@@ -43,10 +43,17 @@ const SkuMonthlyView = dynamic(
   { loading: TabLoading }
 );
 
-export type FinancialsSubTab = "sku_win" | "sku_test" | "sku_monthly" | "fba" | "fbm" | "fbm_fixed";
+export type FinancialsSubTab =
+  | "sku_win"
+  | "sku_test"
+  | "sku_monthly"
+  | "fba"
+  | "fbm"
+  | "sku_monthly_fbm"
+  | "fbm_fixed";
 
-const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "sku_monthly", "fba", "fbm", "fbm_fixed"];
-const FBM_TABS: FinancialsSubTab[] = ["fbm", "fbm_fixed"];
+const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "sku_monthly", "fba", "fbm", "sku_monthly_fbm", "fbm_fixed"];
+const FBM_TABS: FinancialsSubTab[] = ["fbm", "sku_monthly_fbm", "fbm_fixed"];
 
 type TabItem = { key: FinancialsSubTab; label: string; badge?: string; icon: Icon };
 
@@ -60,6 +67,8 @@ const FBA_TAB_ITEMS: TabItem[] = [
 const FBM_TAB_ITEMS: TabItem[] = [
   // FBM (Theo Ngày) — sheet "FBM"
   { key: "fbm", label: "FBM", badge: "Theo Ngày", icon: TruckIcon },
+  // Báo cáo tháng FBM — tab "SKU FBM-monthly" của file TỔNG KẾT CUỐI THÁNG
+  { key: "sku_monthly_fbm", label: "Báo Cáo Tháng", badge: "SKU FBM-monthly", icon: CalendarBlankIcon },
   // FBM cố định — sheet "LỌC SKU CỐ ĐỊNH": mọi SKU trong Bảng mã FBM
   { key: "fbm_fixed", label: "FBM Cố định", icon: ListChecksIcon },
 ];
@@ -192,6 +201,7 @@ export function FinancialsWorkspace() {
           {visibleTab === "sku_win" && <SkuWinView key="sku_win" />}
           {visibleTab === "sku_test" && <SkuTestView />}
           {visibleTab === "fbm" && <FbaDailyView key="fbm" channel="fbm" />}
+          {visibleTab === "sku_monthly_fbm" && <SkuMonthlyView key="sku_monthly_fbm" channel="fbm" />}
           {visibleTab === "fbm_fixed" && <SkuWinView key="fbm_fixed" variant="fbm_fixed" />}
         </AccountingViewTransition>
       </div>

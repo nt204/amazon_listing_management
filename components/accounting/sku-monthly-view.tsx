@@ -28,6 +28,7 @@ import type { SkuMonthlyItem, SkuMonthlyStoreSummary, AvailableMonthOption } fro
 import {
   type ColumnConfig,
   DEFAULT_SKU_MONTHLY_COLUMNS,
+  DEFAULT_SKU_MONTHLY_FBM_COLUMNS,
   ColumnHeaderCell,
   ColumnManagerModal,
   createTextWidthMeasurer,
@@ -37,8 +38,25 @@ import {
   AccountingTopProgressBar,
 } from "./accounting-skeleton";
 
-const SKU_MONTHLY_COLUMNS_STORAGE_KEY = "acc_sku_monthly_columns_v4";
-const SKU_MONTHLY_FROZEN_STORAGE_KEY = "acc_sku_monthly_frozen_v4";
+// Mỗi kênh lưu cấu hình cột riêng (tab SKU FBM-monthly có bộ cột khác SKU Monthly FBA)
+const CHANNEL_CONFIG = {
+  fba: {
+    columnsKey: "acc_sku_monthly_columns_v4",
+    frozenKey: "acc_sku_monthly_frozen_v4",
+    defaultColumns: DEFAULT_SKU_MONTHLY_COLUMNS,
+    api: "/api/accounting/financials/sku-monthly",
+    title: "BÁO CÁO THÁNG SKU (SKU-MONTHLY)",
+    sheet: "SKU-monthly",
+  },
+  fbm: {
+    columnsKey: "acc_sku_monthly_fbm_columns_v1",
+    frozenKey: "acc_sku_monthly_fbm_frozen_v1",
+    defaultColumns: DEFAULT_SKU_MONTHLY_FBM_COLUMNS,
+    api: "/api/accounting/financials/sku-monthly-fbm",
+    title: "BÁO CÁO THÁNG SKU FBM (SKU FBM-MONTHLY)",
+    sheet: "SKU FBM-monthly",
+  },
+} as const;
 const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
 
 function formatCurrency(val: number | null | undefined): string {
@@ -61,9 +79,16 @@ function formatPercent(val: number | null | undefined): string {
 
 interface SkuMonthlyViewProps {
   storeId?: string;
+  /** fbm: tab "SKU FBM-monthly" (cột A-to-z / Chargeback / Phí chủ store thay cho các phí FBA) */
+  channel?: "fba" | "fbm";
 }
 
-export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
+export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMonthlyViewProps) {
+  const config = CHANNEL_CONFIG[channel];
+  const SKU_MONTHLY_COLUMNS_STORAGE_KEY = config.columnsKey;
+  const SKU_MONTHLY_FROZEN_STORAGE_KEY = config.frozenKey;
+  const defaultColumns: ColumnConfig[] = config.defaultColumns;
+  const isFbm = channel === "fbm";
   // Store management sync
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
     if (propStoreId) return propStoreId;
@@ -135,7 +160,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
         try {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            const defaultMap = new Map(DEFAULT_SKU_MONTHLY_COLUMNS.map((c) => [c.id, c]));
+            const defaultMap = new Map(defaultColumns.map((c) => [c.id, c]));
             const restored = parsed
               .filter((col: ColumnConfig) => col.id !== "actions")
               .map((col: ColumnConfig) => {
@@ -151,7 +176,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
             const restoredIds = new Set(restored.map((col: ColumnConfig) => col.id));
             return [
               ...restored,
-              ...DEFAULT_SKU_MONTHLY_COLUMNS.filter((col) => !restoredIds.has(col.id)),
+              ...defaultColumns.filter((col) => !restoredIds.has(col.id)),
             ];
           }
         } catch {
@@ -159,7 +184,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
         }
       }
     }
-    return DEFAULT_SKU_MONTHLY_COLUMNS;
+    return defaultColumns;
   });
 
   const [frozenColumns, setFrozenColumns] = useState<string[]>(() => {
@@ -204,7 +229,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
       localStorage.removeItem(SKU_MONTHLY_COLUMNS_STORAGE_KEY);
       localStorage.removeItem(SKU_MONTHLY_FROZEN_STORAGE_KEY);
     }
-    setColumns(DEFAULT_SKU_MONTHLY_COLUMNS);
+    setColumns(defaultColumns);
     setFrozenColumns(["stt", "sku"]);
   };
 
@@ -413,7 +438,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
         sortDirection,
       });
 
-      const res = await fetch(`/api/accounting/financials/sku-monthly?${params.toString()}`);
+      const res = await fetch(`${config.api}?${params.toString()}`);
       if (!res.ok) throw new Error(`Lỗi tải dữ liệu (${res.status})`);
 
       const data = await res.json();
@@ -428,7 +453,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [selectedStoreId, selectedYear, selectedMonth, debouncedSearch, sortField, sortDirection]);
+  }, [config.api, selectedStoreId, selectedYear, selectedMonth, debouncedSearch, sortField, sortDirection]);
 
   useEffect(() => {
     fetchData();
@@ -441,7 +466,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
     setShowRecalcModal(false);
     setRecalcFeedback(null);
     try {
-      const res = await fetch("/api/accounting/financials/sku-monthly", {
+      const res = await fetch(config.api, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -649,7 +674,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
 
           {/* Export Excel */}
           <a
-            href={`/api/accounting/financials/sku-monthly/export?storeId=${selectedStoreId}&month=${selectedMonth}&year=${selectedYear}&search=${encodeURIComponent(
+            href={`${config.api}/export?storeId=${selectedStoreId}&month=${selectedMonth}&year=${selectedYear}&search=${encodeURIComponent(
               search
             )}`}
             download
@@ -945,6 +970,21 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                         {col.id === "revenue_ads" && (
                           <span className="font-bold text-slate-950 tabular-nums">
                             {formatCurrency(summary.total_revenue_ads)}
+                          </span>
+                        )}
+                        {col.id === "a_to_z_claim" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_a_to_z_claim)}
+                          </span>
+                        )}
+                        {col.id === "chargeback_refund" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.total_chargeback_refund)}
+                          </span>
+                        )}
+                        {col.id === "owner_fee" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(summary.owner_fee ?? 0)}
                           </span>
                         )}
                         {col.id === "available_now" && (
@@ -1284,6 +1324,20 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                               </span>
                             )}
 
+                            {/* A-to-z / Chargeback (SKU FBM-monthly) */}
+                            {col.id === "a_to_z_claim" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.a_to_z_claim ?? 0)}
+                              </span>
+                            )}
+                            {col.id === "chargeback_refund" && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item.chargeback_refund ?? 0)}
+                              </span>
+                            )}
+                            {/* Phí chủ store chỉ có ở dòng tổng */}
+                            {col.id === "owner_fee" && <span className="text-slate-400">—</span>}
+
                             {/* Revenue ads */}
                             {col.id === "revenue_ads" && (
                               <span className="tabular-nums text-slate-700">
@@ -1358,7 +1412,10 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
           </span>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-slate-400">
-          <span>Dữ liệu tự động tổng hợp từ sheet SKU-monthly trong file kế toán</span>
+          <span>
+            Dữ liệu tự động tổng hợp từ sheet {config.sheet} trong file kế toán
+            {summary?.data_source === "file" && " — kỳ này nạp từ file TỔNG KẾT"}
+          </span>
         </div>
       </div>
 
@@ -1458,7 +1515,7 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
       <ColumnManagerModal
         isOpen={showColumnModal}
         onClose={() => setShowColumnModal(false)}
-        title="BÁO CÁO THÁNG SKU (SKU-MONTHLY)"
+        title={config.title}
         columns={columns}
         onSave={handleSaveColumns}
         onReset={handleResetColumns}
@@ -1580,20 +1637,24 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                     {formatCurrency(selectedSkuDetail.amazon_fee_total)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">Phí lưu kho (Storage Fee):</span>
-                  <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.storage_fee)}</span>
-                </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">Phí Placement Inbound:</span>
-                  <span className="font-bold text-rose-600">
-                    {formatCurrency(selectedSkuDetail.placement_fee)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">Phí Long-Term Storage:</span>
-                  <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.long_term_fee)}</span>
-                </div>
+                {!isFbm && (
+                  <>
+                  <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                    <span className="text-slate-600">Phí lưu kho (Storage Fee):</span>
+                    <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.storage_fee)}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                    <span className="text-slate-600">Phí Placement Inbound:</span>
+                    <span className="font-bold text-rose-600">
+                      {formatCurrency(selectedSkuDetail.placement_fee)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                    <span className="text-slate-600">Phí Long-Term Storage:</span>
+                    <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.long_term_fee)}</span>
+                  </div>
+                  </>
+                )}
                 <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
                   <span className="text-slate-600">Thuế (Tax):</span>
                   <span className="font-bold text-slate-900">{formatCurrency(selectedSkuDetail.thue)}</span>
@@ -1604,20 +1665,35 @@ export function SkuMonthlyView({ storeId: propStoreId }: SkuMonthlyViewProps) {
                     {formatCurrency(selectedSkuDetail.return_amount)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">Điều chỉnh (Adjustment):</span>
-                  <span className="font-bold text-slate-900">{formatCurrency(selectedSkuDetail.adjustment)}</span>
-                </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">FBA Customer Return Fee:</span>
-                  <span className="font-bold text-rose-600">
-                    {formatCurrency(selectedSkuDetail.fba_customer_return_fee)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
-                  <span className="text-slate-600">Thu hồi hàng (Removal):</span>
-                  <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.removal)}</span>
-                </div>
+                {isFbm ? (
+                  <>
+                    <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                      <span className="text-slate-600">A-to-z Guarantee Claim:</span>
+                      <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.a_to_z_claim ?? 0)}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                      <span className="text-slate-600">Chargeback Refund:</span>
+                      <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.chargeback_refund ?? 0)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                  <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                    <span className="text-slate-600">Điều chỉnh (Adjustment):</span>
+                    <span className="font-bold text-slate-900">{formatCurrency(selectedSkuDetail.adjustment)}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                    <span className="text-slate-600">FBA Customer Return Fee:</span>
+                    <span className="font-bold text-rose-600">
+                      {formatCurrency(selectedSkuDetail.fba_customer_return_fee)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                    <span className="text-slate-600">Thu hồi hàng (Removal):</span>
+                    <span className="font-bold text-rose-600">{formatCurrency(selectedSkuDetail.removal)}</span>
+                  </div>
+                  </>
+                )}
               </div>
             </div>
 

@@ -11,6 +11,10 @@ DEST="${MAC_MINI_DIR:-/Users/ad/mac-crawler}"
 # Pair mapping: local_file:remote_relative_path
 ITEMS=(
   "scripts/ingest_monthly_from_raw.py:scripts/ingest_monthly_from_raw.py"
+  # SKU FBM-monthly: ingest_monthly_from_raw.py import các module này
+  "scripts/fbm_monthly_engine.py:scripts/fbm_monthly_engine.py"
+  "scripts/fbm_monthly_raw.py:scripts/fbm_monthly_raw.py"
+  "scripts/fbm_monthly_db.py:scripts/fbm_monthly_db.py"
   "mac-crawler/monthly_crawler.ts:monthly_crawler.ts"
   "mac-crawler/run_accounting_monthly.sh:run_accounting_monthly.sh"
 )

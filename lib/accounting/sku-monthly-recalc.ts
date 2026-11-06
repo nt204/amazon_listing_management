@@ -38,12 +38,26 @@ function pythonEnv(): NodeJS.ProcessEnv {
   return { ...process.env, PYTHONPATH: [depsDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) };
 }
 
-export async function enqueueSkuMonthlyRecalc(storeId: string, periods: string[], requestedBy: string) {
+// FBA: accounting_sku_monthly_recalc_queue (migration 133); FBM: accounting_fbm_sku_monthly_recalc_queue (migration 135).
+// Hai hàng đợi riêng để "Tính lại" một bên không ghi đè kỳ bên kia đã nạp từ file TỔNG KẾT.
+export type SkuMonthlyChannel = "fba" | "fbm";
+
+const QUEUE_TABLE: Record<SkuMonthlyChannel, string> = {
+  fba: "accounting_sku_monthly_recalc_queue",
+  fbm: "accounting_fbm_sku_monthly_recalc_queue",
+};
+
+export async function enqueueSkuMonthlyRecalc(
+  storeId: string,
+  periods: string[],
+  requestedBy: string,
+  channel: SkuMonthlyChannel = "fba",
+) {
   if (!periods.length) return;
   const sql = await getDatabaseClient();
   for (const period of periods) {
     await sql`
-      INSERT INTO accounting_sku_monthly_recalc_queue (store_id, period, requested_at, requested_by)
+      INSERT INTO ${sql(QUEUE_TABLE[channel])} (store_id, period, requested_at, requested_by)
       VALUES (${storeId}, ${period}, NOW(), ${requestedBy})
       ON CONFLICT (store_id, period) DO UPDATE
       SET requested_at = NOW(), requested_by = EXCLUDED.requested_by, attempts = 0, last_error = NULL
@@ -70,15 +84,32 @@ export async function enqueueSkuMonthlyRecalcAfterBaseCost(storeId: string, peri
   return existing;
 }
 
-type RecalcJob = { store_id: string; period: string; attempts: number; store_name: string };
+type RecalcJob = {
+  store_id: string;
+  period: string;
+  attempts: number;
+  store_name: string;
+  channel: SkuMonthlyChannel;
+};
 
-/** Lấy 1 kỳ đã lắng (Base Cost của store không còn trong hàng đợi) ra và tính lại. Trả false khi hàng đợi trống. */
+/**
+ * Lấy 1 kỳ đã lắng (Base Cost của store không còn trong hàng đợi) ra và tính lại — hàng đợi FBA trước, rồi FBM.
+ * Trả false khi cả hai hàng đợi trống.
+ */
 export async function processNextSkuMonthlyRecalc(): Promise<boolean> {
+  for (const channel of ["fba", "fbm"] as const) {
+    if (await processNextFromQueue(channel)) return true;
+  }
+  return false;
+}
+
+async function processNextFromQueue(channel: SkuMonthlyChannel): Promise<boolean> {
   const sql = await getDatabaseClient();
-  const [job] = await sql<RecalcJob[]>`
+  const table = sql(QUEUE_TABLE[channel]);
+  const [row] = await sql<Omit<RecalcJob, "channel">[]>`
     WITH next AS (
       SELECT q.store_id, q.period
-      FROM accounting_sku_monthly_recalc_queue q
+      FROM ${table} q
       WHERE q.requested_at < NOW() - make_interval(secs => ${SETTLE_SECONDS})
         AND q.attempts < ${MAX_ATTEMPTS}
         AND NOT EXISTS (SELECT 1 FROM accounting_base_cost_resync_queue b WHERE b.store_id = q.store_id)
@@ -86,22 +117,23 @@ export async function processNextSkuMonthlyRecalc(): Promise<boolean> {
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    DELETE FROM accounting_sku_monthly_recalc_queue q
+    DELETE FROM ${table} q
     USING next, stores s
     WHERE q.store_id = next.store_id AND q.period = next.period AND s.id = q.store_id
     RETURNING q.store_id::text, q.period, q.attempts, s.name AS store_name
   `;
-  if (!job) return false;
+  if (!row) return false;
+  const job: RecalcJob = { ...row, channel };
 
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "sku-monthly-raw-"));
   try {
     await recalcFromR2(job, workDir);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[SkuMonthlyRecalc] ${job.store_name} ${job.period} lỗi (lần ${job.attempts + 1}):`, message);
+    console.error(`[SkuMonthlyRecalc] ${channel.toUpperCase()} ${job.store_name} ${job.period} lỗi (lần ${job.attempts + 1}):`, message);
     // Trả lại hàng đợi để lượt sau thử lại; quá MAX_ATTEMPTS thì giữ dòng kèm lỗi để xem lại
     await sql`
-      INSERT INTO accounting_sku_monthly_recalc_queue (store_id, period, requested_at, requested_by, attempts, last_error)
+      INSERT INTO ${table} (store_id, period, requested_at, requested_by, attempts, last_error)
       VALUES (${job.store_id}, ${job.period}, NOW(), 'retry', ${job.attempts + 1}, ${message.slice(0, 2000)})
       ON CONFLICT (store_id, period) DO NOTHING
     `;
@@ -140,9 +172,20 @@ async function recalcFromR2(job: RecalcJob, workDir: string) {
       "--dir", rawDir,
       "--force",
       "--no-refresh-prev",
+      // FBA: chỉ FBA (FBM có hàng đợi riêng, không để Base Cost đổi kéo theo ghi đè kỳ FBM nạp từ file)
+      "--channel", job.channel,
     ],
     { timeout: INGEST_TIMEOUT_MS, maxBuffer: 20 * 1024 * 1024, env: pythonEnv() },
   );
+  if (job.channel === "fbm") {
+    // Script ghi data_source = NULL cho kỳ FBM vừa tính từ file thô
+    if (!stdout.includes("FBM monthly ingestion completed successfully")) {
+      throw new Error(`Script không báo hoàn tất: ${stdout.slice(-500)}`);
+    }
+    const net = stdout.match(/FBM Net Profit \(Store Total\)\s*:\s*\$\s*(-?[\d.]+)/)?.[1];
+    console.log(`[SkuMonthlyRecalc] FBM ${job.store_name} ${job.period}: đã tính lại từ R2 (Net Profit ${net ?? "?"})`);
+    return;
+  }
   if (!stdout.includes("Monthly ingestion completed successfully")) {
     throw new Error(`Script không báo hoàn tất: ${stdout.slice(-500)}`);
   }

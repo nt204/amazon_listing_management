@@ -430,6 +430,35 @@ export const DEFAULT_SKU_MONTHLY_COLUMNS: ColumnConfig[] = [
   { id: "fnsku", label: "FNSKU", defaultLabel: "FNSKU", visible: true, align: "center", width: 125 },
 ];
 
+// Tab "SKU FBM-monthly" của file TỔNG KẾT: thứ tự cột theo sheet (bỏ các cột sản xuất/cancelled đang lỗi #N/A trên sheet)
+export const DEFAULT_SKU_MONTHLY_FBM_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 55 },
+  { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: false, width: 130 },
+  { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: false, align: "center", width: 65 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 180 },
+  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 125 },
+  { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 110 },
+  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 80 },
+  { id: "ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 105 },
+  { id: "basecost", label: "Basecost", defaultLabel: "Basecost", visible: true, align: "right", width: 105 },
+  { id: "amazon_fee_unrecognized", label: "Amazon Fee (chưa ghi nhận)", defaultLabel: "Amazon Fee (chưa ghi nhận)", visible: true, align: "right", width: 140 },
+  { id: "amazon_fee_trans", label: "Amazon fee (transperance report)", defaultLabel: "Amazon fee (transperance report)", visible: true, align: "right", width: 145 },
+  { id: "thue", label: "Thuế", defaultLabel: "Thuế", visible: true, align: "right", width: 95 },
+  { id: "return_amount", label: "Return", defaultLabel: "Return", visible: true, align: "right", width: 95 },
+  { id: "a_to_z_claim", label: "A-to-z Guarantee Claim", defaultLabel: "A-to-z Guarantee Claim", visible: true, align: "right", width: 125 },
+  { id: "chargeback_refund", label: "Chargeback Refund", defaultLabel: "Chargeback Refund", visible: true, align: "right", width: 115 },
+  { id: "profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 115 },
+  { id: "tacos", label: "TAcos", defaultLabel: "TAcos", visible: true, align: "right", width: 90 },
+  { id: "acos", label: "Acos", defaultLabel: "Acos", visible: true, align: "right", width: 90 },
+  { id: "margin", label: "Magin", defaultLabel: "Magin", visible: true, align: "right", width: 90 },
+  { id: "roi", label: "ROI", defaultLabel: "ROI", visible: true, align: "right", width: 90 },
+  { id: "profit_per_item", label: "Profit/item", defaultLabel: "Profit/item", visible: true, align: "right", width: 100 },
+  { id: "basecost_per_item", label: "Basecost/Item", defaultLabel: "Basecost/Item", visible: true, align: "right", width: 105 },
+  { id: "owner_fee", label: "Phí chủ store", defaultLabel: "Phí chủ store", visible: true, align: "right", width: 115 },
+  { id: "revenue_ads", label: "Revenue ads", defaultLabel: "Revenue ads", visible: true, align: "right", width: 115 },
+  { id: "status", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true, align: "center", width: 95 },
+];
+
 
 
 export function ColumnHeaderCell({

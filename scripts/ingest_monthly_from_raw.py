@@ -1203,6 +1203,65 @@ def refresh_previous_month(store_name_or_id, period, raw_dir=None):
         return
     print(f"🔁 Tính lại kỳ {prev_period} để cập nhật phí Amazon của đơn thanh toán muộn trong kỳ {period}...")
     ingest_monthly(store_name_or_id, prev_period, raw_dir=prev_dir, force=True)
+    ingest_fbm_monthly_safe(store_name_or_id, prev_period, raw_dir=prev_dir)
+
+def ingest_fbm_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, overwrite_file=False):
+    """
+    SKU FBM-monthly của kỳ (tab "SKU FBM-monthly" file TỔNG KẾT) từ cùng bộ file thô — scripts/fbm_monthly_raw.py.
+    Store không có BẢNG MÃ FBM thì bỏ qua. Kỳ nạp từ Google Sheet (data_source = 'file') chỉ bị ghi đè khi
+    overwrite_file (nút "Tính từ file thô" của tab SKU FBM-monthly → --channel fbm).
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from fbm_monthly_raw import compute_fbm_from_raw
+    from fbm_monthly_db import upsert_fbm_month
+
+    year, month = [int(p) for p in period.split('-')]
+    conn = get_db_connection()
+    store_id, store_name = resolve_store(conn, store_name_or_id)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT data_source FROM accounting_fbm_monthly_store_summary WHERE store_id = %s AND year = %s AND month = %s
+    """, (store_id, year, month))
+    existing = cur.fetchone()
+    if existing and existing[0] == 'file' and not overwrite_file:
+        print(f"ℹ️ FBM {store_name} {period}: kỳ nạp từ file TỔNG KẾT — giữ nguyên (tính lại bằng --channel fbm)")
+        conn.close()
+        return False
+    download_dir = raw_dir or os.path.join(DEFAULT_DOWNLOAD_ROOT, period, store_name)
+    orders_file = find_file(download_dir, "02_AllOrders")
+    trans_file = find_file(download_dir, "15_DateRangeTransactions")
+    if not orders_file or not trans_file:
+        raise FileNotFoundError(f"Thiếu 02_AllOrders / 15_DateRangeTransactions trong {download_dir}")
+    ads_file = find_file(download_dir, "01_Portfolios") or find_file(download_dir, "05_Campaigns")
+    result = compute_fbm_from_raw(
+        conn, store_id, store_name, year, month, orders_file, trans_file,
+        find_later_trans_files(download_dir, year, month), ads_file, read_transaction_rows,
+    )
+    if result is None:
+        print(f"ℹ️ {store_name} không có BẢNG MÃ FBM — bỏ qua SKU FBM-monthly")
+        conn.close()
+        return False
+    rows, summary, dropped = result
+    if dropped:
+        print(f"⚠️ FBM: bỏ {len(dropped)} dòng SKU lặp trong BẢNG MÃ FBM: {dropped[:5]}")
+    print(f"📊 FBM {store_name} {period}: Revenue ${summary['revenue']:.2f} | Qty {summary['quantity']:.0f} | "
+          f"SKU Profit ${summary['profit']:.2f} | Phí chủ store ${summary['owner_fee']:.2f}")
+    print(f"FBM Net Profit (Store Total)   : ${summary['net_profit']:>14.2f}")
+    if dry_run:
+        conn.close()
+        return False
+    upsert_fbm_month(conn, store_id, year, month, rows, summary, None)
+    conn.commit()
+    conn.close()
+    print("✅ FBM monthly ingestion completed successfully!")
+    return True
+
+def ingest_fbm_monthly_safe(store_name_or_id, period, raw_dir=None, dry_run=False):
+    """Chạy FBM sau FBA: lỗi FBM không làm hỏng kết quả FBA đã ghi."""
+    try:
+        ingest_fbm_monthly(store_name_or_id, period, raw_dir=raw_dir, dry_run=dry_run)
+    except Exception as e:
+        print(f"⚠️ SKU FBM-monthly {period} lỗi: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest monthly accounting data from raw crawler reports.")
@@ -1212,13 +1271,20 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Calculate without writing to database")
     parser.add_argument("--force", action="store_true", help="Force overwrite even if month already exists in DB")
     parser.add_argument("--no-refresh-prev", action="store_true", help="Không tính lại tháng trước sau khi nạp tháng này")
+    parser.add_argument("--channel", choices=["all", "fba", "fbm"], default="all",
+                        help="all: SKU Monthly FBA rồi SKU FBM-monthly; fbm: chỉ FBM (ghi đè cả kỳ nạp từ file TỔNG KẾT)")
     
     args = parser.parse_args()
+    if args.channel == "fbm":
+        ingest_fbm_monthly(args.store, args.month, raw_dir=args.dir, dry_run=args.dry_run, overwrite_file=True)
+        return
     # Tháng trước tính lại TRƯỚC: phí thanh toán muộn nằm trong file tháng này, và hàng ra kho tháng trước
     # quyết định tồn đầu kỳ → Base Cost tháng này.
     if not args.dry_run and not args.no_refresh_prev and (args.force or not month_exists(args.store, args.month)):
         refresh_previous_month(args.store, args.month, raw_dir=args.dir)
     ingest_monthly(args.store, args.month, raw_dir=args.dir, dry_run=args.dry_run, force=args.force)
+    if args.channel == "all":
+        ingest_fbm_monthly_safe(args.store, args.month, raw_dir=args.dir, dry_run=args.dry_run)
 
 if __name__ == '__main__':
     main()

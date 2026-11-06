@@ -47,6 +47,9 @@ export interface SkuMonthlyItem {
   revenue_ads: number;
   listing_month: string | null;
   review_month: string | null;
+  /** Chỉ SKU FBM-monthly */
+  a_to_z_claim?: number;
+  chargeback_refund?: number;
 }
 
 export interface SkuMonthlyStoreSummary {
@@ -83,6 +86,12 @@ export interface SkuMonthlyStoreSummary {
   roi: number | null;
   active_sku_count: number;
   total_sku_count: number;
+  /** Chỉ SKU FBM-monthly: cột A-to-z / Chargeback và phí chủ store (ô V2, đã gồm trong net_profit) */
+  total_a_to_z_claim?: number;
+  total_chargeback_refund?: number;
+  owner_fee?: number;
+  /** 'file' = kỳ nạp từ file TỔNG KẾT, null = tính từ file thô Amazon */
+  data_source?: string | null;
 }
 
 export interface AvailableMonthOption {
