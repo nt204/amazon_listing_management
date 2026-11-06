@@ -59,6 +59,19 @@ if ! npm run build > "$BUILD_LOG" 2>&1; then
 fi
 
 pm2 reload amazon-listing --update-env
+# Restart giữa chừng giết job ingest PPC đang chạy (pm2 chỉ chờ 1,6s; parser Python nhận SIGINT ngay) —
+# ngày 2026-11-06 LIMIMA phải chạy 3 lần, FASTPEACE hết lượt thử. Worker tự recycle sau mỗi job
+# (PPC_INGESTION_RECYCLE_AFTER_JOB) nên khi đang bận chỉ cần để nó tự nạp code mới lúc xong job.
+busy_ingest=$(node --env-file-if-exists=.env -e '
+  const sql = require("postgres")(process.env.DATABASE_URL, { max: 1 });
+  sql`SELECT count(*)::int AS n FROM ppc_ingestion_jobs WHERE status = '"'"'RUNNING'"'"' AND lease_expires_at > NOW()`
+    .then((r) => { console.log(r[0].n); return sql.end(); })
+    .catch(() => { console.log(0); return sql.end(); });
+' 2>/dev/null || echo 0)
+if [ "${busy_ingest:-0}" != "0" ]; then
+  WORKERS="${WORKERS/ppc-ingestion-worker/}"
+  echo "⏳ ppc-ingestion-worker đang ingest → không restart; worker tự nạp code mới khi xong job."
+fi
 pm2 restart $WORKERS --update-env > /dev/null
 sleep 8
 code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:2411/ || true)
