@@ -472,6 +472,7 @@ async function upsertRankings(
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const isQuotaExhaustedError = (error: unknown) => /rta-7017|not enough uses/i.test(String(error));
 const isAuthError = (error: unknown) => {
   const msg = String(error).toLowerCase();
   // Lỗi phiên đăng nhập: các lượt sau chắc chắn cũng lỗi → dừng và giữ nguyên checkpoint, không đánh dấu ASIN lỗi
@@ -513,6 +514,10 @@ async function callHelium10<T>(call: () => Promise<T>): Promise<T> {
 /** Lý do dừng khi lỗi không thuộc về ASIN (phiên đăng nhập / đường truyền); null = lỗi riêng của lượt này. */
 function helium10StopReason(error: unknown) {
   const errMsg = (error instanceof Error ? error.message : String(error)).slice(0, 160);
+  // Helium 10 trả 403 "rta-7017 Not enough uses" khi tài khoản hết lượt — không phải lỗi cookie
+  if (isQuotaExhaustedError(error)) {
+    return "Tài khoản Helium 10 đã hết lượt Cerebro/Magnet (Not enough uses — lượt dùng chung với người dùng H10 khác và đặt lại theo chu kỳ thanh toán). Checkpoint giữ nguyên, chạy tiếp khi H10 có lượt mới.";
+  }
   if (isAuthError(error)) return `Cookie/phiên Helium 10 không hợp lệ (${errMsg}). Cập nhật Cookie H10 rồi bấm Chạy tiếp.`;
   if (isConnectionError(error)) {
     return `Mất kết nối Helium 10 (${errMsg}), đã thử lại ${CONNECTION_RETRY_DELAYS_MS.length} lần. Checkpoint giữ nguyên, bấm Chạy tiếp khi kết nối ổn định.`;
