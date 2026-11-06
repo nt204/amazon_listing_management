@@ -459,6 +459,26 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     fetchData();
   }, [fetchData]);
 
+  // SKU FBM-monthly: hiện cả tháng chưa có số (đến tháng hiện tại) để chọn rồi bấm "Tính từ file thô"
+  const monthOptions = useMemo(() => {
+    const options: { month: number; label: string; activeSkus: number | null }[] = availableMonths.map((m) => ({
+      month: m.month,
+      label: m.label,
+      activeSkus: m.activeSkus,
+    }));
+    if (isFbm) {
+      const now = new Date();
+      const lastMonth = selectedYear < now.getFullYear() ? 12 : selectedYear === now.getFullYear() ? now.getMonth() + 1 : 0;
+      for (let month = 1; month <= lastMonth; month++) {
+        if (!options.some((o) => o.month === month)) {
+          options.push({ month, label: `Tháng ${month}/${selectedYear}`, activeSkus: null });
+        }
+      }
+      options.sort((a, b) => b.month - a.month);
+    }
+    return options;
+  }, [availableMonths, isFbm, selectedYear]);
+
   // Recalculate handler
   const handleRecalculate = async () => {
     if (selectedMonth === "all") return;
@@ -569,9 +589,9 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
               }}
             >
               {availableMonths.length > 0 ? (
-                availableMonths.map((m) => (
+                monthOptions.map((m) => (
                   <option key={m.month} value={m.month}>
-                    {m.label} ({m.activeSkus} SKUs)
+                    {m.activeSkus == null ? `${m.label} (chưa có số)` : `${m.label} (${m.activeSkus} SKUs)`}
                   </option>
                 ))
               ) : (
