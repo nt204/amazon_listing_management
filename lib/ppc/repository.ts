@@ -1615,7 +1615,7 @@ export async function refreshPpcSnapshotSummary(
   reportStartDate: string,
   reportEndDate: string,
   options: { transaction?: PpcTransaction } = {},
-): Promise<{ snapshotId: string; coverageDays: number }> {
+): Promise<{ snapshotId: string; coverageDays: number; skipped?: boolean }> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
 
@@ -1625,6 +1625,30 @@ export async function refreshPpcSnapshotSummary(
     const spanDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
     const coverageDays = canonicalCoverageDays(spanDays);
     const snapshotId = `snap_${storeId.replace(/-/g, "").slice(0, 8)}_${snapshotDate}_${coverageDays}_${Date.now()}`;
+
+    // 0. Amazon đôi khi xuất Bulk SP thiếu gần hết dòng Product Ad (FASTPEACE 30D ngày 2026-11-05:
+    // campaign $37,476 nhưng Product Ad chỉ $516 → tab SKU còn 3 SKU). Bình thường hai tổng này lệch
+    // dưới ~25%, nên dưới 50% thì giữ snapshot đang active thay vì thay bằng bản thiếu.
+    const [completeness] = await tx`
+      SELECT
+        COALESCE(SUM(spend) FILTER (WHERE grain = 'CAMPAIGN'), 0) AS campaign_spend,
+        COALESCE(SUM(spend) FILTER (WHERE grain = 'PRODUCT'), 0) AS product_spend
+      FROM ppc_performance_facts
+      WHERE store_id = ${storeId}
+        AND snapshot_date = ${snapshotDate}
+        AND report_start_date = ${reportStartDate}
+        AND report_end_date = ${reportEndDate}
+        AND ad_type = 'SP';
+    `;
+    const campaignSpend = Number(completeness?.campaign_spend || 0);
+    const productSpend = Number(completeness?.product_spend || 0);
+    if (campaignSpend >= 50 && productSpend < campaignSpend * 0.5) {
+      console.warn(
+        `[PPC Snapshot] Bỏ qua kích hoạt snapshot ${coverageDays}D (${reportStartDate} → ${reportEndDate}) của store ${storeId}: ` +
+        `file Bulk SP thiếu Product Ad (Product Ad $${productSpend.toFixed(2)} / Campaign $${campaignSpend.toFixed(2)}). Giữ snapshot cũ.`,
+      );
+      return { snapshotId: "", coverageDays, skipped: true };
+    }
 
     // 1. Campaign summary
     await tx`
