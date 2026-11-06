@@ -690,16 +690,9 @@ async function waitForBulkFileDownload(
 
 async function detectActualBulkWorkbookAdType(filePath: string): Promise<"SP" | "SB" | null> {
   try {
-    // Nếu file quá lớn (> 40MB), không nạp toàn bộ workbook vào RAM để tránh OOM / tràn heap memory của Mac mini
-    const stat = fs.statSync(filePath);
-    if (stat.size > 40_000_000) {
-      return null;
-    }
-
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile(filePath);
-    for (const ws of wb.worksheets) {
-      const name = (ws.name || "").toLowerCase();
+    // Chỉ đọc xl/workbook.xml nên không nạp workbook vào RAM, file lớn cũng kiểm tra được.
+    for (const sheetName of await readWorkbookSheetNames(filePath)) {
+      const name = sheetName.toLowerCase();
       if (name.includes("sponsored products") || name.includes("sp campaigns")) return "SP";
       if (name.includes("sponsored brands") || name.includes("sb campaigns") || name.includes("hsa campaigns")) return "SB";
     }
@@ -1770,7 +1763,30 @@ export async function autoCreateAndDownloadSearchTermReport(
   };
 }
 
+// Đọc tên sheet thẳng từ xl/workbook.xml qua central directory của zip.
+// Không dùng tên từ ExcelJS stream: nếu workbook.xml nằm sau các sheet trong zip
+// (Bulk SP của Amazon từ 2026-11-06), stream trả tên mặc định "Sheet1", "Sheet2"...
+async function readWorkbookSheetNames(filePath: string): Promise<string[]> {
+  const xml = await new Promise<string>((resolve, reject) => {
+    execFile("/usr/bin/unzip", ["-p", filePath, "xl/workbook.xml"], { maxBuffer: 16 * 1024 * 1024 }, (error, stdout) =>
+      error ? reject(new Error(`Không đọc được xl/workbook.xml: ${error.message}`)) : resolve(stdout),
+    );
+  });
+  const names = [...xml.matchAll(/<(?:\w+:)?sheet\b[^>]*?\bname="([^"]*)"/g)].map((match) =>
+    match[1]
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, "&"),
+  );
+  if (names.length === 0) throw new Error("xl/workbook.xml không có sheet nào.");
+  return names;
+}
+
 async function inspectWorkbookStreaming(filePath: string, headerRows = 0): Promise<{ sheetNames: string; headerText: string }> {
+  const sheetNames = (await readWorkbookSheetNames(filePath)).map((name) => name.toLowerCase()).join(" ");
+  if (headerRows <= 0) return { sheetNames, headerText: "" };
   const reader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
     worksheets: "emit",
     sharedStrings: "cache",
@@ -1778,11 +1794,11 @@ async function inspectWorkbookStreaming(filePath: string, headerRows = 0): Promi
     styles: "ignore",
     entries: "ignore",
   });
-  const sheetNames: string[] = [];
   let headerText = "";
+  let sheetsSeen = 0;
   for await (const worksheet of reader) {
-    sheetNames.push(String((worksheet as any).name || "").toLowerCase());
-    if (headerRows > 0 && sheetNames.length === 1) {
+    sheetsSeen += 1;
+    if (sheetsSeen === 1) {
       let rowsRead = 0;
       for await (const row of worksheet) {
         const values = row.values;
@@ -1792,7 +1808,7 @@ async function inspectWorkbookStreaming(filePath: string, headerRows = 0): Promi
       }
     }
   }
-  return { sheetNames: sheetNames.join(" "), headerText };
+  return { sheetNames, headerText };
 }
 
 export async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<void> {
