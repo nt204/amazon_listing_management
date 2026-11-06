@@ -43,6 +43,9 @@ OWNER_FEE_REVENUE_THRESHOLD = 20000.0
 OWNER_FEE_MIN_VND = 1_000_000
 USD_VND_RATE = 25000.0  # ô AF1 sheet SKU-monthly
 
+# Store mà ô AE2 (file TỔNG KẾT) không cộng phí "Service Fee / Subscription" — kế toán chốt theo đúng công thức Excel.
+STORES_EXCLUDE_SUBSCRIPTION_FEE = {'FASTPEACE'}
+
 def load_owner_fee_rules(conn):
     """
     Đọc cấu hình phí chủ store từ app_settings (nếu có), fallback về hằng số mặc định.
@@ -486,7 +489,7 @@ def load_order_sku_map(conn, store_id, orders_file, sku_master, asin_to_sku, fns
             pass
     return order_sku
 
-def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map=None, order_to_sku=None):
+def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map=None, order_to_sku=None, include_subscription_fee=True):
     sku_trans = defaultdict(lambda: {
         'amazon_fee_trans': 0.0,
         'return_amount': 0.0,
@@ -608,7 +611,7 @@ def parse_transactions(trans_file, sku_master, asin_to_sku, fnsku_to_sku, baseco
                 fba_storage_fee_trans += total
                 
         elif ttype == 'Service Fee':
-            if 'Subscription' in desc:
+            if 'Subscription' in desc and include_subscription_fee:
                 awd_sub_fees += total
                 
     if unmapped_transactions:
@@ -791,7 +794,8 @@ def ingest_monthly(store_name_or_id, period, raw_dir=None, dry_run=False, force=
     print(f"🔍 Loaded reverse order lookups: {len(removal_order_map)} removal orders, {len(order_to_sku)} customer orders.")
     trans_file = find_file(download_dir, "15_DateRangeTransactions")
     sku_trans, settled_order_ids, awd_sub_fees, fba_storage_trans, vat_tax_adjustment = parse_transactions(
-        trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map, order_to_sku
+        trans_file, sku_master, asin_to_sku, fnsku_to_sku, basecosts, month_order_ids, removal_order_map, order_to_sku,
+        include_subscription_fee=(store_name or '').strip().upper() not in STORES_EXCLUDE_SUBSCRIPTION_FEE,
     )
     print(f"💳 Settled {len(settled_order_ids)} orders in transactions. AWD/Sub fees = {awd_sub_fees:.2f}")
 
