@@ -2,7 +2,7 @@ import "server-only";
 
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, statfs, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
@@ -328,6 +328,25 @@ export function reportAdType(reference: string): PpcAdType {
   if (/(?:^|[\s_\-/])SB(?:[\s_\-.]|$)/i.test(reference) || /sponsored brands/i.test(reference)) return "SB";
   if (/(?:^|[\s_\-/])SD(?:[\s_\-.]|$)/i.test(reference) || /sponsored display/i.test(reference)) return "SD";
   return "UNKNOWN";
+}
+
+/**
+ * PostgreSQL nằm chung đĩa với app trên VPS; FASTPEACE (≈1 GB xlsx → 4,2 triệu dòng ≈ 3–4 GB trong
+ * ppc_performance_facts) từng làm đầy đĩa giữa transaction (2026-11-06). Thiếu chỗ thì báo lỗi trước
+ * khi ghi để job retry sau và snapshot cũ giữ nguyên, thay vì đẩy database tới lúc hết đĩa.
+ */
+async function assertDiskRoomForBulk(storeName: string, bulkBytes: number): Promise<void> {
+  const diskPath = process.env.PPC_INGEST_DISK_PATH || "/";
+  const stats = await statfs(diskPath).catch(() => null);
+  if (!stats) return;
+  const freeBytes = stats.bavail * stats.bsize;
+  const neededBytes = bulkBytes * 3 + 1024 ** 3;
+  if (freeBytes < neededBytes) {
+    const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+    throw new Error(
+      `Ổ đĩa server (${diskPath}) chỉ còn ${gb(freeBytes)} GB, batch ${storeName} cần khoảng ${gb(neededBytes)} GB — giữ snapshot cũ, thử lại sau.`,
+    );
+  }
 }
 
 const EXPLICIT_RANGE_PATTERN = /(?:^|\D)20\d{2}[01]\d[0-3]\d-20\d{2}[01]\d[0-3]\d(?:\D|$)/;
@@ -1506,6 +1525,7 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
       continue;
     }
 
+    await assertDiskRoomForBulk(storeName, stagedBulkFiles.reduce((sum, item) => sum + (item.object.Size || 0), 0));
     const mergedSearchTerms = parsedSearchTerms.flatMap((item) => item.rows);
     console.log(`[R2 Sync] Đang nạp ${mergedSearchTerms.length.toLocaleString()} dòng Search Term + ${stagedBulkFiles.length} file Bulk của ${storeName} vào PostgreSQL...`);
     // Một transaction cho cả batch: file Bulk nào parse lỗi hoặc rỗng thì rollback toàn bộ.
