@@ -1264,19 +1264,26 @@ export function ListingWorkspace({
     } catch { }
   }, [userBatchSeenKey]);
 
+  // Chấm đỏ "batch xong": khung chung của mọi mục nên chỉ hỏi 60s/lần khi tab đang mở (trước đây 6s kể cả tab ẩn —
+  // hơn nửa số request của cả web); batch mới tạo / quay lại tab thì hỏi ngay.
   useEffect(() => {
     void checkUnreadBatch();
     const interval = setInterval(() => {
-      void checkUnreadBatch();
-    }, 6000);
+      if (document.visibilityState === "visible") void checkUnreadBatch();
+    }, 60000);
 
     const handleBatchUpdate = () => {
       void checkUnreadBatch();
     };
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") void checkUnreadBatch();
+    };
     window.addEventListener("batch-job-updated", handleBatchUpdate);
+    document.addEventListener("visibilitychange", handleVisible);
     return () => {
       clearInterval(interval);
       window.removeEventListener("batch-job-updated", handleBatchUpdate);
+      document.removeEventListener("visibilitychange", handleVisible);
     };
   }, [checkUnreadBatch]);
 

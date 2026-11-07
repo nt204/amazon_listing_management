@@ -1,3 +1,4 @@
+import { compressedJson } from "@/lib/compressed-json";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listPpcDailyCampaignsFromDb } from "@/lib/ppc/repository";
 
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
     // cùng một màn hình hiển thị khác nhau.
     const data = await listPpcDailyCampaignsFromDb(scope, { storeName, days });
 
-    return Response.json({
+    return compressedJson(request, {
       success: true,
       storeName,
       days,

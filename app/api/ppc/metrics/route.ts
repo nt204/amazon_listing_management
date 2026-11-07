@@ -1,3 +1,4 @@
+import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getPpcAnalyticsData } from "@/lib/ppc/service";
 import { getActiveSnapshotId } from "@/lib/ppc/repository";
@@ -214,7 +215,7 @@ export async function GET(request: Request) {
       });
     }
 
-    return Response.json(data, {
+    return compressedJson(request, data, {
       headers: {
         "ETag": etag,
         "Cache-Control": refresh ? "private, no-store" : "private, max-age=60, stale-while-revalidate=300",

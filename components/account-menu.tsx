@@ -35,7 +35,9 @@ export function AccountMenu({
     if (actor.role !== "admin" || pendingUserCount !== undefined) return;
 
     let cancelled = false;
+    let lastLoadedAt = 0;
     const loadPendingUsers = async () => {
+      lastLoadedAt = Date.now();
       try {
         const response = await fetch("/api/admin/users", { cache: "no-store" });
         const body = await response.json() as {
@@ -54,7 +56,10 @@ export function AccountMenu({
     const refreshTimer = window.setInterval(() => {
       if (!document.hidden) void loadPendingUsers();
     }, 60_000);
-    const refreshOnFocus = () => void loadPendingUsers();
+    // Quay lại cửa sổ chỉ tải lại khi lần trước đã quá 30s (chuyển qua lại liên tục không gọi API mỗi lần)
+    const refreshOnFocus = () => {
+      if (Date.now() - lastLoadedAt > 30_000) void loadPendingUsers();
+    };
     window.addEventListener("focus", refreshOnFocus);
 
     return () => {

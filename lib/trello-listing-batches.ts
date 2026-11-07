@@ -163,14 +163,16 @@ export async function getActiveListingBatches(teamId?: string, actorId?: string)
         LIMIT 5;
       `;
 
+  // 1 truy vấn cho mọi batch (trước đây 1 truy vấn / batch)
   const activeItems: Record<string, TrelloListingBatchItemRecord[]> = {};
-  for (const b of batches) {
+  for (const b of batches) activeItems[b.id] = [];
+  if (batches.length) {
     const items = await sql<TrelloListingBatchItemRecord[]>`
       SELECT * FROM trello_listing_batch_items
-      WHERE batch_id = ${b.id}
+      WHERE batch_id IN ${sql(batches.map((b) => b.id))}
       ORDER BY created_at ASC;
     `;
-    activeItems[b.id] = items;
+    for (const item of items) activeItems[item.batch_id]?.push(item);
   }
 
   return { activeBatches: batches, activeItems };

@@ -1,3 +1,4 @@
+import { compressedJson } from "@/lib/compressed-json";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
 import { listFbmSkuMonthly } from "@/lib/accounting/fbm-sku-monthly-db";
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
       sortField: searchParams.get("sortField") || "revenue",
       sortDirection: (searchParams.get("sortDirection") as "asc" | "desc") || "desc",
     });
-    return Response.json(result);
+    return compressedJson(request, result);
   } catch (error) {
     return routeErrorResponse(error, "Lỗi nạp dữ liệu SKU FBM-monthly", 500);
   }

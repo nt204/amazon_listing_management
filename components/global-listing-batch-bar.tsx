@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
@@ -52,6 +52,12 @@ export function GlobalListingBatchBar() {
     });
   }, []);
 
+  // Đọc batch đang chọn qua ref: để fetchActiveBatches không đổi mỗi lần chọn batch (đổi là effect hỏi lại)
+  const selectedBatchIdRef = useRef(selectedBatchId);
+  useEffect(() => {
+    selectedBatchIdRef.current = selectedBatchId;
+  }, [selectedBatchId]);
+
   const fetchActiveBatches = useCallback(async () => {
     try {
       const res = await fetch("/api/trello/batch-jobs/active", { cache: "no-store" });
@@ -62,33 +68,45 @@ export function GlobalListingBatchBar() {
         if (data.activeItems) {
           setActiveItems(data.activeItems);
         }
-        if (data.activeBatches.length > 0 && !selectedBatchId) {
+        if (data.activeBatches.length > 0 && !selectedBatchIdRef.current) {
           setSelectedBatchId(data.activeBatches[0].id);
         }
       }
     } catch {
       // Bỏ qua lỗi mạng nền
     }
-  }, [selectedBatchId]);
+  }, []);
+
+  // Chu kỳ hỏi theo trạng thái: đang chạy 3s, vừa xong (còn hiện 10 phút) 15s, không có batch 60s.
+  // Effect chỉ chạy lại khi đổi trạng thái — trước đây phụ thuộc cả mảng activeBatches nên mỗi lần nhận dữ liệu
+  // lại hỏi ngay lập tức (vòng lặp gọi API liên tục). Tab ẩn thì ngừng hỏi, hiện lại thì hỏi 1 lần.
+  const pollMode = activeBatches.some((b) => b.status === "running" || b.status === "queued" || b.status === "paused")
+    ? "running"
+    : activeBatches.length > 0
+    ? "recent"
+    : "idle";
 
   useEffect(() => {
     void fetchActiveBatches();
-    const hasRunning = activeBatches.some((b) => b.status === "running" || b.status === "queued");
-    const intervalTime = hasRunning ? 2500 : 8000;
-    const timer = setInterval(() => {
-      void fetchActiveBatches();
-    }, intervalTime);
-
-    const handleUpdate = () => {
-      void fetchActiveBatches();
+    const handleUpdate = () => void fetchActiveBatches();
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") void fetchActiveBatches();
     };
     window.addEventListener("batch-job-updated", handleUpdate);
-
+    document.addEventListener("visibilitychange", handleVisible);
     return () => {
-      clearInterval(timer);
       window.removeEventListener("batch-job-updated", handleUpdate);
+      document.removeEventListener("visibilitychange", handleVisible);
     };
-  }, [fetchActiveBatches, activeBatches]);
+  }, [fetchActiveBatches]);
+
+  useEffect(() => {
+    const intervalTime = pollMode === "running" ? 3000 : pollMode === "recent" ? 15000 : 60000;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void fetchActiveBatches();
+    }, intervalTime);
+    return () => clearInterval(timer);
+  }, [fetchActiveBatches, pollMode]);
 
   const visibleBatches = useMemo(() => {
     return activeBatches.filter((b) => !dismissedBatches.has(b.id));

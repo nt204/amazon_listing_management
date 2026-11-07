@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { detectRasterImageMimeType } from "@/lib/image-processing";
@@ -11,19 +15,76 @@ import sharp from "sharp";
 
 export const runtime = "nodejs";
 
+// Ảnh đã thu nhỏ lưu trên đĩa theo URL + chiều rộng: trước đây mỗi lần trình duyệt chưa có cache là tải lại nguyên
+// ảnh gốc (Trello tới 35 MB) rồi sharp lại — một bảng vài chục SKU = vài chục lượt tải ảnh gốc cùng lúc.
+const CACHE_DIR = process.env.MOCKUP_THUMB_CACHE_DIR || path.join(os.tmpdir(), "mockup-thumb-cache");
+const inFlight = new Map<string, Promise<{ body: Buffer; mime: string }>>();
+
+function cachePaths(url: string, width: number) {
+  const hash = createHash("sha256").update(`${width}|${url}`).digest("hex");
+  const dir = path.join(CACHE_DIR, hash.slice(0, 2));
+  return { dir, file: path.join(dir, `${hash}.webp`) };
+}
+
+function imageResponse(body: Buffer, mime: string, cacheStatus: string) {
+  return new Response(new Uint8Array(body), {
+    headers: {
+      "Content-Type": mime,
+      "Content-Length": String(body.length),
+      "Cache-Control": "public, max-age=31536000, immutable", // Cache 1 year
+      "X-Content-Type-Options": "nosniff",
+      "X-Thumb-Cache": cacheStatus,
+    },
+  });
+}
+
 export async function GET(request: Request) {
   try {
     await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const rawUrl = searchParams.get("url");
     const widthParam = searchParams.get("w");
-    const targetWidth = widthParam ? Math.min(1000, Math.max(24, parseInt(widthParam, 10))) : 64;
+    const parsedWidth = widthParam ? parseInt(widthParam, 10) : NaN;
+    const targetWidth = Number.isFinite(parsedWidth) ? Math.min(1000, Math.max(24, parsedWidth)) : 64;
 
     if (!rawUrl || !rawUrl.trim()) {
       return new NextResponse("Missing url parameter", { status: 400 });
     }
 
     const trimmedUrl = rawUrl.trim();
+    const { dir, file } = cachePaths(trimmedUrl, targetWidth);
+    const cached = await readFile(file).catch(() => null);
+    if (cached) return imageResponse(cached, "image/webp", "HIT");
+
+    const key = file;
+    let pending = inFlight.get(key);
+    if (!pending) {
+      pending = buildThumbnail(trimmedUrl, targetWidth, dir, file).finally(() => inFlight.delete(key));
+      inFlight.set(key, pending);
+    }
+    const { body, mime } = await pending;
+    return imageResponse(body, mime, "MISS");
+  } catch (error) {
+    if (error instanceof UpstreamError) {
+      return new NextResponse(error.message, { status: error.status });
+    }
+    return routeErrorResponse(error, "Không thể tải ảnh mockup.", 500);
+  }
+}
+
+class UpstreamError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+async function buildThumbnail(
+  trimmedUrl: string,
+  targetWidth: number,
+  dir: string,
+  file: string,
+): Promise<{ body: Buffer; mime: string }> {
+  {
     let originalBuffer: Buffer | null = null;
     let mimeType = "image/jpeg";
 
@@ -52,7 +113,7 @@ export async function GET(request: Request) {
       });
 
       if (!upstreamRes.ok) {
-        return new NextResponse(`Upstream failed: ${upstreamRes.status}`, { status: upstreamRes.status });
+        throw new UpstreamError(`Upstream failed: ${upstreamRes.status}`, upstreamRes.status);
       }
 
       mimeType = upstreamRes.headers.get("content-type") || "image/jpeg";
@@ -61,12 +122,12 @@ export async function GET(request: Request) {
     }
 
     if (!originalBuffer || originalBuffer.length === 0) {
-      return new NextResponse("Empty image buffer", { status: 404 });
+      throw new UpstreamError("Empty image buffer", 404);
     }
 
     // Ultra-lightweight WebP thumbnail: ~1-3KB per image for 0ms network impact
     let outputBuffer: Buffer;
-    let outputMime = "image/webp";
+    const outputMime = "image/webp";
 
     try {
       outputBuffer = await sharp(originalBuffer)
@@ -74,20 +135,19 @@ export async function GET(request: Request) {
         .webp({ quality: 55, effort: 2 })
         .toBuffer();
     } catch {
-      // Fallback if format is not supported by Sharp
-      outputBuffer = originalBuffer;
-      outputMime = mimeType;
+      // Fallback if format is not supported by Sharp — không lưu cache (ảnh gốc, có thể rất lớn)
+      return { body: originalBuffer, mime: mimeType };
     }
 
-    return new Response(new Uint8Array(outputBuffer), {
-      headers: {
-        "Content-Type": outputMime,
-        "Content-Length": String(outputBuffer.length),
-        "Cache-Control": "public, max-age=31536000, immutable", // Cache 1 year
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
-  } catch (error) {
-    return routeErrorResponse(error, "Không thể tải ảnh mockup.", 500);
+    // Ghi file tạm rồi rename: request khác không đọc phải file đang ghi dở. Lỗi ghi cache không làm hỏng ảnh trả về.
+    try {
+      await mkdir(dir, { recursive: true });
+      const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(tmp, outputBuffer);
+      await rename(tmp, file);
+    } catch {
+      // bỏ qua
+    }
+    return { body: outputBuffer, mime: outputMime };
   }
 }

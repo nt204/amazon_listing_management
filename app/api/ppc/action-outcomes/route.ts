@@ -1,3 +1,4 @@
+import { compressedJson } from "@/lib/compressed-json";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { evaluatePendingActionOutcomes } from "@/lib/ppc/action-outcome-evaluator";
@@ -307,7 +308,7 @@ export async function GET(request: Request) {
     // Apply pagination
     const paginatedItems = filteredActions.slice(offset, offset + limit);
 
-    return Response.json({
+    return compressedJson(request, {
       success: true,
       data: {
         items: paginatedItems,

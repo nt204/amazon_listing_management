@@ -1,4 +1,5 @@
 // app/api/ppc/sku-economics/route.ts
+import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { z } from "zod";
 import {
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
     const days = Number(searchParams.get("days") || 30);
 
     const list = await getSkuEconomicsList(storeId, days);
-    return Response.json({ success: true, data: list });
+    return compressedJson(request, { success: true, data: list });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách SKU Economics.", 500);
   }

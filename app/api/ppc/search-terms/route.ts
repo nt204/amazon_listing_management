@@ -1,4 +1,5 @@
 // app/api/ppc/search-terms/route.ts
+import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
@@ -515,7 +516,7 @@ export async function GET(request: Request) {
       };
     });
 
-    return Response.json({
+    return compressedJson(request, {
       success: true,
       data: cachedData,
       timingMs: Math.round(performance.now() - started),

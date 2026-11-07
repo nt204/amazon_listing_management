@@ -1,3 +1,4 @@
+import { compressedJson } from "@/lib/compressed-json";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getAccountingAccess, storeChannelsFor } from "@/lib/accounting/access";
 import { getAccountingDashboard } from "@/lib/accounting/dashboard-db";
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
     const team = searchParams.get("team") || "";
 
     const data = await getAccountingDashboard({ startDate, endDate, storeIds, compare, fresh, team, allowedChannels });
-    return Response.json(data);
+    return compressedJson(request, data);
   } catch (error) {
     return routeErrorResponse(error, "Không thể tải Dashboard kế toán.", 500);
   }

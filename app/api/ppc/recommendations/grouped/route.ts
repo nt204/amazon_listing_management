@@ -1,4 +1,5 @@
 // app/api/ppc/recommendations/grouped/route.ts
+import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listTargetRowsForRecommendations } from "@/lib/ppc/repository";
 import { getGroupedRecommendations, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
@@ -84,7 +85,7 @@ export async function GET(request: Request) {
       data: summaryOnly ? { ...filteredResult, allRecommendations: [] } : filteredResult,
     };
     const body = JSON.stringify(responseData);
-    return new Response(body, {
+    return compressedJson(request, body, {
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",

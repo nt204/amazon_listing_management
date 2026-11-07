@@ -1,3 +1,4 @@
+import { compressedJson } from "@/lib/compressed-json";
 import { NextRequest, NextResponse } from "next/server";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
       limit,
     });
 
-    return NextResponse.json(result);
+    return compressedJson(req, result);
   } catch (err) {
     return routeErrorResponse(err, "Lỗi nạp dữ liệu SKU Monthly", 500);
   }
