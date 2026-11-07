@@ -865,6 +865,79 @@ export interface CleanupOldFactsResult {
 }
 
 /**
+ * Mỗi lần crawl lưu nguyên một snapshot đầy đủ (FASTPEACE ≈ 260k dòng/ngày) và giữ 120 ngày, nên
+ * ppc_performance_facts tăng ≈ 600 MB/ngày — tới 2026-11-07 đã 22 GB trên đĩa 38 GB và batch FASTPEACE
+ * không nạp được nữa. Màn hình/AI chỉ đọc snapshot mới nhất; dữ liệu cũ chỉ được đọc lại theo target có
+ * action (Evaluator before/after, action memory). Nên snapshot cũ hơn PPC_FULL_SNAPSHOT_DAYS ngày (mặc định 14)
+ * chỉ giữ dòng TARGET của target từng có action, bỏ phần còn lại. Không đụng snapshot mới nhất của từng store
+ * và các khoảng báo cáo đang active. File xlsx gốc vẫn lưu ở Mac mini nếu cần nạp lại.
+ * Xoá từng (store, ngày) một để WAL được checkpoint dần, không phình đĩa.
+ */
+export async function compactOldPpcSnapshots(): Promise<CleanupOldFactsResult> {
+  const sql = await getDatabaseClient();
+  const fullDays = Math.max(7, Number(process.env.PPC_FULL_SNAPSHOT_DAYS || 14));
+  // Dò từng (store, ngày) qua index (store_id, snapshot_date, ...) thay vì DISTINCT trên cả bảng.
+  const groups = await sql<Array<{ store_id: string; snapshot_date: string }>>`
+    WITH latest AS (
+      SELECT s.id AS store_id,
+        (SELECT MAX(f.snapshot_date) FROM ppc_performance_facts f WHERE f.store_id = s.id) AS max_date
+      FROM ppc_stores s
+    )
+    SELECT l.store_id, d.day::date::text AS snapshot_date
+    FROM latest l
+    CROSS JOIN generate_series(CURRENT_DATE - 400, CURRENT_DATE - ${fullDays + 1}::integer, INTERVAL '1 day') AS d(day)
+    WHERE l.max_date IS NOT NULL
+      AND d.day::date < l.max_date
+      AND EXISTS (
+        SELECT 1 FROM ppc_performance_facts f
+        WHERE f.store_id = l.store_id AND f.snapshot_date = d.day::date AND f.grain <> 'TARGET'
+      )
+    ORDER BY d.day, l.store_id
+  `;
+
+  let deletedFactsCount = 0;
+  for (const group of groups) {
+    const [row] = await sql<{ count: string }[]>`
+      WITH action_targets AS (
+        SELECT DISTINCT target_id FROM ppc_actions WHERE store_id = ${group.store_id} AND target_id <> ''
+      ),
+      action_keywords AS (
+        SELECT DISTINCT lower(trim(target_keyword)) AS keyword
+        FROM ppc_actions WHERE store_id = ${group.store_id} AND trim(target_keyword) <> ''
+      ),
+      deleted AS (
+        DELETE FROM ppc_performance_facts p
+        WHERE p.store_id = ${group.store_id}
+          AND p.snapshot_date = ${group.snapshot_date}::date
+          AND NOT EXISTS (
+            SELECT 1 FROM ppc_active_snapshots a
+            WHERE a.store_id = p.store_id
+              AND a.report_start_date = p.report_start_date
+              AND a.report_end_date = p.report_end_date
+          )
+          AND NOT (
+            p.grain = 'TARGET'
+            AND (
+              p.target_id IN (SELECT target_id FROM action_targets)
+              OR lower(trim(p.target_expression)) IN (SELECT keyword FROM action_keywords)
+            )
+          )
+        RETURNING 1
+      )
+      SELECT count(*)::text AS count FROM deleted
+    `;
+    deletedFactsCount += Number(row?.count || 0);
+  }
+
+  if (deletedFactsCount > 0) {
+    // VACUUM thường (không FULL): trả chỗ trống cho chính bảng dùng lại khi nạp snapshot mới, không khoá bảng.
+    await sql`VACUUM (PARALLEL 0, ANALYZE) ppc_performance_facts`.catch((err) =>
+      console.warn("[File Manager] Không thể VACUUM ppc_performance_facts sau khi thu gọn:", err));
+  }
+  return { deletedFactsCount };
+}
+
+/**
  * Tự động dọn dẹp các dòng rác 0-metrics của các snapshot ngày cũ trong bảng ppc_performance_facts.
  * Quy tắc an toàn tuyệt đối:
  * 1. KHÔNG BAO GIỜ xóa snapshot của ngày mới nhất (p.snapshot_date < (SELECT MAX(snapshot_date) FROM ppc_performance_facts)).

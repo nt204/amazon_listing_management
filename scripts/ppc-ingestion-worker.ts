@@ -49,7 +49,7 @@ async function main() {
 
       // Tự động dọn dẹp các đợt cũ trùng ngày trên R2 nếu đợt mới đã nạp thành công
       try {
-        const { cleanupDuplicateR2Batches, cleanupOldZeroMetricFacts } = await import("../lib/ppc/file-manager");
+        const { cleanupDuplicateR2Batches, cleanupOldZeroMetricFacts, compactOldPpcSnapshots } = await import("../lib/ppc/file-manager");
         const cleanup = await cleanupDuplicateR2Batches();
         if (cleanup.deletedBatches.length > 0) {
           console.log(`[PPC Ingestion Worker] 🧹 Đã tự động dọn dẹp ${cleanup.deletedBatches.length} batch cũ trùng ngày (${cleanup.deletedFilesCount} file, ${(cleanup.freedBytes / (1024 * 1024)).toFixed(1)} MB)`);
@@ -59,6 +59,12 @@ async function main() {
         const factsCleanup = await cleanupOldZeroMetricFacts();
         if (factsCleanup.deletedFactsCount > 0) {
           console.log(`[PPC Ingestion Worker] 🧹 Đã dọn dẹp ${factsCleanup.deletedFactsCount} dòng rác ngày cũ trong ppc_performance_facts.`);
+        }
+
+        // Thu gọn snapshot cũ (chỉ giữ TARGET có action) để bảng facts không phình hết đĩa
+        const compacted = await compactOldPpcSnapshots();
+        if (compacted.deletedFactsCount > 0) {
+          console.log(`[PPC Ingestion Worker] 🧹 Đã thu gọn ${compacted.deletedFactsCount.toLocaleString()} dòng của snapshot cũ trong ppc_performance_facts.`);
         }
 
         // Dọn các thư mục tạm /tmp/ppc-bulk-* bị bỏ lại bởi tiến trình crash (chỉ thư mục đã cũ)

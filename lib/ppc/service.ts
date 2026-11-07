@@ -339,7 +339,13 @@ async function assertDiskRoomForBulk(storeName: string, bulkBytes: number): Prom
   const diskPath = process.env.PPC_INGEST_DISK_PATH || "/";
   const stats = await statfs(diskPath).catch(() => null);
   if (!stats) return;
-  const freeBytes = stats.bavail * stats.bsize;
+  // Dòng đã xoá (compactOldPpcSnapshots) + VACUUM để lại chỗ trống trong chính bảng facts: Postgres ghi snapshot
+  // mới vào đó trước khi xin thêm đĩa, nên tính cả phần này (pgstattuple, migration 137; thiếu extension thì bỏ qua).
+  const reusableBytes = await getDatabaseClient()
+    .then((sql) => sql<{ free: string }[]>`SELECT approx_free_space::text AS free FROM pgstattuple_approx('ppc_performance_facts'::regclass)`)
+    .then((rows) => Number(rows[0]?.free || 0))
+    .catch(() => 0);
+  const freeBytes = stats.bavail * stats.bsize + reusableBytes;
   const neededBytes = bulkBytes * 3 + 1024 ** 3;
   if (freeBytes < neededBytes) {
     const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
