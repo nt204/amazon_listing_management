@@ -186,6 +186,59 @@ function skuChannelSelect(sql: Sql, channel: SkuChannel) {
         ending_warehouse_balance::float, ton_kho_updated_at::text`;
 }
 
+/**
+ * Giá trị tồn của Bảng Mã (màn hình + xuất Excel dùng chung, giống tab TỒN của file INVENTORY):
+ *   Giá TB năm = Tiền hàng / SL đi hàng của SKU trong Chi Tiết Đi Hàng;
+ *   SKU không có lô nào → giá tồn đầu năm (tab TỒN, "Trung bình giá 1/1"), rồi Basecost TB, rồi giá TB của loại sản phẩm.
+ *   Giá trị tồn = Tồn × Giá TB năm (tồn âm tính 0).
+ * Cần đi kèm skuStockValueJoins (alias asm = bảng mã).
+ */
+function skuUnitCostSql(sql: Sql) {
+  return sql`COALESCE(
+    CASE WHEN ib.inbound_qty > 0 THEN ib.inbound_cost / ib.inbound_qty END,
+    CASE WHEN asm.gia_ton_dau_nam > 0 THEN asm.gia_ton_dau_nam::float END,
+    CASE WHEN asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
+    pt.avg_cost
+  )`;
+}
+
+export function skuStockValueSelect(sql: Sql) {
+  return sql`
+    ROUND((${skuUnitCostSql(sql)})::numeric, 4)::float AS gia_trung_binh_nam,
+    ib.inbound_qty::float AS inbound_qty,
+    ib.inbound_cost::float AS inbound_cost,
+    CASE
+      WHEN asm.ton_kho > 0 THEN ROUND((asm.ton_kho * ${skuUnitCostSql(sql)})::numeric, 2)::float
+      WHEN asm.ton_kho IS NOT NULL THEN 0
+    END AS gia_tri_ton`;
+}
+
+export function skuStockValueJoins(sql: Sql) {
+  return sql`
+    LEFT JOIN LATERAL (
+      SELECT
+        COALESCE(SUM(quantity), 0)::float AS inbound_qty,
+        COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)), 0)::float AS inbound_cost
+      FROM accounting_inbound_shipments s
+      WHERE s.store_id = asm.store_id
+        AND (
+          REPLACE(UPPER(TRIM(s.sku)), ' ', '') = REPLACE(UPPER(TRIM(asm.sku)), ' ', '')
+          OR (asm.asin IS NOT NULL AND s.sku = asm.asin)
+        )
+        AND s.deleted_at IS NULL
+    ) ib ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        CASE WHEN SUM(quantity) > 0 THEN
+          ROUND((SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)) / SUM(quantity))::numeric, 4)::float
+        END AS avg_cost
+      FROM accounting_inbound_shipments s2
+      WHERE s2.store_id = asm.store_id
+        AND LOWER(TRIM(COALESCE(s2.product_type, ''))) = LOWER(TRIM(COALESCE(asm.product_type, '')))
+        AND s2.deleted_at IS NULL
+    ) pt ON true`;
+}
+
 export type InventoryEntityType = "sku" | "sku_fbm" | "inbound" | "check_shipment" | "monthly_base_cost";
 
 export interface InventoryHistoryItem {
@@ -549,48 +602,11 @@ export async function listSkuMaster(
         // BẢNG MÃ FBM không có cột kich_thuoc / file_design (chỉ bảng FBA có)
         ? sql`asm.sup, asm.size, asm.basecost::float, asm.shipping_fee::float, asm.add_shipping_fee::float, asm.total_cost::float, asm.ngay_len_camp`
         : sql`asm.kich_thuoc, asm.file_design, asm.ton_kho::float, asm.in_transit_between_warehouses::float, asm.ending_warehouse_balance::float, asm.ton_kho_updated_at::text`},
-      COALESCE(
-        CASE WHEN ib.inbound_qty > 0 THEN ROUND((ib.inbound_cost / ib.inbound_qty)::numeric, 4)::float END,
-        CASE WHEN asm.basecost_tb IS NOT NULL AND asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
-        pt.avg_cost
-      ) AS gia_trung_binh_nam,
-      ib.inbound_qty::float AS inbound_qty,
-      ib.inbound_cost::float AS inbound_cost,
-      CASE
-        WHEN asm.ton_kho IS NOT NULL AND asm.ton_kho > 0 THEN
-          ROUND((asm.ton_kho * COALESCE(
-            CASE WHEN ib.inbound_qty > 0 THEN (ib.inbound_cost / ib.inbound_qty) END,
-            CASE WHEN asm.basecost_tb IS NOT NULL AND asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
-            pt.avg_cost
-          ))::numeric, 2)::float
-        WHEN asm.ton_kho IS NOT NULL AND asm.ton_kho = 0 THEN 0
-        ELSE NULL
-      END AS gia_tri_ton,
+      ${skuStockValueSelect(sql)},
       asm.created_at::text,
       asm.updated_at::text
     FROM ${sql(table)} asm
-    LEFT JOIN LATERAL (
-      SELECT
-        COALESCE(SUM(quantity), 0)::float AS inbound_qty,
-        COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)), 0)::float AS inbound_cost
-      FROM accounting_inbound_shipments s
-      WHERE s.store_id = asm.store_id
-        AND (
-          REPLACE(UPPER(TRIM(s.sku)), ' ', '') = REPLACE(UPPER(TRIM(asm.sku)), ' ', '')
-          OR (asm.asin IS NOT NULL AND s.sku = asm.asin)
-        )
-        AND s.deleted_at IS NULL
-    ) ib ON true
-    LEFT JOIN LATERAL (
-      SELECT
-        CASE WHEN SUM(quantity) > 0 THEN
-          ROUND((SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)) / SUM(quantity))::numeric, 4)::float
-        END AS avg_cost
-      FROM accounting_inbound_shipments s2
-      WHERE s2.store_id = asm.store_id
-        AND LOWER(TRIM(COALESCE(s2.product_type, ''))) = LOWER(TRIM(COALESCE(asm.product_type, '')))
-        AND s2.deleted_at IS NULL
-    ) pt ON true
+    ${skuStockValueJoins(sql)}
     WHERE asm.store_id = ${storeId}
       AND asm.deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
@@ -1988,6 +2004,8 @@ export function createDefaultSkuSheet(ws: ExcelJS.Worksheet, skus: any[] = []): 
         return val != null && val !== "" ? Number(val) : null;
       }
       if (col.key === "gia_tri_ton") {
+        // Cùng số với màn hình Bảng Mã (skuStockValueSelect); chỉ tự tính khi dòng không có sẵn giá trị
+        if (row.gia_tri_ton != null) return Number(row.gia_tri_ton);
         if (row.ton_kho == null || row.basecost_tb == null) return null;
         const base = Number(row.basecost_tb) || 0;
         const ton = Number(row.ton_kho) || 0;

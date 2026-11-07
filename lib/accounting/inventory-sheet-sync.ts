@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getServiceAccountEmail, parseSpreadsheetId, readSpreadsheetTab } from "@/lib/google/sheets";
 import { syncBaseCostOutflowFromSheet } from "@/lib/accounting/base-cost-sheet-outflow";
+import { syncOpeningCostFromSheet } from "@/lib/accounting/opening-cost-sheet";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 import { storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
 import {
@@ -977,6 +978,12 @@ async function runLink(
         }
       })
       .catch((error) => console.error(`[InventorySheetSync] ${link.store_id} BASECOST THÁNG lỗi:`, error instanceof Error ? error.message : error));
+    // Tab TỒN: giá tồn đầu năm, dùng cho Giá trị tồn của SKU không có lô nào trong Chi Tiết Đi Hàng
+    await syncOpeningCostFromSheet(link.store_id, link.sheet_url)
+      .then((r) => {
+        if (r.updated) console.log(`[InventorySheetSync] ${link.store_id} TỒN: cập nhật giá tồn đầu năm ${r.updated}/${r.sheetRows} SKU`);
+      })
+      .catch((error) => console.error(`[InventorySheetSync] ${link.store_id} TỒN lỗi:`, error instanceof Error ? error.message : error));
   }
   const errors = parts.filter((p) => !results[p]!.ok).map((p) => `${SHEET_TYPE_LABELS[p]}: ${results[p]!.error}`);
   return { ok: errors.length === 0, parts: results, error: errors.length ? errors.join(" | ") : undefined };
