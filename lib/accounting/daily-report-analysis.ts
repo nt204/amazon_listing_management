@@ -39,6 +39,10 @@ export interface PortfolioStat {
   todaySales: number;
   todayOrders: number;
   avg7Spend: number;
+  todayImpressions?: number;
+  todayClicks?: number;
+  /** Số của ngày trước ngày báo cáo (báo cáo quản trị so với hôm qua). */
+  yesterday?: { spend: number; sales: number; orders: number; impressions: number; clicks: number };
 }
 
 export interface ChannelDrill {

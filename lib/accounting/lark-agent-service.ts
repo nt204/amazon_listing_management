@@ -40,8 +40,10 @@ import { resolveLarkActorStoreAccess, type PpcStoreAccessStore } from "@/lib/ppc
 import { getDatabaseClient } from "@/lib/db";
 import {
   getDailyBusinessReview,
+  parseChannelDiagnosisRequest,
   parseDailyReportDetailRequest,
   sendDailyReportDetail,
+  sendChannelDiagnosis,
 } from "@/lib/accounting/daily-business-reporter";
 
 const AUTO_BID_TOOLS = new Set([
@@ -931,6 +933,23 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
     });
     if (!result.success && options.sendToLark) await sendLarkTextNotification(result.message, recipient);
     return { replyText: result.text ?? result.message, toolsUsed: ["daily_report_detail"], larkSent: Boolean(options.sendToLark) };
+  }
+
+  // "phân tích <store>": phân tích nguyên nhân + action do code tính (không qua AI). Không nhận ra store thì để AI trả lời.
+  const diagnosisRequest = parseChannelDiagnosisRequest(options.message);
+  if (diagnosisRequest && targetReceiveId) {
+    const recipient = { receiveId: targetReceiveId, receiveIdType: targetReceiveIdType, replyToMessageId: options.replyToMessageId };
+    const result = await sendChannelDiagnosis({
+      message: options.message,
+      targetDate: diagnosisRequest.date,
+      storeNames: allowedStores?.map((store) => store.name),
+      recipient,
+      dryRun: !options.sendToLark,
+    });
+    if (result.matched) {
+      if (!result.success && options.sendToLark) await sendLarkTextNotification(result.message, recipient);
+      return { replyText: result.text ?? result.message, toolsUsed: ["channel_diagnosis"], larkSent: Boolean(options.sendToLark) };
+    }
   }
 
   // 1. KIỂM TRA THAO TÁC PPC ĐANG CHỜ XÁC NHẬN (NẾU CÓ SESSION ID)
