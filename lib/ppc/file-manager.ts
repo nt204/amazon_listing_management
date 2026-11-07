@@ -868,14 +868,14 @@ export interface CleanupOldFactsResult {
  * Mỗi lần crawl lưu nguyên một snapshot đầy đủ (FASTPEACE ≈ 260k dòng/ngày) và giữ 120 ngày, nên
  * ppc_performance_facts tăng ≈ 600 MB/ngày — tới 2026-11-07 đã 22 GB trên đĩa 38 GB và batch FASTPEACE
  * không nạp được nữa. Màn hình/AI chỉ đọc snapshot mới nhất; dữ liệu cũ chỉ được đọc lại theo target có
- * action (Evaluator before/after, action memory). Nên snapshot cũ hơn PPC_FULL_SNAPSHOT_DAYS ngày (mặc định 14)
+ * action (Evaluator before/after, action memory). Nên snapshot cũ hơn PPC_FULL_SNAPSHOT_DAYS ngày (mặc định 7)
  * chỉ giữ dòng TARGET của target từng có action, bỏ phần còn lại. Không đụng snapshot mới nhất của từng store
  * và các khoảng báo cáo đang active. File xlsx gốc vẫn lưu ở Mac mini nếu cần nạp lại.
  * Xoá từng (store, ngày) một để WAL được checkpoint dần, không phình đĩa.
  */
 export async function compactOldPpcSnapshots(): Promise<CleanupOldFactsResult> {
   const sql = await getDatabaseClient();
-  const fullDays = Math.max(7, Number(process.env.PPC_FULL_SNAPSHOT_DAYS || 14));
+  const fullDays = Math.max(7, Number(process.env.PPC_FULL_SNAPSHOT_DAYS || 7));
   // Dò từng (store, ngày) qua index (store_id, snapshot_date, ...) thay vì DISTINCT trên cả bảng.
   const groups = await sql<Array<{ store_id: string; snapshot_date: string }>>`
     WITH latest AS (
@@ -955,11 +955,17 @@ export async function cleanupOldZeroMetricFacts(): Promise<CleanupOldFactsResult
     // 1. Dọn dẹp facts rác 0-metrics của các snapshot ngày cũ (an toàn 100%)
     const result = await sql<{ count: string }[]>`
       WITH latest_snapshot AS (
-        SELECT MAX(snapshot_date) AS max_date FROM ppc_performance_facts
+        -- Mới nhất THEO TỪNG STORE: lấy MAX chung thì store chậm một ngày (BOZSPACER 2026-11-07) bị xoá
+        -- target 0-metrics khỏi chính snapshot đang hiển thị.
+        SELECT s.id AS store_id,
+          (SELECT MAX(f.snapshot_date) FROM ppc_performance_facts f WHERE f.store_id = s.id) AS max_date
+        FROM ppc_stores s
       ),
       deleted AS (
         DELETE FROM ppc_performance_facts p
-        WHERE p.snapshot_date < (SELECT max_date FROM latest_snapshot)
+        USING latest_snapshot l
+        WHERE l.store_id = p.store_id
+          AND p.snapshot_date < l.max_date
           AND p.spend = 0
           AND p.clicks = 0
           AND p.impressions = 0
