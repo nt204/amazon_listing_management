@@ -961,6 +961,8 @@ interface BulkTaskItem {
   days: 3 | 7 | 30;
   requestId: string;
   filePath?: string;
+  /** Số lần phải tạo lại export vì file tải về khác loại SP/SB với slot (ID bị khoá nhầm). */
+  retriggers?: number;
 }
 
 async function downloadBulkFileByRow(
@@ -1236,6 +1238,37 @@ export async function createAndDownloadAllBulkReports(
           sbDir,
           signal,
         );
+
+        if (actualAdType !== task.adType) {
+          // ID khoá nhầm (BOZSPACER 2026-11-07: ID dò từ bảng cho "SB 30d" thực ra là một export SP). Đổi nhãn theo
+          // nội dung thì số ngày vẫn là của slot sai, batch thiếu slot và mọi lần retry lại dùng đúng ID sai đó.
+          // Nên bỏ file, tạo lại export cho đúng slot này và ghi ID mới vào checkpoint.
+          try { fs.unlinkSync(savedPath); } catch { }
+          task.retriggers = (task.retriggers || 0) + 1;
+          const slotCheckpoint = checkpointTasks?.find((item) => (!item.store || item.store === storeName) && item.type === `BULK_${task.adType}` && item.days === task.days);
+          const mismatch = `ID ${task.requestId} của slot ${task.adType} ${task.days}d trả về file ${actualAdType}`;
+          console.warn(`[BULK PHA 2] ⚠️ ${mismatch} — bỏ file, tạo lại export (lần ${task.retriggers}/2).`);
+          if (task.retriggers > 2) {
+            if (slotCheckpoint) {
+              slotCheckpoint.amazonRequestId = null;
+              slotCheckpoint.status = slotCheckpoint.attempt >= 3 ? "FAILED" : "NOT_STARTED";
+              slotCheckpoint.lastError = mismatch;
+              saveCheckpoint?.();
+            }
+            throw new Error(`[BULK] ${mismatch} sau 2 lần tạo lại.`);
+          }
+          task.requestId = await triggerBulkExport(bulkPage, entityParam, task.adType, task.days, storeName);
+          if (slotCheckpoint) {
+            slotCheckpoint.amazonRequestId = task.requestId;
+            slotCheckpoint.status = "AMAZON_PROCESSING";
+            slotCheckpoint.attempt += 1;
+            slotCheckpoint.lastError = mismatch;
+            saveCheckpoint?.();
+          }
+          console.log(`[BULK PHA 2] 🔒 ĐÃ GHI NHỚ LẠI: ${task.adType}_${task.days}D = ${task.requestId}`);
+          await bulkPage.waitForTimeout(6000);
+          continue;
+        }
 
         task.filePath = savedPath;
         const checkpointTask = checkpointTasks?.find((item) => (!item.store || item.store === storeName) && item.type === `BULK_${actualAdType}` && item.days === task.days);
