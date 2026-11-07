@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   ArrowClockwiseIcon,
@@ -59,6 +59,37 @@ const CHANNEL_CONFIG = {
   },
 } as const;
 const PAGE_SIZE_STORAGE_KEY = "acc_sku_monthly_page_size";
+
+// Cột hiển thị khác tên trường dữ liệu
+const SORT_FIELD_ALIAS: Record<string, string> = { amazon_fee: "amazon_fee_total" };
+// So chuỗi kiểu tự nhiên: SKU2 < SKU10, không phân biệt hoa thường / dấu
+const COLLATOR = new Intl.Collator("vi", { numeric: true, sensitivity: "base" });
+
+const normalizeText = (value: unknown) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase();
+
+/**
+ * Tìm kiếm trên SKU, ASIN, Product Type, Trạng thái, FNSKU (không phân biệt hoa thường / dấu):
+ *  - nhiều từ cách nhau bằng khoảng trắng: dòng phải chứa đủ các từ ("glass ornament off")
+ *  - dán danh sách cách nhau bằng dấu phẩy / xuống dòng: dòng khớp một trong các mục (dán nhiều SKU một lúc)
+ */
+function buildSearchMatcher(query: string): ((item: SkuMonthlyItem) => boolean) | null {
+  const groups = normalizeText(query)
+    .split(/[,;\n]+/)
+    .map((part) => part.trim().split(/\s+/).filter(Boolean))
+    .filter((words) => words.length > 0);
+  if (!groups.length) return null;
+  return (item) => {
+    const haystack = normalizeText(
+      [item.sku, item.asin, item.product_type, item.status, item.fnsku].filter(Boolean).join(" "),
+    );
+    return groups.some((words) => words.every((word) => haystack.includes(word)));
+  };
+}
 const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
 
 function formatCurrency(val: number | null | undefined): string {
@@ -120,7 +151,8 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
   // Search & Sorting
   const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  // Lọc / sắp xếp chạy trên trình duyệt (đã có đủ SKU của kỳ): gõ / bấm cột không phải tải lại từ server
+  const deferredSearch = useDeferredValue(search);
   const [sortField, setSortField] = useState<string>("revenue");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
@@ -255,7 +287,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
         localStorage.setItem(SKU_MONTHLY_FROZEN_STORAGE_KEY, JSON.stringify(nextFrozenColumns));
       }
     },
-    [visibleColumns]
+    [visibleColumns, SKU_MONTHLY_FROZEN_STORAGE_KEY]
   );
 
   const handleResetFrozenColumns = useCallback(() => {
@@ -264,7 +296,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     if (typeof window !== "undefined") {
       localStorage.setItem(SKU_MONTHLY_FROZEN_STORAGE_KEY, JSON.stringify(defaultFrozenColumns));
     }
-  }, []);
+  }, [SKU_MONTHLY_FROZEN_STORAGE_KEY]);
 
   const handleQuickHideColumn = useCallback(
     (colId: string) => {
@@ -354,7 +386,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       }
       return updated;
     });
-  }, []);
+  }, [SKU_MONTHLY_COLUMNS_STORAGE_KEY]);
 
   // Auto-fit Column
   const handleAutoFitColumn = useCallback(
@@ -403,14 +435,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     handleSaveColumns(newCols);
   };
 
-  // Debounce search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
   // Load stores once on mount
   useEffect(() => {
     let ignore = false;
@@ -454,9 +478,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
         storeId: selectedStoreId,
         year: String(selectedYear),
         month: String(selectedMonth),
-        search: debouncedSearch,
-        sortField,
-        sortDirection,
       });
 
       const res = await fetch(`${config.api}?${params.toString()}`);
@@ -475,7 +496,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     } finally {
       setLoading(false);
     }
-  }, [config.api, selectedStoreId, selectedYear, selectedMonth, debouncedSearch, sortField, sortDirection]);
+  }, [config.api, selectedStoreId, selectedYear, selectedMonth]);
 
   useEffect(() => {
     fetchData();
@@ -501,10 +522,28 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     return options;
   }, [availableMonths, isFbm, selectedYear]);
 
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  // Tìm kiếm + sắp xếp trên TOÀN BỘ SKU của kỳ rồi mới chia trang
+  const displayItems = useMemo(() => {
+    const matcher = buildSearchMatcher(deferredSearch);
+    const filtered = matcher ? items.filter(matcher) : items;
+    const field = SORT_FIELD_ALIAS[sortField] ?? sortField;
+    const dir = sortDirection === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const av = (a as unknown as Record<string, unknown>)[field];
+      const bv = (b as unknown as Record<string, unknown>)[field];
+      // Ô trống (—) luôn xuống cuối dù sắp tăng hay giảm
+      const aEmpty = av == null || av === "";
+      const bEmpty = bv == null || bv === "";
+      if (aEmpty || bEmpty) return aEmpty === bEmpty ? 0 : aEmpty ? 1 : -1;
+      if (typeof av === "number" && typeof bv === "number") return dir * (av - bv);
+      return dir * COLLATOR.compare(String(av), String(bv));
+    });
+  }, [items, deferredSearch, sortField, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(displayItems.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * pageSize;
-  const pageItems = items.slice(pageStart, pageStart + pageSize);
+  const pageItems = displayItems.slice(pageStart, pageStart + pageSize);
 
   // Recalculate handler
   const handleRecalculate = async () => {
@@ -544,6 +583,8 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
   // Handle column sorting
   const handleSort = (field: string) => {
+    if (field === "stt" || field === "mockup") return;
+    setPage(1);
     if (sortField === field) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -646,10 +687,13 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
             />
             <input
               type="text"
-              placeholder="Tìm SKU, ASIN, Product Type..."
+              placeholder="Tìm SKU, ASIN, Product Type… (dán nhiều SKU cách nhau dấu phẩy)"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-52 rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 py-1 text-xs text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:outline-hidden shadow-2xs"
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="w-72 rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 py-1 text-xs text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:outline-hidden shadow-2xs"
             />
           </div>
 
@@ -864,7 +908,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                           <span className="text-slate-700 font-bold">{summary.active_sku_count} active</span>
                         )}
                         {col.id === "mockup" && <span className="text-slate-400">—</span>}
-                        {col.id === "sku" && <span className="font-bold text-slate-950">{items.length} SKUs</span>}
+                        {col.id === "sku" && <span className="font-bold text-slate-950">{displayItems.length} SKUs</span>}
                         {col.id === "asin" && <span className="text-slate-400">—</span>}
                         {col.id === "revenue" && (
                           <span className="font-bold text-slate-950 tabular-nums">
@@ -1057,7 +1101,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                   columnsCount={visibleColumns.length}
                   rowHeightClass="h-[36px]"
                 />
-              ) : items.length === 0 ? (
+              ) : displayItems.length === 0 ? (
                 <tr>
                   <td
                     colSpan={visibleColumns.length}
@@ -1450,7 +1494,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       <PaginationBar
         page={currentPage}
         totalPages={totalPages}
-        totalItems={items.length}
+        totalItems={displayItems.length}
         limit={pageSize}
         onPageChange={setPage}
         onLimitChange={(size) => {
@@ -1465,7 +1509,8 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       <div className="bg-slate-100 px-3 py-1.5 border-t border-slate-200 text-xs text-slate-500 flex items-center justify-between shrink-0 select-none">
         <div className="flex items-center gap-2">
           <span>
-            Hiển thị <strong>{items.length}</strong> SKU
+            Hiển thị <strong>{displayItems.length}</strong>
+            {displayItems.length !== items.length && <> / {items.length}</>} SKU
             {summary && (
               <>
                 {" "}— trong đó <strong className="text-emerald-700">{summary.active_sku_count}</strong> SKU phát sinh giao dịch
