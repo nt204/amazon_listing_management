@@ -926,7 +926,10 @@ export async function compactOldPpcSnapshots(): Promise<CleanupOldFactsResult> {
       )
       SELECT count(*)::text AS count FROM deleted
     `;
-    deletedFactsCount += Number(row?.count || 0);
+    const deleted = Number(row?.count || 0);
+    deletedFactsCount += deleted;
+    // Đĩa còn rất ít: checkpoint để WAL của lần xoá này được tái sử dụng ngay thay vì dồn lại.
+    if (deleted > 0) await sql`CHECKPOINT`.catch(() => undefined);
   }
 
   if (deletedFactsCount > 0) {

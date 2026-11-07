@@ -126,7 +126,11 @@ export async function enqueuePpcIngestion(
       END,
       stage = CASE WHEN ${force} THEN 'QUEUED' ELSE ppc_ingestion_jobs.stage END,
       progress_pct = CASE WHEN ${force} THEN 0 ELSE ppc_ingestion_jobs.progress_pct END,
-      attempt_count = CASE WHEN ${force} THEN 0 ELSE ppc_ingestion_jobs.attempt_count END,
+      -- Retry job đã FAILED cũng phải có lượt mới: worker chỉ nhận job attempt_count < max_attempts.
+      attempt_count = CASE
+        WHEN ${force} OR ppc_ingestion_jobs.status IN ('FAILED', 'CANCELLED') THEN 0
+        ELSE ppc_ingestion_jobs.attempt_count
+      END,
       next_attempt_at = CASE 
         WHEN ${force} THEN NOW()
         WHEN ppc_ingestion_jobs.status IN ('FAILED', 'CANCELLED') THEN NOW() 
@@ -141,7 +145,20 @@ export async function enqueuePpcIngestion(
       lease_expires_at = CASE WHEN ${force} THEN NULL ELSE ppc_ingestion_jobs.lease_expires_at END,
       updated_at = NOW()
     RETURNING *`;
-  return rows[0];
+  const job = rows[0];
+  // Batch do crawler bàn giao: khi job FAILED, ppc_sync_jobs cũng đã FAILED. Đưa về INGESTING để lúc nạp xong
+  // completePpcIngestion/failPpcIngestion cập nhật được (trước đây báo "Crawler job liên kết không còn ở trạng thái
+  // INGESTING" dù dữ liệu đã nạp, 2026-11-06).
+  if (job?.crawler_job_id && (job.status === "QUEUED" || job.status === "RETRY_WAIT")) {
+    await sql`
+      UPDATE ppc_sync_jobs
+      SET status = 'INGESTING', stage = 'INGESTING', error_message = NULL, completed_at = NULL,
+          current_step = 'Đã đưa batch vào hàng đợi nạp lại trên server.', updated_at = NOW()
+      WHERE id = ${job.crawler_job_id} AND team_id = ${job.team_id} AND batch_id = ${job.batch_id}
+        AND status IN ('FAILED', 'CANCELLED')
+    `;
+  }
+  return job;
 }
 export async function getPpcIngestion(scope:DataScope,id:string){const sql=await getDatabaseClient();const rows=await sql<PpcIngestionJob[]>`
   SELECT id,team_id,actor_id,batch_id,batch_date,store_names,status,stage,progress_pct,attempt_count,max_attempts,result,error_message

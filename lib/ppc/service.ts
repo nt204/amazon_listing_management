@@ -335,24 +335,35 @@ export function reportAdType(reference: string): PpcAdType {
  * ppc_performance_facts) từng làm đầy đĩa giữa transaction (2026-11-06). Thiếu chỗ thì báo lỗi trước
  * khi ghi để job retry sau và snapshot cũ giữ nguyên, thay vì đẩy database tới lúc hết đĩa.
  */
-async function assertDiskRoomForBulk(storeName: string, bulkBytes: number): Promise<void> {
+async function measureDiskRoom(): Promise<{ diskPath: string; freeBytes: number } | null> {
   const diskPath = process.env.PPC_INGEST_DISK_PATH || "/";
   const stats = await statfs(diskPath).catch(() => null);
-  if (!stats) return;
+  if (!stats) return null;
   // Dòng đã xoá (compactOldPpcSnapshots) + VACUUM để lại chỗ trống trong chính bảng facts: Postgres ghi snapshot
   // mới vào đó trước khi xin thêm đĩa, nên tính cả phần này (pgstattuple, migration 137; thiếu extension thì bỏ qua).
   const reusableBytes = await getDatabaseClient()
     .then((sql) => sql<{ free: string }[]>`SELECT approx_free_space::text AS free FROM pgstattuple_approx('ppc_performance_facts'::regclass)`)
     .then((rows) => Number(rows[0]?.free || 0))
     .catch(() => 0);
-  const freeBytes = stats.bavail * stats.bsize + reusableBytes;
+  return { diskPath, freeBytes: stats.bavail * stats.bsize + reusableBytes };
+}
+
+async function assertDiskRoomForBulk(storeName: string, bulkBytes: number): Promise<void> {
   const neededBytes = bulkBytes * 3 + 1024 ** 3;
-  if (freeBytes < neededBytes) {
-    const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
-    throw new Error(
-      `Ổ đĩa server (${diskPath}) chỉ còn ${gb(freeBytes)} GB, batch ${storeName} cần khoảng ${gb(neededBytes)} GB — giữ snapshot cũ, thử lại sau.`,
-    );
-  }
+  let room = await measureDiskRoom();
+  if (!room || room.freeBytes >= neededBytes) return;
+
+  // Thiếu chỗ: thu gọn snapshot cũ ngay rồi đo lại, thay vì để job đốt hết lượt retry (FASTPEACE 2026-11-07).
+  const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+  console.log(`[R2 Sync] Đĩa còn ${gb(room.freeBytes)} GB < ${gb(neededBytes)} GB cần cho ${storeName} → thu gọn snapshot cũ trước khi nạp...`);
+  const { compactOldPpcSnapshots } = await import("./file-manager");
+  const compacted = await compactOldPpcSnapshots();
+  console.log(`[R2 Sync] Đã thu gọn ${compacted.deletedFactsCount.toLocaleString()} dòng snapshot cũ.`);
+  room = await measureDiskRoom();
+  if (!room || room.freeBytes >= neededBytes) return;
+  throw new Error(
+    `Ổ đĩa server (${room.diskPath}) chỉ còn ${gb(room.freeBytes)} GB, batch ${storeName} cần khoảng ${gb(neededBytes)} GB — giữ snapshot cũ, thử lại sau.`,
+  );
 }
 
 const EXPLICIT_RANGE_PATTERN = /(?:^|\D)20\d{2}[01]\d[0-3]\d-20\d{2}[01]\d[0-3]\d(?:\D|$)/;
