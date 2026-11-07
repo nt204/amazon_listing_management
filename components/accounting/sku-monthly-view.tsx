@@ -165,7 +165,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       const saved = Number(localStorage.getItem(PAGE_SIZE_STORAGE_KEY));
       if ([25, 50, 100, 200].includes(saved)) return saved;
     }
-    return 100;
+    return 50;
   });
   const [summary, setSummary] = useState<SkuMonthlyStoreSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
