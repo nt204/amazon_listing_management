@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import { listSkuMonthly } from "@/lib/accounting/sku-monthly-db";
 import { enqueueSkuMonthlyRecalc } from "@/lib/accounting/sku-monthly-recalc";
 
 export async function GET(req: NextRequest) {
   try {
+    const actor = await authorize(req, "read", "accounting");
     const { searchParams } = new URL(req.url);
     const storeId = searchParams.get("storeId");
 
     if (!storeId) {
       return NextResponse.json({ error: "Thiếu storeId" }, { status: 400 });
     }
+    // Phân quyền kế toán: SKU Monthly là kênh FBA của store
+    await requireStoreAccess(actor, storeId, "FBA");
 
     const year = searchParams.get("year") ? parseInt(searchParams.get("year")!, 10) : 2026;
     const monthParam = searchParams.get("month");
@@ -38,23 +43,21 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(result);
-  } catch (err: any) {
-    console.error("[API SKU Monthly] Error:", err);
-    return NextResponse.json(
-      { error: err.message || "Lỗi nạp dữ liệu SKU Monthly" },
-      { status: 500 }
-    );
+  } catch (err) {
+    return routeErrorResponse(err, "Lỗi nạp dữ liệu SKU Monthly", 500);
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
+    const actor = await authorize(req, "write", "accounting");
     const body = await req.json();
     const { storeId, year, month } = body;
 
     if (!storeId || !year || !month) {
       return NextResponse.json({ error: "Thiếu storeId, year hoặc month" }, { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, "FBA", "write");
 
     const period = `${year}-${String(month).padStart(2, "0")}`;
     if (!/^\d{4}-\d{2}$/.test(period)) {
@@ -68,11 +71,7 @@ export async function POST(req: NextRequest) {
       success: true,
       message: `Đã xếp hàng tính lại kỳ ${period} từ file thô trên R2 — khoảng 1–3 phút nữa tải lại trang để xem số mới`,
     });
-  } catch (err: any) {
-    console.error("[API SKU Monthly Recalculate] Error:", err);
-    return NextResponse.json(
-      { error: err.message || "Lỗi khi tính toán dữ liệu thô" },
-      { status: 500 }
-    );
+  } catch (err) {
+    return routeErrorResponse(err, "Lỗi khi tính toán dữ liệu thô", 500);
   }
 }

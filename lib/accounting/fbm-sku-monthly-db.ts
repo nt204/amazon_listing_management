@@ -154,12 +154,26 @@ export async function listFbmSkuMonthly(
   const isAllMonths = monthOpt === "all";
   const monthNum = typeof monthOpt === "number" ? monthOpt : 0;
 
-  // Mỗi dòng = 1 sản phẩm SKU + ASIN. Mockup lấy từ BẢNG MÃ FBM (dòng cùng ASIN, không có thì dòng đầu của SKU)
+  // Mockup theo SKU + ASIN (không có thì dòng đầu của SKU): tính 1 lần cho cả store rồi hash join —
+  // LATERAL theo từng dòng quét lại bảng mã cho mỗi SKU (FASTPEACE 3.645 SKU mất ~19 giây).
+  const mockups = sql`
+    WITH mockups AS (
+      SELECT UPPER(TRIM(sku)) AS sku_key, UPPER(TRIM(COALESCE(asin, ''))) AS asin_key, mockup_url,
+        ROW_NUMBER() OVER (PARTITION BY UPPER(TRIM(sku)) ORDER BY row_order NULLS LAST, created_at) = 1 AS first_of_sku,
+        ROW_NUMBER() OVER (
+          PARTITION BY UPPER(TRIM(sku)), UPPER(TRIM(COALESCE(asin, ''))) ORDER BY row_order NULLS LAST, created_at
+        ) = 1 AS first_of_asin
+      FROM accounting_sku_master_fbm
+      WHERE store_id = ${storeId} AND deleted_at IS NULL AND mockup_url IS NOT NULL
+    )
+  `;
+  // Mỗi dòng = 1 sản phẩm SKU + ASIN
   const rawItems = isAllMonths
     ? await sql<Row[]>`
+        ${mockups}
         SELECT sm.sku, sm.asin,
           MAX(sm.product_type) AS product_type, MAX(sm.status) AS status,
-          MAX(m.mockup_url) AS mockup_url,
+          MAX(COALESCE(ma.mockup_url, ms.mockup_url)) AS mockup_url,
           SUM(sm.revenue) AS revenue, SUM(sm.quantity) AS quantity, SUM(sm.ads_fee) AS ads_fee,
           SUM(sm.basecost) AS basecost, SUM(sm.amazon_fee_unrecognized) AS amazon_fee_unrecognized,
           SUM(sm.amazon_fee_trans) AS amazon_fee_trans, SUM(sm.thue) AS thue,
@@ -167,22 +181,17 @@ export async function listFbmSkuMonthly(
           SUM(sm.chargeback_refund) AS chargeback_refund, SUM(sm.profit) AS profit,
           SUM(sm.revenue_ads) AS revenue_ads
         FROM accounting_fbm_sku_monthly sm
-        LEFT JOIN LATERAL (
-          SELECT mockup_url FROM accounting_sku_master_fbm f
-          WHERE f.store_id = sm.store_id AND UPPER(TRIM(f.sku)) = UPPER(sm.sku) AND f.deleted_at IS NULL
-          ORDER BY UPPER(TRIM(COALESCE(f.asin, ''))) = UPPER(sm.asin) DESC, f.row_order NULLS LAST LIMIT 1
-        ) m ON true
+        LEFT JOIN mockups ma ON ma.sku_key = UPPER(sm.sku) AND ma.asin_key = UPPER(sm.asin) AND ma.first_of_asin
+        LEFT JOIN mockups ms ON ms.sku_key = UPPER(sm.sku) AND ms.first_of_sku
         WHERE sm.store_id = ${storeId} AND sm.year = ${year}
         GROUP BY sm.sku, sm.asin
       `
     : await sql<Row[]>`
-        SELECT sm.*, m.mockup_url
+        ${mockups}
+        SELECT sm.*, COALESCE(ma.mockup_url, ms.mockup_url) AS mockup_url
         FROM accounting_fbm_sku_monthly sm
-        LEFT JOIN LATERAL (
-          SELECT mockup_url FROM accounting_sku_master_fbm f
-          WHERE f.store_id = sm.store_id AND UPPER(TRIM(f.sku)) = UPPER(sm.sku) AND f.deleted_at IS NULL
-          ORDER BY UPPER(TRIM(COALESCE(f.asin, ''))) = UPPER(sm.asin) DESC, f.row_order NULLS LAST LIMIT 1
-        ) m ON true
+        LEFT JOIN mockups ma ON ma.sku_key = UPPER(sm.sku) AND ma.asin_key = UPPER(sm.asin) AND ma.first_of_asin
+        LEFT JOIN mockups ms ON ms.sku_key = UPPER(sm.sku) AND ms.first_of_sku
         WHERE sm.store_id = ${storeId} AND sm.year = ${year} AND sm.month = ${monthNum}
       `;
 

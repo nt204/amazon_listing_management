@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorize, routeErrorResponse } from "@/lib/api-guard";
+import { requireStoreAccess } from "@/lib/accounting/access";
 import { listSkuMonthly } from "@/lib/accounting/sku-monthly-db";
 
 export async function GET(req: NextRequest) {
   try {
+    const actor = await authorize(req, "read", "accounting");
     const { searchParams } = new URL(req.url);
     const storeId = searchParams.get("storeId");
 
     if (!storeId) {
       return new NextResponse("Thiếu storeId", { status: 400 });
     }
+    await requireStoreAccess(actor, storeId, "FBA");
 
     const year = searchParams.get("year") ? parseInt(searchParams.get("year")!, 10) : 2026;
     const monthParam = searchParams.get("month");
@@ -190,8 +194,7 @@ export async function GET(req: NextRequest) {
         "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
-  } catch (err: any) {
-    console.error("[API SKU Monthly Export] Error:", err);
-    return new NextResponse("Lỗi xuất file SKU Monthly", { status: 500 });
+  } catch (err) {
+    return routeErrorResponse(err, "Lỗi xuất file SKU Monthly", 500);
   }
 }

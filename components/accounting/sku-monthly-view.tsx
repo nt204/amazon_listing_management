@@ -57,6 +57,7 @@ const CHANNEL_CONFIG = {
     sheet: "SKU FBM-monthly",
   },
 } as const;
+const RENDER_PAGE = 500;
 const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
 
 function formatCurrency(val: number | null | undefined): string {
@@ -124,6 +125,8 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
   // Data & UI states
   const [items, setItems] = useState<SkuMonthlyItem[]>([]);
+  // Store FBM có hàng nghìn SKU: vẽ dần theo trang khi cuộn tới cuối bảng thay vì vẽ hết một lần
+  const [renderLimit, setRenderLimit] = useState(RENDER_PAGE);
   const [summary, setSummary] = useState<SkuMonthlyStoreSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -443,6 +446,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
       const data = await res.json();
       setItems(data.items || []);
+      setRenderLimit(RENDER_PAGE);
       setSummary(data.summary || null);
       if (data.availableMonths && data.availableMonths.length > 0) {
         setAvailableMonths(data.availableMonths);
@@ -707,7 +711,15 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       </div>
 
       {/* 2. TABLE CONTAINER: Sticky Orange Header & Sticky Amber Total Row */}
-      <div className="flex-1 overflow-auto bg-white relative">
+      <div
+        className="flex-1 overflow-auto bg-white relative"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          if (renderLimit < items.length && el.scrollTop + el.clientHeight > el.scrollHeight - 600) {
+            setRenderLimit((n) => n + RENDER_PAGE);
+          }
+        }}
+      >
         <AccountingTopProgressBar loading={loading} variant="amber" />
         <div
           style={{
@@ -1044,7 +1056,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                   </td>
                 </tr>
               ) : (
-                items.map((item, idx) => {
+                items.slice(0, renderLimit).map((item, idx) => {
                   const isProfit = item.profit >= 0;
 
                   return (
@@ -1413,6 +1425,19 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                     </tr>
                   );
                 })
+              )}
+              {renderLimit < items.length && (
+                <tr>
+                  <td colSpan={visibleColumns.length} className="py-3 text-left">
+                    <button
+                      type="button"
+                      onClick={() => setRenderLimit((n) => n + RENDER_PAGE)}
+                      className="sticky left-3 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                    >
+                      Hiện thêm ({formatInteger(items.length - renderLimit)} SKU còn lại)
+                    </button>
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
