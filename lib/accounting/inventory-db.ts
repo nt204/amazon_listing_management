@@ -189,14 +189,15 @@ function skuChannelSelect(sql: Sql, channel: SkuChannel) {
 /**
  * Giá trị tồn của Bảng Mã (màn hình + xuất Excel dùng chung, giống tab TỒN của file INVENTORY):
  *   Giá TB năm = Tiền hàng / SL đi hàng của SKU trong Chi Tiết Đi Hàng;
- *   SKU không có lô nào → giá tồn đầu năm (tab TỒN, "Trung bình giá 1/1"), rồi Basecost TB, rồi giá TB của loại sản phẩm.
+ *   SKU không có lô nào → giá tồn đầu năm = Basecost đầu kỳ tháng 01 của năm nay trong Basecost Tháng
+ *   (tức giá tháng 12 năm trước — như cột "Trung bình giá 1/1" của tab TỒN), rồi Basecost TB, rồi giá TB của loại sản phẩm.
  *   Giá trị tồn = Tồn × Giá TB năm (tồn âm tính 0).
  * Cần đi kèm skuStockValueJoins (alias asm = bảng mã).
  */
 function skuUnitCostSql(sql: Sql) {
   return sql`COALESCE(
     CASE WHEN ib.inbound_qty > 0 THEN ib.inbound_cost / ib.inbound_qty END,
-    CASE WHEN asm.gia_ton_dau_nam > 0 THEN asm.gia_ton_dau_nam::float END,
+    CASE WHEN od.basecost_dau_ky > 0 THEN od.basecost_dau_ky::float END,
     CASE WHEN asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
     pt.avg_cost
   )`;
@@ -236,7 +237,12 @@ export function skuStockValueJoins(sql: Sql) {
       WHERE s2.store_id = asm.store_id
         AND LOWER(TRIM(COALESCE(s2.product_type, ''))) = LOWER(TRIM(COALESCE(asm.product_type, '')))
         AND s2.deleted_at IS NULL
-    ) pt ON true`;
+    ) pt ON true
+    LEFT JOIN accounting_monthly_base_cost od
+      ON od.store_id = asm.store_id
+      AND od.period = TO_CHAR(CURRENT_DATE, 'YYYY') || '-01'
+      AND od.sku = asm.sku
+      AND od.deleted_at IS NULL`;
 }
 
 export type InventoryEntityType = "sku" | "sku_fbm" | "inbound" | "check_shipment" | "monthly_base_cost";
