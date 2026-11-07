@@ -33,6 +33,7 @@ import {
   ColumnManagerModal,
   createTextWidthMeasurer,
 } from "./column-manager-modal";
+import { PaginationBar } from "./pagination-bar";
 import {
   AccountingTableSkeletonRows,
   AccountingTopProgressBar,
@@ -57,7 +58,7 @@ const CHANNEL_CONFIG = {
     sheet: "SKU FBM-monthly",
   },
 } as const;
-const RENDER_PAGE = 500;
+const PAGE_SIZE_STORAGE_KEY = "acc_sku_monthly_page_size";
 const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
 
 function formatCurrency(val: number | null | undefined): string {
@@ -125,8 +126,15 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
   // Data & UI states
   const [items, setItems] = useState<SkuMonthlyItem[]>([]);
-  // Store FBM có hàng nghìn SKU: vẽ dần theo trang khi cuộn tới cuối bảng thay vì vẽ hết một lần
-  const [renderLimit, setRenderLimit] = useState(RENDER_PAGE);
+  // Phân trang phía client (API trả đủ SKU để dòng tổng / sắp xếp đúng trên toàn bộ): store FBM có hàng nghìn SKU
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = Number(localStorage.getItem(PAGE_SIZE_STORAGE_KEY));
+      if ([25, 50, 100, 200].includes(saved)) return saved;
+    }
+    return 100;
+  });
   const [summary, setSummary] = useState<SkuMonthlyStoreSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -284,10 +292,20 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, []);
 
+  // Khóa liền mạch từ cột đầu tới cột khóa cuối cùng (mặc định tới SKU): cột nằm giữa 2 cột khóa cũng phải khóa,
+  // không thì Product Type / Mockup cuộn trôi xuống dưới STT + SKU
+  const lockedColumns = useMemo(() => {
+    let last = -1;
+    visibleColumns.forEach((col, i) => {
+      if (frozenColumns.includes(col.id)) last = i;
+    });
+    return visibleColumns.slice(0, last + 1).map((col) => col.id);
+  }, [frozenColumns, visibleColumns]);
+
   // Cumulative sticky left offsets for frozen columns
   const getCellFreezeProps = useCallback(
     (colId: string, isHeader = false) => {
-      const isFrozen = frozenColumns.includes(colId);
+      const isFrozen = lockedColumns.includes(colId);
       if (!isFrozen) {
         return {
           isFrozen: false,
@@ -299,7 +317,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
       let leftOffset = 0;
       let isLast = false;
-      const frozenVisible = visibleColumns.filter((c) => frozenColumns.includes(c.id));
+      const frozenVisible = visibleColumns.filter((c) => lockedColumns.includes(c.id));
       for (let i = 0; i < frozenVisible.length; i++) {
         const c = frozenVisible[i];
         if (c.id === colId) {
@@ -324,7 +342,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
           : "",
       };
     },
-    [frozenColumns, visibleColumns]
+    [lockedColumns, visibleColumns]
   );
 
   // Resize Column
@@ -446,7 +464,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
       const data = await res.json();
       setItems(data.items || []);
-      setRenderLimit(RENDER_PAGE);
+      setPage(1);
       setSummary(data.summary || null);
       if (data.availableMonths && data.availableMonths.length > 0) {
         setAvailableMonths(data.availableMonths);
@@ -482,6 +500,11 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     }
     return options;
   }, [availableMonths, isFbm, selectedYear]);
+
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageItems = items.slice(pageStart, pageStart + pageSize);
 
   // Recalculate handler
   const handleRecalculate = async () => {
@@ -711,15 +734,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       </div>
 
       {/* 2. TABLE CONTAINER: Sticky Orange Header & Sticky Amber Total Row */}
-      <div
-        className="flex-1 overflow-auto bg-white relative"
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          if (renderLimit < items.length && el.scrollTop + el.clientHeight > el.scrollHeight - 600) {
-            setRenderLimit((n) => n + RENDER_PAGE);
-          }
-        }}
-      >
+      <div className="flex-1 overflow-auto bg-white relative">
         <AccountingTopProgressBar loading={loading} variant="amber" />
         <div
           style={{
@@ -1056,7 +1071,8 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                   </td>
                 </tr>
               ) : (
-                items.slice(0, renderLimit).map((item, idx) => {
+                pageItems.map((item, pageIdx) => {
+                  const idx = pageStart + pageIdx;
                   const isProfit = item.profit >= 0;
 
                   return (
@@ -1426,23 +1442,24 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                   );
                 })
               )}
-              {renderLimit < items.length && (
-                <tr>
-                  <td colSpan={visibleColumns.length} className="py-3 text-left">
-                    <button
-                      type="button"
-                      onClick={() => setRenderLimit((n) => n + RENDER_PAGE)}
-                      className="sticky left-3 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                    >
-                      Hiện thêm ({formatInteger(items.length - renderLimit)} SKU còn lại)
-                    </button>
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <PaginationBar
+        page={currentPage}
+        totalPages={totalPages}
+        totalItems={items.length}
+        limit={pageSize}
+        onPageChange={setPage}
+        onLimitChange={(size) => {
+          setPageSize(size);
+          setPage(1);
+          if (typeof window !== "undefined") localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(size));
+        }}
+        label="SKU"
+      />
 
       {/* 3. FOOTER BAR (Đồng bộ với FBA ngày) */}
       <div className="bg-slate-100 px-3 py-1.5 border-t border-slate-200 text-xs text-slate-500 flex items-center justify-between shrink-0 select-none">
@@ -1472,8 +1489,8 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
         const visibleIndex = visibleColumns.findIndex((item) => item.id === field);
         const isCurrentBoundary =
           visibleIndex >= 0 &&
-          frozenColumns.includes(field) &&
-          !visibleColumns.slice(visibleIndex + 1).some((item) => frozenColumns.includes(item.id));
+          lockedColumns.includes(field) &&
+          !visibleColumns.slice(visibleIndex + 1).some((item) => lockedColumns.includes(item.id));
 
         return (
           <div
