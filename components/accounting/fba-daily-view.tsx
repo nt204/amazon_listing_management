@@ -1,5 +1,6 @@
 "use client";
 
+import { profitColClass } from "./profit-column";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwiseIcon,
@@ -644,7 +645,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       isFrozen={f.isFrozen}
                       isBoundary={f.isBoundary}
                       style={{ ...f.style, ...bgStyle }}
-                      className="py-2 px-2.5 whitespace-nowrap bg-[#ff9900] text-slate-950"
+                      className={`py-2 px-2.5 whitespace-nowrap bg-[#ff9900] text-slate-950 ${profitColClass(col.id, "head")}`}
                       draggable={true}
                       isDragging={headerDragId === col.id}
                       isDragOver={headerDragOverId === col.id}
@@ -728,7 +729,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       <td
                         key={`total-${col.id}`}
                         style={{ ...f.style, ...bgStyle }}
-                        className={`py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-semibold ${
+                        className={`${profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-semibold ${
                           f.isBoundary
                             ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                             : "border-r border-amber-200/80"
@@ -937,7 +938,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                           <td
                             key={col.id}
                             style={{ ...f.style, ...cellBg }}
-                            className={`py-1.5 px-2.5 text-xs border-b border-slate-200 whitespace-nowrap ${
+                            className={`${profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs border-b border-slate-200 whitespace-nowrap ${
                               f.isBoundary
                                 ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                                 : "border-r border-slate-200"

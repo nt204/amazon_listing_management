@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
+import { profitColClass } from "./profit-column";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ArrowClockwiseIcon,
@@ -1084,7 +1085,7 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
                         isFrozen={f.isFrozen}
                         isBoundary={f.isBoundary}
                         style={f.style}
-                        className={`py-1.5 px-2 text-[15px] bg-[#ff9900] text-slate-950 select-none ${isKeyBoldCol ? "font-bold text-slate-950" : "font-bold text-slate-900"
+                        className={`py-1.5 px-2 text-[15px] bg-[#ff9900] text-slate-950 select-none ${profitColClass(col.id, "head")} ${isKeyBoldCol ? "font-bold text-slate-950" : "font-bold text-slate-900"
                           } ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}
                         draggable={true}
                         isDragging={headerDragId === col.id}
@@ -1180,7 +1181,7 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
                         <td
                           key={`total-${col.id}`}
                           style={{ ...f.style, ...bgStyle }}
-                          className={`py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap ${
+                          className={`${profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap ${
                             f.isBoundary
                               ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                               : "border-r border-amber-200/80"
@@ -1382,7 +1383,7 @@ export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" 
                             <td
                               key={col.id}
                               style={{ ...f.style, ...bgStyle }}
-                              className={`py-1.5 px-2.5 text-xs text-slate-900 border-b border-slate-200 transition-colors ${
+                              className={`${profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs text-slate-900 border-b border-slate-200 transition-colors ${
                                 f.isBoundary
                                   ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                                   : "border-r border-slate-200"
