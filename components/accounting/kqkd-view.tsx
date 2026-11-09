@@ -12,6 +12,7 @@ import {
   StorefrontIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import { createPortal } from "react-dom";
 import { storeCanEdit, storeCanView } from "@/lib/accounting/store-teams";
 import type { StoreAccessInfo } from "@/lib/accounting/types";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
@@ -570,14 +571,18 @@ function ThumbZoom({ url }: { url: string | null }) {
         }}
         className="h-7 w-7 shrink-0 cursor-zoom-in rounded border border-slate-200 object-cover transition-transform duration-150 hover:scale-110"
       />
-      {pos && (
-        <span
-          className="pointer-events-none fixed z-[100] block h-60 w-60 overflow-hidden rounded-lg border border-slate-200 bg-white p-1 shadow-xl"
-          style={{ left: pos.x, top: pos.y }}
-        >
-          <img src={big || thumb} alt="" className="h-full w-full rounded object-contain" />
-        </span>
-      )}
+      {/* Portal ra body: ô SKU sticky (z-10) và dòng có animation transform tạo stacking context riêng,
+          để popup bên trong sẽ bị ô khác đè / lệch vị trí */}
+      {pos &&
+        createPortal(
+          <span
+            className="animate-in fade-in zoom-in-95 duration-150 pointer-events-none fixed z-[1000] block h-60 w-60 overflow-hidden rounded-lg border border-slate-200 bg-white p-1 shadow-xl"
+            style={{ left: Math.min(pos.x, window.innerWidth - 248), top: pos.y }}
+          >
+            <img src={big || thumb} alt="" className="h-full w-full rounded object-contain" />
+          </span>,
+          document.body
+        )}
     </>
   );
 }
