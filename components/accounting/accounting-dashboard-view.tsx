@@ -1153,6 +1153,9 @@ const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
 /** Profit: dương xanh, âm đỏ, 0 xám. */
 const profitTone = (v: number) => (v > 0 ? "text-emerald-600" : v < 0 ? "text-rose-600" : "text-slate-500");
 
+/** Dòng bảng Stores Performance: 1 store, hoặc 1 kênh của store chạy cả FBA và FBM. */
+type StorePerfRow = DashboardStoreRow & { rowKey: string };
+
 /** Giá trị sắp xếp; null (tỷ lệ không có mẫu số) luôn nằm cuối. */
 function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | string | null {
   const c = row.current;
@@ -1180,7 +1183,6 @@ const CHANNEL_BADGE: Record<StoreChannel, string> = {
   FBA: "bg-sky-50 text-sky-600",
   FBM: "bg-violet-50 text-violet-600",
 };
-const CHANNEL_BAR: Record<StoreChannel, string> = { FBA: "#0284c7", FBM: "#7c3aed" };
 
 function ChannelBadge({ channel, label = channel }: { channel: StoreChannel; label?: string }) {
   return (
@@ -1248,9 +1250,22 @@ function StoresPerformance({
 }) {
   // Mặc định store lỗ nặng nhất lên đầu
   const [sort, setSort] = useState<{ key: StoreSortKey; dir: "asc" | "desc" }>({ key: "profit", dir: "asc" });
+  // Store chạy cả FBA và FBM: tách thành 2 dòng độc lập, mỗi dòng 1 tag kênh, không có dòng gộp.
   const rows = useMemo(() => {
     const sign = sort.dir === "asc" ? 1 : -1;
-    return [...data.byStore].sort((a, b) => {
+    const flat: StorePerfRow[] = data.byStore.flatMap((r): StorePerfRow[] =>
+      r.byChannel
+        ? r.byChannel.map((c) => ({
+            ...r,
+            rowKey: `${r.storeId}:${c.channel}`,
+            current: c.current,
+            previous: c.previous,
+            channels: [c.channel],
+            byChannel: undefined,
+          }))
+        : [{ ...r, rowKey: r.storeId }],
+    );
+    return flat.sort((a, b) => {
       const av = storeSortValue(a, sort.key);
       const bv = storeSortValue(b, sort.key);
       if (av == null || bv == null) return av == null ? (bv == null ? 0 : 1) : -1;
@@ -1264,9 +1279,6 @@ function StoresPerformance({
   const toggleSort = (key: StoreSortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "store" ? "asc" : "desc" }));
 
-  // Nhiều store: mỗi store 1 dòng gộp (nhãn kênh cạnh tên); chỉ 1 store: tách thêm dòng FBA / FBM.
-  const channelRows = (row: DashboardStoreRow) => (data.byStore.length === 1 ? row.byChannel : undefined);
-
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
       <h2 className="text-lg font-bold text-slate-900">Stores Performance</h2>
@@ -1276,7 +1288,7 @@ function StoresPerformance({
           const c = row.current;
           const suspicious = c.adsFee > 0 && c.revenue <= 0;
           return (
-            <div key={row.storeId} className="py-1">
+            <div key={row.rowKey} className="py-1">
               <button
                 type="button"
                 onClick={() => onFocusStore(row.storeId)}
@@ -1286,7 +1298,7 @@ function StoresPerformance({
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colorOf(row.storeId) }} />
                     <span className="truncate text-[15px] font-semibold text-slate-900">{row.storeName}</span>
-                    {!channelRows(row) && row.channels?.map((ch) => <ChannelBadge key={ch} channel={ch} label={channelLabel(row.storeId, ch)} />)}
+                    {row.channels?.map((ch) => <ChannelBadge key={ch} channel={ch} label={channelLabel(row.storeId, ch)} />)}
                     {suspicious && <WarningIcon size={14} weight="fill" className="shrink-0 text-amber-500" />}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-xs tabular-nums text-slate-500">
@@ -1309,22 +1321,6 @@ function StoresPerformance({
                   </div>
                 </div>
               </button>
-              {channelRows(row)?.map(({ channel, current: t }) => (
-                <div
-                  key={channel}
-                  className="flex w-full items-center justify-between gap-3 py-1.5 pl-[18px] text-xs tabular-nums text-slate-500"
-                >
-                  <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
-                    <ChannelBadge channel={channel} label={channelLabel(row.storeId, channel)} />
-                    <span>Rev {money(t.revenue)}</span>
-                    <span>TACOS {ratioOrDash(t.tacos, t.revenue)}</span>
-                  </span>
-                  <span className="shrink-0 text-right">
-                    <span className={`font-semibold ${profitTone(t.profit)}`}>{money(t.profit)}</span>{" "}
-                    <span className="text-slate-400">({ratioOrDash(t.margin, t.revenue)})</span>
-                  </span>
-                </div>
-              ))}
             </div>
           );
         })}
@@ -1380,8 +1376,7 @@ function StoresPerformance({
             const share = totalRevenue > 0 ? c.revenue / totalRevenue : 0;
             const suspicious = c.adsFee > 0 && c.revenue <= 0;
             return (
-              // Mỗi store 1 tbody: dòng store + các dòng kênh FBA / FBM đi cùng nhau khi sắp xếp
-              <tbody key={row.storeId} className="acc-rise" style={{ animationDelay: `${delay + idx * 25}ms` }}>
+              <tbody key={row.rowKey} className="acc-rise" style={{ animationDelay: `${delay + idx * 25}ms` }}>
                 <tr
                   onClick={() => onFocusStore(row.storeId)}
                   title={`View ${row.storeName} only`}
@@ -1391,7 +1386,7 @@ function StoresPerformance({
                     <div className="flex items-center gap-2.5">
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colorOf(row.storeId) }} />
                       <span className="truncate font-semibold text-slate-900">{row.storeName}</span>
-                      {!channelRows(row) && row.channels?.map((ch) => <ChannelBadge key={ch} channel={ch} label={channelLabel(row.storeId, ch)} />)}
+                      {row.channels?.map((ch) => <ChannelBadge key={ch} channel={ch} label={channelLabel(row.storeId, ch)} />)}
                       {suspicious && (
                         <span title={`Ad spend ${money(c.adsFee)} with no revenue — check ads mapping`}>
                           <WarningIcon size={14} weight="fill" className="text-amber-500" />
@@ -1401,20 +1396,6 @@ function StoresPerformance({
                   </td>
                   <StoreMetricCells t={c} share={share} barColor={colorOf(row.storeId)} />
                 </tr>
-                {channelRows(row)?.map(({ channel: ch, current: t }) => (
-                  <tr key={ch} className="bg-slate-50/40">
-                    <td className="border-b border-slate-100 py-1.5 pl-[42px] pr-3">
-                      <ChannelBadge channel={ch} label={channelLabel(row.storeId, ch)} />
-                    </td>
-                    <StoreMetricCells
-                      t={t}
-                      share={c.revenue > 0 ? Math.max(0, t.revenue) / c.revenue : 0}
-                      barColor={CHANNEL_BAR[ch]}
-                      barTitle={c.revenue > 0 ? `${pct(t.revenue / c.revenue)} of ${row.storeName} revenue` : undefined}
-                      sub
-                    />
-                  </tr>
-                ))}
               </tbody>
             );
           })}

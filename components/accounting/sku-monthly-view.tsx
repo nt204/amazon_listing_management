@@ -8,7 +8,6 @@ import {
   CalendarBlankIcon,
   CaretDownIcon,
   CaretUpIcon,
-  CheckCircleIcon,
   CopyIcon,
   DownloadSimpleIcon,
   EyeIcon,
@@ -22,8 +21,6 @@ import {
   PlusIcon,
   SlidersHorizontalIcon,
   StorefrontIcon,
-  WarningCircleIcon,
-  CalculatorIcon,
 } from "@phosphor-icons/react";
 import type { SkuMonthlyItem, SkuMonthlyStoreSummary, AvailableMonthOption } from "@/lib/accounting/sku-monthly-db";
 import {
@@ -173,11 +170,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
   const [error, setError] = useState<string | null>(null);
   const [copiedSku, setCopiedSku] = useState<string | null>(null);
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMonthlyItem | null>(null);
-
-  // Recalculate raw data state
-  const [recalculating, setRecalculating] = useState<boolean>(false);
-  const [showRecalcModal, setShowRecalcModal] = useState<boolean>(false);
-  const [recalcFeedback, setRecalcFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
   // Table zoom
   const [zoomLevel, setZoomLevel] = useState<number>(() => {
@@ -546,42 +538,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
   const pageStart = (currentPage - 1) * pageSize;
   const pageItems = displayItems.slice(pageStart, pageStart + pageSize);
 
-  // Recalculate handler
-  const handleRecalculate = async () => {
-    if (selectedMonth === "all") return;
-    setRecalculating(true);
-    setShowRecalcModal(false);
-    setRecalcFeedback(null);
-    try {
-      const res = await fetch(config.api, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          storeId: selectedStoreId,
-          year: selectedYear,
-          month: selectedMonth,
-          force: true,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Có lỗi xảy ra khi tính toán lại");
-      }
-      setRecalcFeedback({
-        success: true,
-        message: data.message || `Đã hoàn tất tính toán kỳ ${selectedMonth}/${selectedYear} từ raw data!`,
-      });
-      await fetchData();
-    } catch (err: any) {
-      setRecalcFeedback({
-        success: false,
-        message: err.message || "Lỗi khi tính toán lại từ raw data",
-      });
-    } finally {
-      setRecalculating(false);
-    }
-  };
-
   // Handle column sorting
   const handleSort = (field: string) => {
     if (field === "stt" || field === "mockup") return;
@@ -747,21 +703,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
           >
             <SlidersHorizontalIcon size={14} className="text-slate-600" />
             <span>Tùy chỉnh cột</span>
-          </button>
-
-          {/* Recalculate Button */}
-          <button
-            type="button"
-            onClick={() => setShowRecalcModal(true)}
-            disabled={recalculating || selectedMonth === "all"}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
-            title="Tính toán lại P&L từ các file thô crawler tải về"
-          >
-            <CalculatorIcon
-              size={14}
-              className={recalculating ? "animate-spin text-indigo-600" : "text-indigo-600"}
-            />
-            <span>{recalculating ? "Đang tính..." : "Tính từ file thô"}</span>
           </button>
 
           {/* Export Excel */}
@@ -1818,79 +1759,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
         </div>
       )}
 
-      {/* RECALCULATE MODAL */}
-      {showRecalcModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
-                <CalculatorIcon size={22} weight="bold" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Tính toán lại từ Raw Data</h3>
-                <p className="text-xs text-slate-500">
-                  Tháng {selectedMonth}/{selectedYear} - Store:{" "}
-                  {stores.find((s) => s.id === selectedStoreId)?.name || "Store hiện tại"}
-                </p>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3.5 text-xs text-amber-900 space-y-1.5">
-              <p className="font-semibold flex items-center gap-1.5">
-                <WarningCircleIcon size={16} weight="bold" className="text-amber-600 shrink-0" />
-                Lưu ý quan trọng:
-              </p>
-              <ul className="list-disc pl-5 space-y-1 text-slate-600 text-[11px]">
-                <li>Hệ thống sẽ chạy parser đọc trực tiếp từ các file báo cáo thô trong thư mục crawler tải về.</li>
-                <li>Dữ liệu tháng {selectedMonth}/{selectedYear} trong cơ sở dữ liệu sẽ được cập nhật lại theo các file mới nhất.</li>
-              </ul>
-            </div>
-
-            <div className="flex justify-end gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowRecalcModal(false)}
-                className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                onClick={handleRecalculate}
-                className="px-4 py-2 rounded-xl bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-700 shadow-2xs transition cursor-pointer"
-              >
-                Xác nhận tính lại
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* FEEDBACK TOAST */}
-      {recalcFeedback && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-md rounded-2xl bg-white p-4 shadow-xl border border-slate-200 space-y-2 animate-in slide-in-from-bottom duration-200">
-          <div className="flex items-start gap-3">
-            {recalcFeedback.success ? (
-              <CheckCircleIcon size={22} weight="fill" className="text-emerald-500 shrink-0 mt-0.5" />
-            ) : (
-              <WarningCircleIcon size={22} weight="fill" className="text-rose-500 shrink-0 mt-0.5" />
-            )}
-            <div className="flex-1">
-              <p className="text-xs font-bold text-slate-900">
-                {recalcFeedback.success ? "Tính toán thành công!" : "Tính toán thất bại"}
-              </p>
-              <p className="text-[11px] text-slate-600 mt-0.5">{recalcFeedback.message}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setRecalcFeedback(null)}
-              className="text-slate-400 hover:text-slate-600 text-xs font-bold ml-2 cursor-pointer"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
