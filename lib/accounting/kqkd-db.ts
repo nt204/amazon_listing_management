@@ -290,5 +290,23 @@ export async function getKqkd(storeId: string, year: number, options: { refresh?
     a.sku.localeCompare(b.sku)
   );
 
-  return { year, months, skus, winResults, generatedAt: new Date().toISOString() };
+  return { year, months, skus, winResults: withAutoWin(skus, winResults, currentPeriod), generatedAt: new Date().toISOString() };
+}
+
+// Số SKU WIN thực tế tự đếm từ BẢNG MÃ: SKU đã đến tháng đánh giá mà trạng thái "Phát triển" = WIN
+// (khớp các ô Team điền tay của sheet T7/T8/T10/2026). Team chỉ cần cập nhật trạng thái trong Bảng mã;
+// ô nhập tay (accounting_kqkd_win_results) nếu có thì ưu tiên — để sửa ngoại lệ.
+const WIN_STATUS = "phát triển";
+function withAutoWin(skus: KqkdSku[], manual: KqkdWinResult[], currentPeriod: string): KqkdWinResult[] {
+  const out = new Map<string, KqkdWinResult>();
+  for (const s of skus) {
+    if (!s.eval_month || s.eval_month > currentPeriod) continue;
+    const phoi = s.product_type || "(trống)";
+    const key = `${s.eval_month}|${phoi}`;
+    const cur = out.get(key) || { eval_month: s.eval_month, product_type: phoi, win_count: 0, updated_by: "auto:bang-ma", updated_at: new Date().toISOString() };
+    if ((s.status || "").normalize("NFC").trim().toLowerCase() === WIN_STATUS) cur.win_count += 1;
+    out.set(key, cur);
+  }
+  for (const m of manual) out.set(`${m.eval_month}|${m.product_type}`, m);
+  return Array.from(out.values()).sort((a, b) => a.eval_month.localeCompare(b.eval_month) || a.product_type.localeCompare(b.product_type));
 }
