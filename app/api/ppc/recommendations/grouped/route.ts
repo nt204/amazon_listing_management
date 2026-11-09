@@ -3,6 +3,8 @@ import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listTargetRowsForRecommendations } from "@/lib/ppc/repository";
 import { getGroupedRecommendations, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
+import { attachSearchVolumes } from "@/lib/ppc/search-volume";
+import { getDatabaseClient } from "@/lib/db";
 
 import {
   groupedRecommendationsCacheKey,
@@ -69,12 +71,38 @@ export async function GET(request: Request) {
     const skuRecommendations = result.allRecommendations.filter(
       (recommendation) => (recommendation.sku || "").toUpperCase() === normalizedSku,
     );
+    // Chi tiết 1 SKU: gắn SV / Organic rank / Sponsored rank cho từng target (ít dòng, không đi qua cache).
+    let skuRecommendationsWithVolume: typeof skuRecommendations = skuRecommendations;
+    if (normalizedSku !== "ALL" && !summaryOnly && skuRecommendations.length > 0) {
+      try {
+        const asin = result.groups.find((group) => group.sku.toUpperCase() === normalizedSku)?.asin || null;
+        const sql = await getDatabaseClient();
+        const enriched = await attachSearchVolumes(
+          sql,
+          skuRecommendations.map((rec) => ({ ...rec, impressions: 0, asin })),
+          {
+            keywordOf: (rec) => (rec.targetType === "PRODUCT" ? null : rec.keyword),
+            coverageDaysOf: () => days,
+            shareApplies: () => false,
+          },
+        );
+        skuRecommendationsWithVolume = skuRecommendations.map((rec, index) => ({
+          ...rec,
+          searchVolume: enriched[index].searchVolume,
+          searchVolumeTrend: enriched[index].searchVolumeTrend,
+          organicRank: enriched[index].organicRank,
+          sponsoredRank: enriched[index].sponsoredRank,
+        }));
+      } catch (error) {
+        console.warn("[recommendations/grouped] attach search volume failed", error);
+      }
+    }
     const filteredResult = normalizedSku === "ALL"
       ? result
       : {
         ...result,
         groups: result.groups.filter((group) => group.sku.toUpperCase() === normalizedSku),
-        allRecommendations: skuRecommendations,
+        allRecommendations: skuRecommendationsWithVolume,
         totalRecommendations: skuRecommendations.length,
         totalSkus: result.groups.some((group) => group.sku.toUpperCase() === normalizedSku) ? 1 : 0,
       };

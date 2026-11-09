@@ -171,6 +171,11 @@ export interface PpcRecommendation {
   sales?: number;
   orders?: number;
   cpc?: number;
+  /** Chỉ có khi tải chi tiết 1 SKU (Helium 10 / bảng rank). */
+  searchVolume?: number | null;
+  searchVolumeTrend?: number | null;
+  organicRank?: number | null;
+  sponsoredRank?: number | null;
   createdAt: string;
 }
 

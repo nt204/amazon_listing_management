@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "react";
 import type { RequestActor } from "@/lib/auth";
 import { usePpcColumnVisibility } from "./use-ppc-column-visibility";
 import {
@@ -8,7 +8,6 @@ import {
   CheckCircle,
   X,
   CaretRight,
-  ArrowRight,
   ArrowUpRight,
   ArrowDownRight,
   Pause,
@@ -43,6 +42,7 @@ import {
 import type { PpcRecommendation, PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
 import type { AiReviewerExecutionResult } from "@/lib/ppc/ai-reviewer";
 import { PpcPagination } from "./ppc-pagination";
+import { PpcOrganicRankCell, PpcSearchVolumeCell, PpcSponsoredRankCell } from "./ppc-search-volume";
 import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
@@ -837,8 +837,6 @@ export function PpcSkuRecommendationGroupView({
     [skuRecsBeforeActionFilter, modalActionFilter],
   );
 
-  const focusedRec = currentSkuRecs.find((r) => r.id === focusedRecId) ?? currentSkuRecs[0] ?? null;
-
   // Group currentSkuRecs by Campaign
   const groupedByCampaign = useMemo(() => {
     const map = new Map<string, PpcRecommendation[]>();
@@ -857,6 +855,7 @@ export function PpcSkuRecommendationGroupView({
       let spend = 0;
       let sales = 0;
       let orders = 0;
+      let clicks = 0;
       for (const r of recs) {
         if (r.recType === "BID_INCREASE") totalIncrease++;
         else if (r.recType === "BID_DECREASE") totalDecrease++;
@@ -864,6 +863,7 @@ export function PpcSkuRecommendationGroupView({
         spend += r.spend || 0;
         sales += r.sales || 0;
         orders += r.orders || 0;
+        clicks += r.clicks || 0;
       }
       const firstRec = recs[0];
       const campState = (firstRec?.campaignState || "enabled").toLowerCase();
@@ -893,6 +893,7 @@ export function PpcSkuRecommendationGroupView({
         spend,
         sales,
         orders,
+        clicks,
       };
     });
   }, [currentSkuRecs]);
@@ -2304,9 +2305,10 @@ export function PpcSkuRecommendationGroupView({
 
                             <div className="flex items-center gap-5 text-xs">
                               {[
+                                { label: "Clicks", value: String(cg.clicks) },
+                                { label: "Orders", value: String(cg.orders) },
                                 { label: "Spend", value: `$${cg.spend.toFixed(2)}` },
                                 { label: "Sales", value: `$${cg.sales.toFixed(2)}` },
-                                { label: "Orders", value: String(cg.orders) },
                               ].map((m) => (
                                 <div key={m.label} className="w-16">
                                   <div className="text-[11px] text-slate-500">{m.label}</div>
@@ -2343,20 +2345,25 @@ export function PpcSkuRecommendationGroupView({
                                 <thead className="text-slate-500 text-[11px] font-semibold border-b border-slate-100">
                                   <tr>
                                     <th className="py-2.5 pl-4 pr-2 w-8">{campaignCheckbox}</th>
-                                    <th className="py-2.5 px-3">Target / Keyword</th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap" title="Orders · ACOS trong kỳ dữ liệu">
-                                      {recommendationWindowDays}D
-                                    </th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Current Bid</th>
-                                    <th className="py-2.5 px-3 text-right">Suggested</th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Final Bid</th>
+                                    <th className="py-2.5 px-2">Target / Keyword</th>
+                                    <th className="py-2.5 px-2 text-right" title="Search Volume tháng (Helium 10)">SV</th>
+                                    <th className="py-2.5 px-2 text-center whitespace-nowrap" title="Organic Rank">Org</th>
+                                    <th className="py-2.5 px-2 text-center whitespace-nowrap" title="Sponsored Rank">SP</th>
+                                    <th className="py-2.5 px-2 text-right" title={`Clicks ${recommendationWindowDays} ngày`}>Clicks</th>
+                                    <th className="py-2.5 px-2 text-right" title={`Orders ${recommendationWindowDays} ngày`}>Orders</th>
+                                    <th className="py-2.5 px-2 text-right" title={`Spend ${recommendationWindowDays} ngày`}>Spend</th>
+                                    <th className="py-2.5 px-2 text-right" title={`Sales ${recommendationWindowDays} ngày`}>Sales</th>
+                                    <th className="py-2.5 px-2 text-right" title={`ACOS ${recommendationWindowDays} ngày`}>ACOS</th>
+                                    <th className="py-2.5 px-2 text-right whitespace-nowrap">Current</th>
+                                    <th className="py-2.5 px-2 text-right">Suggested</th>
+                                    <th className="py-2.5 px-2 text-right whitespace-nowrap">Final Bid</th>
                                     <th className="py-2.5 pl-2 pr-4 w-20"></th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-slate-700">
                                   {cg.recs.map((rec) => {
                                     const isSelected = selectedRecIds.has(rec.id);
-                                    const isFocused = focusedRec?.id === rec.id;
+                                    const isFocused = focusedRecId === rec.id;
                                     const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
                                     const isApproved = isTargetApproved(rec);
                                     const suggestedTone = rec.recType === "BID_INCREASE"
@@ -2366,9 +2373,10 @@ export function PpcSkuRecommendationGroupView({
                                         : "text-slate-700";
 
                                     return (
+                                      <Fragment key={rec.id}>
                                       <tr
-                                        key={rec.id}
-                                        onClick={() => setFocusedRecId(rec.id)}
+                                        onClick={() => setFocusedRecId((prev) => (prev === rec.id ? null : rec.id))}
+                                        title="Bấm để xem lý do đề xuất"
                                         className={`cursor-pointer transition ${isFocused ? "bg-indigo-50/70" : isSelected ? "bg-indigo-50/30" : "hover:bg-slate-50"}`}
                                       >
                                         <td className="py-2.5 pl-4 pr-2">
@@ -2396,25 +2404,34 @@ export function PpcSkuRecommendationGroupView({
                                             </button>
                                           )}
                                         </td>
-                                        <td className="py-2.5 px-3 col-primary">
+                                        <td className="py-2.5 px-2 col-primary min-w-[180px]">
                                           <div className="font-semibold text-[13px] text-slate-900 break-words">{rec.keyword}</div>
                                           {rec.matchType && (
                                             <div className="text-[11px] text-slate-400 capitalize">{rec.matchType.toLowerCase()}</div>
                                           )}
                                         </td>
-                                        <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono">
-                                          <span className="text-slate-700 mr-2">{rec.orders || 0}</span>
+                                        <PpcSearchVolumeCell
+                                          className="py-2.5 px-2"
+                                          searchVolume={rec.searchVolume}
+                                          searchVolumeTrend={rec.searchVolumeTrend}
+                                        />
+                                        <PpcOrganicRankCell className="py-2.5 px-2" organicRank={rec.organicRank} />
+                                        <PpcSponsoredRankCell className="py-2.5 px-2" sponsoredRank={rec.sponsoredRank} />
+                                        <td className={`py-2.5 px-2 text-right font-mono ${rec.clicks ? "text-slate-700" : "text-slate-300"}`}>{rec.clicks || 0}</td>
+                                        <td className={`py-2.5 px-2 text-right font-mono ${rec.orders ? "text-slate-900 font-bold" : "text-slate-300"}`}>{rec.orders || 0}</td>
+                                        <td className={`py-2.5 px-2 text-right font-mono whitespace-nowrap ${rec.spend ? "text-slate-700" : "text-slate-300"}`}>${(rec.spend || 0).toFixed(2)}</td>
+                                        <td className={`py-2.5 px-2 text-right font-mono whitespace-nowrap ${rec.sales ? "text-slate-700" : "text-slate-300"}`}>${(rec.sales || 0).toFixed(2)}</td>
+                                        <td className="py-2.5 px-2 text-right font-mono whitespace-nowrap">
                                           <AcosValue
                                             spend={rec.spend || 0}
                                             sales={rec.sales || 0}
                                             breakEvenAcos={selectedSkuGroup.breakEvenAcos}
-                                            className="inline-block w-12"
                                           />
                                         </td>
-                                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                                        <td className="py-2.5 px-2 text-right font-mono text-slate-600">
                                           ${(rec.currentBid || 0).toFixed(2)}
                                         </td>
-                                        <td className="py-2.5 px-3 text-right font-mono font-bold">
+                                        <td className="py-2.5 px-2 text-right font-mono font-bold">
                                           {rec.recType === "PAUSE_TARGET" ? (
                                             <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px]">Pause</span>
                                           ) : (
@@ -2463,6 +2480,47 @@ export function PpcSkuRecommendationGroupView({
                                           )}
                                         </td>
                                       </tr>
+                                      {isFocused && (
+                                        <tr className="bg-indigo-50/40">
+                                          <td></td>
+                                          <td colSpan={13} className="px-2 pb-3 pt-1">
+                                            <div className="flex flex-wrap items-start gap-3">
+                                              <div className="flex-1 min-w-[280px] text-[11px] leading-relaxed">
+                                                <span className="font-semibold text-slate-500">Lý do: </span>
+                                                <span className="text-slate-700">{rec.reason || "—"}</span>
+                                                {rec.ruleProfile && <span className="text-slate-400"> · {rec.ruleProfile}</span>}
+                                                <div className="mt-1 text-slate-500 font-mono">
+                                                  CPC {(rec.clicks || 0) > 0 || rec.cpc ? `$${(rec.cpc ?? (rec.spend || 0) / (rec.clicks || 1)).toFixed(2)}` : "—"}
+                                                  {" · "}CVR {(rec.clicks || 0) > 0 ? `${(((rec.orders || 0) / (rec.clicks || 1)) * 100).toFixed(1)}%` : "—"}
+                                                  {" · "}ROAS {(rec.spend || 0) > 0 ? ((rec.sales || 0) / (rec.spend || 1)).toFixed(2) : "—"}
+                                                  {" · "}BE ACOS {selectedSkuGroup.breakEvenAcos.toFixed(1)}%
+                                                </div>
+                                              </div>
+                                              <div className="flex gap-2 shrink-0">
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => { e.stopPropagation(); handleExplainRule(rec); }}
+                                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                                  title="Xem điều kiện rule và phép tính tạo ra mức bid này"
+                                                >
+                                                  <Info size={12} weight="bold" />
+                                                  Giải thích
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => { e.stopPropagation(); handleOpenAiReview(rec); }}
+                                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-purple-200 bg-white text-[11px] font-semibold text-purple-700 hover:bg-purple-50 cursor-pointer"
+                                                  title="AI phản biện đề xuất này"
+                                                >
+                                                  <Sparkle size={12} weight="fill" />
+                                                  AI phản biện
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                      </Fragment>
                                     );
                                   })}
                                 </tbody>
@@ -2480,163 +2538,6 @@ export function PpcSkuRecommendationGroupView({
                 </p>
               </div>
 
-              {/* RIGHT: target detail */}
-              <aside className="lg:w-[300px] shrink-0 overflow-y-auto border-t lg:border-t-0 lg:border-l border-slate-100 bg-slate-50/50 p-4">
-                {loadingSkuDetails ? null : !focusedRec ? (
-                  <div className="h-full flex items-center justify-center text-center text-xs text-slate-400 p-4">
-                    {recentlyApprovedIds.size > 0
-                      ? `Đã duyệt ${recentlyApprovedIds.size} đề xuất vào Action Queue`
-                      : "Chọn một target để xem chi tiết"}
-                  </div>
-                ) : (() => {
-                  const rec = focusedRec;
-                  const clicks = rec.clicks || 0;
-                  const orders = rec.orders || 0;
-                  const spend = rec.spend || 0;
-                  const sales = rec.sales || 0;
-                  const currentBid = rec.currentBid || 0;
-                  const suggestedBid = rec.recommendedBid || 0;
-                  const isPause = rec.recType === "PAUSE_TARGET";
-                  const changePct = currentBid > 0 && !isPause ? ((suggestedBid - currentBid) / currentBid) * 100 : null;
-                  const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
-                  const isApproved = isTargetApproved(rec);
-                  const cpc = rec.cpc ?? (clicks > 0 ? spend / clicks : 0);
-                  const isPaused = (rec.campaignState || "").toLowerCase() === "paused";
-
-                  return (
-                    <div className="space-y-3">
-                      <div>
-                        <h3 className="text-sm font-black text-slate-900 break-words leading-snug">{rec.keyword}</h3>
-                        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 flex-wrap">
-                          {rec.matchType && <span className="capitalize">{rec.matchType.toLowerCase()}</span>}
-                          {rec.matchType && <span>•</span>}
-                          <span>{getRecCampaignType(rec)}</span>
-                          <span>•</span>
-                          <span className={isPaused ? "font-semibold text-amber-700" : ""}>{isPaused ? "Paused" : "Active"}</span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5 truncate" title={rec.campaignName}>{rec.campaignName}</div>
-                      </div>
-
-                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">{recommendationWindowDays} ngày</div>
-                        <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
-                          {[
-                            { label: "Clicks", value: String(clicks) },
-                            { label: "Orders", value: String(orders) },
-                            { label: "Spend", value: `$${spend.toFixed(2)}` },
-                            { label: "Sales", value: `$${sales.toFixed(2)}` },
-                            { label: "CPC", value: clicks > 0 || rec.cpc ? `$${cpc.toFixed(2)}` : "—" },
-                          ].map((m) => (
-                            <div key={m.label} className="min-w-0">
-                              <div className="text-[10px] text-slate-500">{m.label}</div>
-                              <div className="text-xs font-bold font-mono text-slate-900">{m.value}</div>
-                            </div>
-                          ))}
-                          <div className="min-w-0">
-                            <div className="text-[10px] text-slate-500">ACOS</div>
-                            <AcosValue
-                              spend={spend}
-                              sales={sales}
-                              breakEvenAcos={selectedSkuGroup.breakEvenAcos}
-                              className="block text-xs font-bold font-mono"
-                            />
-                          </div>
-                          {[
-                            { label: "CVR", value: clicks > 0 ? `${((orders / clicks) * 100).toFixed(1)}%` : "—" },
-                            { label: "ROAS", value: spend > 0 ? (sales / spend).toFixed(2) : "—" },
-                            { label: "BE ACOS", value: `${selectedSkuGroup.breakEvenAcos.toFixed(1)}%` },
-                          ].map((m) => (
-                            <div key={m.label} className="min-w-0">
-                              <div className="text-[10px] text-slate-500">{m.label}</div>
-                              <div className="text-xs font-bold font-mono text-slate-700">{m.value}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-baseline gap-1.5 font-mono">
-                            <span className="text-sm font-bold text-slate-500">${currentBid.toFixed(2)}</span>
-                            <ArrowRight size={12} className="text-slate-400 self-center" />
-                            {isPause ? (
-                              <span className="text-base font-black font-sans text-amber-700">Pause</span>
-                            ) : (
-                              <span className={`text-base font-black ${rec.recType === "BID_DECREASE" ? "text-rose-600" : "text-emerald-600"}`}>
-                                ${suggestedBid.toFixed(2)}
-                              </span>
-                            )}
-                          </div>
-                          {changePct !== null && (
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${changePct >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-                              {changePct >= 0 ? "↑" : "↓"} {Math.abs(changePct).toFixed(0)}%
-                            </span>
-                          )}
-                        </div>
-
-                        {isApproved ? (
-                          <button
-                            onClick={handleOpenActionQueueModal}
-                            className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
-                          >
-                            <Lightning size={13} weight="fill" className="text-amber-300" />
-                            Đã duyệt · Mở Action Queue
-                          </button>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            {!isPause && (
-                              <div className="flex-1 min-w-0" title="Bid cuối cùng">
-                                <RecFinalBidInput
-                                  large
-                                  initialValue={finalBid}
-                                  disabled={isApproving || isStoreSwitching}
-                                  onCommit={(newVal) => handleCommitFinalBid(rec.id, newVal)}
-                                />
-                              </div>
-                            )}
-                            <button
-                              onClick={() => void handleApproveSingle(rec)}
-                              disabled={isApproving || isStoreSwitching}
-                              className={`${isPause ? "w-full" : "shrink-0"} px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer disabled:opacity-40`}
-                            >
-                              {isStoreSwitching ? "Đang đổi Store..." : isPause ? "Duyệt tạm dừng" : "Duyệt"}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {rec.reason && (
-                        <div className="text-[11px] leading-relaxed">
-                          <span className="font-semibold text-slate-500">Lý do: </span>
-                          <span className="text-slate-700">{rec.reason}</span>
-                          {rec.ruleProfile && <span className="text-slate-400"> · {rec.ruleProfile}</span>}
-                        </div>
-                      )}
-
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleExplainRule(rec)}
-                          className="flex-1 inline-flex items-center justify-center gap-1 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                          title="Xem điều kiện rule và phép tính tạo ra mức bid này"
-                        >
-                          <Info size={12} weight="bold" />
-                          Giải thích
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenAiReview(rec)}
-                          className="flex-1 inline-flex items-center justify-center gap-1 py-1.5 rounded-lg border border-purple-200 bg-white text-[11px] font-semibold text-purple-700 hover:bg-purple-50 cursor-pointer"
-                          title="AI phản biện đề xuất này"
-                        >
-                          <Sparkle size={12} weight="fill" />
-                          AI phản biện
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </aside>
             </div>
           </div>
           {isAiChatOpen && (
