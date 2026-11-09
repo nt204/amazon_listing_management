@@ -5,13 +5,11 @@ import {
   ResponsiveContainer,
   ComposedChart,
   Bar,
-  Line,
   Area,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
-  ReferenceLine,
 } from "recharts";
 import { X, Tag, StackIcon, ShoppingCartIcon, CubeIcon, PercentIcon, TargetIcon } from "@phosphor-icons/react";
 import type { PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
@@ -118,7 +116,6 @@ export function PpcSkuTrendModal({
   const plotData = chartData.map((d) => ({
     ...d,
     acosPlot: d.acosNum == null ? null : Math.min(d.acosNum, acosCeil),
-    noSalePlot: d.noSaleSpend ? acosCeil * 0.92 : null,
   }));
   type PlotPoint = (typeof plotData)[number];
 
@@ -305,15 +302,6 @@ export function PpcSkuTrendModal({
                 <Bar yAxisId="money" dataKey="spend" fill="#6366f1" radius={[3, 3, 0, 0]} barSize={barSize} />
                 <Bar yAxisId="money" dataKey="sales" fill="#22c55e" radius={[3, 3, 0, 0]} barSize={barSize} />
 
-                <ReferenceLine
-                  yAxisId="acos"
-                  y={targetAcos}
-                  stroke="#22c55e"
-                  strokeDasharray="5 4"
-                  strokeWidth={1.5}
-                  label={<TargetPill text={`Target ${formatTick(targetAcos)}%`} />}
-                />
-
                 <Area
                   yAxisId="acos"
                   type="monotone"
@@ -325,15 +313,6 @@ export function PpcSkuTrendModal({
                   zIndex={450}
                   dot={{ r: 4, fill: "#f97316", fillOpacity: 1, stroke: "#fff", strokeWidth: 2 }}
                   activeDot={{ r: 5, fill: "#f97316", fillOpacity: 1, stroke: "#fff", strokeWidth: 2 }}
-                  isAnimationActive={false}
-                />
-                <Line
-                  yAxisId="acos"
-                  dataKey="noSalePlot"
-                  stroke="none"
-                  legendType="none"
-                  dot={{ r: 4, fill: "#e11d48", stroke: "#fff", strokeWidth: 2 }}
-                  activeDot={false}
                   isAnimationActive={false}
                 />
               </ComposedChart>
@@ -371,21 +350,6 @@ function niceCeil(v: number, steps: number) {
 
 function formatTick(v: number) {
   return Number.isInteger(v) ? String(v) : v.toFixed(1).replace(/\.0$/, "");
-}
-
-/** Nhãn "Target 30%" dạng pill ở đầu vạch target. */
-function TargetPill({ text, viewBox }: { text: string; viewBox?: { x?: number; y?: number } }) {
-  const x = (viewBox?.x ?? 0) + 8;
-  const y = viewBox?.y ?? 0;
-  const w = text.length * 6 + 16;
-  return (
-    <g>
-      <rect x={x} y={y - 10} width={w} height={20} rx={6} fill="#22c55e" />
-      <text x={x + w / 2} y={y + 4} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">
-        {text}
-      </text>
-    </g>
-  );
 }
 
 function KpiCard({
