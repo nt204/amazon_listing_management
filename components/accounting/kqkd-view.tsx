@@ -606,7 +606,7 @@ function RatePill({ v }: { v: number | null }) {
   return (
     <span
       title={ok ? "Đạt mục tiêu" : "Chưa đạt mục tiêu"}
-      className={`inline-block min-w-14 rounded-full px-2 py-0.5 text-center text-[11px] font-semibold transition-all duration-150 ${ok ? "bg-emerald-50 text-emerald-700 shadow-2xs" : "bg-slate-100 text-slate-600"}`}
+      className={`font-semibold tabular-nums ${ok ? "text-emerald-700" : "text-rose-600"}`}
     >
       {fmtPct(v)}
     </span>
@@ -918,11 +918,12 @@ function KqkdPeople({
               type="button"
               aria-pressed={fKind === o.k}
               onClick={() => setFKind(o.k)}
-              className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-all duration-150 ${
-                fKind === o.k ? "bg-white text-blue-700 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+              className={`relative z-10 cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold select-none transition-colors duration-150 ${
+                fKind === o.k ? "text-blue-700" : "text-slate-500 hover:text-slate-800"
               }`}
             >
-              {o.label}
+              {fKind === o.k && <AnimatedTabPill layoutId="kqkd-people-kind-pill" className="rounded-md bg-white shadow-2xs" />}
+              <span className="relative z-10">{o.label}</span>
             </button>
           ))}
         </div>
@@ -1493,86 +1494,106 @@ export function KqkdView() {
   }, [currentYear]);
 
   const selectCls = "h-8 cursor-pointer rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-800 focus:outline-hidden";
+  // Bộ lọc đang bật thì tô xanh để nhìn là biết đang lọc gì
+  const filterCls = (value: string) =>
+    `h-8 cursor-pointer rounded-lg border px-2.5 text-xs font-semibold focus:outline-hidden ${
+      value ? "border-blue-400 bg-blue-50 text-blue-800" : "border-slate-300 bg-white text-slate-800"
+    }`;
+  const phoiSelect = (
+    <select id="kqkd-phoi" aria-label="Tên Phôi" value={fPhoi} onChange={(e) => setFPhoi(e.target.value)} className={filterCls(fPhoi)}>
+      <option value="">Phôi: tất cả</option>
+      {phoiOptions.map((p) => (
+        <option key={p} value={p}>
+          {p}
+        </option>
+      ))}
+    </select>
+  );
 
   return (
     <div className="flex h-full w-full flex-col gap-2 overflow-auto p-2 font-sans">
-      {/* TOOLBAR */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
-        <div className="flex h-8 items-center rounded-lg border border-slate-300 bg-white px-2.5 text-xs">
-          <StorefrontIcon size={15} weight="bold" className="mr-1.5 shrink-0 text-slate-500" />
-          <select
-            id="kqkd-store-select"
-            value={selectedStoreId}
-            onChange={(e) => handleStoreSelect(e.target.value)}
-            disabled={loadingStores || stores.length === 0}
-            className="cursor-pointer bg-transparent font-bold text-slate-800 focus:outline-hidden"
-          >
-            {loadingStores ? (
-              <option value="">Đang tải store...</option>
-            ) : stores.length === 0 ? (
-              <option value="">Không có store</option>
-            ) : (
-              stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))
-            )}
-          </select>
-        </div>
+      {/* TOOLBAR — tầng 1: bối cảnh (store · năm · chế độ) · tầng 2 (SKU Testing): tìm + lọc · tuỳ chọn hiển thị */}
+      <div className="flex shrink-0 flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center gap-2 p-2">
+          <div className="flex h-8 items-center rounded-lg border border-slate-300 bg-white px-2.5 text-xs">
+            <StorefrontIcon size={15} weight="bold" className="mr-1.5 shrink-0 text-slate-500" />
+            <select
+              id="kqkd-store-select"
+              value={selectedStoreId}
+              onChange={(e) => handleStoreSelect(e.target.value)}
+              disabled={loadingStores || stores.length === 0}
+              className="cursor-pointer bg-transparent font-bold text-slate-800 focus:outline-hidden"
+            >
+              {loadingStores ? (
+                <option value="">Đang tải store...</option>
+              ) : stores.length === 0 ? (
+                <option value="">Không có store</option>
+              ) : (
+                stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
 
-        <select id="kqkd-year-select" aria-label="Năm listing" value={year} onChange={(e) => setYear(Number(e.target.value))} className={selectCls}>
-          {years.map((y) => (
-            <option key={y} value={y}>
-              Listing {y}
-            </option>
-          ))}
-        </select>
-
-        <div className="relative flex h-8 items-center rounded-lg border border-slate-300 bg-slate-100/90 p-0.5 shadow-2xs">
-          {(
-            [
-              { key: "overview", label: "Tổng quan tháng" },
-              { key: "skus", label: "SKU Testing" },
-            ] as const
-          ).map((o) => {
-            const isActive = mode === o.key;
-            return (
-              <button
-                key={o.key}
-                type="button"
-                aria-pressed={isActive}
-                onClick={() => handleMode(o.key)}
-                className={`relative z-10 cursor-pointer rounded-md px-3.5 py-1 text-xs font-bold select-none transition-colors duration-150 ${
-                  isActive ? "text-white" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                {isActive && (
-                  <AnimatedTabPill
-                    layoutId="kqkd-mode-pill"
-                    className="bg-blue-600 shadow-xs rounded-md"
-                  />
-                )}
-                <span className="relative z-10">{o.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {allSkus.length > 0 && (
-          <select id="kqkd-phoi" aria-label="Tên Phôi" value={fPhoi} onChange={(e) => setFPhoi(e.target.value)} className={selectCls}>
-            <option value="">Tất cả phôi</option>
-            {phoiOptions.map((p) => (
-              <option key={p} value={p}>
-                {p}
+          <select id="kqkd-year-select" aria-label="Năm listing" value={year} onChange={(e) => setYear(Number(e.target.value))} className={selectCls}>
+            {years.map((y) => (
+              <option key={y} value={y}>
+                Listing {y}
               </option>
             ))}
           </select>
-        )}
+
+          <span className="mx-0.5 hidden h-5 w-px bg-slate-200 sm:block" aria-hidden />
+
+          <div className="relative flex h-8 items-center rounded-lg border border-slate-300 bg-slate-100/90 p-0.5 shadow-2xs">
+            {(
+              [
+                { key: "overview", label: "Tổng quan tháng" },
+                { key: "skus", label: "SKU Testing" },
+              ] as const
+            ).map((o) => {
+              const isActive = mode === o.key;
+              return (
+                <button
+                  key={o.key}
+                  type="button"
+                  aria-pressed={isActive}
+                  onClick={() => handleMode(o.key)}
+                  className={`relative z-10 cursor-pointer rounded-md px-3.5 py-1 text-xs font-bold select-none transition-colors duration-150 ${
+                    isActive ? "text-white" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {isActive && (
+                    <AnimatedTabPill
+                      layoutId="kqkd-mode-pill"
+                      className="bg-blue-600 shadow-xs rounded-md"
+                    />
+                  )}
+                  <span className="relative z-10">{o.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {mode === "overview" && allSkus.length > 0 && phoiSelect}
+
+          <button
+            type="button"
+            onClick={() => load(true)}
+            disabled={loading || !selectedStoreId}
+            className="ml-auto flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+          >
+            <ArrowClockwiseIcon size={14} className={loading ? "animate-spin text-amber-600" : "text-slate-600"} />
+            <span>Làm mới</span>
+          </button>
+        </div>
 
         {mode === "skus" && allSkus.length > 0 && (
-          <>
-            <div className="relative w-44 transition-all duration-200 focus-within:w-56">
+          <div className="flex flex-wrap items-center gap-2 bg-slate-50/60 p-2">
+            <div className="relative w-56 transition-all duration-200 focus-within:w-72">
               <MagnifyingGlassIcon size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 id="kqkd-search"
@@ -1580,7 +1601,7 @@ export function KqkdView() {
                 placeholder="Tìm SKU, ASIN, phôi..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-8 w-full rounded-lg border border-slate-300 bg-white pl-7 pr-5 text-xs font-medium text-slate-800 placeholder-slate-400 outline-hidden focus:border-blue-500"
+                className={`h-8 w-full rounded-lg border bg-white pl-7 pr-5 text-xs font-medium text-slate-800 placeholder-slate-400 outline-hidden focus:border-blue-500 ${search ? "border-blue-400" : "border-slate-300"}`}
               />
               {search && (
                 <button type="button" onClick={() => setSearch("")} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" aria-label="Xoá tìm kiếm">
@@ -1588,23 +1609,26 @@ export function KqkdView() {
                 </button>
               )}
             </div>
-            <select id="kqkd-status" aria-label="Trạng thái" value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={selectCls}>
-              <option value="">Tất cả trạng thái</option>
+
+            <span className="ml-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Lọc</span>
+            {phoiSelect}
+            <select id="kqkd-status" aria-label="Trạng thái" value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={filterCls(fStatus)}>
+              <option value="">Trạng thái: tất cả</option>
               {statuses.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>
               ))}
             </select>
-            <select id="kqkd-pic" aria-label="PIC Idea" value={fPic} onChange={(e) => setFPic(e.target.value)} className={selectCls}>
-              <option value="">Tất cả PIC</option>
+            <select id="kqkd-pic" aria-label="PIC Idea" value={fPic} onChange={(e) => setFPic(e.target.value)} className={filterCls(fPic)}>
+              <option value="">PIC: tất cả</option>
               {picOptions.map((p) => (
                 <option key={p} value={p}>
                   {p}
                 </option>
               ))}
             </select>
-            <select id="kqkd-listm" aria-label="Tháng listing" value={fListM} onChange={(e) => setFListM(e.target.value)} className={selectCls}>
+            <select id="kqkd-listm" aria-label="Tháng listing" value={fListM} onChange={(e) => setFListM(e.target.value)} className={filterCls(fListM)}>
               <option value="">Tháng listing: tất cả</option>
               {listMonthOptions.map((m) => (
                 <option key={m} value={m}>
@@ -1612,7 +1636,7 @@ export function KqkdView() {
                 </option>
               ))}
             </select>
-            <select id="kqkd-evalm" aria-label="Tháng đánh giá" value={fEvalM} onChange={(e) => setFEvalM(e.target.value)} className={selectCls}>
+            <select id="kqkd-evalm" aria-label="Tháng đánh giá" value={fEvalM} onChange={(e) => setFEvalM(e.target.value)} className={filterCls(fEvalM)}>
               <option value="">Tháng đánh giá: tất cả</option>
               {evalMonthOptions.map((m) => (
                 <option key={m} value={m}>
@@ -1628,32 +1652,26 @@ export function KqkdView() {
                   clearFilters();
                   setSort(null);
                 }}
-                className="animate-in fade-in zoom-in-95 duration-150 flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100"
+                className="animate-in fade-in zoom-in-95 duration-150 flex h-8 cursor-pointer items-center gap-1 rounded-lg px-2 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-50"
               >
                 <XIcon size={11} weight="bold" />
                 Xoá lọc{activeFilters ? ` (${activeFilters})` : ""}
               </button>
             )}
-            <select id="kqkd-metric" aria-label="Chỉ số theo tháng" value={metric} onChange={(e) => setMetric(e.target.value as Metric | "all")} className={selectCls}>
-              {METRICS.map((m) => (
-                <option key={m.key} value={m.key}>
-                  Theo tháng: {m.label}
-                </option>
-              ))}
-              <option value="all">Theo tháng: tất cả chỉ số</option>
-            </select>
-          </>
-        )}
 
-        <button
-          type="button"
-          onClick={() => load(true)}
-          disabled={loading || !selectedStoreId}
-          className="ml-auto flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
-        >
-          <ArrowClockwiseIcon size={14} className={loading ? "animate-spin text-amber-600" : "text-slate-600"} />
-          <span>Làm mới</span>
-        </button>
+            <label htmlFor="kqkd-metric" className="ml-auto flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+              Cột tháng
+              <select id="kqkd-metric" aria-label="Chỉ số theo tháng" value={metric} onChange={(e) => setMetric(e.target.value as Metric | "all")} className={selectCls}>
+                {METRICS.map((m) => (
+                  <option key={m.key} value={m.key}>
+                    {m.label}
+                  </option>
+                ))}
+                <option value="all">Tất cả chỉ số</option>
+              </select>
+            </label>
+          </div>
+        )}
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>}
@@ -1757,19 +1775,19 @@ export function KqkdView() {
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-[14px] font-bold text-slate-800">Theo tháng</h3>
-                  <span className="ml-2 text-[11px] font-semibold text-slate-500">Chi tiết theo:</span>
-                  <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                  <div className="ml-2 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
                     {([{ key: "phoi", label: "Phôi" }, ...PERSON_ROLES] as const).map((o) => (
                       <button
                         key={o.key}
                         type="button"
                         aria-pressed={breakdown === o.key}
                         onClick={() => pickBreakdown(o.key)}
-                        className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-colors duration-150 ${
-                          breakdown === o.key ? "bg-white text-blue-700 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+                        className={`relative z-10 cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold select-none transition-colors duration-150 ${
+                          breakdown === o.key ? "text-blue-700" : "text-slate-500 hover:text-slate-800"
                         }`}
                       >
-                        {o.label}
+                        {breakdown === o.key && <AnimatedTabPill layoutId="kqkd-breakdown-pill" className="rounded-md bg-white shadow-2xs" />}
+                        <span className="relative z-10">{o.label}</span>
                       </button>
                     ))}
                   </div>
