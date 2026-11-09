@@ -1,10 +1,12 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useDeferredValue, type ReactNode } from "react";
 import {
   ArrowClockwiseIcon,
-  CaretDownIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ArrowsDownUpIcon,
   CaretRightIcon,
   MagnifyingGlassIcon,
   StorefrontIcon,
@@ -13,7 +15,7 @@ import {
 import { storeCanEdit, storeCanView } from "@/lib/accounting/store-teams";
 import type { StoreAccessInfo } from "@/lib/accounting/types";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
-import { AccountingTopProgressBar } from "./accounting-skeleton";
+import { AccountingTopProgressBar, AccountingViewTransition, AnimatedTabPill } from "./accounting-skeleton";
 
 // Tab KQKD — tham khảo file "BÁO CÁO KQKD SKU TESTING" (tab Tổng quan tháng + SKU TESTING).
 
@@ -39,6 +41,8 @@ interface KqkdSku {
   mockup_url: string | null;
   status: string | null;
   pic_idea: string | null;
+  pic_mkt?: string | null;
+  design_pic?: string | null;
   listing_month: string;
   eval_month: string | null;
   von_hang: number;
@@ -130,6 +134,95 @@ function derive(s: KqkdSku) {
   };
 }
 
+// Sắp xếp bảng SKU Testing: key = tên cột, hoặc "m|YYYY-MM|metric" cho cột theo tháng
+type SortState = { key: string; dir: "asc" | "desc" } | null;
+const TEXT_SORT_KEYS = new Set(["sku", "product_type", "status", "pic_idea", "listing_month", "eval_month"]);
+
+function sortValue(s: KqkdSku, key: string): string | number | null {
+  if (key.startsWith("m|")) {
+    const [, month, mt] = key.split("|");
+    return cellMetric(s.months[month], mt as Metric, s.unit_cost);
+  }
+  const d = derive(s);
+  switch (key) {
+    case "sku":
+      return s.sku;
+    case "product_type":
+      return s.product_type || null;
+    case "status":
+      return s.status || null;
+    case "pic_idea":
+      return s.pic_idea?.trim() || null;
+    case "listing_month":
+      return s.listing_month;
+    case "eval_month":
+      return s.eval_month;
+    case "von_hang":
+      return s.von_hang;
+    case "revenue":
+      return s.revenue;
+    case "quantity":
+      return s.quantity;
+    case "basecost":
+      return d.basecost;
+    case "ads_fee":
+      return s.ads_fee;
+    case "tacos":
+      return d.tacos;
+    case "profit":
+      return s.profit;
+    case "roi":
+      return d.roi;
+    case "hoanVon":
+      return d.hoanVon;
+    case "hoanVonPct":
+      return d.hoanVonPct;
+    case "qty_di":
+      return s.qty_di;
+    case "ton":
+      return d.ton;
+    default:
+      return null;
+  }
+}
+
+// Tiêu đề cột bấm được để sắp xếp: lần 1 giảm dần (chữ: A→Z), lần 2 đảo chiều, lần 3 bỏ sắp xếp
+function SortTh({
+  k,
+  sort,
+  onSort,
+  className,
+  align = "right",
+  children,
+}: {
+  k: string;
+  sort: SortState;
+  onSort: (k: string) => void;
+  className: string;
+  align?: "left" | "right";
+  children: ReactNode;
+}) {
+  const active = sort?.key === k;
+  const Icon = !active ? ArrowsDownUpIcon : sort.dir === "asc" ? ArrowUpIcon : ArrowDownIcon;
+  return (
+    <th className={className} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={() => onSort(k)}
+        title="Bấm để sắp xếp"
+        className={`group/sort inline-flex w-full cursor-pointer select-none items-center gap-1 ${align === "right" ? "flex-row-reverse" : ""}`}
+      >
+        <span>{children}</span>
+        <Icon
+          size={11}
+          weight="bold"
+          className={`shrink-0 transition-all duration-150 ${active ? "text-blue-600" : "opacity-0 group-hover/sort:opacity-50"}`}
+        />
+      </button>
+    </th>
+  );
+}
+
 function cellMetric(c: MonthCell | undefined, metric: Metric, unitCost: number | null): number | null {
   if (!c) return null;
   switch (metric) {
@@ -199,8 +292,8 @@ function WinInput({
           (e.target as HTMLInputElement).blur();
         }
       }}
-      className={`w-14 rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-right font-mono text-xs outline-hidden placeholder:italic placeholder:text-slate-400 focus:border-sky-500 focus:bg-white disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent ${
-        saving ? "opacity-60" : ""
+      className={`w-14 rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-right font-mono text-xs outline-hidden placeholder:italic placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-200 transition-all duration-150 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent ${
+        saving ? "opacity-60 animate-pulse" : ""
       }`}
     />
   );
@@ -220,33 +313,46 @@ function WinChart({
   const max = Math.max(1, ...items.map((i) => Math.max(i.target ?? 0, i.win ?? 0)));
   const h = (v: number) => `${(v / max) * 100}%`;
   return (
-    <figure className="min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <figure className="min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-2xs transition-all duration-200 hover:shadow-xs">
       <figcaption className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-[13px] font-bold text-slate-800">SKU WIN theo tháng</span>
         <span className="flex items-center gap-3 text-[11px] text-slate-500">
           <span className="flex items-center gap-1">
-            <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: C_TARGET }} /> Mục tiêu
+            <i className="inline-block h-2.5 w-2.5 rounded-sm transition-transform duration-200 hover:scale-125" style={{ background: C_TARGET }} /> Mục tiêu
           </span>
           <span className="flex items-center gap-1">
-            <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: C_WIN }} /> WIN thực tế
+            <i className="inline-block h-2.5 w-2.5 rounded-sm transition-transform duration-200 hover:scale-125" style={{ background: C_WIN }} /> WIN thực tế
           </span>
         </span>
       </figcaption>
       <div className="relative mt-6 h-28 border-b border-slate-200">
+        <div aria-hidden className="absolute inset-0 flex flex-col justify-between">
+          <div className="border-t border-dashed border-slate-100" />
+          <div className="border-t border-dashed border-slate-100" />
+          <div />
+        </div>
         <div className="absolute inset-0 flex">
           {items.map((it) => (
-            <div key={it.month} title={it.tip} className="relative flex h-full flex-1 items-end justify-center gap-[3px] hover:bg-slate-50">
+            <div key={it.month} title={it.tip} className="group/bar relative flex h-full flex-1 items-end justify-center gap-[3px] rounded-t-sm transition-colors duration-150 hover:bg-slate-100/70">
               {(it.rate != null || it.note) && (
                 <span
-                  className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[10.5px] ${it.rate != null ? "font-semibold text-slate-800" : "text-slate-400"}`}
+                  className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[10.5px] transition-transform duration-200 group-hover/bar:scale-105 ${it.rate != null ? "font-semibold text-slate-800" : "text-slate-400"}`}
                   style={{ bottom: `calc(${h(Math.max(it.target ?? 0, it.win ?? 0))} + 4px)` }}
                 >
                   {it.rate != null ? fmtPct(it.rate) : it.note}
                 </span>
               )}
-              {it.target != null && <div className="w-[40%] max-w-7 rounded-t-[3px]" style={{ height: h(it.target), background: C_TARGET }} />}
               {it.target != null && (
-                <div className="w-[40%] max-w-7 rounded-t-[3px]" style={{ height: it.win ? h(it.win) : "0", background: C_WIN }} />
+                <div
+                  className="w-[40%] max-w-7 rounded-t-[3px] transition-[height] duration-500 ease-out group-hover/bar:brightness-95"
+                  style={{ height: h(it.target), background: C_TARGET }}
+                />
+              )}
+              {it.target != null && (
+                <div
+                  className="w-[40%] max-w-7 rounded-t-[3px] transition-[height] duration-500 ease-out group-hover/bar:brightness-110"
+                  style={{ height: it.win ? h(it.win) : "0", background: C_WIN }}
+                />
               )}
             </div>
           ))}
@@ -254,7 +360,7 @@ function WinChart({
       </div>
       <div className="flex pt-1">
         {items.map((it) => (
-          <span key={it.month} className="flex-1 text-center text-[11px] text-slate-500">
+          <span key={it.month} className="flex-1 text-center text-[11px] text-slate-500 font-medium transition-colors duration-150 hover:text-slate-900">
             T{it.month}
           </span>
         ))}
@@ -274,13 +380,24 @@ function StatusDonut({ parts }: { parts: { label: string; n: number; color: stri
     return { ...p, len, offset };
   });
   return (
-    <figure className="min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <figure className="min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-2xs transition-all duration-200 hover:shadow-xs">
       <figcaption className="text-[13px] font-bold text-slate-800">Trạng thái SKU ({total})</figcaption>
       <div className="mt-2 flex items-center gap-6">
         <svg viewBox="0 0 110 110" className="h-28 w-28 shrink-0 -rotate-90" role="img" aria-label="Trạng thái SKU">
           <circle cx={55} cy={55} r={R} fill="none" stroke="#f1f5f9" strokeWidth={16} />
           {segs.map((p) => (
-            <circle key={p.label} cx={55} cy={55} r={R} fill="none" stroke={p.color} strokeWidth={16} strokeDasharray={`${Math.max(0, p.len - 1.5)} ${C}`} strokeDashoffset={-p.offset}>
+            <circle
+              key={p.label}
+              cx={55}
+              cy={55}
+              r={R}
+              fill="none"
+              stroke={p.color}
+              strokeWidth={16}
+              strokeDasharray={`${Math.max(0, p.len - 1.5)} ${C}`}
+              strokeDashoffset={-p.offset}
+              className="transition-all duration-500 ease-out hover:opacity-80 cursor-pointer"
+            >
               <title>{`${p.label}: ${p.n}`}</title>
             </circle>
           ))}
@@ -293,9 +410,9 @@ function StatusDonut({ parts }: { parts: { label: string; n: number; color: stri
         </svg>
         <ul className="space-y-2.5 text-[13px]">
           {parts.map((p) => (
-            <li key={p.label} className="flex items-center gap-2">
-              <i className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.color }} />
-              <span className="w-20 text-slate-700">{p.label}</span>
+            <li key={p.label} className="group/item flex items-center gap-2 transition-transform duration-150 hover:translate-x-0.5 cursor-pointer">
+              <i className="inline-block h-2.5 w-2.5 shrink-0 rounded-full transition-transform duration-150 group-hover/item:scale-125" style={{ background: p.color }} />
+              <span className="w-20 text-slate-700 font-medium group-hover/item:text-slate-900">{p.label}</span>
               <span className="w-8 text-right font-mono font-semibold tabular-nums text-slate-900">{p.n}</span>
               <span className="w-14 text-right font-mono tabular-nums text-slate-500">{fmtPct(ratio(p.n, total))}</span>
             </li>
@@ -306,40 +423,62 @@ function StatusDonut({ parts }: { parts: { label: string; n: number; color: stri
   );
 }
 
-// Sparkline Profit từng tháng: cột lên = lãi, xuống = lỗ
-function ProfitSpark({ values }: { values: { label: string; v: number | null }[] }) {
-  const W = 84;
-  const H = 22;
+// Sparkline Profit từng tháng: trục 0 ở giữa, lãi = cột xanh lên, lỗ = cột đỏ xuống.
+// Tháng trước khi listing bỏ trống; tháng hiện tại (tạm tính) tô nhạt. Bên cạnh ghi tổng Profit để biết độ lớn.
+function ProfitSpark({
+  values,
+  total,
+}: {
+  values: { label: string; v: number | null; before?: boolean; partial?: boolean }[];
+  total?: number;
+}) {
+  const W = 132;
+  const H = 30;
   const mid = H / 2;
-  const max = Math.max(1, ...values.map((x) => Math.abs(x.v ?? 0)));
+  const max = Math.max(1, ...values.map((x) => (x.before ? 0 : Math.abs(x.v ?? 0))));
   const slot = W / Math.max(values.length, 1);
-  const bw = Math.max(2, Math.min(5, slot - 1.5));
+  const bw = Math.max(4, Math.min(8, slot - 2));
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block">
-      <line x1={0} x2={W} y1={mid} y2={mid} stroke="#e2e8f0" strokeWidth={1} />
-      {values.map((x, i) => {
-        if (x.v == null || x.v === 0) return null;
-        const h = Math.max(1, (Math.abs(x.v) / max) * (mid - 1));
-        return (
-          <rect key={x.label} x={slot * i + (slot - bw) / 2} y={x.v > 0 ? mid - h : mid} width={bw} height={h} rx={1} fill={x.v > 0 ? "#64748b" : "#dc2626"}>
-            <title>{`${x.label}: ${usd.format(x.v)}`}</title>
-          </rect>
-        );
-      })}
-    </svg>
+    <span className="flex items-center gap-2">
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block shrink-0">
+        <line x1={0} x2={W} y1={mid} y2={mid} stroke="#cbd5e1" strokeWidth={1} />
+        {values.map((x, i) => {
+          if (x.before || x.v == null || x.v === 0) return null;
+          const h = Math.max(1.5, (Math.abs(x.v) / max) * (mid - 1));
+          return (
+            <rect
+              key={x.label}
+              x={slot * i + (slot - bw) / 2}
+              y={x.v > 0 ? mid - h : mid}
+              width={bw}
+              height={h}
+              rx={1}
+              fill={x.v > 0 ? "#16a34a" : "#dc2626"}
+              opacity={x.partial ? 0.4 : 1}
+            >
+              <title>{`${x.label}: ${usd.format(x.v)}${x.partial ? " (tạm tính)" : ""}`}</title>
+            </rect>
+          );
+        })}
+      </svg>
+      {total != null && (
+        <span className={`w-14 text-right font-mono text-[11px] font-semibold tabular-nums ${total > 0 ? "text-emerald-700" : total < 0 ? "text-red-600" : "text-slate-300"}`}>
+          {total < 0 ? "-" : ""}
+          {Math.abs(total) >= 1000 ? `$${(Math.abs(total) / 1000).toFixed(1)}k` : usd0.format(Math.abs(total))}
+        </span>
+      )}
+    </span>
   );
 }
 
 // Lưới kẻ mảnh mọi ô; vạch dọc đậm hơn (SEP) ở đầu mỗi nhóm cột.
 // Màu chữ trên td/th phải dùng "!" vì CSS chung của Accounting đặt màu cho table td/th.
-const TH_BASE = "border border-slate-300 px-3 py-2 text-[11px] font-semibold whitespace-nowrap";
-const TH = `${TH_BASE} bg-slate-100 !text-slate-700`;
-const TD = "border border-slate-200 px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap";
-const TDL = "border border-slate-200 px-3 py-1.5 text-left whitespace-nowrap";
-const SEP = "border-l-2 border-l-slate-300";
-const MONTH_ROW = "bg-slate-50";
+const TH_BASE = "border border-slate-200 px-3 py-2 text-[11px] font-semibold whitespace-nowrap";
+const TH = `${TH_BASE} bg-slate-50 !text-slate-600`;
+const TD = "border border-slate-100 px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap";
+const TDL = "border border-slate-100 px-3 py-1.5 text-left whitespace-nowrap";
+const SEP = "border-l-2 border-l-slate-200";
 // Ô không áp dụng: gạch ngang nhạt để khỏi lẫn với ô trống
-const DASH = <span className="text-slate-300">—</span>;
 const TOTAL_ROW = "bg-slate-100 [&>td]:border-t-2 [&>td]:border-t-slate-300";
 
 // % hoàn vốn: chỉ số; âm = đỏ
@@ -348,14 +487,113 @@ function PctBar({ v }: { v: number | null }) {
   return <span className={v < 0 ? "text-red-600" : ""}>{fmtPct(v)}</span>;
 }
 
+// Bảng SKU Testing: số 0 / trống in nhạt để số thật nổi lên; Profit xanh khi lãi, đỏ khi lỗ
+function zc(v: number | null | undefined) {
+  return v == null || !Number.isFinite(v) || Math.abs(v) < 0.005 ? "!text-slate-300" : "";
+}
+function profitCls(v: number | null | undefined) {
+  if (v == null || !Number.isFinite(v) || Math.abs(v) < 0.005) return "!text-slate-300";
+  return v > 0 ? "!text-emerald-700" : "!text-red-600";
+}
+
+// % hoàn vốn dạng thanh: đầy = đã thu đủ vốn hàng
+function HoanVonBar({ v }: { v: number | null }) {
+  if (v == null || !Number.isFinite(v)) return null;
+  const w = Math.max(0, Math.min(1, v)) * 100;
+  const color = v < 0 ? "bg-red-500" : v >= 1 ? "bg-emerald-500" : v >= 0.5 ? "bg-blue-500" : "bg-amber-500";
+  return (
+    <span className="flex items-center justify-end gap-2">
+      <span className={v < 0 ? "text-red-600" : v >= 1 ? "font-semibold text-emerald-700" : ""}>{fmtPct(v)}</span>
+      <span className="h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-slate-200">
+        <span className={`block h-full rounded-full ${color}`} style={{ width: `${w}%` }} />
+      </span>
+    </span>
+  );
+}
+
+// Ảnh SKU: lia chuột hoặc bấm để xem ảnh to (fixed, không bị khung cuộn của bảng cắt)
+function ThumbZoom({ url }: { url: string | null }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const thumb = getOptimizedThumbnailUrl(url, 64);
+  const big = getOptimizedThumbnailUrl(url, 320);
+  // Ảnh đang hiện: cuộn bảng hoặc bấm chỗ khác thì đóng
+  useEffect(() => {
+    if (!pos) return;
+    const close = () => {
+      setPinned(false);
+      setPos(null);
+    };
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("mousedown", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("mousedown", close);
+    };
+  }, [pos]);
+  if (!thumb) return <span className="h-7 w-7 shrink-0 rounded border border-dashed border-slate-200" />;
+  const show = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    const size = 240;
+    const y = Math.max(8, Math.min(window.innerHeight - size - 8, r.top + r.height / 2 - size / 2));
+    setPos({ x: r.right + 8, y });
+  };
+  return (
+    <>
+      <img
+        src={thumb}
+        alt=""
+        loading="lazy"
+        onMouseEnter={(e) => show(e.currentTarget)}
+        onMouseLeave={() => !pinned && setPos(null)}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (pinned) {
+            setPinned(false);
+            setPos(null);
+          } else {
+            setPinned(true);
+            show(e.currentTarget);
+          }
+        }}
+        className="h-7 w-7 shrink-0 cursor-zoom-in rounded border border-slate-200 object-cover transition-transform duration-150 hover:scale-110"
+      />
+      {pos && (
+        <span
+          className="pointer-events-none fixed z-[100] block h-60 w-60 overflow-hidden rounded-lg border border-slate-200 bg-white p-1 shadow-xl"
+          style={{ left: pos.x, top: pos.y }}
+        >
+          <img src={big || thumb} alt="" className="h-full w-full rounded object-contain" />
+        </span>
+      )}
+    </>
+  );
+}
+
 // Tỉ lệ WIN so với mục tiêu: nhãn màu
+// Nội dung ô trượt mở/đóng mượt (bảng không animate được chiều cao dòng, nên animate nội dung trong ô)
+function Slide({ open, className = "", children }: { open: boolean; className?: string; children?: ReactNode }) {
+  return (
+    <div
+      className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+      }`}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div className={`px-3 py-2.5 ${className}`}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
 function RatePill({ v }: { v: number | null }) {
   if (v == null || !Number.isFinite(v)) return null;
   const ok = v >= WIN_TARGET_RATE;
   return (
     <span
       title={ok ? "Đạt mục tiêu" : "Chưa đạt mục tiêu"}
-      className={`inline-block min-w-14 rounded-full px-2 py-0.5 text-center text-[11px] font-semibold ${ok ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}
+      className={`inline-block min-w-14 rounded-full px-2 py-0.5 text-center text-[11px] font-semibold transition-all duration-150 ${ok ? "bg-emerald-50 text-emerald-700 shadow-2xs" : "bg-slate-100 text-slate-600"}`}
     >
       {fmtPct(v)}
     </span>
@@ -369,11 +607,274 @@ function StatusPill({ status }: { status: string | null }) {
 
 function Kpi({ label, value, sub, highlight }: { label: string; value: string; sub?: ReactNode; highlight?: boolean }) {
   return (
-    <div className={`min-w-0 rounded-xl border px-4 py-3 ${highlight ? "border-emerald-200 bg-emerald-50/70" : "border-slate-200 bg-white"}`}>
-      <div className="text-xs font-medium text-slate-500">{label}</div>
-      <div className={`mt-1 font-mono text-2xl font-bold leading-tight tabular-nums ${highlight ? "text-emerald-700" : "text-slate-900"}`}>{value}</div>
-      {sub && <div className="mt-0.5 text-[11px] text-slate-500">{sub}</div>}
+    <div
+      className={`min-w-0 rounded-xl border px-4 py-3.5 shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs select-none ${
+        highlight ? "border-emerald-200 bg-emerald-50/70" : "border-slate-200 bg-white"
+      }`}
+    >
+      <div className="text-[12px] font-semibold text-slate-500">{label}</div>
+      <div className={`mt-1.5 font-mono text-[26px] font-bold leading-none tracking-tight tabular-nums transition-colors duration-200 ${highlight ? "text-emerald-700" : "text-slate-900"}`}>{value}</div>
+      {sub && <div className="mt-2 text-[11.5px] text-slate-500">{sub}</div>}
     </div>
+  );
+}
+
+// Skeleton loading cho tab KQKD: chống giật layout, tăng độ mượt khi đổi năm / đổi store
+function KqkdSkeleton() {
+  return (
+    <div className="flex-1 overflow-auto bg-slate-50/60 p-3 space-y-3 font-sans">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-2xs space-y-2">
+            <div className="h-3 w-20 rounded bg-slate-200/70 acc-shimmer" />
+            <div className="h-7 w-28 rounded bg-slate-200/90 acc-shimmer" />
+            <div className="h-2.5 w-24 rounded bg-slate-100 acc-shimmer" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[2fr_1fr]">
+        <div className="h-44 rounded-xl border border-slate-200 bg-white p-4 space-y-4 shadow-2xs">
+          <div className="flex justify-between">
+            <div className="h-4 w-32 rounded bg-slate-200/70 acc-shimmer" />
+            <div className="h-3 w-36 rounded bg-slate-200/60 acc-shimmer" />
+          </div>
+          <div className="h-28 rounded bg-slate-100/70 acc-shimmer" />
+        </div>
+        <div className="h-44 rounded-xl border border-slate-200 bg-white p-4 space-y-4 shadow-2xs">
+          <div className="h-4 w-28 rounded bg-slate-200/70 acc-shimmer" />
+          <div className="flex items-center gap-4">
+            <div className="h-24 w-24 rounded-full bg-slate-200/70 acc-shimmer" />
+            <div className="space-y-2 flex-1">
+              <div className="h-3 w-full rounded bg-slate-200/60 acc-shimmer" />
+              <div className="h-3 w-4/5 rounded bg-slate-200/60 acc-shimmer" />
+              <div className="h-3 w-3/5 rounded bg-slate-200/60 acc-shimmer" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3 shadow-2xs">
+        <div className="h-4 w-28 rounded bg-slate-200/70 acc-shimmer" />
+        <div className="h-36 rounded bg-slate-100/70 acc-shimmer" />
+      </div>
+    </div>
+  );
+}
+
+// ===== NGƯỜI R&D: hiệu quả theo từng người (PIC Idea / PIC MKT / Design) =====
+type PersonRole = "pic_idea" | "pic_mkt" | "design_pic";
+const PERSON_ROLES: { key: PersonRole; label: string }[] = [{ key: "pic_idea", label: "PIC Idea" }];
+// Bảng mã ghi tên không thống nhất ("Cường"/"Cuong", "Đức"/"Duc"): gom theo tên bỏ dấu, viết thường
+function personKey(name: string | null | undefined) {
+  const t = (name || "").trim();
+  if (!t) return "";
+  return t.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/\s+/g, " ");
+}
+
+// key (bỏ dấu) → tên hiển thị = cách viết gặp nhiều nhất
+function personNames(skus: KqkdSku[], role: PersonRole) {
+  const counts = new Map<string, Map<string, number>>();
+  for (const s of skus) {
+    const raw = (s[role] ?? "").trim();
+    const k = personKey(raw) || "(trống)";
+    const m = counts.get(k) || new Map<string, number>();
+    m.set(raw || "(chưa ghi tên)", (m.get(raw || "(chưa ghi tên)") || 0) + 1);
+    counts.set(k, m);
+  }
+  const out = new Map<string, string>();
+  for (const [k, m] of counts) out.set(k, Array.from(m.entries()).sort((x, y) => y[1] - x[1])[0][0]);
+  return out;
+}
+
+type PersonStat = {
+  key: string;
+  name: string;
+  skus: KqkdSku[];
+  n: number;
+  win: number;
+  test: number;
+  loss: number;
+  due: number;
+  winDue: number;
+  von: number;
+  revenue: number;
+  ads: number;
+  basecost: number;
+  profit: number;
+  hoanVon: number;
+};
+
+function KqkdPeople({
+  skus,
+  currentMonth,
+  role,
+}: {
+  skus: KqkdSku[];
+  currentMonth: string;
+  role: PersonRole;
+}) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+
+  const people = useMemo(() => {
+    const map = new Map<string, PersonStat & { names: Map<string, number> }>();
+    for (const s of skus) {
+      const raw = (s[role] ?? "").trim();
+      const key = personKey(raw) || "(trống)";
+      const cur: PersonStat & { names: Map<string, number> } = map.get(key) || {
+        key, name: "", names: new Map(), skus: [], n: 0, win: 0, test: 0, loss: 0, due: 0, winDue: 0, von: 0, revenue: 0, ads: 0, basecost: 0, profit: 0, hoanVon: 0,
+      };
+      cur.names.set(raw || "(trống)", (cur.names.get(raw || "(trống)") || 0) + 1);
+      const d = derive(s);
+      const kind = statusKind(s.status);
+      cur.skus.push(s);
+      cur.n += 1;
+      cur[kind] += 1;
+      if (s.eval_month && s.eval_month <= currentMonth) {
+        cur.due += 1;
+        if (kind === "win") cur.winDue += 1;
+      }
+      cur.von += s.von_hang;
+      cur.revenue += s.revenue;
+      cur.ads += s.ads_fee;
+      cur.basecost += d.basecost;
+      cur.profit += s.profit;
+      cur.hoanVon += d.hoanVon;
+      map.set(key, cur);
+    }
+    const out: PersonStat[] = [];
+    for (const p of map.values()) {
+      // Tên hiển thị = cách viết gặp nhiều nhất
+      const name = Array.from(p.names.entries()).sort((a, b) => b[1] - a[1])[0][0];
+      p.skus.sort((a, b) => b.profit - a.profit);
+      out.push({ ...p, name });
+    }
+    return out.sort((a, b) => (a.key === "(trống)" ? 1 : b.key === "(trống)" ? -1 : b.profit - a.profit || b.n - a.n));
+  }, [skus, role, currentMonth]);
+
+
+  const maxAbsProfit = Math.max(1, ...people.map((p) => Math.abs(p.profit)));
+  const toggle = (k: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  const H = TH;
+  return (
+    <section className="mx-3 mb-3 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2.5">
+        <h3
+          className="text-[14px] font-bold text-slate-800"
+          title="Tỉ lệ WIN = SKU trạng thái “Phát triển” / SKU đã đến tháng đánh giá. Bấm vào một người để xem từng SKU."
+        >
+          PIC IDEA
+        </h3>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1100px] border-collapse text-[13px] [&_td]:py-2.5">
+          <thead>
+            <tr>
+              <th rowSpan={2} className={`${H} w-10 text-center align-bottom`}>STT</th>
+              <th rowSpan={2} className={`${H} text-left align-bottom`}>Người</th>
+              <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-blue-100 !text-blue-800`}>SKU</th>
+              <th colSpan={2} className={`${TH_BASE} ${SEP} text-center bg-emerald-100 !text-emerald-800`}>WIN</th>
+              <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-violet-100 !text-violet-800`}>Tiền</th>
+            </tr>
+            <tr>
+              <th className={`${TH_BASE} ${SEP} text-right bg-blue-50 !text-blue-900`}>Tổng</th>
+              <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>WIN</th>
+              <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Đang test</th>
+              <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Dừng</th>
+              <th className={`${TH_BASE} ${SEP} text-right bg-emerald-50 !text-emerald-900`}>WIN / đã đánh giá</th>
+              <th className={`${TH_BASE} text-center bg-emerald-50 !text-emerald-900`}>Tỉ lệ WIN</th>
+              <th className={`${TH_BASE} ${SEP} text-right bg-violet-50 !text-violet-900`}>Vốn test</th>
+              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Revenue</th>
+              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Ads Fee</th>
+              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Profit</th>
+              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>% Hoàn vốn</th>
+            </tr>
+          </thead>
+          <tbody>
+            {people.map((p, i) => {
+              const isOpen = open.has(p.key);
+              const w = (Math.abs(p.profit) / maxAbsProfit) * 100;
+              return (
+                <Fragment key={p.key}>
+                  <tr
+                    onClick={() => toggle(p.key)}
+                    className={`cursor-pointer transition-colors duration-150 hover:!bg-amber-50/60 ${isOpen ? "bg-blue-50 [&>td]:!font-bold [&>td]:!text-slate-900" : i % 2 ? "bg-slate-50/80" : "bg-white"}`}
+                  >
+                    <td className={`${TD} !text-center !text-slate-400`}>{i + 1}</td>
+                    <td className={`${TDL} font-semibold ${isOpen ? "border-l-4 border-l-blue-500" : ""}`}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <CaretRightIcon size={12} className={`shrink-0 transition-transform duration-200 ${isOpen ? "rotate-90 text-blue-600" : "text-slate-400"}`} />
+                        <span className={p.key === "(trống)" ? "italic text-slate-400" : ""}>{p.key === "(trống)" ? "(chưa ghi tên)" : p.name}</span>
+                      </span>
+                    </td>
+                    <td className={`${TD} ${SEP}`}>{p.n}</td>
+                    <td className={`${TD} ${p.win ? "!text-emerald-700 font-semibold" : "!text-slate-300"}`}>{p.win}</td>
+                    <td className={`${TD} ${zc(p.test)}`}>{p.test}</td>
+                    <td className={`${TD} ${zc(p.loss)}`}>{p.loss}</td>
+                    <td className={`${TD} ${SEP}`}>{p.due ? `${p.winDue}/${p.due}` : <span className="text-[11px] text-slate-400">chưa đến hạn</span>}</td>
+                    <td className={`${TD} text-center`}><RatePill v={ratio(p.winDue, p.due)} /></td>
+                    <td className={`${TD} ${SEP} ${zc(p.von)}`}>{fmtUsd(p.von)}</td>
+                    <td className={`${TD} ${zc(p.revenue)}`}>{fmtUsd(p.revenue)}</td>
+                    <td className={`${TD} ${zc(p.ads)}`}>{fmtUsd(p.ads)}</td>
+                    <td className={`${TD} ${profitCls(p.profit)}`}>
+                      <span className="flex items-center justify-end gap-2">
+                        {fmtUsd(p.profit)}
+                        <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-slate-100">
+                          <span className={`block h-full rounded-full ${p.profit >= 0 ? "bg-emerald-500" : "bg-red-500"}`} style={{ width: `${w}%` }} />
+                        </span>
+                      </span>
+                    </td>
+                    <td className={TD}><HoanVonBar v={ratio(p.hoanVon, p.von)} /></td>
+                  </tr>
+                  {isOpen &&
+                    p.skus.map((s, j) => {
+                      const d = derive(s);
+                      const last = j === p.skus.length - 1;
+                      return (
+                        <tr
+                          key={s.sku}
+                          className={`acc-rise bg-white hover:!bg-amber-50/50 [&_td]:!text-[12px] ${last ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""}`}
+                          style={{ animationDelay: `${Math.min(j * 25, 400)}ms` }}
+                        >
+                          <td className={`${TD} !text-center !text-slate-300`}>{j + 1}</td>
+                          <td className={`${TDL} pl-8`}>
+                            <span className="flex items-center gap-2">
+                              <ThumbZoom url={s.mockup_url} />
+                              <span className="min-w-0">
+                                <span className="block font-mono text-[11.5px] font-bold text-slate-900">{s.sku}</span>
+                                <span className="block truncate text-[11px] text-slate-500" title={s.product_type || ""}>
+                                  {s.product_type || "—"} · {monthLabel(s.listing_month)}
+                                </span>
+                              </span>
+                            </span>
+                          </td>
+                          <td colSpan={4} className={`${TDL} ${SEP}`}>
+                            <StatusPill status={s.status} />
+                          </td>
+                          <td colSpan={2} className={`${TDL} ${SEP} !text-slate-500`}>
+                            {s.eval_month ? `Đánh giá ${monthLabel(s.eval_month)}` : ""}
+                          </td>
+                          <td className={`${TD} ${SEP} ${zc(s.von_hang)}`}>{fmtUsd(s.von_hang)}</td>
+                          <td className={`${TD} ${zc(s.revenue)}`}>{fmtUsd(s.revenue)}</td>
+                          <td className={`${TD} ${zc(s.ads_fee)}`}>{fmtUsd(s.ads_fee)}</td>
+                          <td className={`${TD} ${profitCls(s.profit)}`}>{fmtUsd(s.profit)}</td>
+                          <td className={TD}><HoanVonBar v={d.hoanVonPct} /></td>
+                        </tr>
+                      );
+                    })}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -389,7 +890,8 @@ export function KqkdView() {
   const [mode, setMode] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "overview";
     try {
-      return window.sessionStorage.getItem("acc_kqkd_mode") === "skus" ? "skus" : "overview";
+      const saved = window.sessionStorage.getItem("acc_kqkd_mode");
+      return saved === "skus" ? "skus" : "overview";
     } catch {
       return "overview";
     }
@@ -408,10 +910,21 @@ export function KqkdView() {
   const [savingWin, setSavingWin] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [fStatus, setFStatus] = useState("");
+  const [fPic, setFPic] = useState("");
+  const [fListM, setFListM] = useState("");
+  const [fEvalM, setFEvalM] = useState("");
+  const [sort, setSort] = useState<SortState>(null);
+  const onSort = (k: string) =>
+    setSort((prev) => {
+      const first: "asc" | "desc" = TEXT_SORT_KEYS.has(k) ? "asc" : "desc";
+      if (prev?.key !== k) return { key: k, dir: first };
+      if (prev.dir === first) return { key: k, dir: first === "asc" ? "desc" : "asc" };
+      return null;
+    });
   const [metric, setMetric] = useState<Metric | "all">("profit");
   const [fPhoi, setFPhoi] = useState("");
-  // Tháng đang mở xem chi tiết phôi (mặc định thu gọn: mỗi tháng một dòng "Tất cả")
-  const [openMonths, setOpenMonths] = useState<Set<string>>(() => new Set());
+  // Tháng đang mở xem chi tiết phôi (mặc định mở sẵn tháng hiện tại, các tháng khác thu gọn)
+  const [openMonths, setOpenMonths] = useState<Set<string>>(() => new Set([currentMonth]));
   const toggleMonth = (m: string) =>
     setOpenMonths((prev) => {
       const next = new Set(prev);
@@ -532,14 +1045,54 @@ export function KqkdView() {
     [allSkus]
   );
 
+  const deferredSearch = useDeferredValue(search);
+
+  const picOptions = useMemo(
+    () => Array.from(new Set(allSkus.map((s) => s.pic_idea?.trim() || "(trống)"))).sort((a, b) => a.localeCompare(b)),
+    [allSkus]
+  );
+  const listMonthOptions = useMemo(() => Array.from(new Set(allSkus.map((s) => s.listing_month))).sort(), [allSkus]);
+  const evalMonthOptions = useMemo(
+    () => Array.from(new Set(allSkus.map((s) => s.eval_month).filter(Boolean) as string[])).sort(),
+    [allSkus]
+  );
+  const activeFilters = [search, fStatus, fPhoi, fPic, fListM, fEvalM].filter(Boolean).length;
+  const clearFilters = () => {
+    setSearch("");
+    setFStatus("");
+    setFPhoi("");
+    setFPic("");
+    setFListM("");
+    setFEvalM("");
+  };
+
+  // SKU Testing: Phôi (dùng chung với Tổng quan) + tìm kiếm + trạng thái + PIC + tháng, rồi sắp xếp
   const skus = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return allSkus.filter(
+    const q = deferredSearch.trim().toLowerCase();
+    const out = baseSkus.filter(
       (s) =>
         (!fStatus || s.status === fStatus) &&
-        (!q || s.sku.toLowerCase().includes(q) || (s.asin || "").toLowerCase().includes(q) || (s.product_type || "").toLowerCase().includes(q))
+        (!fPic || (s.pic_idea?.trim() || "(trống)") === fPic) &&
+        (!fListM || s.listing_month === fListM) &&
+        (!fEvalM || (fEvalM === "none" ? !s.eval_month : s.eval_month === fEvalM)) &&
+        (!q ||
+          s.sku.toLowerCase().includes(q) ||
+          (s.asin || "").toLowerCase().includes(q) ||
+          (s.product_type || "").toLowerCase().includes(q) ||
+          (s.pic_idea || "").toLowerCase().includes(q))
     );
-  }, [allSkus, search, fStatus]);
+    if (!sort) return out;
+    const sign = sort.dir === "asc" ? 1 : -1;
+    return out
+      .map((s) => ({ s, v: sortValue(s, sort.key) }))
+      .sort((a, b) => {
+        // Ô trống luôn nằm cuối, bất kể chiều sắp xếp
+        if (a.v == null || b.v == null) return a.v == null ? (b.v == null ? 0 : 1) : -1;
+        if (typeof a.v === "string" || typeof b.v === "string") return sign * String(a.v).localeCompare(String(b.v), "vi");
+        return sign * (a.v - b.v);
+      })
+      .map((x) => x.s);
+  }, [baseSkus, deferredSearch, fStatus, fPic, fListM, fEvalM, sort]);
 
   const months = useMemo(() => data?.months || [], [data]);
 
@@ -629,18 +1182,64 @@ export function KqkdView() {
     return { n, doneN, win, pendingN: n - doneN, notDueN };
   }, [evals]);
 
+  // Bảng tháng: mở một tháng ra chia theo Phôi (mặc định) hoặc theo người (PIC Idea / PIC MKT / Design).
+  // Số tổng của tháng giữ nguyên; chỉ các dòng con đổi cách gom. Theo người: WIN = số SKU "Phát triển" (chỉ xem, không điền).
+  const [breakdown, setBreakdown] = useState<"phoi" | PersonRole>("phoi");
+  const [peopleRole, setPeopleRole] = useState<PersonRole>("pic_idea");
+  const pickBreakdown = (b: "phoi" | PersonRole) => {
+    setBreakdown(b);
+    if (b !== "phoi") setPeopleRole(b);
+  };
+  const byPerson = breakdown !== "phoi";
+  const tableListing = useMemo(() => {
+    if (breakdown === "phoi") return listing;
+    const names = personNames(baseSkus, breakdown);
+    return listing.map((b) => {
+      const g = new Map<string, { n: number; von: number; hoanVon: number }>();
+      for (const s of baseSkus) {
+        if (s.listing_month !== b.month) continue;
+        const k = names.get(personKey(s[breakdown]) || "(trống)") || "(chưa ghi tên)";
+        const cur = g.get(k) || { n: 0, von: 0, hoanVon: 0 };
+        cur.n += 1;
+        cur.von += s.von_hang;
+        cur.hoanVon += derive(s).hoanVon;
+        g.set(k, cur);
+      }
+      return { ...b, rows: Array.from(g.entries()).map(([phoi, v]) => ({ phoi, ...v })).sort((x, y) => y.von - x.von) };
+    });
+  }, [listing, baseSkus, breakdown]);
+  const tableEvals = useMemo(() => {
+    if (breakdown === "phoi") return evals;
+    const names = personNames(baseSkus, breakdown);
+    return evals.map((e) => {
+      const g = new Map<string, { n: number; suggest: number }>();
+      for (const s of baseSkus) {
+        if (s.eval_month !== e.month) continue;
+        const k = names.get(personKey(s[breakdown]) || "(trống)") || "(chưa ghi tên)";
+        const cur = g.get(k) || { n: 0, suggest: 0 };
+        cur.n += 1;
+        if (statusKind(s.status) === "win") cur.suggest += 1;
+        g.set(k, cur);
+      }
+      const rows = Array.from(g.entries())
+        .map(([phoi, v]) => ({ phoi, ...v, win: v.suggest as number | null }))
+        .sort((x, y) => x.phoi.localeCompare(y.phoi));
+      return { ...e, rows };
+    });
+  }, [evals, baseSkus, breakdown]);
+
   // Một bảng chung theo tháng: phần Listing (SKU listing tháng đó) + phần Đánh giá (SKU đến hạn đánh giá tháng đó).
   // Dòng phôi = hợp các phôi của hai phần; phần nào không có phôi đó thì để trống. Tháng trống liền nhau gộp một dòng.
   const mergedRows = useMemo(() => {
-    type L = (typeof listing)[number];
-    type E = (typeof evals)[number];
+    type L = (typeof tableListing)[number];
+    type E = (typeof tableEvals)[number];
     type Row = { kind: "month"; month: string; l?: L; e?: E; phoi: string[] } | { kind: "empty"; from: number; to: number };
-    const maxM = Math.max(lastMonth, ...listing.map((b) => monthNum(b.month)), ...evals.map((e) => monthNum(e.month)));
+    const maxM = Math.max(lastMonth, ...tableListing.map((b) => monthNum(b.month)), ...tableEvals.map((e) => monthNum(e.month)));
     const out: Row[] = [];
     for (let m = 1; m <= maxM; m++) {
       const key = `${year}-${String(m).padStart(2, "0")}`;
-      const l = listing.find((b) => b.month === key && b.n);
-      const e = evals.find((x) => x.month === key);
+      const l = tableListing.find((b) => b.month === key && b.n);
+      const e = tableEvals.find((x) => x.month === key);
       const last = out[out.length - 1];
       if (!l && !e) {
         if (last?.kind === "empty" && last.to === m - 1) last.to = m;
@@ -651,7 +1250,10 @@ export function KqkdView() {
       out.push({ kind: "month", month: key, l, e, phoi });
     }
     return out;
-  }, [listing, evals, lastMonth, year]);
+  }, [tableListing, tableEvals, lastMonth, year]);
+
+  // Nút "Xem tất cả / Thu gọn" chỉ xét các tháng đang hiện trên bảng (tháng hiện tại có thể chưa có dòng)
+  const anyMonthOpen = mergedRows.some((r) => r.kind === "month" && openMonths.has(r.month));
 
   const statusParts = useMemo(() => {
     const c = { win: 0, test: 0, loss: 0 };
@@ -755,28 +1357,37 @@ export function KqkdView() {
           ))}
         </select>
 
-        <div className="flex h-8 overflow-hidden rounded-lg border border-slate-300 bg-white">
+        <div className="relative flex h-8 items-center rounded-lg border border-slate-300 bg-slate-100/90 p-0.5 shadow-2xs">
           {(
             [
               { key: "overview", label: "Tổng quan tháng" },
               { key: "skus", label: "SKU Testing" },
             ] as const
-          ).map((o, i) => (
-            <button
-              key={o.key}
-              type="button"
-              aria-pressed={mode === o.key}
-              onClick={() => handleMode(o.key)}
-              className={`cursor-pointer px-3 text-xs font-semibold transition-colors ${i > 0 ? "border-l border-slate-300" : ""} ${
-                mode === o.key ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
+          ).map((o) => {
+            const isActive = mode === o.key;
+            return (
+              <button
+                key={o.key}
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => handleMode(o.key)}
+                className={`relative z-10 cursor-pointer rounded-md px-3.5 py-1 text-xs font-bold select-none transition-colors duration-150 ${
+                  isActive ? "text-white" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {isActive && (
+                  <AnimatedTabPill
+                    layoutId="kqkd-mode-pill"
+                    className="bg-blue-600 shadow-xs rounded-md"
+                  />
+                )}
+                <span className="relative z-10">{o.label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        {mode === "overview" && allSkus.length > 0 && (
+        {allSkus.length > 0 && (
           <select id="kqkd-phoi" aria-label="Tên Phôi" value={fPhoi} onChange={(e) => setFPhoi(e.target.value)} className={selectCls}>
             <option value="">Tất cả phôi</option>
             {phoiOptions.map((p) => (
@@ -806,13 +1417,51 @@ export function KqkdView() {
               )}
             </div>
             <select id="kqkd-status" aria-label="Trạng thái" value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={selectCls}>
-              <option value="">Mọi trạng thái</option>
+              <option value="">Tất cả trạng thái</option>
               {statuses.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>
               ))}
             </select>
+            <select id="kqkd-pic" aria-label="PIC Idea" value={fPic} onChange={(e) => setFPic(e.target.value)} className={selectCls}>
+              <option value="">Tất cả PIC</option>
+              {picOptions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <select id="kqkd-listm" aria-label="Tháng listing" value={fListM} onChange={(e) => setFListM(e.target.value)} className={selectCls}>
+              <option value="">Tháng listing: tất cả</option>
+              {listMonthOptions.map((m) => (
+                <option key={m} value={m}>
+                  Listing {monthLabel(m)}
+                </option>
+              ))}
+            </select>
+            <select id="kqkd-evalm" aria-label="Tháng đánh giá" value={fEvalM} onChange={(e) => setFEvalM(e.target.value)} className={selectCls}>
+              <option value="">Tháng đánh giá: tất cả</option>
+              {evalMonthOptions.map((m) => (
+                <option key={m} value={m}>
+                  Đánh giá {monthLabel(m)}
+                </option>
+              ))}
+              <option value="none">Chưa có tháng đánh giá</option>
+            </select>
+            {(activeFilters > 0 || sort) && (
+              <button
+                type="button"
+                onClick={() => {
+                  clearFilters();
+                  setSort(null);
+                }}
+                className="animate-in fade-in zoom-in-95 duration-150 flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100"
+              >
+                <XIcon size={11} weight="bold" />
+                Xoá lọc{activeFilters ? ` (${activeFilters})` : ""}
+              </button>
+            )}
             <select id="kqkd-metric" aria-label="Chỉ số theo tháng" value={metric} onChange={(e) => setMetric(e.target.value as Metric | "all")} className={selectCls}>
               {METRICS.map((m) => (
                 <option key={m.key} value={m.key}>
@@ -837,16 +1486,20 @@ export function KqkdView() {
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>}
 
-      <div className="relative flex min-h-[420px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xs">
+      <div className="relative flex min-h-[420px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
         <AccountingTopProgressBar loading={loading} variant="indigo" />
 
+        {loading && !data && <KqkdSkeleton />}
+
         {!loading && data && allSkus.length === 0 && (
-          <div className="flex flex-1 items-center justify-center p-10 text-sm text-slate-500">Không có SKU listing năm {year}</div>
+          <div className="flex flex-1 items-center justify-center p-10 text-sm text-slate-500">
+            Không có SKU listing năm {year}
+          </div>
         )}
 
         {/* TỔNG QUAN THÁNG */}
         {mode === "overview" && allSkus.length > 0 && (
-          <div className="flex-1 overflow-auto bg-slate-50/60">
+          <AccountingViewTransition transitionKey="overview" className="flex-1 overflow-auto bg-slate-50">
             <div className="grid grid-cols-2 gap-3 p-3 pb-0 md:grid-cols-3 xl:grid-cols-5">
               <Kpi label="Số lượng SKU" value={fmtInt(listingYear.n)} sub={`Listing ${year}`} />
               <Kpi
@@ -912,26 +1565,56 @@ export function KqkdView() {
               <StatusDonut parts={statusParts} />
             </div>
 
-            <section className="mx-3 mb-3 overflow-x-auto rounded-xl border border-slate-200 bg-white">
-              <div className="flex items-center justify-between px-3 py-2">
-                <h3 className="text-[13px] font-bold text-slate-800">Theo tháng</h3>
+            <section className="mx-3 mb-3 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-[14px] font-bold text-slate-800">Theo tháng</h3>
+                  <span className="ml-2 text-[11px] font-semibold text-slate-500">Chi tiết theo:</span>
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                    {([{ key: "phoi", label: "Phôi" }, ...PERSON_ROLES] as const).map((o) => (
+                      <button
+                        key={o.key}
+                        type="button"
+                        aria-pressed={breakdown === o.key}
+                        onClick={() => pickBreakdown(o.key)}
+                        className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-colors duration-150 ${
+                          breakdown === o.key ? "bg-white text-blue-700 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() =>
-                    setOpenMonths((prev) =>
-                      prev.size ? new Set() : new Set(mergedRows.flatMap((r) => (r.kind === "month" ? [r.month] : [])))
+                    setOpenMonths(() =>
+                      anyMonthOpen ? new Set() : new Set(mergedRows.flatMap((r) => (r.kind === "month" ? [r.month] : [])))
                     )
                   }
-                  className="cursor-pointer rounded-md border border-slate-300 px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                  className="cursor-pointer rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-2xs transition-all duration-150 hover:bg-slate-50 hover:text-slate-900 active:scale-95"
                 >
-                  {openMonths.size ? "Thu gọn" : "Xem theo phôi"}
+                  {anyMonthOpen ? "Thu gọn tất cả" : "Xem tất cả theo phôi"}
                 </button>
               </div>
-              <table className="w-full border-collapse text-[13px] [&_td]:py-2.5 [&_td]:!text-[13px]">
+              {/* table-fixed + colgroup: độ rộng cột cố định, mở/đóng tháng không làm bảng co giãn */}
+              <table className="w-full min-w-[960px] table-fixed border-collapse text-[13px] [&_td]:py-2.5 [&_td]:!text-[13px]">
+                <colgroup>
+                  <col className="w-[8%]" />
+                  <col className="w-[22%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[11%]" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th rowSpan={2} className={`${TH} text-left align-bottom !text-slate-700`}>Tháng</th>
-                    <th rowSpan={2} className={`${TH} text-left align-bottom !text-slate-700`}>Tên Phôi</th>
+                    <th rowSpan={2} className={`${TH} text-left align-bottom !text-slate-700`}>{byPerson ? PERSON_ROLES.find((r) => r.key === breakdown)?.label : "Tên Phôi"}</th>
                     <th colSpan={3} className={`${TH_BASE} ${SEP} text-center bg-blue-100 !text-blue-800`}>R&amp;D Testing</th>
                     <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-emerald-100 !text-emerald-800`}>Đánh giá SKU WIN</th>
                   </tr>
@@ -965,13 +1648,19 @@ export function KqkdView() {
                       <RatePill v={ratio(evalYear.win, evalYear.doneN)} />
                     </td>
                   </tr>
-                  {mergedRows.map((row) => {
+                  {mergedRows.map((row, idx) => {
+                    // Dòng xen kẽ màu cho dễ dò theo hàng
+                    const stripe = idx % 2 === 1 ? "bg-slate-50/80" : "bg-white";
                     if (row.kind === "empty")
                       return (
-                        <tr key={`e${row.from}`}>
-                          <td className={`${TDL} pl-8 !text-slate-500`}>T{row.from === row.to ? row.from : `${row.from}–T${row.to}`}</td>
-                          <td colSpan={8} className={`${TDL} italic !text-slate-500`}>
-                            —
+                        <tr key={`e${row.from}`} className={stripe}>
+                          <td className={`${TDL} pl-8 font-semibold !text-slate-500`}>T{row.from === row.to ? row.from : `${row.from}–T${row.to}`}</td>
+                          <td className={`${TDL} !text-slate-400`}>Không có</td>
+                          <td colSpan={3} className={`${TDL} ${SEP} !text-center !text-slate-400`}>
+                            Không có
+                          </td>
+                          <td colSpan={4} className={`${TDL} ${SEP} !text-center !text-slate-400`}>
+                            Không có
                           </td>
                         </tr>
                       );
@@ -980,66 +1669,136 @@ export function KqkdView() {
                     const open = openMonths.has(row.month);
                     return (
                       <Fragment key={row.month}>
-                        <tr className={`cursor-pointer hover:bg-slate-50 ${open ? MONTH_ROW : ""}`} onClick={() => toggleMonth(row.month)}>
-                          <td className={`${TDL} font-semibold`}>
+                        <tr
+                          className={`cursor-pointer transition-colors duration-150 hover:!bg-amber-50/60 ${open ? "bg-blue-50 [&>td]:!font-bold [&>td]:!text-slate-900" : stripe}`}
+                          onClick={() => toggleMonth(row.month)}
+                        >
+                          <td
+                            rowSpan={row.phoi.length + 1}
+                            className={`${TDL} font-semibold ${open ? "!align-top border-l-4 border-l-blue-500 bg-blue-50" : ""}`}
+                          >
                             <span className="inline-flex items-center gap-1.5">
-                              {open ? <CaretDownIcon size={12} className="text-slate-500" /> : <CaretRightIcon size={12} className="text-slate-400" />}
+                              <CaretRightIcon
+                                size={12}
+                                className={`transition-transform duration-200 ease-out shrink-0 ${open ? "rotate-90 text-blue-600 font-bold" : "text-slate-400"}`}
+                              />
                               T{monthNum(row.month)}
                             </span>
                           </td>
-                          <td className={`${TDL} !text-slate-700`}>
-                            Tất cả
+                          <td className={`${TDL} ${open ? "font-bold !text-slate-900" : "!text-slate-700"}`}>
+                            {open ? `Tổng ${row.phoi.length} ${byPerson ? "người" : "phôi"}` : "Tất cả"}
                           </td>
-                          <td className={`${TD} ${SEP}`}>{l ? l.n : DASH}</td>
-                          <td className={TD}>{l ? fmtUsd(l.von) : DASH}</td>
-                          <td className={TD}>{l ? <PctBar v={ratio(l.hoanVon, l.von)} /> : DASH}</td>
-                          <td className={`${TD} ${SEP} ${e && !e.due ? "!text-slate-400" : ""}`}>{e ? e.n : DASH}</td>
-                          <td className={`${TD} ${e && !e.due ? "!text-slate-400" : ""}`}>{e ? fmtTarget(e.n * WIN_TARGET_RATE) : DASH}</td>
-                          <td className={TD} title={e && e.win != null ? "SKU WIN / SKU đã đánh giá" : undefined}>
-                            {!e ? DASH : !e.due ? (
-                              <span className="text-[11px] text-slate-400">chưa đến hạn</span>
-                            ) : e.win != null ? (
-                              <>
-                                {e.win}/{e.doneN}
-                              </>
-                            ) : (
-                              <span className="text-[11px] font-semibold text-amber-700">chưa điền</span>
-                            )}
-                          </td>
-                          <td className={`${TD} text-center`}>
-                            {rate != null ? <RatePill v={rate} /> : e ? "" : DASH}
-                          </td>
+                          {l ? (
+                            <>
+                              <td className={`${TD} ${SEP}`}>{l.n}</td>
+                              <td className={TD}>{fmtUsd(l.von)}</td>
+                              <td className={TD}>
+                                <PctBar v={ratio(l.hoanVon, l.von)} />
+                              </td>
+                            </>
+                          ) : (
+                            <td colSpan={3} className={`${TDL} ${SEP} !text-center`}>
+                              <span className="font-normal text-slate-400">Không có</span>
+                            </td>
+                          )}
+                          {!e && (
+                            <td colSpan={4} className={`${TDL} ${SEP} !text-center`}>
+                              <span className="font-normal text-slate-400">Không có</span>
+                            </td>
+                          )}
+                          {e && (
+                            <>
+                              <td className={`${TD} ${SEP} ${!e.due ? "!text-slate-400" : ""}`}>{e.n}</td>
+                              <td className={`${TD} ${!e.due ? "!text-slate-400" : ""}`}>{fmtTarget(e.n * WIN_TARGET_RATE)}</td>
+                              <td className={TD} title={e.win != null ? "SKU WIN / SKU đã đánh giá" : undefined}>
+                                {!e.due ? (
+                                  <span className="text-[11px] text-slate-400">chưa đến hạn</span>
+                                ) : e.win != null ? (
+                                  `${e.win}/${e.doneN}`
+                                ) : (
+                                  <span className="text-[11px] font-semibold text-amber-700">chưa điền</span>
+                                )}
+                              </td>
+                              <td className={`${TD} text-center`}>{rate != null && <RatePill v={rate} />}</td>
+                            </>
+                          )}
                         </tr>
-                        {open &&
-                          row.phoi.map((phoi) => {
+                        {row.phoi.map((phoi, pi) => {
                             const lr = l?.rows.find((r) => r.phoi === phoi);
                             const er = e?.rows.find((r) => r.phoi === phoi);
+                            const last = pi === row.phoi.length - 1;
+                            // Dòng phôi luôn có trong bảng, đóng thì cao 0 — mở ra trượt xuống mượt
+                            const cell = `!p-0 ${open ? "" : "!border-y-0"}`;
+                            const none = (span: number, wholeMonthEmpty: boolean) => (
+                              <td colSpan={span} className={`${TDL} ${SEP} ${cell} !text-center !text-slate-300`}>
+                                <Slide open={open}>{wholeMonthEmpty ? "\u00a0" : "—"}</Slide>
+                              </td>
+                            );
                             return (
-                              <tr key={phoi} className="bg-slate-50/40">
-                                <td className={TDL} />
-                                <td className={`${TDL} !text-slate-700`}>{phoi}</td>
-                                <td className={`${TD} ${SEP}`}>{lr ? lr.n : DASH}</td>
-                                <td className={TD}>{lr ? fmtUsd(lr.von) : DASH}</td>
-                                <td className={TD}>{lr ? <PctBar v={ratio(lr.hoanVon, lr.von)} /> : DASH}</td>
-                                <td className={`${TD} ${SEP}`}>{er ? er.n : DASH}</td>
-                                <td className={TD}>{er ? fmtTarget(er.n * WIN_TARGET_RATE) : DASH}</td>
-                                <td className={`${TD} py-1`}>
-                                  {!er && DASH}
-                                  {er && e && (
-                                    <WinInput
-                                      key={`${e.month}|${phoi}|${er.win ?? ""}`}
-                                      value={er.win}
-                                      max={er.n}
-                                      suggest={er.suggest}
-                                      disabled={!canEdit || !e.due}
-                                      saving={savingWin === `${e.month}|${phoi}`}
-                                      onCommit={(v) => saveWin(e.month, phoi, v)}
-                                    />
-                                  )}
+                              <tr
+                                key={phoi}
+                                aria-hidden={!open}
+                                className={`bg-white transition-colors duration-150 hover:!bg-amber-50/50 [&_td]:!text-slate-600 ${
+                                  open && last ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""
+                                }`}
+                              >
+                                <td className={`${TDL} ${cell}`}>
+                                  <Slide open={open} className="pl-6">
+                                    <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-slate-300 align-middle" />
+                                    {phoi}
+                                  </Slide>
                                 </td>
-                                <td className={`${TD} text-center`}>
-                                  {er ? <RatePill v={er.win != null ? ratio(er.win, er.n) : null} /> : DASH}
-                                </td>
+                                {lr ? (
+                                  <>
+                                    <td className={`${TD} ${SEP} ${cell}`}>
+                                      <Slide open={open}>{lr.n}</Slide>
+                                    </td>
+                                    <td className={`${TD} ${cell}`}>
+                                      <Slide open={open}>{fmtUsd(lr.von)}</Slide>
+                                    </td>
+                                    <td className={`${TD} ${cell}`}>
+                                      <Slide open={open}>
+                                        <PctBar v={ratio(lr.hoanVon, lr.von)} />
+                                      </Slide>
+                                    </td>
+                                  </>
+                                ) : (
+                                  none(3, !l)
+                                )}
+                                {er && e ? (
+                                  <>
+                                    <td className={`${TD} ${SEP} ${cell}`}>
+                                      <Slide open={open}>{er.n}</Slide>
+                                    </td>
+                                    <td className={`${TD} ${cell}`}>
+                                      <Slide open={open}>{fmtTarget(er.n * WIN_TARGET_RATE)}</Slide>
+                                    </td>
+                                    <td className={`${TD} ${cell}`}>
+                                      <Slide open={open} className="!py-1.5">
+                                        {byPerson ? (
+                                          e.due ? `${er.win}/${er.n}` : <span className="text-[11px] text-slate-400">chưa đến hạn</span>
+                                        ) : (
+                                        <WinInput
+                                          key={`${e.month}|${phoi}|${er.win ?? ""}`}
+                                          value={er.win}
+                                          max={er.n}
+                                          suggest={er.suggest}
+                                          disabled={!open || !canEdit || !e.due}
+                                          saving={savingWin === `${e.month}|${phoi}`}
+                                          onCommit={(v) => saveWin(e.month, phoi, v)}
+                                        />
+                                        )}
+                                      </Slide>
+                                    </td>
+                                    <td className={`${TD} text-center ${cell}`}>
+                                      <Slide open={open}>
+                                        <RatePill v={er.win != null && (!byPerson || e.due) ? ratio(er.win, er.n) : null} />
+                                      </Slide>
+                                    </td>
+                                  </>
+                                ) : (
+                                  none(4, !e)
+                                )}
                               </tr>
                             );
                           })}
@@ -1050,22 +1809,28 @@ export function KqkdView() {
               </table>
               {noEvalCount > 0 && <p className="px-3 py-2 text-[11px] text-slate-600">{noEvalCount} SKU chưa có tháng đánh giá</p>}
             </section>
-          </div>
+
+            <KqkdPeople
+              skus={baseSkus}
+              currentMonth={currentMonth}
+              role={peopleRole}
+            />
+          </AccountingViewTransition>
         )}
 
         {/* SKU TESTING */}
         {mode === "skus" && allSkus.length > 0 && (
-          <div className="flex-1 overflow-auto scrollbar-thin">
+          <AccountingViewTransition transitionKey="skus" className="flex-1 overflow-auto scrollbar-thin">
             <table className="min-w-max border-collapse text-xs">
               <thead className="sticky top-0 z-20">
                 <tr>
-                  <th colSpan={7} className={`${TH} text-left !text-slate-700`}>Thông tin cơ bản</th>
-                  <th colSpan={12} className={`${TH} ${SEP} text-left !text-slate-700`}>Life time</th>
-                  {months.map((m) => (
+                  <th colSpan={8} className={`${TH_BASE} text-left bg-emerald-100 !text-emerald-900`}>Thông tin cơ bản</th>
+                  <th colSpan={12} className={`${TH_BASE} ${SEP} text-left bg-blue-200 !text-blue-900`}>Life time</th>
+                  {months.map((m, mi) => (
                     <th
                       key={m.month}
                       colSpan={monthMetrics.length}
-                      className={`${TH} ${SEP} text-left !text-slate-700`}
+                      className={`${TH_BASE} ${SEP} text-left ${mi % 2 ? "bg-amber-200 !text-amber-900" : "bg-violet-200 !text-violet-900"}`}
                       title={m.source === "closed" ? "Số đã chốt sổ tháng" : "Tính từ dữ liệu ngày (chưa chốt sổ)"}
                     >
                       {monthLabel(m.month)}
@@ -1074,37 +1839,54 @@ export function KqkdView() {
                   ))}
                 </tr>
                 <tr>
-                  <th className={`${TH} sticky left-0 z-30 text-left`}>SKU</th>
-                  <th className={`${TH} text-left`}>Profit theo tháng</th>
-                  <th className={`${TH} text-left`}>Product Type</th>
-                  <th className={`${TH} text-left`}>Trạng thái</th>
-                  <th className={`${TH} text-left`}>PIC Idea</th>
-                  <th className={`${TH} text-right`}>Tháng listing</th>
-                  <th className={`${TH} text-right`}>Tháng đánh giá</th>
-                  <th className={`${TH} ${SEP} text-right`}>Tổng vốn hàng</th>
-                  <th className={`${TH} text-right`}>Revenue</th>
-                  <th className={`${TH} text-right`}>Quantity</th>
-                  <th className={`${TH} text-right`}>Basecost</th>
-                  <th className={`${TH} text-right`}>Ads Fee</th>
-                  <th className={`${TH} text-right`}>TAcos</th>
-                  <th className={`${TH} text-right !text-slate-800`}>Profit</th>
-                  <th className={`${TH} text-right`}>ROI</th>
-                  <th className={`${TH} text-right`}>Hoàn vốn</th>
-                  <th className={`${TH} text-right`}>% Hoàn vốn</th>
-                  <th className={`${TH} text-right`}>Số lượng đi hàng</th>
-                  <th className={`${TH} text-right`}>Tồn</th>
+                  <th className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-0 z-30 w-10 min-w-10 !px-1 text-center`}>STT</th>
+                  <SortTh k="sku" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-10 z-30 text-left`}>SKU</SortTh>
+                  <th className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Profit theo tháng</th>
+                  <SortTh k="product_type" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Product Type</SortTh>
+                  <SortTh k="status" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Trạng thái</SortTh>
+                  <SortTh k="pic_idea" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>PIC Idea</SortTh>
+                  <SortTh k="listing_month" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-right`}>Tháng listing</SortTh>
+                  <SortTh k="eval_month" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-right`}>Tháng đánh giá</SortTh>
+                  <SortTh k="von_hang" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 ${SEP} text-right`}>Tổng vốn hàng</SortTh>
+                  <SortTh k="revenue" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Revenue</SortTh>
+                  <SortTh k="quantity" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Quantity</SortTh>
+                  <SortTh k="basecost" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Basecost</SortTh>
+                  <SortTh k="ads_fee" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Ads Fee</SortTh>
+                  <SortTh k="tacos" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>TAcos</SortTh>
+                  <SortTh k="profit" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Profit</SortTh>
+                  <SortTh k="roi" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>ROI</SortTh>
+                  <SortTh k="hoanVon" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Hoàn vốn</SortTh>
+                  <SortTh k="hoanVonPct" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>% Hoàn vốn</SortTh>
+                  <SortTh k="qty_di" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Số lượng đi hàng</SortTh>
+                  <SortTh k="ton" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Tồn</SortTh>
                   {months.map((m) =>
                     monthMetrics.map((mt, j) => (
-                      <th key={`${m.month}-${mt.key}`} className={`${TH} text-right ${j === 0 ? SEP : ""} `}>
+                      <SortTh
+                        key={`${m.month}-${mt.key}`}
+                        k={`m|${m.month}|${mt.key}`}
+                        sort={sort}
+                        onSort={onSort}
+                        className={`${TH_BASE} text-right ${j === 0 ? SEP : ""} ${months.indexOf(m) % 2 ? "bg-amber-100 !text-amber-900" : "bg-violet-100 !text-violet-900"}`}
+                      >
                         {mt.label}
-                      </th>
+                      </SortTh>
                     ))
                   )}
                 </tr>
                 <tr className={TOTAL_ROW}>
-                  <td className={`${TDL} font-semibold sticky left-0 z-30 bg-slate-100`}>Tổng {skus.length} SKU</td>
+                  <td colSpan={2} className={`${TDL} font-semibold sticky left-0 z-30 bg-slate-100`}>
+                    Tổng {skus.length}
+                    {skus.length !== allSkus.length && <span className="font-normal text-slate-500">/{allSkus.length}</span>} SKU
+                  </td>
                   <td className={`${TDL} font-semibold`}>
-                    <ProfitSpark values={months.map((m) => ({ label: monthLabel(m.month), v: totals.byMonth.get(m.month)?.cell.profit ?? null }))} />
+                    <ProfitSpark
+                      total={totals.profit}
+                      values={months.map((m) => ({
+                        label: monthLabel(m.month),
+                        v: totals.byMonth.get(m.month)?.cell.profit ?? null,
+                        partial: m.month >= currentMonth,
+                      }))}
+                    />
                   </td>
                   <td colSpan={5} className={`${TDL} font-semibold`} />
                   <td className={`${TD} ${SEP} font-semibold`}>{fmtUsd(totals.von)}</td>
@@ -1116,7 +1898,7 @@ export function KqkdView() {
                   <td className={`${TD} font-semibold ${signClass(totals.profit)}`}>{fmtUsd(totals.profit)}</td>
                   <td className={`${TD} font-semibold`}>{fmtPct(ratio(totals.profit, totals.basecost))}</td>
                   <td className={`${TD} font-semibold`}>{fmtUsd(totals.hoanVon)}</td>
-                  <td className={`${TD} font-semibold`}><PctBar v={ratio(totals.hoanVon, totals.von)} /></td>
+                  <td className={`${TD} font-semibold`}><HoanVonBar v={ratio(totals.hoanVon, totals.von)} /></td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.qtyDi)}</td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.qtyDi - totals.quantity)}</td>
                   {months.map((m) =>
@@ -1132,23 +1914,39 @@ export function KqkdView() {
                 </tr>
               </thead>
               <tbody>
-                {skus.map((s) => {
+                {skus.length === 0 && (
+                  <tr>
+                    <td colSpan={20 + months.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
+                      Không có SKU khớp bộ lọc.{" "}
+                      <button type="button" onClick={clearFilters} className="cursor-pointer font-semibold text-blue-600 hover:underline">
+                        Xoá lọc
+                      </button>
+                    </td>
+                  </tr>
+                )}
+                {skus.map((s, i) => {
                   const d = derive(s);
-                  const thumb = getOptimizedThumbnailUrl(s.mockup_url, 64);
                   return (
-                    <tr key={s.sku} className="group hover:bg-slate-50">
-                      <td className={`${TDL} sticky left-0 z-10 bg-white shadow-[1px_0_0_#e2e8f0] group-hover:bg-slate-50`}>
+                    <tr key={s.sku} className="group bg-white even:bg-slate-50/70 transition-colors duration-150 hover:!bg-orange-50 [content-visibility:auto] [contain-intrinsic-size:36px]">
+                      <td className={`${TD} sticky left-0 z-10 w-10 min-w-10 !px-1 !text-center !text-slate-400 bg-white group-even:bg-slate-50 group-hover:!bg-orange-50 transition-colors duration-150`}>
+                        {i + 1}
+                      </td>
+                      <td className={`${TDL} sticky left-10 z-10 bg-white shadow-[1px_0_0_#e2e8f0] group-even:bg-slate-50 group-hover:!bg-orange-50 transition-colors duration-150`}>
                         <span className="flex items-center gap-2">
-                          {thumb ? (
-                            <img src={thumb} alt="" loading="lazy" className="h-7 w-7 shrink-0 rounded border border-slate-200 object-cover" />
-                          ) : (
-                            <span className="h-7 w-7 shrink-0 rounded border border-dashed border-slate-200" />
-                          )}
+                          <ThumbZoom url={s.mockup_url} />
                           <span className="font-mono text-[11.5px] font-bold text-slate-900">{s.sku}</span>
                         </span>
                       </td>
                       <td className={TDL}>
-                        <ProfitSpark values={months.map((m) => ({ label: monthLabel(m.month), v: s.months[m.month]?.profit ?? null }))} />
+                        <ProfitSpark
+                          total={s.profit}
+                          values={months.map((m) => ({
+                            label: monthLabel(m.month),
+                            v: s.months[m.month]?.profit ?? null,
+                            before: m.month < s.listing_month,
+                            partial: m.month >= currentMonth,
+                          }))}
+                        />
                       </td>
                       <td className={`${TDL} max-w-[170px] truncate`} title={s.product_type || ""}>
                         {s.product_type}
@@ -1159,21 +1957,21 @@ export function KqkdView() {
                       <td className={TDL}>{s.pic_idea}</td>
                       <td className={TD}>{monthLabel(s.listing_month)}</td>
                       <td className={TD}>{s.eval_month ? monthLabel(s.eval_month) : ""}</td>
-                      <td className={`${TD} ${SEP}`}>{fmtUsd(s.von_hang)}</td>
-                      <td className={TD}>{fmtUsd(s.revenue)}</td>
-                      <td className={TD}>{fmtInt(s.quantity)}</td>
-                      <td className={TD}>{fmtUsd(d.basecost)}</td>
-                      <td className={TD}>{fmtUsd(s.ads_fee)}</td>
-                      <td className={TD}>{fmtPct(d.tacos)}</td>
-                      <td className={`${TD} font-semibold ${signClass(s.profit)}`}>{fmtUsd(s.profit)}</td>
-                      <td className={TD}>{fmtPct(d.roi)}</td>
-                      <td className={TD}>{fmtUsd(d.hoanVon)}</td>
-                      <td className={TD}>
-                        <PctBar v={d.hoanVonPct} />
+                      <td className={`${TD} ${SEP} ${zc(s.von_hang)}`}>{fmtUsd(s.von_hang)}</td>
+                      <td className={`${TD} ${zc(s.revenue)}`}>{fmtUsd(s.revenue)}</td>
+                      <td className={`${TD} ${zc(s.quantity)}`}>{fmtInt(s.quantity)}</td>
+                      <td className={`${TD} ${zc(d.basecost)}`}>{fmtUsd(d.basecost)}</td>
+                      <td className={`${TD} ${zc(s.ads_fee)}`}>{fmtUsd(s.ads_fee)}</td>
+                      <td className={`${TD} ${zc(d.tacos)}`}>{fmtPct(d.tacos)}</td>
+                      <td className={`${TD} bg-blue-50/40 font-semibold ${profitCls(s.profit)}`}>{fmtUsd(s.profit)}</td>
+                      <td className={`${TD} ${zc(d.roi)}`}>{fmtPct(d.roi)}</td>
+                      <td className={`${TD} ${zc(d.hoanVon)}`}>{fmtUsd(d.hoanVon)}</td>
+                      <td className={`${TD} bg-blue-50/40`}>
+                        <HoanVonBar v={d.hoanVonPct} />
                       </td>
-                      <td className={TD}>{fmtInt(s.qty_di)}</td>
+                      <td className={`${TD} ${zc(s.qty_di)}`}>{fmtInt(s.qty_di)}</td>
                       <td
-                        className={`${TD} ${d.ton < 0 ? "!text-red-600" : ""}`}
+                        className={`${TD} ${d.ton < 0 ? "!text-red-600" : zc(d.ton)}`}
                         title={d.ton < 0 ? "Bán nhiều hơn số đi hàng — thiếu lô đi hàng trong Bảng nhập?" : undefined}
                       >
                         {fmtInt(d.ton)}
@@ -1185,7 +1983,7 @@ export function KqkdView() {
                           return (
                             <td
                               key={`${m.month}-${mt.key}`}
-                              className={`${TD} ${j === 0 ? SEP : ""} ${before ? "bg-slate-50" : ""} ${mt.key === "profit" ? signClass(v) : ""}`}
+                              className={`${TD} ${j === 0 ? SEP : ""} ${before ? "bg-slate-100/70" : ""} ${mt.key === "profit" ? profitCls(v) : zc(v)}`}
                             >
                               {fmtMetric(v, mt.key)}
                             </td>
@@ -1197,7 +1995,7 @@ export function KqkdView() {
                 })}
               </tbody>
             </table>
-          </div>
+          </AccountingViewTransition>
         )}
       </div>
     </div>
