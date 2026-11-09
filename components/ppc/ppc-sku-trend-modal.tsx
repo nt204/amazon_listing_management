@@ -121,7 +121,6 @@ export function PpcSkuTrendModal({
     noSalePlot: d.noSaleSpend ? acosCeil * 0.92 : null,
   }));
   type PlotPoint = (typeof plotData)[number];
-  const hasNoSaleDays = plotData.some((d) => d.noSaleSpend);
 
   const barSize = timeframe === "30D" ? 8 : timeframe === "14D" ? 14 : 20;
   const noData = totals.spend <= 0 && totals.sales <= 0;
@@ -355,13 +354,6 @@ export function PpcSkuTrendModal({
             }
             label="ACoS"
           />
-          <LegendItem
-            marker={<span className="w-5 border-t-2 border-dashed border-green-500" />}
-            label={`Target ACoS (${formatTick(targetAcos)}%)`}
-          />
-          {hasNoSaleDays && (
-            <LegendItem marker={<span className="h-2.5 w-2.5 rounded-full bg-rose-600" />} label="Spend, 0 sales" />
-          )}
         </div>
       </div>
     </div>
