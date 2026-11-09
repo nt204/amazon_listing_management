@@ -193,9 +193,11 @@ function SortTh({
   onSort,
   className,
   align = "right",
+  rowSpan,
   children,
 }: {
   k: string;
+  rowSpan?: number;
   sort: SortState;
   onSort: (k: string) => void;
   className: string;
@@ -205,7 +207,7 @@ function SortTh({
   const active = sort?.key === k;
   const Icon = !active ? ArrowsDownUpIcon : sort.dir === "asc" ? ArrowUpIcon : ArrowDownIcon;
   return (
-    <th className={className} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+    <th rowSpan={rowSpan} className={className} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
       <button
         type="button"
         onClick={() => onSort(k)}
@@ -423,6 +425,15 @@ function StatusDonut({ parts }: { parts: { label: string; n: number; color: stri
   );
 }
 
+// Số Profit gọn: $1.6k · $245 · dưới $10 giữ 2 số lẻ (tránh hiện "-$0")
+function compactProfit(v: number) {
+  const a = Math.abs(v);
+  const sign = v < 0 && a >= 0.005 ? "-" : "";
+  if (a >= 1000) return `${sign}$${(a / 1000).toFixed(1)}k`;
+  if (a >= 10) return `${sign}${usd0.format(a)}`;
+  return `${sign}$${a.toFixed(2)}`;
+}
+
 // Sparkline Profit từng tháng: trục 0 ở giữa, lãi = cột xanh lên, lỗ = cột đỏ xuống.
 // Tháng trước khi listing bỏ trống; tháng hiện tại (tạm tính) tô nhạt. Bên cạnh ghi tổng Profit để biết độ lớn.
 function ProfitSpark({
@@ -435,7 +446,8 @@ function ProfitSpark({
   const W = 132;
   const H = 30;
   const mid = H / 2;
-  const max = Math.max(1, ...values.map((x) => (x.before ? 0 : Math.abs(x.v ?? 0))));
+  // Thang tối thiểu $50: SKU chỉ lãi/lỗ vài đô không bị vẽ cột cao vống như SKU lãi hàng nghìn
+  const max = Math.max(50, ...values.map((x) => (x.before ? 0 : Math.abs(x.v ?? 0))));
   const slot = W / Math.max(values.length, 1);
   const bw = Math.max(4, Math.min(8, slot - 2));
   return (
@@ -456,15 +468,14 @@ function ProfitSpark({
               fill={x.v > 0 ? "#16a34a" : "#dc2626"}
               opacity={x.partial ? 0.4 : 1}
             >
-              <title>{`${x.label}: ${usd.format(x.v)}${x.partial ? " (tạm tính)" : ""}`}</title>
+              <title>{`${x.label}: Profit ${usd.format(x.v)}${x.partial ? " (tạm tính)" : ""}`}</title>
             </rect>
           );
         })}
       </svg>
       {total != null && (
         <span className={`w-14 text-right font-mono text-[11px] font-semibold tabular-nums ${total > 0 ? "text-emerald-700" : total < 0 ? "text-red-600" : "text-slate-300"}`}>
-          {total < 0 ? "-" : ""}
-          {Math.abs(total) >= 1000 ? `$${(Math.abs(total) / 1000).toFixed(1)}k` : usd0.format(Math.abs(total))}
+          {compactProfit(total)}
         </span>
       )}
     </span>
@@ -477,7 +488,7 @@ const TH_BASE = "border border-slate-200 px-3 py-2 text-[11px] font-semibold whi
 const TH = `${TH_BASE} bg-slate-50 !text-slate-600`;
 const TD = "border border-slate-100 px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap";
 const TDL = "border border-slate-100 px-3 py-1.5 text-left whitespace-nowrap";
-const SEP = "border-l-2 border-l-slate-200";
+const SEP = "kq-sep border-l-2 border-l-slate-200";
 // Ô không áp dụng: gạch ngang nhạt để khỏi lẫn với ô trống
 const TOTAL_ROW = "bg-slate-100 [&>td]:border-t-2 [&>td]:border-t-slate-300";
 
@@ -713,10 +724,35 @@ function KqkdPeople({
   role: PersonRole;
 }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const [q, setQ] = useState("");
+  const [fKind, setFKind] = useState<"" | "win" | "test" | "loss">("");
+  const [sort, setSort] = useState<SortState>(null);
+  const onSort = (k: string) =>
+    setSort((prev) => {
+      const first: "asc" | "desc" = k === "name" ? "asc" : "desc";
+      if (prev?.key !== k) return { key: k, dir: first };
+      if (prev.dir === first) return { key: k, dir: first === "asc" ? "desc" : "asc" };
+      return null;
+    });
+  const deferredQ = useDeferredValue(q);
+
+  // Lọc SKU trước khi gom theo người: số liệu từng người = đúng phần SKU đang lọc
+  const filtered = useMemo(() => {
+    const t = personKey(deferredQ);
+    return skus.filter((s) => {
+      if (fKind && statusKind(s.status) !== fKind) return false;
+      if (!t) return true;
+      return (
+        personKey(s[role]).includes(t) ||
+        s.sku.toLowerCase().includes(t) ||
+        personKey(s.product_type).includes(t)
+      );
+    });
+  }, [skus, deferredQ, fKind, role]);
 
   const people = useMemo(() => {
     const map = new Map<string, PersonStat & { names: Map<string, number> }>();
-    for (const s of skus) {
+    for (const s of filtered) {
       const raw = (s[role] ?? "").trim();
       const key = personKey(raw) || "(trống)";
       const cur: PersonStat & { names: Map<string, number> } = map.get(key) || {
@@ -748,7 +784,58 @@ function KqkdPeople({
       out.push({ ...p, name });
     }
     return out.sort((a, b) => (a.key === "(trống)" ? 1 : b.key === "(trống)" ? -1 : b.profit - a.profit || b.n - a.n));
-  }, [skus, role, currentMonth]);
+  }, [filtered, role, currentMonth]);
+
+  // Sắp xếp người theo cột đã chọn; "(chưa ghi tên)" luôn ở cuối
+  const sortedPeople = useMemo(() => {
+    if (!sort) return people;
+    const val = (p: PersonStat): number | string | null => {
+      switch (sort.key) {
+        case "name":
+          return p.name;
+        case "rate":
+          return ratio(p.winDue, p.due);
+        case "winDue":
+          return p.due ? p.winDue : null;
+        case "hoanVonPct":
+          return ratio(p.hoanVon, p.von);
+        default:
+          return (p as unknown as Record<string, number>)[sort.key] ?? null;
+      }
+    };
+    const sign = sort.dir === "asc" ? 1 : -1;
+    return [...people].sort((a, b) => {
+      if (a.key === "(trống)" || b.key === "(trống)") return a.key === "(trống)" ? 1 : -1;
+      const x = val(a);
+      const y = val(b);
+      if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+      if (typeof x === "string" || typeof y === "string") return sign * String(x).localeCompare(String(y), "vi");
+      return sign * (x - y);
+    });
+  }, [people, sort]);
+
+  // SKU trong một người: theo cột đang sắp nếu SKU có cột tương ứng, mặc định Profit giảm dần
+  const SKU_SORT_KEY: Record<string, string> = {
+    von: "von_hang",
+    revenue: "revenue",
+    ads: "ads_fee",
+    profit: "profit",
+    hoanVonPct: "hoanVonPct",
+    name: "sku",
+  };
+  const sortSkus = (list: KqkdSku[]) => {
+    const k = sort ? SKU_SORT_KEY[sort.key] : undefined;
+    if (!sort || !k) return list;
+    const sign = sort.dir === "asc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const x = sortValue(a, k);
+      const y = sortValue(b, k);
+      if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+      if (typeof x === "string" || typeof y === "string") return sign * String(x).localeCompare(String(y), "vi");
+      return sign * (x - y);
+    });
+  };
+  const filtering = Boolean(q || fKind || sort);
 
 
   const maxAbsProfit = Math.max(1, ...people.map((p) => Math.abs(p.profit)));
@@ -770,6 +857,65 @@ function KqkdPeople({
         >
           PIC IDEA
         </h3>
+        <div className="relative ml-2 w-48 transition-all duration-200 focus-within:w-60">
+          <MagnifyingGlassIcon size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Tìm người, SKU, phôi..."
+            aria-label="Tìm trong bảng PIC IDEA"
+            className="h-7 w-full rounded-lg border border-slate-300 bg-white pl-7 pr-6 text-xs font-medium text-slate-800 placeholder-slate-400 outline-hidden transition-colors focus:border-blue-500"
+          />
+          {q && (
+            <button type="button" onClick={() => setQ("")} aria-label="Xoá tìm kiếm" className="absolute right-1.5 top-1/2 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-slate-600">
+              <XIcon size={10} />
+            </button>
+          )}
+        </div>
+        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+          {(
+            [
+              { k: "", label: "Tất cả" },
+              { k: "win", label: "WIN" },
+              { k: "test", label: "Đang test" },
+              { k: "loss", label: "Dừng" },
+            ] as const
+          ).map((o) => (
+            <button
+              key={o.k}
+              type="button"
+              aria-pressed={fKind === o.k}
+              onClick={() => setFKind(o.k)}
+              className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-all duration-150 ${
+                fKind === o.k ? "bg-white text-blue-700 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {filtering && (
+          <button
+            type="button"
+            onClick={() => {
+              setQ("");
+              setFKind("");
+              setSort(null);
+            }}
+            className="animate-in fade-in zoom-in-95 duration-150 flex h-7 cursor-pointer items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2 text-[11px] font-semibold text-blue-700 transition-colors hover:bg-blue-100"
+          >
+            <XIcon size={10} weight="bold" />
+            Xoá lọc
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => (prev.size ? new Set() : new Set(sortedPeople.map((p) => p.key))))}
+          className="ml-auto cursor-pointer rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-2xs transition-all duration-150 hover:bg-slate-50 hover:text-slate-900 active:scale-95"
+        >
+          {open.size ? "Thu gọn tất cả" : "Mở tất cả"}
+        </button>
       </div>
 
       <div className="overflow-x-auto">
@@ -777,27 +923,34 @@ function KqkdPeople({
           <thead>
             <tr>
               <th rowSpan={2} className={`${H} w-10 text-center align-bottom`}>STT</th>
-              <th rowSpan={2} className={`${H} text-left align-bottom`}>Người</th>
+              <SortTh k="name" sort={sort} onSort={onSort} align="left" rowSpan={2} className={`${H} text-left align-bottom`}>Người</SortTh>
               <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-blue-100 !text-blue-800`}>SKU</th>
               <th colSpan={2} className={`${TH_BASE} ${SEP} text-center bg-emerald-100 !text-emerald-800`}>WIN</th>
               <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-violet-100 !text-violet-800`}>Tiền</th>
             </tr>
             <tr>
-              <th className={`${TH_BASE} ${SEP} text-right bg-blue-50 !text-blue-900`}>Tổng</th>
-              <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>WIN</th>
-              <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Đang test</th>
-              <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Dừng</th>
-              <th className={`${TH_BASE} ${SEP} text-right bg-emerald-50 !text-emerald-900`}>WIN / đã đánh giá</th>
-              <th className={`${TH_BASE} text-center bg-emerald-50 !text-emerald-900`}>Tỉ lệ WIN</th>
-              <th className={`${TH_BASE} ${SEP} text-right bg-violet-50 !text-violet-900`}>Vốn test</th>
-              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Revenue</th>
-              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Ads Fee</th>
-              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Profit</th>
-              <th className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>% Hoàn vốn</th>
+              <SortTh k="n" sort={sort} onSort={onSort} className={`${TH_BASE} ${SEP} text-right bg-blue-50 !text-blue-900`}>Tổng</SortTh>
+              <SortTh k="win" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>WIN</SortTh>
+              <SortTh k="test" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Đang test</SortTh>
+              <SortTh k="loss" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Dừng</SortTh>
+              <SortTh k="winDue" sort={sort} onSort={onSort} className={`${TH_BASE} ${SEP} text-right bg-emerald-50 !text-emerald-900`}>WIN / đã đánh giá</SortTh>
+              <SortTh k="rate" sort={sort} onSort={onSort} className={`${TH_BASE} text-center bg-emerald-50 !text-emerald-900`}>Tỉ lệ WIN</SortTh>
+              <SortTh k="von" sort={sort} onSort={onSort} className={`${TH_BASE} ${SEP} text-right bg-violet-50 !text-violet-900`}>Vốn test</SortTh>
+              <SortTh k="revenue" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Revenue</SortTh>
+              <SortTh k="ads" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Ads Fee</SortTh>
+              <SortTh k="profit" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Profit</SortTh>
+              <SortTh k="hoanVonPct" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>% Hoàn vốn</SortTh>
             </tr>
           </thead>
           <tbody>
-            {people.map((p, i) => {
+            {sortedPeople.length === 0 && (
+              <tr>
+                <td colSpan={13} className="px-4 py-8 text-left text-sm !text-slate-500">
+                  Không có người / SKU khớp bộ lọc.
+                </td>
+              </tr>
+            )}
+            {sortedPeople.map((p, i) => {
               const isOpen = open.has(p.key);
               const w = (Math.abs(p.profit) / maxAbsProfit) * 100;
               return (
@@ -833,7 +986,7 @@ function KqkdPeople({
                     <td className={TD}><HoanVonBar v={ratio(p.hoanVon, p.von)} /></td>
                   </tr>
                   {isOpen &&
-                    p.skus.map((s, j) => {
+                    sortSkus(p.skus).map((s, j) => {
                       const d = derive(s);
                       const last = j === p.skus.length - 1;
                       return (
@@ -1821,7 +1974,9 @@ export function KqkdView() {
         {/* SKU TESTING */}
         {mode === "skus" && allSkus.length > 0 && (
           <AccountingViewTransition transitionKey="skus" className="flex-1 overflow-auto scrollbar-thin">
-            <table className="min-w-max border-collapse text-xs">
+            {/* border-separate: tiêu đề dính (sticky) mang theo viền của ô — border-collapse để lại khe trong suốt giữa các dòng khi cuộn.
+                Bỏ viền trên/trái của từng ô để không bị viền đôi; giữ vạch dọc đậm (kq-sep) đầu mỗi nhóm cột. */}
+            <table className="min-w-max border-separate border-spacing-0 text-xs [&_td]:border-t-0 [&_th]:border-t-0 [&_td:not(.kq-sep)]:border-l-0 [&_th:not(.kq-sep)]:border-l-0 [&_thead_tr:last-child>td]:border-b-2 [&_thead_tr:last-child>td]:border-b-slate-300">
               <thead className="sticky top-0 z-20">
                 <tr>
                   <th colSpan={8} className={`${TH_BASE} text-left bg-emerald-100 !text-emerald-900`}>Thông tin cơ bản</th>
