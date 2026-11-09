@@ -6,8 +6,7 @@ import { listSkuWin } from "@/lib/accounting/sku-win-db";
 // Tab KQKD — file "BÁO CÁO KQKD SKU TESTING": cohort SKU listing trong năm (BẢNG MÃ),
 // vốn hàng từ lô đi hàng, kết quả từng tháng. Bám đúng nguồn của sheet:
 // - Tab "Tháng N" = IMPORTRANGE tab SKU-monthly của file TỔNG KẾT CUỐI THÁNG → accounting_sku_monthly (kỳ đã chốt).
-// - Tab "INPUT KQ Tháng hiện tại" = IMPORTRANGE tab SKU TEST (A:R) của file Lọc SKU → Lọc SKU Test cả tháng:
-//   chỉ SKU trạng thái "Test"; SKU Phát triển / Hủy không có số tháng hiện tại (giống sheet).
+// - Tab "INPUT KQ Tháng hiện tại" (sheet: chỉ SKU Test) → hệ thống tính mọi trạng thái để SKU đã WIN không mất số tháng này.
 // - Kỳ đã qua mà chưa chốt SKU Monthly (sheet luôn có tab Tháng N, hệ thống thì chưa): tạm tính bằng công thức
 //   Lọc SKU Win cho mọi SKU, đánh dấu "live" để giao diện ghi rõ là tạm tính.
 // Lifetime = cộng mọi tháng từ tháng 1 tới tháng hiện tại (sheet: J/K/M/O cộng đủ các nhóm cột tháng).
@@ -128,8 +127,9 @@ async function liveMonth(storeId: string, period: string, today: string, isCurre
   const { items } = await listSkuWin(storeId, {
     startDate: start,
     endDate: end,
-    // Tháng hiện tại = Lọc SKU Test (chỉ trạng thái Test); kỳ cũ chưa chốt = mọi SKU
-    status: isCurrent ? "Test" : "all",
+    // Mọi trạng thái, kể cả tháng hiện tại: sheet chỉ lấy SKU "Test" cho tháng hiện tại nên SKU đã WIN
+    // (Phát triển) mất doanh số tháng này và lifetime bị thiếu.
+    status: "all",
     limit: 1_000_000,
     includeAllTime: false,
   });

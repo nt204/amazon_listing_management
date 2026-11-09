@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   CalendarBlankIcon,
-  ChartLineUpIcon,
   FlaskIcon,
   ListChecksIcon,
   PackageIcon,
@@ -34,11 +33,6 @@ const SkuTestView = dynamic(
   { loading: TabLoading }
 );
 
-const KqkdView = dynamic(
-  () => import("./kqkd-view").then((m) => m.KqkdView),
-  { loading: TabLoading }
-);
-
 const FbaDailyView = dynamic(
   () => import("./fba-daily-view").then((m) => m.FbaDailyView),
   { loading: TabLoading }
@@ -52,14 +46,13 @@ const SkuMonthlyView = dynamic(
 export type FinancialsSubTab =
   | "sku_win"
   | "sku_test"
-  | "kqkd"
   | "sku_monthly"
   | "fba"
   | "fbm"
   | "sku_monthly_fbm"
   | "fbm_fixed";
 
-const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "kqkd", "sku_monthly", "fba", "fbm", "sku_monthly_fbm", "fbm_fixed"];
+const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "sku_monthly", "fba", "fbm", "sku_monthly_fbm", "fbm_fixed"];
 const FBM_TABS: FinancialsSubTab[] = ["fbm", "sku_monthly_fbm", "fbm_fixed"];
 
 type TabItem = { key: FinancialsSubTab; label: string; badge?: string; icon: Icon };
@@ -69,8 +62,6 @@ const FBA_TAB_ITEMS: TabItem[] = [
   { key: "sku_monthly", label: "Báo Cáo Tháng", badge: "SKU Monthly", icon: CalendarBlankIcon },
   { key: "sku_win", label: "Lọc SKU Win", icon: PackageIcon },
   { key: "sku_test", label: "Lọc SKU Test", icon: FlaskIcon },
-  // KQKD — file "BÁO CÁO KQKD SKU TESTING": tổng quan tháng + SKU Testing
-  { key: "kqkd", label: "KQKD", badge: "SKU Testing", icon: ChartLineUpIcon },
 ];
 
 const FBM_TAB_ITEMS: TabItem[] = [
@@ -209,8 +200,7 @@ export function FinancialsWorkspace() {
           {visibleTab === "sku_monthly" && <SkuMonthlyView key="sku_monthly" />}
           {visibleTab === "sku_win" && <SkuWinView key="sku_win" />}
           {visibleTab === "sku_test" && <SkuTestView />}
-          {visibleTab === "kqkd" && <KqkdView key="kqkd" />}
-          {visibleTab === "fbm" && <FbaDailyView key="fbm" channel="fbm" />}
+                    {visibleTab === "fbm" && <FbaDailyView key="fbm" channel="fbm" />}
           {visibleTab === "sku_monthly_fbm" && <SkuMonthlyView key="sku_monthly_fbm" channel="fbm" />}
           {visibleTab === "fbm_fixed" && <SkuWinView key="fbm_fixed" variant="fbm_fixed" />}
         </AccountingViewTransition>

@@ -130,6 +130,7 @@ type AccountingSection =
   | "orders"
   | "import"
   | "financials"
+  | "kqkd"
   | "reports"
   | "admin"
   | "access"
@@ -776,6 +777,29 @@ function WorkspaceSidebar({
                     </div>
                   </button>
 
+                  {/* 6. KQKD SKU — báo cáo kết quả kinh doanh SKU Testing (mục riêng) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("kqkd");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
+                      accountingSection === "kqkd"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <ChartLineUpIcon
+                      size={17}
+                      weight={accountingSection === "kqkd" ? "fill" : "duotone"}
+                      className={`shrink-0 ${accountingSection === "kqkd" ? "text-indigo-600" : "text-slate-400"}`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-[13px]">KQKD SKU</span>
+                    </div>
+                  </button>
+
                   {/* 6. Reports */}
                   <button
                     type="button"
@@ -1143,6 +1167,7 @@ export function ListingWorkspace({
         "orders",
         "import",
         "financials",
+        "kqkd",
         "reports",
         "admin",
         "access",
@@ -1420,6 +1445,8 @@ export function ListingWorkspace({
                                 accountingSection === "amazon_fees" ||
                                 accountingSection === "ads"
                                 ? "Accounting - Financials (Tài Chính)"
+                                : accountingSection === "kqkd"
+                                  ? "Accounting - KQKD SKU Testing"
                                 : accountingSection === "reports" ||
                                   accountingSection === "pnl" ||
                                   accountingSection === "settlements"

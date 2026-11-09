@@ -160,6 +160,10 @@ const FinancialsWorkspace = dynamic(
   () => import("./financials-workspace").then((module) => module.FinancialsWorkspace),
   { loading: AccountingSectionLoading },
 );
+const KqkdView = dynamic(
+  () => import("./kqkd-view").then((module) => module.KqkdView),
+  { loading: AccountingSectionLoading },
+);
 const AccountingAccessView = dynamic(
   () => import("./accounting-access-view").then((module) => module.AccountingAccessView),
   { loading: AccountingSectionLoading },
@@ -177,6 +181,7 @@ export type AccountingModuleKey =
   | "files"
   | "orders"
   | "financials"
+  | "kqkd"
   | "reports"
   | "admin"
   | "access"
@@ -397,6 +402,15 @@ export function AccountingWorkspace({
     return (
       <AccountingSectionShell sectionKey="financials">
         <FinancialsWorkspace />
+      </AccountingSectionShell>
+    );
+  }
+
+  // KQKD SKU — file "BÁO CÁO KQKD SKU TESTING" (mục riêng trên sidebar)
+  if (effectiveSection === "kqkd") {
+    return (
+      <AccountingSectionShell sectionKey="kqkd">
+        <KqkdView />
       </AccountingSectionShell>
     );
   }
