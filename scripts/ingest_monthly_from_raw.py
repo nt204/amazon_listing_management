@@ -419,7 +419,8 @@ def wait_for_base_cost_resync(conn, store_id, timeout=240, settle=8):
         cur.execute("SELECT max(updated_at) FROM accounting_monthly_base_cost WHERE store_id = %s", (store_id,))
         changed = cur.fetchone()[0]
         conn.commit()
-        if queued or changed != last_change:
+        # stable_since None: lượt đầu — store chưa có dòng Base Cost (max = NULL = last_change) vẫn phải bắt đầu đếm
+        if queued or stable_since is None or changed != last_change:
             last_change, stable_since = changed, time.time()
         elif time.time() - stable_since >= settle:
             return True
