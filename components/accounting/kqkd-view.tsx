@@ -44,6 +44,8 @@ interface KqkdSku {
   pic_idea: string | null;
   pic_mkt?: string | null;
   design_pic?: string | null;
+  ton_kho?: number | null;
+  ton_kho_updated_at?: string | null;
   listing_month: string;
   eval_month: string | null;
   von_hang: number;
@@ -131,7 +133,8 @@ function derive(s: KqkdSku) {
     roi: ratio(s.profit, basecost),
     hoanVon,
     hoanVonPct: ratio(hoanVon, s.von_hang),
-    ton: s.qty_di - s.quantity,
+    // Tồn = tồn kho mới nhất hệ thống đang tính (Inventory Ledger FBA + AWD). Chưa có dữ liệu tồn → null (để trống)
+    ton: s.ton_kho ?? null,
   };
 }
 
@@ -311,7 +314,16 @@ const C_TEST = "#f59e0b";
 function WinChart({
   items,
 }: {
-  items: { month: number; target: number | null; win: number | null; rate: number | null; note?: string; tip: string }[];
+  items: {
+    month: number;
+    target: number | null;
+    win: number | null;
+    rate: number | null;
+    note?: string;
+    tip: string;
+    n?: number;
+    doneN?: number;
+  }[];
 }) {
   const max = Math.max(1, ...items.map((i) => Math.max(i.target ?? 0, i.win ?? 0)));
   const h = (v: number) => `${(v / max) * 100}%`;
@@ -336,7 +348,49 @@ function WinChart({
         </div>
         <div className="absolute inset-0 flex">
           {items.map((it) => (
-            <div key={it.month} title={it.tip} className="group/bar relative flex h-full flex-1 items-end justify-center gap-[3px] rounded-t-sm transition-colors duration-150 hover:bg-slate-100/70">
+            <div key={it.month} aria-label={it.tip} className="group/bar relative flex h-full flex-1 items-end justify-center gap-[3px] rounded-t-sm transition-colors duration-150 hover:bg-slate-100/70">
+              {/* Hộp số liệu khi rê chuột: số SKU đánh giá, mục tiêu, WIN thực tế */}
+              <div
+                className={`pointer-events-none absolute bottom-full z-30 mb-2 w-max min-w-[168px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11.5px] opacity-0 shadow-lg transition-all duration-150 translate-y-1 group-hover/bar:translate-y-0 group-hover/bar:opacity-100 ${
+                  it.month <= 2 ? "left-0" : it.month >= 11 ? "right-0" : "left-1/2 -translate-x-1/2"
+                }`}
+              >
+                <div className="mb-1 font-bold text-slate-800">Tháng {it.month}</div>
+                {it.n ? (
+                  <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5">
+                    <dt className="text-slate-500">SKU đánh giá</dt>
+                    <dd className="text-right font-mono font-semibold tabular-nums text-slate-900">{it.n}</dd>
+                    {it.target != null && (
+                      <>
+                        <dt className="flex items-center gap-1.5 text-slate-500">
+                          <i className="inline-block h-2 w-2 rounded-sm" style={{ background: C_TARGET }} />
+                          Mục tiêu
+                        </dt>
+                        <dd className="text-right font-mono font-semibold tabular-nums text-slate-900">{fmtTarget(it.target)} SKU</dd>
+                        <dt className="flex items-center gap-1.5 text-slate-500">
+                          <i className="inline-block h-2 w-2 rounded-sm" style={{ background: C_WIN }} />
+                          WIN thực tế
+                        </dt>
+                        <dd className="text-right font-mono font-semibold tabular-nums text-slate-900">
+                          {it.win != null ? `${it.win}/${it.doneN ?? it.n} SKU` : <span className="font-sans font-normal text-amber-700">chưa điền</span>}
+                        </dd>
+                      </>
+                    )}
+                    {it.rate != null && (
+                      <>
+                        <dt className="text-slate-500">Tỉ lệ WIN</dt>
+                        <dd className={`text-right font-mono font-bold tabular-nums ${it.rate >= WIN_TARGET_RATE ? "text-emerald-700" : "text-slate-900"}`}>{fmtPct(it.rate)}</dd>
+                      </>
+                    )}
+                    {it.note && <dd className="col-span-2 text-slate-400">{it.note}</dd>}
+                    {it.doneN != null && it.doneN < it.n && it.win != null && (
+                      <dd className="col-span-2 text-amber-700">{it.n - it.doneN} SKU chưa điền</dd>
+                    )}
+                  </dl>
+                ) : (
+                  <div className="text-slate-400">Không có SKU đánh giá</div>
+                )}
+              </div>
               {(it.rate != null || it.note) && (
                 <span
                   className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[10.5px] transition-transform duration-200 group-hover/bar:scale-105 ${it.rate != null ? "font-semibold text-slate-800" : "text-slate-400"}`}
@@ -372,7 +426,7 @@ function WinChart({
   );
 }
 
-// Trạng thái SKU (Bảng mã): WIN = Phát triển · Đang test · Dừng = Hủy
+// Trạng thái SKU (Bảng mã): WIN = Phát triển · Đang test · Hủy
 function StatusDonut({ parts }: { parts: { label: string; n: number; color: string }[] }) {
   const total = parts.reduce((a, p) => a + p.n, 0);
   const R = 42;
@@ -423,63 +477,6 @@ function StatusDonut({ parts }: { parts: { label: string; n: number; color: stri
         </ul>
       </div>
     </figure>
-  );
-}
-
-// Số Profit gọn: $1.6k · $245 · dưới $10 giữ 2 số lẻ (tránh hiện "-$0")
-function compactProfit(v: number) {
-  const a = Math.abs(v);
-  const sign = v < 0 && a >= 0.005 ? "-" : "";
-  if (a >= 1000) return `${sign}$${(a / 1000).toFixed(1)}k`;
-  if (a >= 10) return `${sign}${usd0.format(a)}`;
-  return `${sign}$${a.toFixed(2)}`;
-}
-
-// Sparkline Profit từng tháng: trục 0 ở giữa, lãi = cột xanh lên, lỗ = cột đỏ xuống.
-// Tháng trước khi listing bỏ trống; tháng hiện tại (tạm tính) tô nhạt. Bên cạnh ghi tổng Profit để biết độ lớn.
-function ProfitSpark({
-  values,
-  total,
-}: {
-  values: { label: string; v: number | null; before?: boolean; partial?: boolean }[];
-  total?: number;
-}) {
-  const W = 132;
-  const H = 30;
-  const mid = H / 2;
-  // Thang tối thiểu $50: SKU chỉ lãi/lỗ vài đô không bị vẽ cột cao vống như SKU lãi hàng nghìn
-  const max = Math.max(50, ...values.map((x) => (x.before ? 0 : Math.abs(x.v ?? 0))));
-  const slot = W / Math.max(values.length, 1);
-  const bw = Math.max(4, Math.min(8, slot - 2));
-  return (
-    <span className="flex items-center gap-2">
-      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block shrink-0">
-        <line x1={0} x2={W} y1={mid} y2={mid} stroke="#cbd5e1" strokeWidth={1} />
-        {values.map((x, i) => {
-          if (x.before || x.v == null || x.v === 0) return null;
-          const h = Math.max(1.5, (Math.abs(x.v) / max) * (mid - 1));
-          return (
-            <rect
-              key={x.label}
-              x={slot * i + (slot - bw) / 2}
-              y={x.v > 0 ? mid - h : mid}
-              width={bw}
-              height={h}
-              rx={1}
-              fill={x.v > 0 ? "#16a34a" : "#dc2626"}
-              opacity={x.partial ? 0.4 : 1}
-            >
-              <title>{`${x.label}: Profit ${usd.format(x.v)}${x.partial ? " (tạm tính)" : ""}`}</title>
-            </rect>
-          );
-        })}
-      </svg>
-      {total != null && (
-        <span className={`w-14 text-right font-mono text-[11px] font-semibold tabular-nums ${total > 0 ? "text-emerald-700" : total < 0 ? "text-red-600" : "text-slate-300"}`}>
-          {compactProfit(total)}
-        </span>
-      )}
-    </span>
   );
 }
 
@@ -621,7 +618,19 @@ function StatusPill({ status }: { status: string | null }) {
   return <span className={statusKind(status) === "loss" ? "text-slate-400" : ""}>{status}</span>;
 }
 
-function Kpi({ label, value, sub, highlight }: { label: string; value: string; sub?: ReactNode; highlight?: boolean }) {
+function Kpi({
+  label,
+  value,
+  sub,
+  highlight,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  sub?: ReactNode;
+  highlight?: boolean;
+  valueClass?: string;
+}) {
   return (
     <div
       className={`min-w-0 rounded-xl border px-4 py-3.5 shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs select-none ${
@@ -629,7 +638,7 @@ function Kpi({ label, value, sub, highlight }: { label: string; value: string; s
       }`}
     >
       <div className="text-[12px] font-semibold text-slate-500">{label}</div>
-      <div className={`mt-1.5 font-mono text-[26px] font-bold leading-none tracking-tight tabular-nums transition-colors duration-200 ${highlight ? "text-emerald-700" : "text-slate-900"}`}>{value}</div>
+      <div className={`mt-1.5 font-mono text-[26px] font-bold leading-none tracking-tight tabular-nums transition-colors duration-200 ${valueClass ?? (highlight ? "text-emerald-700" : "text-slate-900")}`}>{value}</div>
       {sub && <div className="mt-2 text-[11.5px] text-slate-500">{sub}</div>}
     </div>
   );
@@ -819,22 +828,40 @@ function KqkdPeople({
     });
   }, [people, sort]);
 
-  // SKU trong một người: theo cột đang sắp nếu SKU có cột tương ứng, mặc định Profit giảm dần
-  const SKU_SORT_KEY: Record<string, string> = {
-    von: "von_hang",
-    revenue: "revenue",
-    ads: "ads_fee",
-    profit: "profit",
-    hoanVonPct: "hoanVonPct",
-    name: "sku",
-  };
-  const sortSkus = (list: KqkdSku[]) => {
-    const k = sort ? SKU_SORT_KEY[sort.key] : undefined;
-    if (!sort || !k) return list;
-    const sign = sort.dir === "asc" ? 1 : -1;
-    return [...list].sort((a, b) => {
-      const x = sortValue(a, k);
-      const y = sortValue(b, k);
+  // Mở một người: tóm tắt theo phôi (Product Type) của người đó, cùng cột với dòng người.
+  // Sắp theo cột đang chọn (cột "Người" = tên phôi A→Z), mặc định Profit giảm dần.
+  const phoiOf = (p: PersonStat): PersonStat[] => {
+    const m = new Map<string, PersonStat>();
+    for (const s of p.skus) {
+      const key = s.product_type || "(trống)";
+      const cur: PersonStat = m.get(key) || {
+        key, name: key, skus: [], n: 0, win: 0, test: 0, loss: 0, due: 0, winDue: 0, von: 0, revenue: 0, ads: 0, basecost: 0, profit: 0, hoanVon: 0,
+      };
+      const d = derive(s);
+      const kind = statusKind(s.status);
+      cur.skus.push(s);
+      cur.n += 1;
+      cur[kind] += 1;
+      if (s.eval_month && s.eval_month <= currentMonth) {
+        cur.due += 1;
+        if (kind === "win") cur.winDue += 1;
+      }
+      cur.von += s.von_hang;
+      cur.revenue += s.revenue;
+      cur.ads += s.ads_fee;
+      cur.basecost += d.basecost;
+      cur.profit += s.profit;
+      cur.hoanVon += d.hoanVon;
+      m.set(key, cur);
+    }
+    const list = Array.from(m.values());
+    const k = sort?.key ?? "profit";
+    const sign = sort ? (sort.dir === "asc" ? 1 : -1) : -1;
+    const val = (x: PersonStat): number | string | null =>
+      k === "name" ? x.name : k === "hoanVonPct" ? ratio(x.hoanVon, x.von) : k === "rate" ? ratio(x.winDue, x.due) : ((x as unknown as Record<string, number>)[k] ?? null);
+    return list.sort((a, b) => {
+      const x = val(a);
+      const y = val(b);
       if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
       if (typeof x === "string" || typeof y === "string") return sign * String(x).localeCompare(String(y), "vi");
       return sign * (x - y);
@@ -843,7 +870,6 @@ function KqkdPeople({
   const filtering = Boolean(q || fKind || sort);
 
 
-  const maxAbsProfit = Math.max(1, ...people.map((p) => Math.abs(p.profit)));
   const toggle = (k: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -858,7 +884,7 @@ function KqkdPeople({
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2.5">
         <h3
           className="text-[14px] font-bold text-slate-800"
-          title="Tỉ lệ WIN = SKU trạng thái “Phát triển” / SKU đã đến tháng đánh giá. Bấm vào một người để xem từng SKU."
+          title="Đã đánh giá = SKU đã đến tháng đánh giá. Bấm vào một người để xem từng SKU."
         >
           PIC IDEA
         </h3>
@@ -884,7 +910,7 @@ function KqkdPeople({
               { k: "", label: "Tất cả" },
               { k: "win", label: "WIN" },
               { k: "test", label: "Đang test" },
-              { k: "loss", label: "Dừng" },
+              { k: "loss", label: "Hủy" },
             ] as const
           ).map((o) => (
             <button
@@ -929,17 +955,15 @@ function KqkdPeople({
             <tr>
               <th rowSpan={2} className={`${H} w-10 text-center align-bottom`}>STT</th>
               <SortTh k="name" sort={sort} onSort={onSort} align="left" rowSpan={2} className={`${H} text-left align-bottom`}>Người</SortTh>
-              <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-blue-100 !text-blue-800`}>SKU</th>
-              <th colSpan={2} className={`${TH_BASE} ${SEP} text-center bg-emerald-100 !text-emerald-800`}>WIN</th>
+              <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-blue-100 !text-blue-800`}>SKU</th>
               <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-violet-100 !text-violet-800`}>Tiền</th>
             </tr>
             <tr>
               <SortTh k="n" sort={sort} onSort={onSort} className={`${TH_BASE} ${SEP} text-right bg-blue-50 !text-blue-900`}>Tổng</SortTh>
+              <SortTh k="due" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Đã đánh giá</SortTh>
               <SortTh k="win" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>WIN</SortTh>
               <SortTh k="test" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Đang test</SortTh>
-              <SortTh k="loss" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Dừng</SortTh>
-              <SortTh k="winDue" sort={sort} onSort={onSort} className={`${TH_BASE} ${SEP} text-right bg-emerald-50 !text-emerald-900`}>WIN / đã đánh giá</SortTh>
-              <SortTh k="rate" sort={sort} onSort={onSort} className={`${TH_BASE} text-center bg-emerald-50 !text-emerald-900`}>Tỉ lệ WIN</SortTh>
+              <SortTh k="loss" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Hủy</SortTh>
               <SortTh k="von" sort={sort} onSort={onSort} className={`${TH_BASE} ${SEP} text-right bg-violet-50 !text-violet-900`}>Vốn test</SortTh>
               <SortTh k="revenue" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Revenue</SortTh>
               <SortTh k="ads" sort={sort} onSort={onSort} className={`${TH_BASE} text-right bg-violet-50 !text-violet-900`}>Ads Fee</SortTh>
@@ -950,14 +974,13 @@ function KqkdPeople({
           <tbody>
             {sortedPeople.length === 0 && (
               <tr>
-                <td colSpan={13} className="px-4 py-8 text-left text-sm !text-slate-500">
+                <td colSpan={12} className="px-4 py-8 text-left text-sm !text-slate-500">
                   Không có người / SKU khớp bộ lọc.
                 </td>
               </tr>
             )}
             {sortedPeople.map((p, i) => {
               const isOpen = open.has(p.key);
-              const w = (Math.abs(p.profit) / maxAbsProfit) * 100;
               return (
                 <Fragment key={p.key}>
                   <tr
@@ -972,60 +995,45 @@ function KqkdPeople({
                       </span>
                     </td>
                     <td className={`${TD} ${SEP}`}>{p.n}</td>
+                    <td className={`${TD} ${zc(p.due)}`}>{p.due}</td>
                     <td className={`${TD} ${p.win ? "!text-emerald-700 font-semibold" : "!text-slate-300"}`}>{p.win}</td>
                     <td className={`${TD} ${zc(p.test)}`}>{p.test}</td>
                     <td className={`${TD} ${zc(p.loss)}`}>{p.loss}</td>
-                    <td className={`${TD} ${SEP}`}>{p.due ? `${p.winDue}/${p.due}` : <span className="text-[11px] text-slate-400">chưa đến hạn</span>}</td>
-                    <td className={`${TD} text-center`}><RatePill v={ratio(p.winDue, p.due)} /></td>
                     <td className={`${TD} ${SEP} ${zc(p.von)}`}>{fmtUsd(p.von)}</td>
                     <td className={`${TD} ${zc(p.revenue)}`}>{fmtUsd(p.revenue)}</td>
                     <td className={`${TD} ${zc(p.ads)}`}>{fmtUsd(p.ads)}</td>
-                    <td className={`${TD} ${profitCls(p.profit)}`}>
-                      <span className="flex items-center justify-end gap-2">
-                        {fmtUsd(p.profit)}
-                        <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-slate-100">
-                          <span className={`block h-full rounded-full ${p.profit >= 0 ? "bg-emerald-500" : "bg-red-500"}`} style={{ width: `${w}%` }} />
-                        </span>
-                      </span>
-                    </td>
+                    <td className={`${TD} ${profitCls(p.profit)}`}>{fmtUsd(p.profit)}</td>
                     <td className={TD}><HoanVonBar v={ratio(p.hoanVon, p.von)} /></td>
                   </tr>
                   {isOpen &&
-                    sortSkus(p.skus).map((s, j) => {
-                      const d = derive(s);
-                      const last = j === p.skus.length - 1;
-                      return (
+                    (() => {
+                      const rows = phoiOf(p);
+                      return rows.map((f, j) => (
                         <tr
-                          key={s.sku}
-                          className={`acc-rise bg-white hover:!bg-amber-50/50 [&_td]:!text-[12px] ${last ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""}`}
-                          style={{ animationDelay: `${Math.min(j * 25, 400)}ms` }}
+                          key={f.key}
+                          className={`acc-rise bg-white hover:!bg-amber-50/50 [&_td]:!text-slate-600 ${j === rows.length - 1 ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""}`}
+                          style={{ animationDelay: `${Math.min(j * 30, 400)}ms` }}
                         >
                           <td className={`${TD} !text-center !text-slate-300`}>{j + 1}</td>
                           <td className={`${TDL} pl-8`}>
-                            <span className="flex items-center gap-2">
-                              <ThumbZoom url={s.mockup_url} />
-                              <span className="min-w-0">
-                                <span className="block font-mono text-[11.5px] font-bold text-slate-900">{s.sku}</span>
-                                <span className="block truncate text-[11px] text-slate-500" title={s.product_type || ""}>
-                                  {s.product_type || "—"} · {monthLabel(s.listing_month)}
-                                </span>
-                              </span>
-                            </span>
+                            <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-slate-300 align-middle" />
+                            <span className={f.key === "(trống)" ? "italic !text-slate-400" : ""}>{f.key === "(trống)" ? "(chưa ghi phôi)" : f.name}</span>
                           </td>
-                          <td colSpan={4} className={`${TDL} ${SEP}`}>
-                            <StatusPill status={s.status} />
+                          <td className={`${TD} ${SEP}`}>{f.n}</td>
+                          <td className={`${TD} ${zc(f.due)}`}>{f.due}</td>
+                          <td className={`${TD} ${f.win ? "!text-emerald-700 font-semibold" : "!text-slate-300"}`}>{f.win}</td>
+                          <td className={`${TD} ${zc(f.test)}`}>{f.test}</td>
+                          <td className={`${TD} ${zc(f.loss)}`}>{f.loss}</td>
+                          <td className={`${TD} ${SEP} ${zc(f.von)}`}>{fmtUsd(f.von)}</td>
+                          <td className={`${TD} ${zc(f.revenue)}`}>{fmtUsd(f.revenue)}</td>
+                          <td className={`${TD} ${zc(f.ads)}`}>{fmtUsd(f.ads)}</td>
+                          <td className={`${TD} ${profitCls(f.profit)}`}>{fmtUsd(f.profit)}</td>
+                          <td className={TD}>
+                            <HoanVonBar v={ratio(f.hoanVon, f.von)} />
                           </td>
-                          <td colSpan={2} className={`${TDL} ${SEP} !text-slate-500`}>
-                            {s.eval_month ? `Đánh giá ${monthLabel(s.eval_month)}` : ""}
-                          </td>
-                          <td className={`${TD} ${SEP} ${zc(s.von_hang)}`}>{fmtUsd(s.von_hang)}</td>
-                          <td className={`${TD} ${zc(s.revenue)}`}>{fmtUsd(s.revenue)}</td>
-                          <td className={`${TD} ${zc(s.ads_fee)}`}>{fmtUsd(s.ads_fee)}</td>
-                          <td className={`${TD} ${profitCls(s.profit)}`}>{fmtUsd(s.profit)}</td>
-                          <td className={TD}><HoanVonBar v={d.hoanVonPct} /></td>
                         </tr>
-                      );
-                    })}
+                      ));
+                    })()}
                 </Fragment>
               );
             })}
@@ -1349,6 +1357,7 @@ export function KqkdView() {
     if (b !== "phoi") setPeopleRole(b);
   };
   const byPerson = breakdown !== "phoi";
+  const nameLabel = byPerson ? PERSON_ROLES.find((r) => r.key === breakdown)?.label : "Tên Phôi";
   const tableListing = useMemo(() => {
     if (breakdown === "phoi") return listing;
     const names = personNames(baseSkus, breakdown);
@@ -1419,7 +1428,7 @@ export function KqkdView() {
     return [
       { label: "WIN", n: c.win, color: C_GOOD },
       { label: "Đang test", n: c.test, color: C_TEST },
-      { label: "Dừng", n: c.loss, color: "#cbd5e1" },
+      { label: "Hủy", n: c.loss, color: "#cbd5e1" },
     ];
   }, [baseSkus]);
 
@@ -1434,7 +1443,8 @@ export function KqkdView() {
 
   // ===== SKU TESTING: dòng tổng =====
   const totals = useMemo(() => {
-    let von = 0, revenue = 0, quantity = 0, basecost = 0, ads = 0, profit = 0, hoanVon = 0, qtyDi = 0;
+    let von = 0, revenue = 0, quantity = 0, basecost = 0, ads = 0, profit = 0, hoanVon = 0, qtyDi = 0, ton = 0;
+    let hasTon = false;
     for (const s of skus) {
       const d = derive(s);
       von += s.von_hang;
@@ -1445,6 +1455,10 @@ export function KqkdView() {
       profit += s.profit;
       hoanVon += d.hoanVon;
       qtyDi += s.qty_di;
+      if (s.ton_kho != null) {
+        ton += s.ton_kho;
+        hasTon = true;
+      }
     }
     const byMonth = new Map<string, { cell: MonthCell; cost: number }>();
     for (const { month } of months) {
@@ -1461,7 +1475,7 @@ export function KqkdView() {
       }
       byMonth.set(month, { cell, cost });
     }
-    return { von, revenue, quantity, basecost, ads, profit, hoanVon, qtyDi, byMonth };
+    return { von, revenue, quantity, basecost, ads, profit, hoanVon, qtyDi, ton: hasTon ? ton : null, byMonth };
   }, [skus, months]);
 
   const monthMetrics = metric === "all" ? METRICS : METRICS.filter((m) => m.key === metric);
@@ -1658,18 +1672,31 @@ export function KqkdView() {
         {/* TỔNG QUAN THÁNG */}
         {mode === "overview" && allSkus.length > 0 && (
           <AccountingViewTransition transitionKey="overview" className="flex-1 overflow-auto bg-slate-50">
-            <div className="grid grid-cols-2 gap-3 p-3 pb-0 md:grid-cols-3 xl:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3 p-3 pb-0 md:grid-cols-3 xl:grid-cols-6">
               <Kpi label="Số lượng SKU" value={fmtInt(listingYear.n)} sub={`Listing ${year}`} />
               <Kpi
                 label="Tổng vốn test"
                 value={usd0.format(listingYear.von)}
                 sub={`Hoàn vốn ${fmtPct(ratio(listingYear.hoanVon, listingYear.von)) || "0%"}`}
               />
-              <Kpi
-                label="Mục tiêu SKU WIN"
-                value={evalYear.n ? `${Math.ceil(evalYear.n * WIN_TARGET_RATE - 1e-9)} SKU` : "—"}
-                sub={`≥${Math.round(WIN_TARGET_RATE * 100)}% trên ${evalYear.n} SKU`}
-              />
+              {(() => {
+                // Revenue / Profit cả đời của các SKU listing trong năm (theo bộ lọc phôi)
+                const rev = baseSkus.reduce((a, s) => a + s.revenue, 0);
+                const ads = baseSkus.reduce((a, s) => a + s.ads_fee, 0);
+                const profit = baseSkus.reduce((a, s) => a + s.profit, 0);
+                const margin = ratio(profit, rev);
+                return (
+                  <>
+                    <Kpi label="Revenue" value={usd0.format(rev)} sub={`TACoS ${fmtPct(ratio(-ads, rev)) || "0%"}`} />
+                    <Kpi
+                      label="Profit"
+                      value={usd0.format(profit)}
+                      valueClass={profit < 0 ? "text-red-600" : undefined}
+                      sub={`Biên lợi nhuận ${fmtPct(margin) || "0%"}`}
+                    />
+                  </>
+                );
+              })()}
               <Kpi
                 label="SKU WIN (KQ thực tế)"
                 value={evalYear.doneN ? `${fmtInt(evalYear.win)}/${fmtInt(evalYear.doneN)}` : "—"}
@@ -1698,12 +1725,14 @@ export function KqkdView() {
                 items={MONTHS_12.map((m) => {
                   const e = evals.find((x) => monthNum(x.month) === m);
                   if (!e) return { month: m, target: null, win: null, rate: null, tip: `Tháng ${m}: không có SKU đánh giá` };
-                  if (!e.due) return { month: m, target: null, win: null, rate: null, note: "chưa đến hạn", tip: `Tháng ${m}: ${e.n} SKU, chưa đến hạn đánh giá` };
+                  if (!e.due) return { month: m, n: e.n, target: null, win: null, rate: null, note: "chưa đến hạn", tip: `Tháng ${m}: ${e.n} SKU, chưa đến hạn đánh giá` };
                   const target = e.n * WIN_TARGET_RATE;
                   if (e.win != null) {
                     const r = ratio(e.win, e.doneN);
                     return {
                       month: m,
+                      n: e.n,
+                      doneN: e.doneN,
                       target,
                       win: e.win,
                       rate: r,
@@ -1712,6 +1741,7 @@ export function KqkdView() {
                   }
                   return {
                     month: m,
+                    n: e.n,
                     target,
                     win: null,
                     rate: null,
@@ -1759,28 +1789,30 @@ export function KqkdView() {
               {/* table-fixed + colgroup: độ rộng cột cố định, mở/đóng tháng không làm bảng co giãn */}
               <table className="w-full min-w-[960px] table-fixed border-collapse text-[13px] [&_td]:py-2.5 [&_td]:!text-[13px]">
                 <colgroup>
-                  <col className="w-[8%]" />
-                  <col className="w-[22%]" />
-                  <col className="w-[8%]" />
-                  <col className="w-[11%]" />
+                  <col className="w-[6%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[7%]" />
                   <col className="w-[10%]" />
-                  <col className="w-[8%]" />
                   <col className="w-[9%]" />
-                  <col className="w-[13%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[7%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[10%]" />
                   <col className="w-[11%]" />
                 </colgroup>
                 <thead>
                   <tr>
                     <th rowSpan={2} className={`${TH} text-left align-bottom !text-slate-700`}>Tháng</th>
-                    <th rowSpan={2} className={`${TH} text-left align-bottom !text-slate-700`}>{byPerson ? PERSON_ROLES.find((r) => r.key === breakdown)?.label : "Tên Phôi"}</th>
-                    <th colSpan={3} className={`${TH_BASE} ${SEP} text-center bg-blue-100 !text-blue-800`}>R&amp;D Testing</th>
-                    <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-emerald-100 !text-emerald-800`}>Đánh giá SKU WIN</th>
+                    <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-blue-100 !text-blue-800`}>R&amp;D Testing</th>
+                    <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-emerald-100 !text-emerald-800`}>Đánh giá SKU WIN</th>
                   </tr>
                   <tr>
-                    <th className={`${TH_BASE} ${SEP} text-right bg-blue-50 !text-blue-900`}>Số SKU</th>
+                    <th className={`${TH_BASE} ${SEP} text-left bg-blue-50 !text-blue-900`}>{nameLabel}</th>
+                    <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Số SKU</th>
                     <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>Vốn test</th>
                     <th className={`${TH_BASE} text-right bg-blue-50 !text-blue-900`}>% Hoàn vốn</th>
-                    <th className={`${TH_BASE} ${SEP} text-right bg-emerald-50 !text-emerald-900`}>Số SKU</th>
+                    <th className={`${TH_BASE} ${SEP} text-left bg-emerald-50 !text-emerald-900`}>{nameLabel}</th>
+                    <th className={`${TH_BASE} text-right bg-emerald-50 !text-emerald-900`}>Số SKU</th>
                     <th className={`${TH_BASE} text-right bg-emerald-50 !text-emerald-900`}>Mục tiêu</th>
                     <th className={`${TH_BASE} text-right bg-emerald-50 !text-emerald-900`}>WIN thực tế</th>
                     <th className={`${TH_BASE} text-center bg-emerald-50 !text-emerald-900`}>Tỉ lệ WIN</th>
@@ -1789,18 +1821,19 @@ export function KqkdView() {
                 <tbody>
                   <tr className="bg-emerald-50/70 [&>td]:font-bold">
                     <td className={`${TDL} font-semibold`}>Tổng</td>
-                    <td className={TDL} />
-                    <td className={`${TD} ${SEP} font-semibold`}>{listingYear.n}</td>
+                    <td className={`${TDL} ${SEP}`} />
+                    <td className={`${TD} font-semibold`}>{listingYear.n}</td>
                     <td className={`${TD} font-semibold`}>{fmtUsd(listingYear.von)}</td>
                     <td className={`${TD} font-semibold`}>
                       <PctBar v={ratio(listingYear.hoanVon, listingYear.von)} />
                     </td>
-                    <td className={`${TD} ${SEP} font-semibold`} title="SKU thuộc các tháng đánh giá đã đến hạn">
+                    <td className={`${TDL} ${SEP}`} />
+                    <td className={`${TD} font-semibold`} title="SKU thuộc các tháng đánh giá đã đến hạn">
                       {evalYear.n || ""}
                     </td>
                     <td className={`${TD} font-semibold`}>{evalYear.n ? fmtTarget(evalYear.n * WIN_TARGET_RATE) : ""}</td>
-                    <td className={`${TD} font-semibold`} title="SKU WIN / SKU đã đánh giá">
-                      {evalYear.doneN ? `${evalYear.win}/${evalYear.doneN}` : ""}
+                    <td className={`${TD} font-semibold`} title={evalYear.pendingN ? `${evalYear.pendingN} SKU chưa điền kết quả` : undefined}>
+                      {evalYear.doneN ? evalYear.win : ""}
                     </td>
                     <td className={`${TD} text-center font-semibold`}>
                       <RatePill v={ratio(evalYear.win, evalYear.doneN)} />
@@ -1813,11 +1846,10 @@ export function KqkdView() {
                       return (
                         <tr key={`e${row.from}`} className={stripe}>
                           <td className={`${TDL} pl-8 font-semibold !text-slate-500`}>T{row.from === row.to ? row.from : `${row.from}–T${row.to}`}</td>
-                          <td className={`${TDL} !text-slate-400`}>Không có</td>
-                          <td colSpan={3} className={`${TDL} ${SEP} !text-center !text-slate-400`}>
+                          <td colSpan={4} className={`${TDL} ${SEP} !text-center !text-slate-400`}>
                             Không có
                           </td>
-                          <td colSpan={4} className={`${TDL} ${SEP} !text-center !text-slate-400`}>
+                          <td colSpan={5} className={`${TDL} ${SEP} !text-center !text-slate-400`}>
                             Không có
                           </td>
                         </tr>
@@ -1825,6 +1857,10 @@ export function KqkdView() {
                     const { l, e } = row;
                     const rate = e && e.win != null ? ratio(e.win, e.doneN) : null;
                     const open = openMonths.has(row.month);
+                    // Hai khối độc lập (như Excel): mỗi bên tự liệt kê phôi của mình, dòng i bên trái không liên quan dòng i bên phải
+                    const lRows = l?.rows ?? [];
+                    const eRows = e?.rows ?? [];
+                    const childN = Math.max(lRows.length, eRows.length);
                     return (
                       <Fragment key={row.month}>
                         <tr
@@ -1832,7 +1868,7 @@ export function KqkdView() {
                           onClick={() => toggleMonth(row.month)}
                         >
                           <td
-                            rowSpan={row.phoi.length + 1}
+                            rowSpan={childN + 1}
                             className={`${TDL} font-semibold ${open ? "!align-top border-l-4 border-l-blue-500 bg-blue-50" : ""}`}
                           >
                             <span className="inline-flex items-center gap-1.5">
@@ -1843,123 +1879,125 @@ export function KqkdView() {
                               T{monthNum(row.month)}
                             </span>
                           </td>
-                          <td className={`${TDL} ${open ? "font-bold !text-slate-900" : "!text-slate-700"}`}>
-                            {open ? `Tổng ${row.phoi.length} ${byPerson ? "người" : "phôi"}` : "Tất cả"}
-                          </td>
                           {l ? (
                             <>
-                              <td className={`${TD} ${SEP}`}>{l.n}</td>
+                              <td className={`${TDL} ${SEP} ${open ? "" : "!text-slate-700"}`}>{open ? (byPerson ? "" : `${lRows.length} phôi`) : "Tất cả"}</td>
+                              <td className={TD}>{l.n}</td>
                               <td className={TD}>{fmtUsd(l.von)}</td>
                               <td className={TD}>
                                 <PctBar v={ratio(l.hoanVon, l.von)} />
                               </td>
                             </>
                           ) : (
-                            <td colSpan={3} className={`${TDL} ${SEP} !text-center`}>
-                              <span className="font-normal text-slate-400">Không có</span>
-                            </td>
-                          )}
-                          {!e && (
                             <td colSpan={4} className={`${TDL} ${SEP} !text-center`}>
                               <span className="font-normal text-slate-400">Không có</span>
                             </td>
                           )}
-                          {e && (
+                          {e ? (
                             <>
-                              <td className={`${TD} ${SEP} ${!e.due ? "!text-slate-400" : ""}`}>{e.n}</td>
+                              <td className={`${TDL} ${SEP} ${open ? "" : "!text-slate-700"}`}>{open ? (byPerson ? "" : `${eRows.length} phôi`) : "Tất cả"}</td>
+                              <td className={`${TD} ${!e.due ? "!text-slate-400" : ""}`}>{e.n}</td>
                               <td className={`${TD} ${!e.due ? "!text-slate-400" : ""}`}>{fmtTarget(e.n * WIN_TARGET_RATE)}</td>
-                              <td className={TD} title={e.win != null ? "SKU WIN / SKU đã đánh giá" : undefined}>
+                              <td className={TD} title={e.due && e.win != null && e.doneN < e.n ? `${e.n - e.doneN} SKU chưa điền kết quả` : undefined}>
                                 {!e.due ? (
                                   <span className="text-[11px] text-slate-400">chưa đến hạn</span>
                                 ) : e.win != null ? (
-                                  `${e.win}/${e.doneN}`
+                                  e.win
                                 ) : (
                                   <span className="text-[11px] font-semibold text-amber-700">chưa điền</span>
                                 )}
                               </td>
                               <td className={`${TD} text-center`}>{rate != null && <RatePill v={rate} />}</td>
                             </>
+                          ) : (
+                            <td colSpan={5} className={`${TDL} ${SEP} !text-center`}>
+                              <span className="font-normal text-slate-400">Không có</span>
+                            </td>
                           )}
                         </tr>
-                        {row.phoi.map((phoi, pi) => {
-                            const lr = l?.rows.find((r) => r.phoi === phoi);
-                            const er = e?.rows.find((r) => r.phoi === phoi);
-                            const last = pi === row.phoi.length - 1;
-                            // Dòng phôi luôn có trong bảng, đóng thì cao 0 — mở ra trượt xuống mượt
-                            const cell = `!p-0 ${open ? "" : "!border-y-0"}`;
-                            const none = (span: number, wholeMonthEmpty: boolean) => (
-                              <td colSpan={span} className={`${TDL} ${SEP} ${cell} !text-center !text-slate-300`}>
-                                <Slide open={open}>{wholeMonthEmpty ? "\u00a0" : "—"}</Slide>
-                              </td>
-                            );
-                            return (
-                              <tr
-                                key={phoi}
-                                aria-hidden={!open}
-                                className={`bg-white transition-colors duration-150 hover:!bg-amber-50/50 [&_td]:!text-slate-600 ${
-                                  open && last ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""
-                                }`}
-                              >
-                                <td className={`${TDL} ${cell}`}>
-                                  <Slide open={open} className="pl-6">
-                                    <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-slate-300 align-middle" />
-                                    {phoi}
-                                  </Slide>
-                                </td>
-                                {lr ? (
-                                  <>
-                                    <td className={`${TD} ${SEP} ${cell}`}>
-                                      <Slide open={open}>{lr.n}</Slide>
-                                    </td>
-                                    <td className={`${TD} ${cell}`}>
-                                      <Slide open={open}>{fmtUsd(lr.von)}</Slide>
-                                    </td>
-                                    <td className={`${TD} ${cell}`}>
-                                      <Slide open={open}>
-                                        <PctBar v={ratio(lr.hoanVon, lr.von)} />
-                                      </Slide>
-                                    </td>
-                                  </>
-                                ) : (
-                                  none(3, !l)
-                                )}
-                                {er && e ? (
-                                  <>
-                                    <td className={`${TD} ${SEP} ${cell}`}>
-                                      <Slide open={open}>{er.n}</Slide>
-                                    </td>
-                                    <td className={`${TD} ${cell}`}>
-                                      <Slide open={open}>{fmtTarget(er.n * WIN_TARGET_RATE)}</Slide>
-                                    </td>
-                                    <td className={`${TD} ${cell}`}>
-                                      <Slide open={open} className="!py-1.5">
-                                        {byPerson ? (
-                                          e.due ? `${er.win}/${er.n}` : <span className="text-[11px] text-slate-400">chưa đến hạn</span>
-                                        ) : (
+                        {Array.from({ length: childN }, (_, pi) => {
+                          const lr = lRows[pi];
+                          const er = eRows[pi];
+                          const last = pi === childN - 1;
+                          // Dòng con luôn có trong bảng, đóng thì cao 0 — mở ra trượt xuống mượt
+                          const cell = `!p-0 ${open ? "" : "!border-y-0"}`;
+                          const blank = (span: number) => (
+                            <td colSpan={span} className={`${TDL} ${SEP} ${cell}`}>
+                              <Slide open={open}>{"\u00a0"}</Slide>
+                            </td>
+                          );
+                          const name = (text: string) => (
+                            <td className={`${TDL} ${SEP} ${cell}`}>
+                              <Slide open={open} className="truncate pl-5" >
+                                <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-slate-300 align-middle" />
+                                <span title={text}>{text}</span>
+                              </Slide>
+                            </td>
+                          );
+                          return (
+                            <tr
+                              key={pi}
+                              aria-hidden={!open}
+                              className={`bg-white transition-colors duration-150 hover:!bg-amber-50/50 [&_td]:!text-slate-600 ${
+                                open && last ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""
+                              }`}
+                            >
+                              {lr ? (
+                                <>
+                                  {name(lr.phoi)}
+                                  <td className={`${TD} ${cell}`}>
+                                    <Slide open={open}>{lr.n}</Slide>
+                                  </td>
+                                  <td className={`${TD} ${cell}`}>
+                                    <Slide open={open}>{fmtUsd(lr.von)}</Slide>
+                                  </td>
+                                  <td className={`${TD} ${cell}`}>
+                                    <Slide open={open}>
+                                      <PctBar v={ratio(lr.hoanVon, lr.von)} />
+                                    </Slide>
+                                  </td>
+                                </>
+                              ) : (
+                                blank(4)
+                              )}
+                              {er && e ? (
+                                <>
+                                  {name(er.phoi)}
+                                  <td className={`${TD} ${cell}`}>
+                                    <Slide open={open}>{er.n}</Slide>
+                                  </td>
+                                  <td className={`${TD} ${cell}`}>
+                                    <Slide open={open}>{fmtTarget(er.n * WIN_TARGET_RATE)}</Slide>
+                                  </td>
+                                  <td className={`${TD} ${cell}`}>
+                                    <Slide open={open} className="!py-1.5">
+                                      {byPerson ? (
+                                        e.due ? er.win : <span className="text-[11px] text-slate-400">chưa đến hạn</span>
+                                      ) : (
                                         <WinInput
-                                          key={`${e.month}|${phoi}|${er.win ?? ""}`}
+                                          key={`${e.month}|${er.phoi}|${er.win ?? ""}`}
                                           value={er.win}
                                           max={er.n}
                                           suggest={er.suggest}
                                           disabled={!open || !canEdit || !e.due}
-                                          saving={savingWin === `${e.month}|${phoi}`}
-                                          onCommit={(v) => saveWin(e.month, phoi, v)}
+                                          saving={savingWin === `${e.month}|${er.phoi}`}
+                                          onCommit={(v) => saveWin(e.month, er.phoi, v)}
                                         />
-                                        )}
-                                      </Slide>
-                                    </td>
-                                    <td className={`${TD} text-center ${cell}`}>
-                                      <Slide open={open}>
-                                        <RatePill v={er.win != null && (!byPerson || e.due) ? ratio(er.win, er.n) : null} />
-                                      </Slide>
-                                    </td>
-                                  </>
-                                ) : (
-                                  none(4, !e)
-                                )}
-                              </tr>
-                            );
-                          })}
+                                      )}
+                                    </Slide>
+                                  </td>
+                                  <td className={`${TD} text-center ${cell}`}>
+                                    <Slide open={open}>
+                                      <RatePill v={er.win != null && (!byPerson || e.due) ? ratio(er.win, er.n) : null} />
+                                    </Slide>
+                                  </td>
+                                </>
+                              ) : (
+                                blank(5)
+                              )}
+                            </tr>
+                          );
+                        })}
                       </Fragment>
                     );
                   })}
@@ -1984,7 +2022,7 @@ export function KqkdView() {
             <table className="min-w-max border-separate border-spacing-0 text-xs [&_td]:border-t-0 [&_th]:border-t-0 [&_td:not(.kq-sep)]:border-l-0 [&_th:not(.kq-sep)]:border-l-0 [&_thead_tr:last-child>td]:border-b-2 [&_thead_tr:last-child>td]:border-b-slate-300">
               <thead className="sticky top-0 z-20">
                 <tr>
-                  <th colSpan={8} className={`${TH_BASE} text-left bg-emerald-100 !text-emerald-900`}>Thông tin cơ bản</th>
+                  <th colSpan={7} className={`${TH_BASE} text-left bg-emerald-100 !text-emerald-900`}>Thông tin cơ bản</th>
                   <th colSpan={12} className={`${TH_BASE} ${SEP} text-left bg-blue-200 !text-blue-900`}>Life time</th>
                   {months.map((m, mi) => (
                     <th
@@ -2001,7 +2039,6 @@ export function KqkdView() {
                 <tr>
                   <th className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-0 z-30 w-10 min-w-10 !px-1 text-center`}>STT</th>
                   <SortTh k="sku" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-10 z-30 text-left`}>SKU</SortTh>
-                  <th className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Profit theo tháng</th>
                   <SortTh k="product_type" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Product Type</SortTh>
                   <SortTh k="status" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Trạng thái</SortTh>
                   <SortTh k="pic_idea" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>PIC Idea</SortTh>
@@ -2038,16 +2075,6 @@ export function KqkdView() {
                     Tổng {skus.length}
                     {skus.length !== allSkus.length && <span className="font-normal text-slate-500">/{allSkus.length}</span>} SKU
                   </td>
-                  <td className={`${TDL} font-semibold`}>
-                    <ProfitSpark
-                      total={totals.profit}
-                      values={months.map((m) => ({
-                        label: monthLabel(m.month),
-                        v: totals.byMonth.get(m.month)?.cell.profit ?? null,
-                        partial: m.month >= currentMonth,
-                      }))}
-                    />
-                  </td>
                   <td colSpan={5} className={`${TDL} font-semibold`} />
                   <td className={`${TD} ${SEP} font-semibold`}>{fmtUsd(totals.von)}</td>
                   <td className={`${TD} font-semibold`}>{fmtUsd(totals.revenue)}</td>
@@ -2060,7 +2087,7 @@ export function KqkdView() {
                   <td className={`${TD} font-semibold`}>{fmtUsd(totals.hoanVon)}</td>
                   <td className={`${TD} font-semibold`}><HoanVonBar v={ratio(totals.hoanVon, totals.von)} /></td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.qtyDi)}</td>
-                  <td className={`${TD} font-semibold`}>{fmtInt(totals.qtyDi - totals.quantity)}</td>
+                  <td className={`${TD} font-semibold`}>{fmtInt(totals.ton)}</td>
                   {months.map((m) =>
                     monthMetrics.map((mt, j) => {
                       const v = totalMetric(m.month, mt.key);
@@ -2076,7 +2103,7 @@ export function KqkdView() {
               <tbody>
                 {skus.length === 0 && (
                   <tr>
-                    <td colSpan={20 + months.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
+                    <td colSpan={19 + months.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
                       Không có SKU khớp bộ lọc.{" "}
                       <button type="button" onClick={clearFilters} className="cursor-pointer font-semibold text-blue-600 hover:underline">
                         Xoá lọc
@@ -2096,17 +2123,6 @@ export function KqkdView() {
                           <ThumbZoom url={s.mockup_url} />
                           <span className="font-mono text-[11.5px] font-bold text-slate-900">{s.sku}</span>
                         </span>
-                      </td>
-                      <td className={TDL}>
-                        <ProfitSpark
-                          total={s.profit}
-                          values={months.map((m) => ({
-                            label: monthLabel(m.month),
-                            v: s.months[m.month]?.profit ?? null,
-                            before: m.month < s.listing_month,
-                            partial: m.month >= currentMonth,
-                          }))}
-                        />
                       </td>
                       <td className={`${TDL} max-w-[170px] truncate`} title={s.product_type || ""}>
                         {s.product_type}
@@ -2131,8 +2147,12 @@ export function KqkdView() {
                       </td>
                       <td className={`${TD} ${zc(s.qty_di)}`}>{fmtInt(s.qty_di)}</td>
                       <td
-                        className={`${TD} ${d.ton < 0 ? "!text-red-600" : zc(d.ton)}`}
-                        title={d.ton < 0 ? "Bán nhiều hơn số đi hàng — thiếu lô đi hàng trong Bảng nhập?" : undefined}
+                        className={`${TD} ${zc(d.ton)}`}
+                        title={
+                          d.ton == null
+                            ? "Chưa có dữ liệu tồn kho (Inventory Ledger) cho SKU này"
+                            : `Tồn kho hệ thống${s.ton_kho_updated_at ? ` · cập nhật ${s.ton_kho_updated_at.slice(0, 10)}` : ""}`
+                        }
                       >
                         {fmtInt(d.ton)}
                       </td>

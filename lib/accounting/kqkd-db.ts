@@ -37,6 +37,9 @@ export interface KqkdSku {
   pic_idea: string | null;
   pic_mkt: string | null;
   design_pic: string | null;
+  /** Tồn kho mới nhất hệ thống đang tính (Bảng mã: Inventory Ledger FBA + AWD); null = chưa có dữ liệu */
+  ton_kho: number | null;
+  ton_kho_updated_at: string | null;
   /** YYYY-MM */
   listing_month: string;
   /** YYYY-MM, null khi Bảng mã chưa ghi tháng đánh giá */
@@ -179,11 +182,14 @@ export async function getKqkd(storeId: string, year: number, options: { refresh?
     pic_idea: string | null;
     pic_mkt: string | null;
     design_pic: string | null;
+    ton_kho: string | null;
+    ton_kho_updated_at: string | null;
     listing_month: string;
     eval_month: string | null;
   }[]>`
     SELECT DISTINCT ON (sku)
       id, sku, asin, product_type, mockup_url, status, pic_idea, pic_mkt, design_pic,
+      ton_kho, ton_kho_updated_at::text AS ton_kho_updated_at,
       left(thang_listing, 7) AS listing_month,
       CASE WHEN thang_danh_gia ~ '^[0-9]{4}-[0-9]{2}' THEN left(thang_danh_gia, 7) END AS eval_month
     FROM accounting_sku_master
@@ -277,6 +283,8 @@ export async function getKqkd(storeId: string, year: number, options: { refresh?
       pic_idea: c.pic_idea,
       pic_mkt: c.pic_mkt,
       design_pic: c.design_pic,
+      ton_kho: c.ton_kho == null ? null : Number(c.ton_kho),
+      ton_kho_updated_at: c.ton_kho_updated_at,
       listing_month: c.listing_month,
       eval_month: c.eval_month,
       von_hang: lot.von,
