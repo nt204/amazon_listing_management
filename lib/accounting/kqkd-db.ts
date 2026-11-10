@@ -63,10 +63,26 @@ export interface KqkdWinResult {
   updated_at: string;
 }
 
+/** SKU listing năm trước nhưng tháng đánh giá rơi vào năm đang xem — chỉ dùng cho phần "Đánh giá SKU WIN" */
+export interface KqkdEvalSku {
+  sku: string;
+  product_type: string | null;
+  status: string | null;
+  pic_idea: string | null;
+  pic_mkt: string | null;
+  design_pic: string | null;
+  /** YYYY-MM */
+  listing_month: string;
+  /** YYYY-MM */
+  eval_month: string;
+}
+
 export interface KqkdResult {
   year: number;
   months: KqkdMonthMeta[];
   skus: KqkdSku[];
+  /** Sheet "Tổng quan tháng": phần đánh giá gồm cả SKU listing cuối năm trước (vd listing 10/2025 → đánh giá 1/2026) */
+  evalSkus: KqkdEvalSku[];
   winResults: KqkdWinResult[];
   generatedAt: string;
 }
@@ -200,12 +216,32 @@ export async function getKqkd(storeId: string, year: number, options: { refresh?
     ORDER BY sku, row_order NULLS LAST, updated_at DESC
   `;
 
+  // SKU listing các năm trước, tháng đánh giá thuộc năm này: không vào cohort (R&D Testing / Lifetime)
+  // nhưng vẫn phải có ở phần Đánh giá SKU WIN như sheet.
+  const cohortSkus = new Set(cohort.map((c) => c.sku));
+  const evalRows = await sql<KqkdEvalSku[]>`
+    SELECT DISTINCT ON (sku)
+      sku, product_type, status, pic_idea, pic_mkt, design_pic,
+      left(thang_listing, 7) AS listing_month,
+      left(thang_danh_gia, 7) AS eval_month
+    FROM accounting_sku_master
+    WHERE store_id = ${storeId}
+      AND deleted_at IS NULL
+      AND thang_listing ~ '^[0-9]{4}-[0-9]{2}'
+      AND left(thang_listing, 4) < ${String(year)}
+      AND thang_danh_gia ~ '^[0-9]{4}-[0-9]{2}'
+      AND left(thang_danh_gia, 4) = ${String(year)}
+    ORDER BY sku, row_order NULLS LAST, updated_at DESC
+  `;
+  const evalSkus = evalRows.filter((e) => !cohortSkus.has(e.sku));
+
   const lastMonth = year < Number(currentPeriod.slice(0, 4)) ? 12 : year > Number(currentPeriod.slice(0, 4)) ? 0 : Number(currentPeriod.slice(5, 7));
   const periods: string[] = [];
   for (let m = 1; m <= lastMonth; m++) periods.push(ym(year, m));
 
   if (!cohort.length) {
-    return { year, months: [], skus: [], winResults: await listKqkdWinResults(storeId, year), generatedAt: new Date().toISOString() };
+    const manual = await listKqkdWinResults(storeId, year);
+    return { year, months: [], skus: [], evalSkus, winResults: withAutoWin(evalSkus, manual, currentPeriod), generatedAt: new Date().toISOString() };
   }
 
   const skuList = cohort.map((c) => c.sku);
@@ -304,14 +340,14 @@ export async function getKqkd(storeId: string, year: number, options: { refresh?
     a.sku.localeCompare(b.sku)
   );
 
-  return { year, months, skus, winResults: withAutoWin(skus, winResults, currentPeriod), generatedAt: new Date().toISOString() };
+  return { year, months, skus, evalSkus, winResults: withAutoWin([...skus, ...evalSkus], winResults, currentPeriod), generatedAt: new Date().toISOString() };
 }
 
 // Số SKU WIN thực tế tự đếm từ BẢNG MÃ: SKU đã đến tháng đánh giá mà trạng thái "Phát triển" = WIN
 // (khớp các ô Team điền tay của sheet T7/T8/T10/2026). Team chỉ cần cập nhật trạng thái trong Bảng mã;
 // ô nhập tay (accounting_kqkd_win_results) nếu có thì ưu tiên — để sửa ngoại lệ.
 const WIN_STATUS = "phát triển";
-function withAutoWin(skus: KqkdSku[], manual: KqkdWinResult[], currentPeriod: string): KqkdWinResult[] {
+function withAutoWin(skus: Pick<KqkdSku, "eval_month" | "product_type" | "status">[], manual: KqkdWinResult[], currentPeriod: string): KqkdWinResult[] {
   const out = new Map<string, KqkdWinResult>();
   for (const s of skus) {
     if (!s.eval_month || s.eval_month > currentPeriod) continue;

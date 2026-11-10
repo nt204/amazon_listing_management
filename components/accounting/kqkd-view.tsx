@@ -58,10 +58,14 @@ interface KqkdSku {
   months: Record<string, MonthCell>;
 }
 
+// SKU listing năm trước, tháng đánh giá thuộc năm đang xem — chỉ vào phần "Đánh giá SKU WIN"
+type KqkdEvalSku = Pick<KqkdSku, "sku" | "product_type" | "status" | "pic_idea" | "pic_mkt" | "design_pic" | "listing_month" | "eval_month">;
+
 interface KqkdData {
   year: number;
   months: { month: string; source: "closed" | "live" }[];
   skus: KqkdSku[];
+  evalSkus?: KqkdEvalSku[];
   winResults: { eval_month: string; product_type: string; win_count: number; updated_by: string | null; updated_at: string }[];
   generatedAt: string;
 }
@@ -108,6 +112,51 @@ function fmtTarget(v: number) {
 function ratio(num: number, den: number) {
   return den ? num / den : null;
 }
+// "YYYY-MM" + n tháng
+function addMonths(ym: string, n: number) {
+  const [y, m] = ym.split("-").map(Number);
+  const t = y * 12 + (m - 1) + n;
+  return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
+}
+
+// Sheet SKU TESTING cột "Thời gian đánh giá": tháng listing + 3 → + 4 (đánh giá sau 3, muộn nhất 4 tháng).
+// Tô đỏ khi đã đến hạn (tháng thứ 3–4) hoặc quá hạn — so theo YYYY-MM để qua năm vẫn đúng.
+function evalWindow(listingMonth: string) {
+  const from = addMonths(listingMonth, 3);
+  const to = addMonths(listingMonth, 4);
+  return { from, to, label: `Tháng ${monthNum(from)} - Tháng ${monthNum(to)}` };
+}
+
+// Trạng thái ô "Thời gian đánh giá" của 1 SKU:
+// done = đã đánh giá (Bảng mã đã chốt Phát triển / Hủy) → nền nhạt
+// late = chưa đánh giá mà đã qua tháng thứ 4 · due = đang trong tháng thứ 3–4 · soon = tháng sau bắt đầu đến hạn → đỏ tươi
+// later = còn xa → hồng nhạt
+type EvalState = "done" | "late" | "due" | "soon" | "later";
+function evalState(s: KqkdSku, currentMonth: string): EvalState {
+  if (statusKind(s.status) !== "test") return "done";
+  const w = evalWindow(s.listing_month);
+  if (w.to < currentMonth) return "late";
+  if (w.from <= currentMonth) return "due";
+  if (w.from === addMonths(currentMonth, 1)) return "soon";
+  return "later";
+}
+const EVAL_STATE_LABEL: Record<EvalState, string> = {
+  done: "đã đánh giá",
+  late: "quá hạn, chưa đánh giá",
+  due: "đến hạn đánh giá",
+  soon: "sắp đến hạn (tháng sau)",
+  later: "chưa đến hạn",
+};
+// Cần đánh giá ngay = chưa đánh giá mà đã tới tháng đánh giá (tháng thứ 3–4) hoặc quá hạn → đỏ đậm
+const needsEval = (st: EvalState) => st === "late" || st === "due";
+
+// Ô Profit âm: tô đỏ cả ô cho dễ thấy SKU / tháng lỗ
+const NEG_CELL = "!bg-red-500 !text-slate-950 !font-normal";
+// Ô Hoàn vốn khi đã thu về nhiều hơn Tổng vốn hàng: tô xanh cả ô
+const POS_CELL = "!bg-emerald-100 !text-slate-950 !font-normal";
+// Hai cột Tổng vốn hàng / Hoàn vốn: nền vàng (như sheet) để dễ so với nhau
+const YELLOW_CELL = "!bg-yellow-50";
+
 function monthNum(period: string) {
   return Number(period.slice(5, 7));
 }
@@ -140,7 +189,7 @@ function derive(s: KqkdSku) {
 
 // Sắp xếp bảng SKU Testing: key = tên cột, hoặc "m|YYYY-MM|metric" cho cột theo tháng
 type SortState = { key: string; dir: "asc" | "desc" } | null;
-const TEXT_SORT_KEYS = new Set(["sku", "product_type", "status", "pic_idea", "listing_month", "eval_month"]);
+const TEXT_SORT_KEYS = new Set(["sku", "product_type", "status", "pic_idea", "listing_month", "eval_month", "eval_window"]);
 
 function sortValue(s: KqkdSku, key: string): string | number | null {
   if (key.startsWith("m|")) {
@@ -159,6 +208,8 @@ function sortValue(s: KqkdSku, key: string): string | number | null {
       return s.pic_idea?.trim() || null;
     case "listing_month":
       return s.listing_month;
+    case "eval_window":
+      return addMonths(s.listing_month, 3);
     case "eval_month":
       return s.eval_month;
     case "von_hang":
@@ -696,7 +747,7 @@ function personKey(name: string | null | undefined) {
 }
 
 // key (bỏ dấu) → tên hiển thị = cách viết gặp nhiều nhất
-function personNames(skus: KqkdSku[], role: PersonRole) {
+function personNames(skus: Pick<KqkdSku, PersonRole>[], role: PersonRole) {
   const counts = new Map<string, Map<string, number>>();
   for (const s of skus) {
     const raw = (s[role] ?? "").trim();
@@ -1080,6 +1131,7 @@ export function KqkdView() {
   const [fPic, setFPic] = useState("");
   const [fListM, setFListM] = useState("");
   const [fEvalM, setFEvalM] = useState("");
+  const [fEvalW, setFEvalW] = useState("");
   const [sort, setSort] = useState<SortState>(null);
   const onSort = (k: string) =>
     setSort((prev) => {
@@ -1202,11 +1254,17 @@ export function KqkdView() {
 
   const allSkus = useMemo(() => data?.skus || [], [data]);
   // Tổng quan: lọc theo Tên Phôi (= Product Type) — KPI, biểu đồ, bảng cùng cập nhật
+  const allEvalSkus = useMemo(() => data?.evalSkus || [], [data]);
   const phoiOptions = useMemo(
-    () => Array.from(new Set(allSkus.map((s) => s.product_type || "(trống)"))).sort((a, b) => a.localeCompare(b)),
-    [allSkus]
+    () => Array.from(new Set([...allSkus, ...allEvalSkus].map((s) => s.product_type || "(trống)"))).sort((a, b) => a.localeCompare(b)),
+    [allSkus, allEvalSkus]
   );
   const baseSkus = useMemo(() => (fPhoi ? allSkus.filter((s) => (s.product_type || "(trống)") === fPhoi) : allSkus), [allSkus, fPhoi]);
+  // Phần Đánh giá SKU WIN = cohort + SKU listing năm trước có tháng đánh giá trong năm (sheet Tổng quan tháng: T1/T2)
+  const evalPool = useMemo<KqkdEvalSku[]>(
+    () => [...baseSkus, ...(fPhoi ? allEvalSkus.filter((s) => (s.product_type || "(trống)") === fPhoi) : allEvalSkus)],
+    [baseSkus, allEvalSkus, fPhoi]
+  );
   const statuses = useMemo(
     () => Array.from(new Set(allSkus.map((s) => s.status).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b)),
     [allSkus]
@@ -1223,7 +1281,16 @@ export function KqkdView() {
     () => Array.from(new Set(allSkus.map((s) => s.eval_month).filter(Boolean) as string[])).sort(),
     [allSkus]
   );
-  const activeFilters = [search, fStatus, fPhoi, fPic, fListM, fEvalM].filter(Boolean).length;
+  // Lọc "Thời gian đánh giá": theo khoảng (giá trị = tháng đầu YYYY-MM) hoặc "late" = các ô đỏ
+  const evalWindowOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of allSkus) {
+      const w = evalWindow(s.listing_month);
+      m.set(w.from, `${w.label}${w.from.slice(0, 4) !== String(year) ? ` (${w.from.slice(0, 4)})` : ""}`);
+    }
+    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [allSkus, year]);
+  const activeFilters = [search, fStatus, fPhoi, fPic, fListM, fEvalM, fEvalW].filter(Boolean).length;
   const clearFilters = () => {
     setSearch("");
     setFStatus("");
@@ -1231,6 +1298,7 @@ export function KqkdView() {
     setFPic("");
     setFListM("");
     setFEvalM("");
+    setFEvalW("");
   };
 
   // SKU Testing: Phôi (dùng chung với Tổng quan) + tìm kiếm + trạng thái + PIC + tháng, rồi sắp xếp
@@ -1242,6 +1310,7 @@ export function KqkdView() {
         (!fPic || (s.pic_idea?.trim() || "(trống)") === fPic) &&
         (!fListM || s.listing_month === fListM) &&
         (!fEvalM || (fEvalM === "none" ? !s.eval_month : s.eval_month === fEvalM)) &&
+        (!fEvalW || (fEvalW === "late" ? needsEval(evalState(s, currentMonth)) : evalWindow(s.listing_month).from === fEvalW)) &&
         (!q ||
           s.sku.toLowerCase().includes(q) ||
           (s.asin || "").toLowerCase().includes(q) ||
@@ -1259,7 +1328,7 @@ export function KqkdView() {
         return sign * (a.v - b.v);
       })
       .map((x) => x.s);
-  }, [baseSkus, deferredSearch, fStatus, fPic, fListM, fEvalM, sort]);
+  }, [baseSkus, deferredSearch, fStatus, fPic, fListM, fEvalM, fEvalW, currentMonth, sort]);
 
   const months = useMemo(() => data?.months || [], [data]);
 
@@ -1306,7 +1375,7 @@ export function KqkdView() {
 
   const evals = useMemo(() => {
     const byMonth = new Map<string, Map<string, { n: number; suggest: number }>>();
-    for (const s of baseSkus) {
+    for (const s of evalPool) {
       if (!s.eval_month || !s.eval_month.startsWith(String(year))) continue;
       const g = byMonth.get(s.eval_month) || new Map();
       const phoi = s.product_type || "(trống)";
@@ -1334,7 +1403,7 @@ export function KqkdView() {
           win: done.length ? done.reduce((a, r) => a + (r.win || 0), 0) : null,
         };
       });
-  }, [baseSkus, year, winMap, currentMonth]);
+  }, [evalPool, year, winMap, currentMonth]);
 
   const noEvalCount = useMemo(() => baseSkus.filter((s) => !s.eval_month).length, [baseSkus]);
 
@@ -1378,10 +1447,10 @@ export function KqkdView() {
   }, [listing, baseSkus, breakdown]);
   const tableEvals = useMemo(() => {
     if (breakdown === "phoi") return evals;
-    const names = personNames(baseSkus, breakdown);
+    const names = personNames(evalPool, breakdown);
     return evals.map((e) => {
       const g = new Map<string, { n: number; suggest: number }>();
-      for (const s of baseSkus) {
+      for (const s of evalPool) {
         if (s.eval_month !== e.month) continue;
         const k = names.get(personKey(s[breakdown]) || "(trống)") || "(chưa ghi tên)";
         const cur = g.get(k) || { n: 0, suggest: 0 };
@@ -1394,7 +1463,7 @@ export function KqkdView() {
         .sort((x, y) => x.phoi.localeCompare(y.phoi));
       return { ...e, rows };
     });
-  }, [evals, baseSkus, breakdown]);
+  }, [evals, evalPool, breakdown]);
 
   // Một bảng chung theo tháng: phần Listing (SKU listing tháng đó) + phần Đánh giá (SKU đến hạn đánh giá tháng đó).
   // Dòng phôi = hợp các phôi của hai phần; phần nào không có phôi đó thì để trống. Tháng trống liền nhau gộp một dòng.
@@ -1644,6 +1713,15 @@ export function KqkdView() {
                 </option>
               ))}
               <option value="none">Chưa có tháng đánh giá</option>
+            </select>
+            <select id="kqkd-evalw" aria-label="Thời gian đánh giá" value={fEvalW} onChange={(e) => setFEvalW(e.target.value)} className={filterCls(fEvalW)}>
+              <option value="">Thời gian đánh giá: tất cả</option>
+              <option value="late">Tới hạn / quá hạn, chưa đánh giá (đỏ)</option>
+              {evalWindowOptions.map(([from, label]) => (
+                <option key={from} value={from}>
+                  {label}
+                </option>
+              ))}
             </select>
             {(activeFilters > 0 || sort) && (
               <button
@@ -2040,7 +2118,7 @@ export function KqkdView() {
             <table className="min-w-max border-separate border-spacing-0 text-xs [&_td]:border-t-0 [&_th]:border-t-0 [&_td:not(.kq-sep)]:border-l-0 [&_th:not(.kq-sep)]:border-l-0 [&_thead_tr:last-child>td]:border-b-2 [&_thead_tr:last-child>td]:border-b-slate-300">
               <thead className="sticky top-0 z-20">
                 <tr>
-                  <th colSpan={7} className={`${TH_BASE} text-left bg-emerald-100 !text-emerald-900`}>Thông tin cơ bản</th>
+                  <th colSpan={8} className={`${TH_BASE} text-left bg-emerald-100 !text-emerald-900`}>Thông tin cơ bản</th>
                   <th colSpan={12} className={`${TH_BASE} ${SEP} text-left bg-blue-200 !text-blue-900`}>Life time</th>
                   {months.map((m, mi) => (
                     <th
@@ -2055,14 +2133,15 @@ export function KqkdView() {
                   ))}
                 </tr>
                 <tr>
-                  <th className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-0 z-30 w-10 min-w-10 !px-1 text-center`}>STT</th>
-                  <SortTh k="sku" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-10 z-30 text-left`}>SKU</SortTh>
-                  <SortTh k="product_type" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Product Type</SortTh>
+                  <th className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-0 z-30 w-[40px] min-w-[40px] max-w-[40px] !px-1 text-center`}>STT</th>
+                  <SortTh k="product_type" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-[40px] z-30 w-[180px] min-w-[180px] max-w-[180px] text-left`}>Product Type</SortTh>
+                  <SortTh k="sku" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-[220px] z-30 text-left`}>SKU</SortTh>
                   <SortTh k="status" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Trạng thái</SortTh>
                   <SortTh k="pic_idea" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>PIC Idea</SortTh>
                   <SortTh k="listing_month" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-right`}>Tháng listing</SortTh>
                   <SortTh k="eval_month" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-right`}>Tháng đánh giá</SortTh>
-                  <SortTh k="von_hang" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 ${SEP} text-right`}>Tổng vốn hàng</SortTh>
+                  <SortTh k="eval_window" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-rose-100 !text-rose-800 text-left`}>Thời gian đánh giá</SortTh>
+                  <SortTh k="von_hang" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 ${SEP} text-right`}>Tổng vốn hàng</SortTh>
                   <SortTh k="revenue" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Revenue</SortTh>
                   <SortTh k="quantity" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Quantity</SortTh>
                   <SortTh k="basecost" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Basecost</SortTh>
@@ -2070,7 +2149,7 @@ export function KqkdView() {
                   <SortTh k="tacos" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>TAcos</SortTh>
                   <SortTh k="profit" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Profit</SortTh>
                   <SortTh k="roi" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>ROI</SortTh>
-                  <SortTh k="hoanVon" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Hoàn vốn</SortTh>
+                  <SortTh k="hoanVon" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 text-right`}>Hoàn vốn</SortTh>
                   <SortTh k="hoanVonPct" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>% Hoàn vốn</SortTh>
                   <SortTh k="qty_di" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Số lượng đi hàng</SortTh>
                   <SortTh k="ton" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Tồn</SortTh>
@@ -2089,12 +2168,12 @@ export function KqkdView() {
                   )}
                 </tr>
                 <tr className={TOTAL_ROW}>
-                  <td colSpan={2} className={`${TDL} font-semibold sticky left-0 z-30 bg-slate-100`}>
+                  <td colSpan={3} className={`${TDL} font-semibold sticky left-0 z-30 bg-slate-100`}>
                     Tổng {skus.length}
                     {skus.length !== allSkus.length && <span className="font-normal text-slate-500">/{allSkus.length}</span>} SKU
                   </td>
                   <td colSpan={5} className={`${TDL} font-semibold`} />
-                  <td className={`${TD} ${SEP} font-semibold`}>{fmtUsd(totals.von)}</td>
+                  <td className={`${TD} ${SEP} ${YELLOW_CELL} font-semibold`}>{fmtUsd(totals.von)}</td>
                   <td className={`${TD} font-semibold`}>{fmtUsd(totals.revenue)}</td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.quantity)}</td>
                   <td className={`${TD} font-semibold`}>{fmtUsd(totals.basecost)}</td>
@@ -2102,7 +2181,7 @@ export function KqkdView() {
                   <td className={`${TD} font-semibold`}>{fmtPct(ratio(-totals.ads, totals.revenue))}</td>
                   <td className={`${TD} font-semibold ${signClass(totals.profit)}`}>{fmtUsd(totals.profit)}</td>
                   <td className={`${TD} font-semibold`}>{fmtPct(ratio(totals.profit, totals.basecost))}</td>
-                  <td className={`${TD} font-semibold`}>{fmtUsd(totals.hoanVon)}</td>
+                  <td className={`${TD} ${totals.von > 0 && totals.hoanVon > totals.von ? POS_CELL : `${YELLOW_CELL} font-semibold`}`}>{fmtUsd(totals.hoanVon)}</td>
                   <td className={`${TD} font-semibold`}><HoanVonBar v={ratio(totals.hoanVon, totals.von)} /></td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.qtyDi)}</td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.ton)}</td>
@@ -2121,7 +2200,7 @@ export function KqkdView() {
               <tbody>
                 {skus.length === 0 && (
                   <tr>
-                    <td colSpan={19 + months.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
+                    <td colSpan={20 + months.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
                       Không có SKU khớp bộ lọc.{" "}
                       <button type="button" onClick={clearFilters} className="cursor-pointer font-semibold text-blue-600 hover:underline">
                         Xoá lọc
@@ -2133,17 +2212,20 @@ export function KqkdView() {
                   const d = derive(s);
                   return (
                     <tr key={s.sku} className="group bg-white even:bg-slate-50/70 transition-colors duration-150 hover:!bg-orange-50 [content-visibility:auto] [contain-intrinsic-size:36px]">
-                      <td className={`${TD} sticky left-0 z-10 w-10 min-w-10 !px-1 !text-center !text-slate-400 bg-white group-even:bg-slate-50 group-hover:!bg-orange-50 transition-colors duration-150`}>
+                      <td className={`${TD} sticky left-0 z-10 w-[40px] min-w-[40px] max-w-[40px] !px-1 !text-center !text-slate-400 bg-white group-even:bg-slate-50 group-hover:!bg-orange-50 transition-colors duration-150`}>
                         {i + 1}
                       </td>
-                      <td className={`${TDL} sticky left-10 z-10 bg-white shadow-[1px_0_0_#e2e8f0] group-even:bg-slate-50 group-hover:!bg-orange-50 transition-colors duration-150`}>
+                      <td
+                        className={`${TDL} sticky left-[40px] z-10 w-[180px] min-w-[180px] max-w-[180px] truncate bg-white group-even:bg-slate-50 group-hover:!bg-orange-50 transition-colors duration-150`}
+                        title={s.product_type || ""}
+                      >
+                        {s.product_type}
+                      </td>
+                      <td className={`${TDL} sticky left-[220px] z-10 bg-white shadow-[1px_0_0_#e2e8f0] group-even:bg-slate-50 group-hover:!bg-orange-50 transition-colors duration-150`}>
                         <span className="flex items-center gap-2">
                           <ThumbZoom url={s.mockup_url} />
                           <span className="font-mono text-[11.5px] font-bold text-slate-900">{s.sku}</span>
                         </span>
-                      </td>
-                      <td className={`${TDL} max-w-[170px] truncate`} title={s.product_type || ""}>
-                        {s.product_type}
                       </td>
                       <td className={TDL}>
                         <StatusPill status={s.status} />
@@ -2151,15 +2233,33 @@ export function KqkdView() {
                       <td className={TDL}>{s.pic_idea}</td>
                       <td className={TD}>{monthLabel(s.listing_month)}</td>
                       <td className={TD}>{s.eval_month ? monthLabel(s.eval_month) : ""}</td>
-                      <td className={`${TD} ${SEP} ${zc(s.von_hang)}`}>{fmtUsd(s.von_hang)}</td>
+                      {(() => {
+                        const w = evalWindow(s.listing_month);
+                        // Chưa đánh giá mà quá hạn / đến hạn / sắp đến hạn: đỏ tươi; đã đánh giá: nền nhạt; còn xa: hồng nhạt
+                        const st = evalState(s, currentMonth);
+                        const cls = needsEval(st)
+                          ? "!bg-red-500 !font-normal !text-slate-950"
+                          : st === "done"
+                            ? "!bg-emerald-100 !text-emerald-900"
+                            : "!bg-rose-50 !text-rose-700";
+                        return (
+                          <td
+                            className={`${TDL} ${cls}`}
+                            title={`Đánh giá ${monthLabel(w.from)} – ${monthLabel(w.to)} (listing ${monthLabel(s.listing_month)} + 3–4 tháng) · ${EVAL_STATE_LABEL[st]}`}
+                          >
+                            {w.label}
+                          </td>
+                        );
+                      })()}
+                      <td className={`${TD} ${SEP} ${YELLOW_CELL} ${zc(s.von_hang)}`}>{fmtUsd(s.von_hang)}</td>
                       <td className={`${TD} ${zc(s.revenue)}`}>{fmtUsd(s.revenue)}</td>
                       <td className={`${TD} ${zc(s.quantity)}`}>{fmtInt(s.quantity)}</td>
                       <td className={`${TD} ${zc(d.basecost)}`}>{fmtUsd(d.basecost)}</td>
                       <td className={`${TD} ${zc(s.ads_fee)}`}>{fmtUsd(s.ads_fee)}</td>
                       <td className={`${TD} ${zc(d.tacos)}`}>{fmtPct(d.tacos)}</td>
-                      <td className={`${TD} bg-blue-50/40 font-semibold ${profitCls(s.profit)}`}>{fmtUsd(s.profit)}</td>
+                      <td className={`${TD} ${s.profit <= -0.005 ? NEG_CELL : `bg-blue-50/40 font-semibold ${profitCls(s.profit)}`}`}>{fmtUsd(s.profit)}</td>
                       <td className={`${TD} ${zc(d.roi)}`}>{fmtPct(d.roi)}</td>
-                      <td className={`${TD} ${zc(d.hoanVon)}`}>{fmtUsd(d.hoanVon)}</td>
+                      <td className={`${TD} ${s.von_hang > 0 && d.hoanVon > s.von_hang ? POS_CELL : `${YELLOW_CELL} ${zc(d.hoanVon)}`}`} title={s.von_hang > 0 && d.hoanVon > s.von_hang ? "Đã hoàn vốn: Hoàn vốn > Tổng vốn hàng" : undefined}>{fmtUsd(d.hoanVon)}</td>
                       <td className={`${TD} bg-blue-50/40`}>
                         <HoanVonBar v={d.hoanVonPct} />
                       </td>
@@ -2181,7 +2281,7 @@ export function KqkdView() {
                           return (
                             <td
                               key={`${m.month}-${mt.key}`}
-                              className={`${TD} ${j === 0 ? SEP : ""} ${before ? "bg-slate-100/70" : ""} ${mt.key === "profit" ? profitCls(v) : zc(v)}`}
+                              className={`${TD} ${j === 0 ? SEP : ""} ${before ? "bg-slate-100/70" : ""} ${mt.key === "profit" ? (v != null && v <= -0.005 ? NEG_CELL : profitCls(v)) : zc(v)}`}
                             >
                               {fmtMetric(v, mt.key)}
                             </td>
