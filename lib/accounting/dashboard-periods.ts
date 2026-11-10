@@ -9,8 +9,8 @@ export interface DashboardPeriods {
   trendStartDate: string;
 }
 
-/** yoy_week = cùng tuần năm trước: lùi 52 tuần (364 ngày) để thứ trong tuần khớp nhau. */
-export type DashboardCompareMode = "prev" | "week" | "month" | "yoy" | "yoy_week" | "none";
+/** yoy_week = cùng tuần năm trước: lùi 52 tuần (364 ngày) để thứ trong tuần khớp nhau. day = lùi 1 ngày (hôm qua). */
+export type DashboardCompareMode = "prev" | "day" | "week" | "month" | "yoy" | "yoy_week" | "none";
 
 /** Số tháng lùi để so sánh xu hướng theo tháng (0 = không so sánh). */
 export function monthlyCompareShift(compare: DashboardCompareMode): number {
@@ -82,6 +82,8 @@ export function resolveDashboardPeriods(
     previous = { startDate: shiftMonths(start, -12), endDate: shiftMonths(end, -12) };
   } else if (compare === "month") {
     previous = { startDate: shiftMonths(start, -1), endDate: shiftMonths(end, -1) };
+  } else if (compare === "day") {
+    previous = { startDate: addDays(start, -1), endDate: addDays(end, -1) };
   } else if (compare === "week") {
     previous = { startDate: addDays(start, -7), endDate: addDays(end, -7) };
   } else if (compare === "yoy_week") {

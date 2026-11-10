@@ -1,5 +1,6 @@
 "use client";
 
+import { AccBlackGrid } from "./acc-black-grid";
 import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { AccountingModuleSkeleton, AccountingViewTransition } from "./accounting-skeleton";
@@ -127,12 +128,12 @@ function AccountingSectionShell({
   sectionKey?: string;
 }) {
   return (
-    <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+    <AccBlackGrid enabled={sectionKey !== "overview"} className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
       <AccountingImportTracker />
       <AccountingViewTransition transitionKey={sectionKey}>
         {children}
       </AccountingViewTransition>
-    </div>
+    </AccBlackGrid>
   );
 }
 

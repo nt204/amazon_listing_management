@@ -23,6 +23,8 @@ interface Props {
   maxDate?: string; // YYYY-MM-DD
   anchorDate?: string; // Ngày neo cho preset, mặc định là maxDate hoặc hôm nay
   align?: "left" | "right";
+  /** id preset hiển thị, theo thứ tự (vd Overview Accounting: thêm this_year / last_year, bỏ last_7_days…). */
+  presets?: string[];
 }
 
 const MONTH_NAMES = [
@@ -41,7 +43,12 @@ const PRESETS = [
   { label: "This month", id: "this_month" },
   { label: "Last month", id: "last_month" },
   { label: "Year to date", id: "ytd" },
+  { label: "This year", id: "this_year" },
+  { label: "Last year", id: "last_year" },
 ];
+
+/** Danh sách preset mặc định (giữ như cũ cho PPC / các trang khác); trang nào cần khác thì truyền prop presets. */
+const DEFAULT_PRESET_IDS = ["all", "today", "yesterday", "last_7_days", "this_week", "last_week", "last_30_days", "this_month", "last_month", "ytd"];
 
 function padZero(n: number) {
   return n < 10 ? `0${n}` : String(n);
@@ -72,6 +79,7 @@ export function PpcAmazonDatePicker({
   maxDate,
   anchorDate,
   align = "left",
+  presets = DEFAULT_PRESET_IDS,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -211,9 +219,12 @@ export function PpcAmazonDatePicker({
     } else if (presetId === "last_month") {
       start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       end = new Date(today.getFullYear(), today.getMonth(), 0);
-    } else if (presetId === "ytd") {
+    } else if (presetId === "ytd" || presetId === "this_year") {
       start = new Date(today.getFullYear(), 0, 1);
       end = new Date(today);
+    } else if (presetId === "last_year") {
+      start = new Date(today.getFullYear() - 1, 0, 1);
+      end = new Date(today.getFullYear() - 1, 11, 31);
     } else if (presetId === "lifetime") {
       start = parseDateString(minDate || "2020-01-01");
       end = new Date(today);
@@ -385,7 +396,7 @@ export function PpcAmazonDatePicker({
               <div className="px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
                 Khoảng thời gian
               </div>
-              {PRESETS.map((p) => {
+              {presets.flatMap((id) => PRESETS.filter((p) => p.id === id)).map((p) => {
                 const isActive = activePreset === p.id;
                 return (
                   <button

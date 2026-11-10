@@ -27,6 +27,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import { AccBlackGrid } from "@/components/accounting/acc-black-grid";
 import { AccountMenu } from "@/components/account-menu";
 import { GlobalListingBatchBar } from "@/components/global-listing-batch-bar";
 import type { RequestActor } from "@/lib/auth";
@@ -1564,7 +1565,7 @@ export function ListingWorkspace({
               />
             </div>
           ) : viewMode === "ppc" ? (
-            <div className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
+            <AccBlackGrid className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
               {ppcSection === "phoi" ? (
                 <PpcCostMasterStandalone />
               ) : ppcSection === "rules" ? (
@@ -1605,7 +1606,7 @@ export function ListingWorkspace({
                   }}
                 />
               )}
-            </div>
+            </AccBlackGrid>
           ) : viewMode === "accounting" ? (
             <div className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
               <AccountingWorkspace

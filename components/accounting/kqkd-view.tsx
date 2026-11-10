@@ -1,13 +1,15 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState, useDeferredValue, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type ReactNode } from "react";
 import {
   ArrowClockwiseIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   ArrowsDownUpIcon,
   CaretRightIcon,
+  CheckIcon,
+  FunnelSimpleIcon,
   MagnifyingGlassIcon,
   StorefrontIcon,
   XIcon,
@@ -75,6 +77,7 @@ type Metric = "revenue" | "quantity" | "ads_fee" | "tacos" | "profit" | "roi";
 
 // Sheet: Mục tiêu SKU WIN = 40% × số SKU đánh giá
 const WIN_TARGET_RATE = 0.4;
+const SHOW_MONTH_COLS = false;
 // Trạng thái Bảng mã của SKU đã WIN — dùng để gợi ý số WIN cho team
 const WIN_STATUS = "phát triển";
 const LOSS_STATUS = "hủy";
@@ -151,11 +154,11 @@ const EVAL_STATE_LABEL: Record<EvalState, string> = {
 const needsEval = (st: EvalState) => st === "late" || st === "due";
 
 // Ô Profit âm: tô đỏ cả ô cho dễ thấy SKU / tháng lỗ
-const NEG_CELL = "!bg-red-500 !text-slate-950 !font-normal";
+const NEG_CELL = "!bg-[#FF0000] !text-slate-950 !font-bold";
 // Ô Hoàn vốn khi đã thu về nhiều hơn Tổng vốn hàng: tô xanh cả ô
-const POS_CELL = "!bg-emerald-100 !text-slate-950 !font-normal";
+const POS_CELL = "!bg-[#83C75D] !text-slate-950 !font-normal";
 // Hai cột Tổng vốn hàng / Hoàn vốn: nền vàng (như sheet) để dễ so với nhau
-const YELLOW_CELL = "!bg-yellow-50";
+const YELLOW_CELL = "!bg-[#FACE9C]";
 
 function monthNum(period: string) {
   return Number(period.slice(5, 7));
@@ -277,6 +280,253 @@ function SortTh({
         />
       </button>
     </th>
+  );
+}
+
+// ===== Lọc kiểu Excel trên tiêu đề cột (bảng SKU Testing) =====
+// Bấm tên cột → hộp lọc: sắp xếp, tìm, tích chọn từng giá trị đang có trong cột (kèm số dòng).
+// Danh sách giá trị của 1 cột tính trên các dòng đã qua bộ lọc của CÁC CỘT KHÁC (giống Excel).
+// Bộ lọc lưu tập giá trị được chọn theo đúng chữ hiển thị trong ô; không có key = không lọc cột đó.
+type ColFilters = Record<string, Set<string>>;
+const BLANK = "(Trống)";
+const USD_KEYS = new Set(["von_hang", "revenue", "basecost", "ads_fee", "profit", "hoanVon"]);
+const INT_KEYS = new Set(["quantity", "qty_di", "ton"]);
+const PCT_KEYS = new Set(["tacos", "roi", "hoanVonPct"]);
+
+function filterLabel(s: KqkdSku, key: string, year: number): string {
+  switch (key) {
+    case "listing_month":
+      return monthLabel(s.listing_month);
+    case "eval_month":
+      return s.eval_month ? monthLabel(s.eval_month) : BLANK;
+    case "eval_window": {
+      const w = evalWindow(s.listing_month);
+      const y = w.from.slice(0, 4);
+      return y !== String(year) ? `${w.label} (${y})` : w.label;
+    }
+  }
+  const v = sortValue(s, key);
+  if (v == null || v === "") return BLANK;
+  if (typeof v === "string") return v.trim() || BLANK;
+  const out = USD_KEYS.has(key) ? fmtUsd(v) : INT_KEYS.has(key) ? fmtInt(v) : PCT_KEYS.has(key) ? fmtPct(v) : String(v);
+  return out || BLANK;
+}
+
+function passesColFilters(s: KqkdSku, filters: ColFilters, year: number, except?: string) {
+  for (const k in filters) {
+    if (k !== except && !filters[k].has(filterLabel(s, k, year))) return false;
+  }
+  return true;
+}
+
+type FilterOption = { label: string; count: number };
+type FilterOpen = { key: string; title: string; rect: DOMRect };
+
+// Tiêu đề cột: bấm mở hộp lọc; mũi tên = đang sắp xếp, phễu xanh đặc = đang lọc
+function FilterTh({
+  k,
+  sort,
+  filters,
+  onOpen,
+  className,
+  align = "right",
+  children,
+}: {
+  k: string;
+  sort: SortState;
+  filters: ColFilters;
+  onOpen: (k: string, th: HTMLElement) => void;
+  className: string;
+  align?: "left" | "right";
+  children: ReactNode;
+}) {
+  const dir = sort?.key === k ? sort.dir : null;
+  const filtered = k in filters;
+  return (
+    <th className={className} aria-sort={dir ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={(e) => onOpen(k, e.currentTarget.closest("th") as HTMLElement)}
+        title="Bấm để lọc / sắp xếp"
+        className={`group/f inline-flex w-full cursor-pointer select-none items-center gap-1 ${align === "right" ? "flex-row-reverse" : ""}`}
+      >
+        <span>{children}</span>
+        {dir && (dir === "asc" ? <ArrowUpIcon size={11} weight="bold" className="shrink-0 text-blue-800" /> : <ArrowDownIcon size={11} weight="bold" className="shrink-0 text-blue-800" />)}
+        <FunnelSimpleIcon
+          size={12}
+          weight={filtered ? "fill" : "bold"}
+          className={`shrink-0 transition-opacity duration-150 ${filtered ? "text-blue-800" : "opacity-40 group-hover/f:opacity-90"}`}
+        />
+      </button>
+    </th>
+  );
+}
+
+function ColumnFilterPopover({
+  open,
+  options,
+  selected,
+  sortDir,
+  textSort,
+  onSort,
+  onApply,
+  onClose,
+}: {
+  open: FilterOpen;
+  options: FilterOption[];
+  selected: Set<string> | undefined;
+  sortDir: "asc" | "desc" | null;
+  textSort: boolean;
+  onSort: (dir: "asc" | "desc") => void;
+  onApply: (next: Set<string> | null) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [draft, setDraft] = useState<Set<string>>(
+    () => new Set(options.filter((o) => !selected || selected.has(o.label)).map((o) => o.label))
+  );
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Đóng khi bấm ra ngoài, Esc, cuộn trang/bảng hoặc đổi cỡ cửa sổ (hộp đặt theo vị trí tiêu đề lúc mở)
+  useEffect(() => {
+    const inside = (t: EventTarget | null) => !!ref.current && t instanceof Node && ref.current.contains(t);
+    const onDown = (e: MouseEvent) => {
+      if (!inside(e.target)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const onScroll = (e: Event) => {
+      if (!inside(e.target)) onClose();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  const term = q.trim().toLowerCase();
+  const visible = term ? options.filter((o) => o.label.toLowerCase().includes(term)) : options;
+  const checkedVisible = visible.filter((o) => draft.has(o.label)).length;
+
+  const setMany = (labels: string[], on: boolean) =>
+    setDraft((prev) => {
+      const next = new Set(prev);
+      for (const l of labels) {
+        if (on) next.add(l);
+        else next.delete(l);
+      }
+      return next;
+    });
+  const toggle = (label: string) => setMany([label], !draft.has(label));
+
+  // Đang tìm: chỉ giữ các giá trị khớp từ khoá và được tích (như Excel). Tích đủ mọi giá trị = bỏ lọc cột.
+  const apply = () => {
+    const next = term ? new Set(visible.filter((o) => draft.has(o.label)).map((o) => o.label)) : draft;
+    onApply(options.every((o) => next.has(o.label)) ? null : next);
+  };
+  const canApply = (term ? checkedVisible : draft.size) > 0;
+
+  const W = 290;
+  const left = Math.max(8, Math.min(open.rect.left, window.innerWidth - W - 8));
+  const top = Math.min(open.rect.bottom + 4, window.innerHeight - 200);
+
+  const sortBtn = (dir: "asc" | "desc", label: string) => (
+    <button
+      type="button"
+      onClick={() => onSort(dir)}
+      className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] hover:bg-slate-100 ${sortDir === dir ? "font-semibold text-blue-700" : "text-slate-800"}`}
+    >
+      {dir === "asc" ? <ArrowUpIcon size={13} weight="bold" /> : <ArrowDownIcon size={13} weight="bold" />}
+      {label}
+      {sortDir === dir && <CheckIcon size={13} weight="bold" className="ml-auto" />}
+    </button>
+  );
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={`Lọc cột ${open.title}`}
+      style={{ left, top, width: W }}
+      className="animate-in fade-in zoom-in-95 fixed z-[200] flex max-h-[min(560px,calc(100vh-24px))] flex-col rounded-xl border border-slate-200 bg-white p-2 font-sans shadow-xl duration-100"
+    >
+      <div className="px-2.5 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{open.title}</div>
+      {sortBtn("asc", textSort ? "Sắp xếp A → Z" : "Sắp xếp nhỏ → lớn")}
+      {sortBtn("desc", textSort ? "Sắp xếp Z → A" : "Sắp xếp lớn → nhỏ")}
+      <div className="my-1.5 h-px bg-slate-200" />
+      {selected && (
+        <button
+          type="button"
+          onClick={() => onApply(null)}
+          className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-slate-800 hover:bg-slate-100"
+        >
+          <XIcon size={13} weight="bold" className="text-rose-600" />
+          Xoá bộ lọc cột này
+        </button>
+      )}
+      <div className="px-2.5 pb-1 pt-1 text-[13px] font-semibold text-slate-800">Lọc theo giá trị</div>
+      <div className="flex items-center justify-between px-2.5 pb-1.5 text-xs">
+        <span>
+          <button type="button" onClick={() => setMany(visible.map((o) => o.label), true)} className="cursor-pointer text-blue-700 underline-offset-2 hover:underline">
+            Chọn tất cả {visible.length}
+          </button>
+          <span className="text-slate-400"> - </span>
+          <button type="button" onClick={() => setMany(visible.map((o) => o.label), false)} className="cursor-pointer text-blue-700 underline-offset-2 hover:underline">
+            Xóa
+          </button>
+        </span>
+        <span className="text-slate-500">Đang hiển thị {visible.length}</span>
+      </div>
+      <div className="relative mx-1 mb-1.5">
+        <MagnifyingGlassIcon size={14} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" />
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && canApply) apply();
+          }}
+          placeholder="Tìm giá trị..."
+          className="h-8 w-full rounded-lg border border-slate-300 bg-white pl-2.5 pr-7 text-xs text-slate-800 outline-hidden focus:border-blue-500"
+        />
+      </div>
+      <div className="mx-1 min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 py-1 scrollbar-thin" style={{ maxHeight: 260 }}>
+        {visible.length === 0 && <div className="px-3 py-3 text-center text-xs text-slate-400">Không có giá trị khớp</div>}
+        {visible.map((o) => {
+          const on = draft.has(o.label);
+          return (
+            <label key={o.label} className="flex cursor-pointer items-center gap-2 px-2.5 py-1 text-[13px] text-slate-800 hover:bg-slate-50">
+              <input type="checkbox" checked={on} onChange={() => toggle(o.label)} className="h-3.5 w-3.5 cursor-pointer accent-emerald-700" />
+              <span className={`min-w-0 flex-1 truncate ${o.label === BLANK ? "italic text-slate-500" : ""}`} title={o.label}>
+                {o.label}
+              </span>
+              <span className="shrink-0 text-[11px] tabular-nums text-slate-400">{o.count}</span>
+            </label>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex justify-end gap-2 px-1">
+        <button type="button" onClick={onClose} className="h-8 cursor-pointer rounded-lg border border-slate-300 px-4 text-xs font-semibold text-emerald-800 hover:bg-slate-50">
+          Hủy
+        </button>
+        <button
+          type="button"
+          disabled={!canApply}
+          onClick={apply}
+          className="h-8 cursor-pointer rounded-lg bg-emerald-800 px-5 text-xs font-bold text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          OK
+        </button>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1127,11 +1377,14 @@ export function KqkdView() {
   const [error, setError] = useState<string | null>(null);
   const [savingWin, setSavingWin] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [fStatus, setFStatus] = useState("");
-  const [fPic, setFPic] = useState("");
-  const [fListM, setFListM] = useState("");
-  const [fEvalM, setFEvalM] = useState("");
-  const [fEvalW, setFEvalW] = useState("");
+  // Bảng SKU Testing: lọc kiểu Excel trên từng cột
+  const [colFilters, setColFilters] = useState<ColFilters>({});
+  const [filterOpen, setFilterOpen] = useState<FilterOpen | null>(null);
+  const openFilter = useCallback(
+    (key: string, th: HTMLElement) => setFilterOpen({ key, title: th.textContent?.trim() || key, rect: th.getBoundingClientRect() }),
+    [setFilterOpen]
+  );
+  const closeFilter = useCallback(() => setFilterOpen(null), [setFilterOpen]);
   const [sort, setSort] = useState<SortState>(null);
   const onSort = (k: string) =>
     setSort((prev) => {
@@ -1265,58 +1518,29 @@ export function KqkdView() {
     () => [...baseSkus, ...(fPhoi ? allEvalSkus.filter((s) => (s.product_type || "(trống)") === fPhoi) : allEvalSkus)],
     [baseSkus, allEvalSkus, fPhoi]
   );
-  const statuses = useMemo(
-    () => Array.from(new Set(allSkus.map((s) => s.status).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b)),
-    [allSkus]
-  );
-
   const deferredSearch = useDeferredValue(search);
-
-  const picOptions = useMemo(
-    () => Array.from(new Set(allSkus.map((s) => s.pic_idea?.trim() || "(trống)"))).sort((a, b) => a.localeCompare(b)),
-    [allSkus]
-  );
-  const listMonthOptions = useMemo(() => Array.from(new Set(allSkus.map((s) => s.listing_month))).sort(), [allSkus]);
-  const evalMonthOptions = useMemo(
-    () => Array.from(new Set(allSkus.map((s) => s.eval_month).filter(Boolean) as string[])).sort(),
-    [allSkus]
-  );
-  // Lọc "Thời gian đánh giá": theo khoảng (giá trị = tháng đầu YYYY-MM) hoặc "late" = các ô đỏ
-  const evalWindowOptions = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of allSkus) {
-      const w = evalWindow(s.listing_month);
-      m.set(w.from, `${w.label}${w.from.slice(0, 4) !== String(year) ? ` (${w.from.slice(0, 4)})` : ""}`);
-    }
-    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [allSkus, year]);
-  const activeFilters = [search, fStatus, fPhoi, fPic, fListM, fEvalM, fEvalW].filter(Boolean).length;
+  const activeFilters = (search ? 1 : 0) + Object.keys(colFilters).length;
   const clearFilters = () => {
     setSearch("");
-    setFStatus("");
-    setFPhoi("");
-    setFPic("");
-    setFListM("");
-    setFEvalM("");
-    setFEvalW("");
+    setColFilters({});
   };
 
-  // SKU Testing: Phôi (dùng chung với Tổng quan) + tìm kiếm + trạng thái + PIC + tháng, rồi sắp xếp
-  const skus = useMemo(() => {
+  // SKU Testing: ô tìm kiếm + lọc từng cột kiểu Excel, rồi sắp xếp. Không phụ thuộc bộ lọc Phôi của Tổng quan
+  // (cột Product Type có bộ lọc riêng).
+  const searchedSkus = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
-    const out = baseSkus.filter(
+    if (!q) return allSkus;
+    return allSkus.filter(
       (s) =>
-        (!fStatus || s.status === fStatus) &&
-        (!fPic || (s.pic_idea?.trim() || "(trống)") === fPic) &&
-        (!fListM || s.listing_month === fListM) &&
-        (!fEvalM || (fEvalM === "none" ? !s.eval_month : s.eval_month === fEvalM)) &&
-        (!fEvalW || (fEvalW === "late" ? needsEval(evalState(s, currentMonth)) : evalWindow(s.listing_month).from === fEvalW)) &&
-        (!q ||
-          s.sku.toLowerCase().includes(q) ||
-          (s.asin || "").toLowerCase().includes(q) ||
-          (s.product_type || "").toLowerCase().includes(q) ||
-          (s.pic_idea || "").toLowerCase().includes(q))
+        s.sku.toLowerCase().includes(q) ||
+        (s.asin || "").toLowerCase().includes(q) ||
+        (s.product_type || "").toLowerCase().includes(q) ||
+        (s.pic_idea || "").toLowerCase().includes(q)
     );
+  }, [allSkus, deferredSearch]);
+
+  const skus = useMemo(() => {
+    const out = searchedSkus.filter((s) => passesColFilters(s, colFilters, year));
     if (!sort) return out;
     const sign = sort.dir === "asc" ? 1 : -1;
     return out
@@ -1328,7 +1552,28 @@ export function KqkdView() {
         return sign * (a.v - b.v);
       })
       .map((x) => x.s);
-  }, [baseSkus, deferredSearch, fStatus, fPic, fListM, fEvalM, fEvalW, currentMonth, sort]);
+  }, [searchedSkus, colFilters, year, sort]);
+
+  // Giá trị cho hộp lọc đang mở: các dòng đã qua bộ lọc cột khác, xếp theo giá trị thật (số / tháng), ô trống cuối
+  const filterOptions = useMemo<FilterOption[]>(() => {
+    if (!filterOpen) return [];
+    const key = filterOpen.key;
+    const m = new Map<string, { v: string | number | null; count: number }>();
+    for (const s of searchedSkus) {
+      if (!passesColFilters(s, colFilters, year, key)) continue;
+      const label = filterLabel(s, key, year);
+      const cur = m.get(label);
+      if (cur) cur.count++;
+      else m.set(label, { v: label === BLANK ? null : sortValue(s, key), count: 1 });
+    }
+    return Array.from(m.entries())
+      .sort(([la, a], [lb, b]) => {
+        if (a.v == null || b.v == null) return a.v == null ? (b.v == null ? 0 : 1) : -1;
+        if (typeof a.v === "number" && typeof b.v === "number") return a.v - b.v;
+        return String(a.v).localeCompare(String(b.v), "vi") || la.localeCompare(lb, "vi");
+      })
+      .map(([label, x]) => ({ label, count: x.count }));
+  }, [filterOpen, searchedSkus, colFilters, year]);
 
   const months = useMemo(() => data?.months || [], [data]);
 
@@ -1512,6 +1757,12 @@ export function KqkdView() {
   );
 
   // ===== SKU TESTING: dòng tổng =====
+  // Số phôi = số Product Type khác nhau (bỏ trống) trong danh sách đang lọc / toàn bộ
+  const phoiCount = useMemo(() => {
+    const count = (list: KqkdSku[]) => new Set(list.map((s) => s.product_type?.trim()).filter(Boolean)).size;
+    return { shown: count(skus), all: count(allSkus) };
+  }, [skus, allSkus]);
+
   const totals = useMemo(() => {
     let von = 0, revenue = 0, quantity = 0, basecost = 0, ads = 0, profit = 0, hoanVon = 0, qtyDi = 0, ton = 0;
     let hasTon = false;
@@ -1548,6 +1799,8 @@ export function KqkdView() {
     return { von, revenue, quantity, basecost, ads, profit, hoanVon, qtyDi, ton: hasTon ? ton : null, byMonth };
   }, [skus, months]);
 
+  // Cột theo tháng chỉ dùng để tính toán, không hiển thị trên bảng (bật lại: SHOW_MONTH_COLS = true)
+  const tableMonths = SHOW_MONTH_COLS ? months : [];
   const monthMetrics = metric === "all" ? METRICS : METRICS.filter((m) => m.key === metric);
   const totalMetric = (month: string, mt: Metric) => {
     const t = totals.byMonth.get(month);
@@ -1679,50 +1932,7 @@ export function KqkdView() {
               )}
             </div>
 
-            <span className="ml-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Lọc</span>
-            {phoiSelect}
-            <select id="kqkd-status" aria-label="Trạng thái" value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={filterCls(fStatus)}>
-              <option value="">Trạng thái: tất cả</option>
-              {statuses.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <select id="kqkd-pic" aria-label="PIC Idea" value={fPic} onChange={(e) => setFPic(e.target.value)} className={filterCls(fPic)}>
-              <option value="">PIC: tất cả</option>
-              {picOptions.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <select id="kqkd-listm" aria-label="Tháng listing" value={fListM} onChange={(e) => setFListM(e.target.value)} className={filterCls(fListM)}>
-              <option value="">Tháng listing: tất cả</option>
-              {listMonthOptions.map((m) => (
-                <option key={m} value={m}>
-                  Listing {monthLabel(m)}
-                </option>
-              ))}
-            </select>
-            <select id="kqkd-evalm" aria-label="Tháng đánh giá" value={fEvalM} onChange={(e) => setFEvalM(e.target.value)} className={filterCls(fEvalM)}>
-              <option value="">Tháng đánh giá: tất cả</option>
-              {evalMonthOptions.map((m) => (
-                <option key={m} value={m}>
-                  Đánh giá {monthLabel(m)}
-                </option>
-              ))}
-              <option value="none">Chưa có tháng đánh giá</option>
-            </select>
-            <select id="kqkd-evalw" aria-label="Thời gian đánh giá" value={fEvalW} onChange={(e) => setFEvalW(e.target.value)} className={filterCls(fEvalW)}>
-              <option value="">Thời gian đánh giá: tất cả</option>
-              <option value="late">Tới hạn / quá hạn, chưa đánh giá (đỏ)</option>
-              {evalWindowOptions.map(([from, label]) => (
-                <option key={from} value={from}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            <span className="text-[11px] font-medium text-slate-400">Bấm tên cột để lọc / sắp xếp</span>
             {(activeFilters > 0 || sort) && (
               <button
                 type="button"
@@ -1737,6 +1947,7 @@ export function KqkdView() {
               </button>
             )}
 
+            {SHOW_MONTH_COLS && (
             <label htmlFor="kqkd-metric" className="ml-auto flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
               Cột tháng
               <select id="kqkd-metric" aria-label="Chỉ số theo tháng" value={metric} onChange={(e) => setMetric(e.target.value as Metric | "all")} className={selectCls}>
@@ -1748,6 +1959,7 @@ export function KqkdView() {
                 <option value="all">Tất cả chỉ số</option>
               </select>
             </label>
+            )}
           </div>
         )}
       </div>
@@ -1800,16 +2012,10 @@ export function KqkdView() {
               />
               {(() => {
                 const r = ratio(evalYear.win, evalYear.doneN);
-                const diff = r != null ? (r - WIN_TARGET_RATE) * 100 : null;
                 return (
                   <Kpi
                     label="Tỉ lệ WIN"
                     value={r != null ? fmtPct(r) : "—"}
-                    sub={
-                      diff != null
-                        ? `${diff >= 0 ? "+" : "−"}${Math.abs(diff).toFixed(1)} điểm % so với mục tiêu`
-                        : undefined
-                    }
                     highlight={r != null && r >= WIN_TARGET_RATE}
                   />
                 );
@@ -2115,12 +2321,13 @@ export function KqkdView() {
           <AccountingViewTransition transitionKey="skus" className="flex-1 overflow-auto scrollbar-thin">
             {/* border-separate: tiêu đề dính (sticky) mang theo viền của ô — border-collapse để lại khe trong suốt giữa các dòng khi cuộn.
                 Bỏ viền trên/trái của từng ô để không bị viền đôi; giữ vạch dọc đậm (kq-sep) đầu mỗi nhóm cột. */}
-            <table className="min-w-max border-separate border-spacing-0 text-xs [&_td]:border-t-0 [&_th]:border-t-0 [&_td:not(.kq-sep)]:border-l-0 [&_th:not(.kq-sep)]:border-l-0 [&_thead_tr:last-child>td]:border-b-2 [&_thead_tr:last-child>td]:border-b-slate-300">
+            <table className="min-w-max border-separate border-spacing-0 text-xs [&_td]:!border-black [&_th]:!border-black [&_td]:border-t-0 [&_th]:border-t-0 [&_td:not(.kq-sep)]:border-l-0 [&_th:not(.kq-sep)]:border-l-0 [&_thead_tr:last-child>td]:border-b-2 [&_thead_tr:last-child>td]:border-b-slate-300">
               <thead className="sticky top-0 z-20">
                 <tr>
-                  <th colSpan={8} className={`${TH_BASE} text-left bg-emerald-100 !text-emerald-900`}>Thông tin cơ bản</th>
+                  <th colSpan={3} className={`${TH_BASE} text-left bg-[#FF8C00] !text-black !border-black !border-t !border-l sticky left-0 z-30`}>Thông tin cơ bản</th>
+                  <th colSpan={5} className={`${TH_BASE} bg-[#FF8C00] !border-black !border-t`} />
                   <th colSpan={12} className={`${TH_BASE} ${SEP} text-left bg-blue-200 !text-blue-900`}>Life time</th>
-                  {months.map((m, mi) => (
+                  {tableMonths.map((m, mi) => (
                     <th
                       key={m.month}
                       colSpan={monthMetrics.length}
@@ -2133,34 +2340,34 @@ export function KqkdView() {
                   ))}
                 </tr>
                 <tr>
-                  <th className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-0 z-30 w-[40px] min-w-[40px] max-w-[40px] !px-1 text-center`}>STT</th>
-                  <SortTh k="product_type" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-[40px] z-30 w-[180px] min-w-[180px] max-w-[180px] text-left`}>Product Type</SortTh>
-                  <SortTh k="sku" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 sticky left-[220px] z-30 text-left`}>SKU</SortTh>
-                  <SortTh k="status" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>Trạng thái</SortTh>
-                  <SortTh k="pic_idea" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-left`}>PIC Idea</SortTh>
-                  <SortTh k="listing_month" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-right`}>Tháng listing</SortTh>
-                  <SortTh k="eval_month" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-emerald-50 !text-emerald-900 text-right`}>Tháng đánh giá</SortTh>
-                  <SortTh k="eval_window" sort={sort} onSort={onSort} align="left" className={`${TH_BASE} bg-rose-100 !text-rose-800 text-left`}>Thời gian đánh giá</SortTh>
-                  <SortTh k="von_hang" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 ${SEP} text-right`}>Tổng vốn hàng</SortTh>
-                  <SortTh k="revenue" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Revenue</SortTh>
-                  <SortTh k="quantity" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Quantity</SortTh>
-                  <SortTh k="basecost" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Basecost</SortTh>
-                  <SortTh k="ads_fee" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Ads Fee</SortTh>
-                  <SortTh k="tacos" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>TAcos</SortTh>
-                  <SortTh k="profit" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Profit</SortTh>
-                  <SortTh k="roi" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>ROI</SortTh>
-                  <SortTh k="hoanVon" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 text-right`}>Hoàn vốn</SortTh>
-                  <SortTh k="hoanVonPct" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>% Hoàn vốn</SortTh>
-                  <SortTh k="qty_di" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Số lượng đi hàng</SortTh>
-                  <SortTh k="ton" sort={sort} onSort={onSort} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Tồn</SortTh>
-                  {months.map((m) =>
+                  <th className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black !border-l sticky left-0 z-30 w-[40px] min-w-[40px] max-w-[40px] !px-1 text-center`}>STT</th>
+                  <FilterTh k="product_type" sort={sort} filters={colFilters} onOpen={openFilter} align="left" className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black sticky left-[40px] z-30 w-[180px] min-w-[180px] max-w-[180px] text-left`}>Product Type</FilterTh>
+                  <FilterTh k="sku" sort={sort} filters={colFilters} onOpen={openFilter} align="left" className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black sticky left-[220px] z-30 text-left`}>SKU</FilterTh>
+                  <FilterTh k="status" sort={sort} filters={colFilters} onOpen={openFilter} align="left" className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black text-left`}>Trạng thái</FilterTh>
+                  <FilterTh k="pic_idea" sort={sort} filters={colFilters} onOpen={openFilter} align="left" className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black text-left`}>PIC Idea</FilterTh>
+                  <FilterTh k="listing_month" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black text-right`}>Tháng listing</FilterTh>
+                  <FilterTh k="eval_month" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black text-right`}>Tháng đánh giá</FilterTh>
+                  <FilterTh k="eval_window" sort={sort} filters={colFilters} onOpen={openFilter} align="left" className={`${TH_BASE} bg-[#FF8C00] !text-black !border-black text-left`}>Thời gian đánh giá</FilterTh>
+                  <FilterTh k="von_hang" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 ${SEP} text-right`}>Tổng vốn hàng</FilterTh>
+                  <FilterTh k="revenue" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Revenue</FilterTh>
+                  <FilterTh k="quantity" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Quantity</FilterTh>
+                  <FilterTh k="basecost" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Basecost</FilterTh>
+                  <FilterTh k="ads_fee" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Ads Fee</FilterTh>
+                  <FilterTh k="tacos" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>TAcos</FilterTh>
+                  <FilterTh k="profit" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Profit</FilterTh>
+                  <FilterTh k="roi" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>ROI</FilterTh>
+                  <FilterTh k="hoanVon" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 text-right`}>Hoàn vốn</FilterTh>
+                  <FilterTh k="hoanVonPct" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>% Hoàn vốn</FilterTh>
+                  <FilterTh k="qty_di" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Số lượng đi hàng</FilterTh>
+                  <FilterTh k="ton" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Tồn</FilterTh>
+                  {tableMonths.map((m) =>
                     monthMetrics.map((mt, j) => (
                       <SortTh
                         key={`${m.month}-${mt.key}`}
                         k={`m|${m.month}|${mt.key}`}
                         sort={sort}
                         onSort={onSort}
-                        className={`${TH_BASE} text-right ${j === 0 ? SEP : ""} ${months.indexOf(m) % 2 ? "bg-amber-100 !text-amber-900" : "bg-violet-100 !text-violet-900"}`}
+                        className={`${TH_BASE} text-right ${j === 0 ? SEP : ""} ${tableMonths.indexOf(m) % 2 ? "bg-amber-100 !text-amber-900" : "bg-violet-100 !text-violet-900"}`}
                       >
                         {mt.label}
                       </SortTh>
@@ -2168,8 +2375,13 @@ export function KqkdView() {
                   )}
                 </tr>
                 <tr className={TOTAL_ROW}>
-                  <td colSpan={3} className={`${TDL} font-semibold sticky left-0 z-30 bg-slate-100`}>
-                    Tổng {skus.length}
+                  <td className={`${TDL} font-semibold sticky left-0 z-30 w-[40px] min-w-[40px] max-w-[40px] !px-1 text-center bg-slate-100`}>Tổng</td>
+                  <td className={`${TDL} font-semibold sticky left-[40px] z-30 w-[180px] min-w-[180px] max-w-[180px] bg-slate-100`}>
+                    {phoiCount.shown}
+                    {phoiCount.shown !== phoiCount.all && <span className="font-normal text-slate-500">/{phoiCount.all}</span>} phôi
+                  </td>
+                  <td className={`${TDL} font-semibold sticky left-[220px] z-30 bg-slate-100`}>
+                    {skus.length}
                     {skus.length !== allSkus.length && <span className="font-normal text-slate-500">/{allSkus.length}</span>} SKU
                   </td>
                   <td colSpan={5} className={`${TDL} font-semibold`} />
@@ -2185,7 +2397,7 @@ export function KqkdView() {
                   <td className={`${TD} font-semibold`}><HoanVonBar v={ratio(totals.hoanVon, totals.von)} /></td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.qtyDi)}</td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.ton)}</td>
-                  {months.map((m) =>
+                  {tableMonths.map((m) =>
                     monthMetrics.map((mt, j) => {
                       const v = totalMetric(m.month, mt.key);
                       return (
@@ -2200,7 +2412,7 @@ export function KqkdView() {
               <tbody>
                 {skus.length === 0 && (
                   <tr>
-                    <td colSpan={20 + months.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
+                    <td colSpan={20 + tableMonths.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
                       Không có SKU khớp bộ lọc.{" "}
                       <button type="button" onClick={clearFilters} className="cursor-pointer font-semibold text-blue-600 hover:underline">
                         Xoá lọc
@@ -2238,9 +2450,9 @@ export function KqkdView() {
                         // Chưa đánh giá mà quá hạn / đến hạn / sắp đến hạn: đỏ tươi; đã đánh giá: nền nhạt; còn xa: hồng nhạt
                         const st = evalState(s, currentMonth);
                         const cls = needsEval(st)
-                          ? "!bg-red-500 !font-normal !text-slate-950"
+                          ? "!bg-[#FF0000] !font-normal !text-slate-950"
                           : st === "done"
-                            ? "!bg-emerald-100 !text-emerald-900"
+                            ? "!bg-[#AFD788] !text-slate-950"
                             : "!bg-rose-50 !text-rose-700";
                         return (
                           <td
@@ -2274,7 +2486,7 @@ export function KqkdView() {
                       >
                         {fmtInt(d.ton)}
                       </td>
-                      {months.map((m) => {
+                      {tableMonths.map((m) => {
                         const before = m.month < s.listing_month;
                         return monthMetrics.map((mt, j) => {
                           const v = cellMetric(s.months[m.month], mt.key, s.unit_cost);
@@ -2293,6 +2505,31 @@ export function KqkdView() {
                 })}
               </tbody>
             </table>
+            {filterOpen && (
+              <ColumnFilterPopover
+                key={filterOpen.key}
+                open={filterOpen}
+                options={filterOptions}
+                selected={colFilters[filterOpen.key]}
+                sortDir={sort?.key === filterOpen.key ? sort.dir : null}
+                textSort={TEXT_SORT_KEYS.has(filterOpen.key)}
+                onSort={(dir) => {
+                  setSort({ key: filterOpen.key, dir });
+                  setFilterOpen(null);
+                }}
+                onApply={(next) => {
+                  const key = filterOpen.key;
+                  setColFilters((prev) => {
+                    const out = { ...prev };
+                    if (next) out[key] = next;
+                    else delete out[key];
+                    return out;
+                  });
+                  setFilterOpen(null);
+                }}
+                onClose={closeFilter}
+              />
+            )}
           </AccountingViewTransition>
         )}
       </div>

@@ -72,6 +72,53 @@ body {
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
 }
 
+/* Mục Accounting: mọi đường kẻ trong bảng màu đen (giống bảng SKU Testing).
+   Áp cho Accounting + PPC (gắn lớp acc-black-grid ở khung ngoài). */
+.acc-black-grid table th,
+.acc-black-grid table td,
+.acc-black-grid table tr,
+.acc-black-grid table thead,
+.acc-black-grid table tbody,
+.acc-black-grid table tfoot {
+  border-color: #000 !important;
+}
+
+/* Thêm vạch dọc giữa các cột (bảng nào chỉ có vạch ngang cũng thành lưới ô). Bỏ cột cuối để không chồng viền khung. */
+.acc-black-grid table th:not(:last-child),
+.acc-black-grid table td:not(:last-child) {
+  border-right: 1px solid #000;
+}
+
+/* Hàng tiêu đề: nền riêng cho khác phần giá trị. Chỉ tô ô tiêu đề đang nền trắng / xám nhạt / chưa có nền,
+   giữ nguyên các tiêu đề đã có màu riêng (vd. bảng SKU Testing). Chỉ tính nền cố định "bg-…"/"!bg-…",
+   không tính nền theo trạng thái như "hover:bg-…".
+   !important: cột khóa PPC (ppc-frozen-cell) gắn background-color inline theo màu dòng. */
+.acc-black-grid table thead th:not([class^="bg-"]):not([class*=" bg-"]):not([class*="!bg-"]),
+.acc-black-grid table thead th:is([class~="bg-white"], [class~="bg-slate-50"], [class~="bg-slate-100"], [class~="bg-gray-50"], [class~="bg-gray-100"], [class*="bg-slate-50/"], [class*="bg-white/"]) {
+  background-color: #dbe5f1 !important;
+}
+
+/* Cột khóa PPC (sticky): ô ghim đè lên đường kẻ của bảng nên vạch dọc bị mờ / mất → bỏ viền phải của ô,
+   vẽ vạch đen 1px ngay trong ô (không cộng dồn thành vạch dày). Cột cuối vùng khóa thêm bóng mờ như cũ. */
+.acc-black-grid table .ppc-frozen-cell {
+  border-right-width: 0 !important;
+  box-shadow: inset -1px 0 0 0 #000;
+}
+.acc-black-grid table .ppc-frozen-boundary {
+  box-shadow: inset -1px 0 0 0 #000, 4px 0 6px -2px rgba(15, 23, 42, 0.08);
+}
+
+/* Đường ngăn tiêu đề với phần giá trị đậm hơn */
+.acc-black-grid table thead tr:last-child th {
+  border-bottom: 2px solid #000;
+}
+
+/* Ô chỉ có dấu gạch giữ chỗ ("—") → để trống (AccBlackGrid gắn data-acc-blank) */
+.acc-black-grid table td[data-acc-blank],
+.acc-black-grid table td[data-acc-blank] * {
+  color: transparent !important;
+}
+
 /* Xóa bỏ hoàn toàn các kiểu in đậm quá đà (font-black, font-extrabold) gây chói mắt */
 .font-accounting-system .font-black,
 .font-accounting-system .font-extrabold {
@@ -130,8 +177,8 @@ body {
 .font-accounting-system table tbody td.col-sku div,
 .font-accounting-system table tbody td [class*="font-bold"],
 .font-accounting-system table tbody td.font-bold,
-.font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center),
-.font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center) *,
+.font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center):not(.acc-normal-weight),
+.font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center):not(.acc-normal-weight) *,
 .font-accounting-system table tbody tr > td:first-child:has(input[type="checkbox"]) + td,
 .font-accounting-system table tbody tr > td:first-child:has(input[type="checkbox"]) + td *,
 .font-accounting-system table tbody tr > td.text-center:first-child + td,

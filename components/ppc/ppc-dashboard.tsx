@@ -3690,7 +3690,7 @@ export function PpcDashboard({
               <thead title="Chuột phải vào tiêu đề cột để khóa cột" className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-3.5 min-w-[280px]">Campaign Name</th>
-                  <th className="py-3 px-3">Store</th>
+                  {selectedStore === "ALL" && <th className="py-3 px-3">Store</th>}
                   <th className="py-3 px-3">Ad / Targeting</th>
                   <th className="py-3 px-3">State / Budget</th>
                   <th
@@ -3767,7 +3767,7 @@ export function PpcDashboard({
               <tbody className="divide-y divide-slate-100 font-normal">
                 {(loading || isStoreSwitching || loadingSection === "campaigns" || loadingCampaignPage) ? (
                   <tr>
-                    <td colSpan={14} className="py-16 text-center text-slate-500">
+                    <td colSpan={selectedStore === "ALL" ? 14 : 13} className="py-16 text-center text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={26} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-sm text-slate-800">Đang tải danh sách Campaign cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
@@ -3777,7 +3777,7 @@ export function PpcDashboard({
                   </tr>
                 ) : filteredSortedCampaigns.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="py-12 text-center text-slate-400">
+                    <td colSpan={selectedStore === "ALL" ? 14 : 13} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         <FolderSimple size={24} className="text-slate-300" />
                         <span className="font-semibold text-slate-600">Không tìm thấy campaign phù hợp bộ lọc</span>
@@ -3798,8 +3798,8 @@ export function PpcDashboard({
 
                     return (
                       <tr key={i} className="hover:bg-slate-50/80 transition group">
-                        {/* Campaign Name: Clickable to view Targets directly (IN ĐẬM) */}
-                        <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px] col-primary font-bold">
+                        {/* Campaign Name: Clickable to view Targets directly (in thường) */}
+                        <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px] acc-normal-weight">
                           <button
                             type="button"
                             onClick={() => {
@@ -3810,14 +3810,14 @@ export function PpcDashboard({
                               setTargetPage(1);
                               setActiveTab("targets");
                             }}
-                            className="text-left font-bold text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
+                            className="text-left text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
                             title="Nhấn vào tên Campaign để xem các Target / Keyword của Campaign này"
                           >
                             {c.campaignName}
                           </button>
                         </td>
 
-                        <td className="py-2.5 px-3 text-slate-500 font-normal whitespace-nowrap">{c.storeName}</td>
+                        {selectedStore === "ALL" && <td className="py-2.5 px-3 text-slate-500 font-normal whitespace-nowrap">{c.storeName}</td>}
 
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-normal bg-slate-100 text-slate-700">
@@ -4697,7 +4697,7 @@ export function PpcDashboard({
                 <tr>
                   <th className="py-3 px-2 text-center w-12">Ảnh</th>
                   <th className="py-3 px-3.5">SKU</th>
-                  <th className="py-3 px-2.5">Store</th>
+                  {selectedStore === "ALL" && <th className="py-3 px-2.5">Store</th>}
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() => handleSort("impressions", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
@@ -4747,7 +4747,7 @@ export function PpcDashboard({
               <tbody className="divide-y divide-slate-100 font-medium">
                 {(loading || isStoreSwitching || loadingSection === "skus" || loadingSkuEcon) ? (
                   <tr>
-                    <td colSpan={12} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={selectedStore === "ALL" ? 12 : 11} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải danh sách SKU cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
@@ -4756,7 +4756,7 @@ export function PpcDashboard({
                   </tr>
                 ) : paginatedSkus.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center text-xs text-slate-400">
+                    <td colSpan={selectedStore === "ALL" ? 12 : 11} className="p-8 text-center text-xs text-slate-400">
                       Không tìm thấy SKU nào trong kỳ đang chọn.
                     </td>
                   </tr>
@@ -4810,7 +4810,7 @@ export function PpcDashboard({
                           {s.sku}
                         </button>
                       </td>
-                      <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
+                      {selectedStore === "ALL" && <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>}
                       <td className="py-2.5 px-3 text-right font-medium text-slate-700">
                         {s.impressions ? s.impressions.toLocaleString() : "0"}
                       </td>

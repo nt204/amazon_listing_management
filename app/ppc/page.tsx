@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { PpcDashboard } from "@/components/ppc/ppc-dashboard";
+import { AccBlackGrid } from "@/components/accounting/acc-black-grid";
 import { resolveActorFromHeaders } from "@/lib/auth-server";
 
 export const metadata: Metadata = {
@@ -24,13 +25,13 @@ export default async function PpcPage({
   const params = await searchParams;
 
   return (
-    <div className="font-accounting-system min-h-screen bg-slate-50">
+    <AccBlackGrid className="font-accounting-system min-h-screen bg-slate-50">
       <PpcDashboard
         actor={actor}
         initialTab={params.tab as any}
         initialSubTab={params.subTab as any}
         initialStore={params.store}
       />
-    </div>
+    </AccBlackGrid>
   );
 }

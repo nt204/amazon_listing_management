@@ -79,3 +79,8 @@ test("monthly buckets can compare with the same month last year", () => {
   assert.deepEqual(previousMonthRange("2026-10-01", "2026-10-25", 12), { startDate: "2025-10-01", endDate: "2025-10-25" });
   assert.deepEqual(previousMonthRange("2028-02-01", "2028-02-29", 12), { startDate: "2027-02-01", endDate: "2027-02-28" });
 });
+
+test("compare day: so với hôm qua, kể cả ngày mùng 1 (không nhảy về tháng trước)", () => {
+  const p = resolveDashboardPeriods("2026-11-01", "2026-11-01", "2026-11-09", "day");
+  assert.deepEqual(p.previous, { startDate: "2026-10-31", endDate: "2026-10-31" });
+});
