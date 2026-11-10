@@ -116,6 +116,24 @@ async function liveMonth(storeId: string, period: string, today: string): Promis
 }
 
 /** Kết quả mọi SKU của 1 tháng + nguồn số */
+// Phí chủ store (âm) đúng quy tắc scripts/ingest_monthly_from_raw.py (app_settings 'accounting:store_owner_fee'):
+// từ tháng start_period, doanh thu > ngưỡng thì rate × doanh thu, không thì fixed_vnd / tỷ giá.
+async function ownerFeeOf(period: string, revenue: number): Promise<number> {
+  const sql = await getDatabaseClient();
+  const [row] = await sql<{ value: unknown }[]>`SELECT value FROM app_settings WHERE key = 'accounting:store_owner_fee' LIMIT 1`;
+  let cfg: Record<string, unknown> = {};
+  try {
+    cfg = ((typeof row?.value === "string" ? JSON.parse(row.value) : row?.value) as Record<string, unknown>) ?? {};
+  } catch {
+    cfg = {};
+  }
+  const num = (v: unknown, d: number) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
+  const start = typeof cfg.start_period === "string" ? cfg.start_period : "2026-09";
+  if (period < start) return 0;
+  const threshold = num(cfg.revenue_threshold, 20000);
+  return -(revenue > threshold ? revenue * num(cfg.rate, 0.005) : num(cfg.fixed_vnd, 1_000_000) / num(cfg.usd_vnd_rate, 25000));
+}
+
 async function monthActuals(
   storeId: string,
   period: string,
@@ -128,8 +146,8 @@ async function monthActuals(
   if (period > currentPeriod) return { source: "none", data: new Map() };
   const [y, m] = period.split("-").map(Number);
 
-  const [closed] = await sql<{ awd: string | null }[]>`
-    SELECT awd_subscription_fees AS awd FROM accounting_monthly_store_summary
+  const [closed] = await sql<{ awd: string | null; revenue: string | null }[]>`
+    SELECT awd_subscription_fees AS awd, total_revenue AS revenue FROM accounting_monthly_store_summary
     WHERE store_id = ${storeId} AND year = ${y} AND month = ${m} LIMIT 1
   `;
   if (closed && period !== currentPeriod) {
@@ -172,8 +190,10 @@ async function monthActuals(
         profit,
       });
     }
-    // Phí AWD/Subscription/Disposal cấp store (không gắn SKU) — sheet cộng vào Gross Profit của BÁO CÁO THÁNG
-    return { source: "closed", data, storeFee: closed.awd == null ? null : -n(closed.awd) };
+    // Phí AWD/Subscription/Disposal cấp store (không gắn SKU) — sheet cộng vào Gross Profit của BÁO CÁO THÁNG.
+    // Ô awd_subscription_fees khi chốt sổ đã cộng cả phí chủ store; KPI là của SKU nên không trừ phí chủ store.
+    const storeFee = closed.awd == null ? null : -(n(closed.awd) - (await ownerFeeOf(period, n(closed.revenue))));
+    return { source: "closed", data, storeFee };
   }
 
   const hist = await sql<Record<string, string | number | null>[]>`
