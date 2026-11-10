@@ -11,6 +11,7 @@ import {
   WarningCircleIcon,
   XIcon,
   ChartLineUpIcon,
+  TargetIcon,
   CaretDownIcon,
   ReceiptIcon,
   SquaresFourIcon,
@@ -131,6 +132,7 @@ type AccountingSection =
   | "import"
   | "financials"
   | "kqkd"
+  | "kpi"
   | "reports"
   | "admin"
   | "access"
@@ -800,6 +802,29 @@ function WorkspaceSidebar({
                     </div>
                   </button>
 
+                  {/* 7. KPI kinh doanh — KPI tháng của team (Tổng quan, SKU phát triển, SKU test) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("kpi");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
+                      accountingSection === "kpi"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <TargetIcon
+                      size={17}
+                      weight={accountingSection === "kpi" ? "fill" : "duotone"}
+                      className={`shrink-0 ${accountingSection === "kpi" ? "text-indigo-600" : "text-slate-400"}`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-[13px]">KPI kinh doanh</span>
+                    </div>
+                  </button>
+
                   {/* 6. Reports */}
                   <button
                     type="button"
@@ -1168,6 +1193,7 @@ export function ListingWorkspace({
         "import",
         "financials",
         "kqkd",
+        "kpi",
         "reports",
         "admin",
         "access",
@@ -1447,6 +1473,8 @@ export function ListingWorkspace({
                                 ? "Accounting - Financials (Tài Chính)"
                                 : accountingSection === "kqkd"
                                   ? "Accounting - KQKD SKU Testing"
+                                : accountingSection === "kpi"
+                                  ? "Accounting - KPI kinh doanh"
                                 : accountingSection === "reports" ||
                                   accountingSection === "pnl" ||
                                   accountingSection === "settlements"

@@ -75,6 +75,41 @@ async function sheetsGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Tên file + danh sách tab của 1 spreadsheet */
+export async function readSpreadsheetMeta(url: string): Promise<{ spreadsheetId: string; title: string; tabs: string[] }> {
+  const spreadsheetId = parseSpreadsheetId(url);
+  if (!spreadsheetId) {
+    throw new ApiError("Link không phải Google Sheet hợp lệ (cần dạng docs.google.com/spreadsheets/d/...).", 400);
+  }
+  const meta = await sheetsGet<{ properties: { title: string }; sheets: { properties: { title: string } }[] }>(
+    `${spreadsheetId}?fields=properties.title,sheets.properties.title`,
+  );
+  return { spreadsheetId, title: meta.properties.title, tabs: meta.sheets.map((s) => s.properties.title) };
+}
+
+/**
+ * Đọc một số cột (theo chữ cột A, B, AD…) của 1 tab — dùng cho tab thô rất dài, chỉ cần vài cột.
+ * Mỗi cột trả về mảng giá trị thô theo dòng (phần tử 0 = dòng 1); đuôi trống bị Google cắt nên độ dài có thể khác nhau.
+ */
+export async function readSpreadsheetColumns(
+  spreadsheetId: string,
+  tab: string,
+  columns: string[],
+): Promise<Record<string, (string | number | null)[]>> {
+  const qs = columns
+    .map((c) => `ranges=${encodeURIComponent(`'${tab.replace(/'/g, "''")}'!${c}:${c}`)}`)
+    .join("&");
+  const data = await sheetsGet<{ valueRanges: { values?: (string | number | boolean)[][] }[] }>(
+    `${spreadsheetId}/values:batchGet?${qs}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER&majorDimension=COLUMNS`,
+  );
+  const out: Record<string, (string | number | null)[]> = {};
+  columns.forEach((c, i) => {
+    const values = data.valueRanges[i]?.values?.[0] ?? [];
+    out[c] = values.map((cell) => (cell === "" ? null : typeof cell === "boolean" ? String(cell) : cell));
+  });
+  return out;
+}
+
 /**
  * Đọc toàn bộ 1 tab. pickTab nhận danh sách tên tab và trả về tab cần đọc.
  * Giá trị số trả về dạng số thô (15% → 0.15). Ô ngày trả về serial number của Google

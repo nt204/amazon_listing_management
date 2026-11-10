@@ -164,6 +164,10 @@ const KqkdView = dynamic(
   () => import("./kqkd-view").then((module) => module.KqkdView),
   { loading: AccountingSectionLoading },
 );
+const KpiView = dynamic(
+  () => import("./kpi-view").then((module) => module.KpiView),
+  { loading: AccountingSectionLoading },
+);
 const AccountingAccessView = dynamic(
   () => import("./accounting-access-view").then((module) => module.AccountingAccessView),
   { loading: AccountingSectionLoading },
@@ -182,6 +186,7 @@ export type AccountingModuleKey =
   | "orders"
   | "financials"
   | "kqkd"
+  | "kpi"
   | "reports"
   | "admin"
   | "access"
@@ -411,6 +416,15 @@ export function AccountingWorkspace({
     return (
       <AccountingSectionShell sectionKey="kqkd">
         <KqkdView />
+      </AccountingSectionShell>
+    );
+  }
+
+  // KPI kinh doanh — file "<STORE> - KẾ HOẠCH KINH DOANH": BÁO CÁO THÁNG, CHI TIẾT SKU, CHI TIẾT SKU TEST
+  if (effectiveSection === "kpi") {
+    return (
+      <AccountingSectionShell sectionKey="kpi">
+        <KpiView />
       </AccountingSectionShell>
     );
   }
