@@ -56,6 +56,8 @@ export interface KpiResult {
   period: string;
   periods: { prev: string; cur: string; next: string; ly: string; lyNext: string };
   sources: Record<"prev" | "cur" | "ly" | "lyNext", KpiMonthSource>;
+  /** Phí AWD/Subscription/Disposal cấp store (chi phí dương), chỉ có ở tháng đã chốt */
+  storeFees: Record<"prev" | "cur" | "ly" | "lyNext", number | null>;
   skus: KpiSku[];
   note: { note: string; updated_by: string | null; updated_at: string | null } | null;
   /** Các năm đã nạp số từ file TỔNG KẾT (để giao diện báo thiếu) */
@@ -111,19 +113,24 @@ async function liveMonth(storeId: string, period: string, today: string): Promis
 }
 
 /** Kết quả mọi SKU của 1 tháng + nguồn số */
-async function monthActuals(storeId: string, period: string, today: string): Promise<{ source: KpiMonthSource; data: Map<string, KpiMetrics> }> {
+async function monthActuals(
+  storeId: string,
+  period: string,
+  today: string,
+): Promise<{ source: KpiMonthSource; data: Map<string, KpiMetrics>; storeFee?: number | null }> {
   const sql = await getDatabaseClient();
   const currentPeriod = today.slice(0, 7);
   if (period > currentPeriod) return { source: "none", data: new Map() };
   const [y, m] = period.split("-").map(Number);
 
-  const [closed] = await sql<{ ok: number }[]>`
-    SELECT 1 AS ok FROM accounting_monthly_store_summary WHERE store_id = ${storeId} AND year = ${y} AND month = ${m} LIMIT 1
+  const [closed] = await sql<{ awd: string | null }[]>`
+    SELECT awd_subscription_fees AS awd FROM accounting_monthly_store_summary
+    WHERE store_id = ${storeId} AND year = ${y} AND month = ${m} LIMIT 1
   `;
   if (closed && period !== currentPeriod) {
     const rows = await sql<Record<string, string | number | null>[]>`
       SELECT sku, revenue, quantity, ads_fee, basecost, amazon_fee_unrecognized, amazon_fee_trans, thue, return_amount,
-             adjustment, storage_fee, placement_fee, profit
+             adjustment, basecost_adjustment, storage_fee, placement_fee, profit
       FROM accounting_sku_monthly WHERE store_id = ${storeId} AND year = ${y} AND month = ${m}
     `;
     const data = new Map<string, KpiMetrics>();
@@ -135,7 +142,8 @@ async function monthActuals(storeId: string, period: string, today: string): Pro
       const amazon = -(n(r.amazon_fee_unrecognized) + n(r.amazon_fee_trans));
       const thue = -n(r.thue);
       const ret = -n(r.return_amount);
-      const adjustment = -n(r.adjustment);
+      // Sheet (INPUT KQ hiện tại, cột Adjustment) = Adjustment + Basecost Adjustment
+      const adjustment = -(n(r.adjustment) + n(r.basecost_adjustment));
       const storage = -n(r.storage_fee);
       const placement = -n(r.placement_fee);
       const profit = n(r.profit);
@@ -155,7 +163,8 @@ async function monthActuals(storeId: string, period: string, today: string): Pro
         profit,
       });
     }
-    return { source: "closed", data };
+    // Phí AWD/Subscription/Disposal cấp store (không gắn SKU) — sheet cộng vào Gross Profit của BÁO CÁO THÁNG
+    return { source: "closed", data, storeFee: closed.awd == null ? null : -n(closed.awd) };
   }
 
   const hist = await sql<Record<string, string | number | null>[]>`
@@ -327,6 +336,7 @@ export async function getKpi(storeId: string, period: string, options: { refresh
     period,
     periods,
     sources: { prev: prev.source, cur: cur.source, ly: ly.source, lyNext: lyNext.source },
+    storeFees: { prev: prev.storeFee ?? null, cur: cur.storeFee ?? null, ly: ly.storeFee ?? null, lyNext: lyNext.storeFee ?? null },
     skus,
     note,
     historyYears: historyYearRows.map((r) => Number(r.y)),

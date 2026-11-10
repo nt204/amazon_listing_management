@@ -73,6 +73,7 @@ interface KpiData {
   period: string;
   periods: { prev: string; cur: string; next: string; ly: string; lyNext: string };
   sources: Record<"prev" | "cur" | "ly" | "lyNext", Source>;
+  storeFees?: Record<"prev" | "cur" | "ly" | "lyNext", number | null>;
   skus: KpiSku[];
   note: { note: string; updated_by: string | null; updated_at: string | null } | null;
   historyYears: number[];
@@ -102,8 +103,8 @@ const GROUP_LABEL = { dev: "SKU phát triển", test: "SKU test" } as const;
 
 // Dòng của bảng P&L — đúng thứ tự tab BÁO CÁO THÁNG: Gross Profit chưa trừ Adjustment / Placement Fee,
 // hai khoản này nằm dưới; "Profit SKU" = sau cả hai (= cột Profit của CHI TIẾT SKU).
-type PlKey = keyof KpiMetrics | "tacos" | "gross";
-const PL_ROWS: { key: PlKey; label: string; kind: "usd" | "int" | "pct"; cost?: boolean; strong?: boolean; sub?: boolean }[] = [
+type PlKey = keyof KpiMetrics | "tacos" | "gross" | "store_fee";
+const PL_ROWS: { key: PlKey; label: string; kind: "usd" | "int" | "pct"; cost?: boolean; strong?: boolean; sub?: boolean; storeOnly?: boolean }[] = [
   { key: "revenue", label: "Revenue", kind: "usd", strong: true },
   { key: "quantity", label: "Quantity", kind: "int" },
   { key: "ads_fee", label: "Ads Fee", kind: "usd", cost: true },
@@ -116,16 +117,20 @@ const PL_ROWS: { key: PlKey; label: string; kind: "usd" | "int" | "pct"; cost?: 
   { key: "return_amount", label: "Return", kind: "usd", cost: true },
   { key: "storage_fee", label: "Chi phí lưu kho", kind: "usd", cost: true },
   { key: "other_fee", label: "CP khác", kind: "usd", cost: true },
+  // Phí cấp store, không gắn SKU — chỉ ở trang Tổng quan (sheet: 'INPUT KQ hiện tại'!AE2 cộng vào Gross Profit)
+  { key: "store_fee", label: "AWD/Subscription/Disposal Fee", kind: "usd", cost: true, storeOnly: true },
   { key: "gross", label: "Gross Profit", kind: "usd", strong: true },
   { key: "adjustment", label: "Adjustment", kind: "usd", cost: true, sub: true },
   { key: "placement_fee", label: "Placement Fee", kind: "usd", cost: true, sub: true },
   { key: "profit", label: "Profit SKU (sau Adj. + Placement)", kind: "usd", strong: true },
 ];
 
-function metricValue(m: KpiMetrics | null | undefined, key: PlKey): number | null {
+/** storeFee: phí AWD/Subscription cấp store của tháng (chỉ trang Tổng quan); Gross Profit trừ phí này như sheet */
+function metricValue(m: KpiMetrics | null | undefined, key: PlKey, storeFee: number | null = null): number | null {
   if (!m) return null;
   if (key === "tacos") return tacosOf(m);
-  if (key === "gross") return grossProfit(m);
+  if (key === "store_fee") return storeFee;
+  if (key === "gross") return (grossProfit(m) ?? 0) - (storeFee ?? 0);
   return m[key];
 }
 function fmtMetric(v: number | null, kind: "usd" | "int" | "pct") {
@@ -298,6 +303,7 @@ function OverviewPage({
   const tNext = a.hasTNext ? a.tNext : null;
   const testTCur = t.hasTCur ? t.tCur : null;
   const testTNext = t.hasTNext ? t.tNext : null;
+  const fees = data.storeFees ?? { prev: null, cur: null, ly: null, lyNext: null };
 
   const [note, setNote] = useState(data.note?.note ?? "");
   const [savingNote, setSavingNote] = useState(false);
@@ -310,7 +316,14 @@ function OverviewPage({
     <div className="flex flex-col gap-3 p-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <Tile label={`Revenue SKU phát triển ${periodLabel(periods.cur)}`} actual={a.cur.revenue} target={tCur?.revenue ?? null} prev={a.prev.revenue} ly={lyOk ? a.ly.revenue : null} kind="usd" />
-        <Tile label="Gross Profit" actual={grossProfit(a.cur)} target={grossProfit(tCur)} prev={grossProfit(a.prev)} ly={lyOk ? grossProfit(a.ly) : null} kind="usd" />
+        <Tile
+          label="Gross Profit"
+          actual={metricValue(a.cur, "gross", fees.cur)}
+          target={grossProfit(tCur)}
+          prev={metricValue(a.prev, "gross", fees.prev)}
+          ly={lyOk ? metricValue(a.ly, "gross", fees.ly) : null}
+          kind="usd"
+        />
         <Tile label="Quantity" actual={a.cur.quantity} target={tCur?.quantity ?? null} prev={a.prev.quantity} ly={lyOk ? a.ly.quantity : null} kind="int" />
         <Tile label="TACoS" actual={tacosOf(a.cur)} target={tacosOf(tCur)} prev={tacosOf(a.prev)} ly={lyOk ? tacosOf(a.ly) : null} kind="pct" cost />
       </div>
@@ -349,23 +362,23 @@ function OverviewPage({
             </thead>
             <tbody>
               {PL_ROWS.map((r) => {
-                const v = (m: KpiMetrics | null | undefined) => metricValue(m, r.key);
-                const cur = v(a.cur);
+                const v = (m: KpiMetrics | null | undefined, fee: number | null = null) => metricValue(m, r.key, fee);
+                const cur = v(a.cur, fees.cur);
                 const isPct = r.kind === "pct";
                 const ach = r.cost ? null : achievement(cur, v(tCur));
-                const gp = isPct ? null : growth(cur, v(a.prev));
-                const gl = isPct || !lyOk ? null : growth(cur, v(a.ly));
+                const gp = isPct ? null : growth(cur, v(a.prev, fees.prev));
+                const gl = isPct || !lyOk ? null : growth(cur, v(a.ly, fees.ly));
                 return (
                   <tr key={r.key} className={`border-b border-slate-100 ${r.strong ? "bg-slate-50/50 font-bold" : ""}`}>
                     <td className={`sticky left-0 z-10 whitespace-nowrap bg-white py-1.5 text-left ${r.sub ? "pl-6 pr-3 font-medium text-slate-600" : "px-3 font-semibold text-slate-800"}`}>{r.label}</td>
-                    <td className={`${td} border-l border-slate-200 text-slate-600`}>{fmtMetric(v(a.prev), r.kind)}</td>
-                    <td className={`${td} text-slate-600`}>{lyOk ? fmtMetric(v(a.ly), r.kind) : ""}</td>
+                    <td className={`${td} border-l border-slate-200 text-slate-600`}>{fmtMetric(v(a.prev, fees.prev), r.kind)}</td>
+                    <td className={`${td} text-slate-600`}>{lyOk ? fmtMetric(v(a.ly, fees.ly), r.kind) : ""}</td>
                     <td className={`${td} bg-amber-50/40`}>{fmtMetric(v(tCur), r.kind)}</td>
                     <td className={`${td} bg-blue-50/40 font-semibold text-slate-900`}>{fmtMetric(cur, r.kind)}</td>
                     <td className={`${td} font-bold ${achieveTone(ach)}`}>{fmtPct(ach)}</td>
                     <td className={`${td} ${growthTone(gp, r.cost)}`}>{signed(gp)}</td>
                     <td className={`${td} ${growthTone(gl, r.cost)}`}>{signed(gl)}</td>
-                    <td className={`${td} border-l border-slate-200 text-slate-600`}>{lyNextOk ? fmtMetric(v(a.lyNext), r.kind) : ""}</td>
+                    <td className={`${td} border-l border-slate-200 text-slate-600`}>{lyNextOk ? fmtMetric(v(a.lyNext, fees.lyNext), r.kind) : ""}</td>
                     <td className={`${td} font-semibold`}>{fmtMetric(v(tNext), r.kind)}</td>
                     <td className={td}>{fmtMetric(v(testTNext), r.kind)}</td>
                     <td className={`${td} bg-indigo-50/40 ${growthTone(isPct ? null : growth(v(tNext), cur), r.cost)}`}>{isPct ? "" : signed(growth(v(tNext), cur))}</td>
@@ -996,7 +1009,7 @@ function SkuDrawer({
                 </tr>
               </thead>
               <tbody>
-                {PL_ROWS.map((r) => (
+                {PL_ROWS.filter((r) => !r.storeOnly).map((r) => (
                   <tr key={r.key} className={`border-b border-slate-100 ${r.strong ? "font-bold" : ""}`}>
                     <td className="px-2.5 py-1.5 text-slate-700">{r.label}</td>
                     {cols.map((c) => {
