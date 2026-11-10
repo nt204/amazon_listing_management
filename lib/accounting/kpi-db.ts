@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { listSkuWin } from "@/lib/accounting/sku-win-db";
 import { readSpreadsheetColumns, readSpreadsheetMeta } from "@/lib/google/sheets";
-import { shiftPeriod, splitTax, type KpiMetrics, type KpiTargetInput } from "@/lib/accounting/kpi-calc";
+import { residualOther, shiftPeriod, splitTax, type KpiMetrics, type KpiTargetInput } from "@/lib/accounting/kpi-calc";
 
 // Mục "KPI kinh doanh" — file "<STORE> - KẾ HOẠCH KINH DOANH 2026" (team FBA):
 // - BÁO CÁO THÁNG: tổng team = SKU phát triển + SKU test.
@@ -105,6 +105,7 @@ async function liveMonth(storeId: string, period: string, today: string): Promis
       other_fee: known - it.profit,
       adjustment: 0,
       placement_fee: 0,
+      storage_other: known - it.profit,
       profit: it.profit,
     });
   }
@@ -117,6 +118,8 @@ async function monthActuals(
   storeId: string,
   period: string,
   today: string,
+  /** Số năm trước: 'monthly' = tab SKU-monthly (cột cùng kỳ), 'tonghop' = tab tổng hợp (cột cùng kỳ tháng sau) */
+  variant: "monthly" | "tonghop" = "monthly",
 ): Promise<{ source: KpiMonthSource; data: Map<string, KpiMetrics>; storeFee?: number | null }> {
   const sql = await getDatabaseClient();
   const currentPeriod = today.slice(0, 7);
@@ -130,7 +133,8 @@ async function monthActuals(
   if (closed && period !== currentPeriod) {
     const rows = await sql<Record<string, string | number | null>[]>`
       SELECT sku, revenue, quantity, ads_fee, basecost, amazon_fee_unrecognized, amazon_fee_trans, thue, return_amount,
-             adjustment, basecost_adjustment, storage_fee, placement_fee, profit
+             adjustment, basecost_adjustment, storage_fee, placement_fee, long_term_fee, fba_customer_return_fee,
+             liquidations, basecost_return_adjustment, removal, profit
       FROM accounting_sku_monthly WHERE store_id = ${storeId} AND year = ${y} AND month = ${m}
     `;
     const data = new Map<string, KpiMetrics>();
@@ -156,10 +160,13 @@ async function monthActuals(
         ...splitTax(thue, ads, revenue),
         return_amount: ret,
         storage_fee: storage,
-        // CP khác = Long-term, Customer return fee, Liquidations, Basecost return/adjustment, Removal…
-        other_fee: revenue - ads - basecost - amazon - thue - ret - adjustment - storage - placement - profit,
+        // CP khác như sheet ('INPUT KQ hiện tại'!AO = P+Q+R+S+T):
+        // Long-Term + FBA Customer Return Fee + Liquidations + Basecost Return/Adjustment + Removal
+        other_fee: -(n(r.long_term_fee) + n(r.fba_customer_return_fee) + n(r.liquidations) + n(r.basecost_return_adjustment) + n(r.removal)),
         adjustment,
         placement_fee: placement,
+        // INPUT tháng trước: "Lưu kho + CP khác" = mọi khoản còn lại của SKU (M..T)
+        storage_other: revenue - ads - basecost - amazon - thue - ret - profit,
         profit,
       });
     }
@@ -168,29 +175,32 @@ async function monthActuals(
   }
 
   const hist = await sql<Record<string, string | number | null>[]>`
-    SELECT sku, revenue, quantity, ads_fee, basecost, amazon_fee, thue, ads_tax, tncn_tax, ref_tax, return_amount,
-           storage_fee, other_fee, adjustment, placement_fee, profit
+    SELECT DISTINCT ON (sku) sku, revenue, quantity, ads_fee, basecost, amazon_fee, thue, return_amount,
+           storage_fee, other_fee, adjustment, placement_fee, storage_other, profit
     FROM accounting_kpi_sku_history WHERE store_id = ${storeId} AND period = ${period}
+    ORDER BY sku, (variant = ${variant}) DESC
   `;
   if (hist.length) {
     const data = new Map<string, KpiMetrics>();
     for (const r of hist) {
-      data.set(String(r.sku), {
-        revenue: n(r.revenue),
+      // Thuế tách như sheet: Ads tax = 10% Ads, TNCN = 1% Rev, Ref tax = Thuế − hai khoản trên
+      const revenue = n(r.revenue);
+      const ads = n(r.ads_fee);
+      const m = {
+        revenue,
         quantity: n(r.quantity),
-        ads_fee: n(r.ads_fee),
+        ads_fee: ads,
         basecost: n(r.basecost),
         amazon_fee: n(r.amazon_fee),
-        ads_tax: n(r.ads_tax),
-        tncn_tax: n(r.tncn_tax),
-        ref_tax: n(r.ref_tax),
+        ...splitTax(n(r.thue), ads, revenue),
         return_amount: n(r.return_amount),
         storage_fee: n(r.storage_fee),
         other_fee: n(r.other_fee),
         adjustment: n(r.adjustment),
         placement_fee: n(r.placement_fee),
         profit: n(r.profit),
-      });
+      };
+      data.set(String(r.sku), { ...m, storage_other: r.storage_other == null ? residualOther(m) : n(r.storage_other) });
     }
     return { source: "history", data };
   }
@@ -265,7 +275,7 @@ export async function getKpi(storeId: string, period: string, options: { refresh
   const prev = await monthActuals(storeId, periods.prev, today);
   const cur = await monthActuals(storeId, periods.cur, today);
   const ly = await monthActuals(storeId, periods.ly, today);
-  const lyNext = await monthActuals(storeId, periods.lyNext, today);
+  const lyNext = await monthActuals(storeId, periods.lyNext, today, "tonghop");
 
   // Price = giá bán đơn gần nhất tới cuối tháng đang xem; Basecost = giá vốn tháng (bảng Giá vốn theo tháng,
   // cùng nguồn kế toán tính Basecost). Cột basecost_tb / giá bình quân tháng hay lệch nên chỉ để dự phòng.
@@ -420,7 +430,8 @@ const RAW_TABS: Record<string, { tab: string; cols: string[]; optional?: boolean
   lk: { tab: "Lưu kho", cols: ["G", "H", "J"], optional: true },
   pl: { tab: "Placement", cols: ["F", "V", "W"], optional: true },
   lt: { tab: "Long-Term", cols: ["D", "L", "O"], optional: true },
-  rm: { tab: "Removal RP", cols: ["G", "S", "U"], optional: true },
+  rm: { tab: "Removal RP", cols: ["G", "O", "S", "U"], optional: true },
+  tp: { tab: "Transparency", cols: ["C", "G"], optional: true },
   tl: { tab: "Thanh lý 2024", cols: ["A", "AC", "AD", "D"], optional: true },
   bm: { tab: "BẢNG MÃ", cols: ["A", "B", "D", "E", "F", "J", "M"] },
 };
@@ -494,22 +505,29 @@ export async function importKpiHistoryFromSheet(
     if (f && !fnskuSku.has(f)) fnskuSku.set(f, sku);
   }
 
-  type Acc = {
-    revenue: number; quantity: number; ads: number; basecost: number; amazon: number; adsTax: number; tncn: number;
-    ret: number; adjustment: number; storage: number; placement: number; other: number;
-  };
+  // Mỗi khoản giữ dấu như sheet (chi phí âm). Hai tab dùng chung phần lớn khoản, khác ở nhóm chi phí khác:
+  //  SKU-monthly: Long-Term, FBA Customer Return Fee, Liquidations, Basecost Return/Adjustment, Removal (+ Removal fee Trans Rp)
+  //  tổng hợp:    Basecost Return/Adjustment, Basecost Removal (−Removal RP S−O), Liquidations, Other fees (Transparency)
+  //  cả hai trừ cột Thanh lý (SL đi trong tháng / SL đã removal 2024).
+  const ACC_FIELDS = [
+    "revenue", "quantity", "ads", "basecost", "amazon", "adsTax", "tncn", "ret", "adjustment", "storage", "placement",
+    "longterm", "custret", "liq", "bra", "removal", "thanhly", "bcRemoval",
+  ] as const;
+  type Acc = Record<(typeof ACC_FIELDS)[number], number>;
   const acc = new Map<string, Acc>();
   const add = (sku: string, month: number | null, field: keyof Acc, value: unknown) => {
     if (month == null || !skus.has(sku)) return;
     const v = Number(value);
     if (!Number.isFinite(v) || v === 0) return;
     const key = `${month}|${sku}`;
-    const cur = acc.get(key) || { revenue: 0, quantity: 0, ads: 0, basecost: 0, amazon: 0, adsTax: 0, tncn: 0, ret: 0, adjustment: 0, storage: 0, placement: 0, other: 0 };
+    let cur = acc.get(key);
+    if (!cur) {
+      cur = Object.fromEntries(ACC_FIELDS.map((f) => [f, 0])) as Acc;
+      acc.set(key, cur);
+    }
     cur[field] += v;
-    acc.set(key, cur);
   };
 
-  // Sheet: chi phí là số âm, Profit = Revenue + SUM(chi phí) − Thanh lý (SL đi trong tháng)
   for (const r of iterRows(raw.bc)) {
     const m = monthOf(r.A);
     const sku = str(r.D);
@@ -533,31 +551,53 @@ export async function importKpiHistoryFromSheet(
     if (m == null) continue;
     if (type === "Refund") {
       add(sku, m, "ret", r.AD);
-      add(sku, m, "other", r.AG);
+      add(sku, m, "bra", r.AG);
     } else if (type === "Adjustment") {
       add(sku, m, "adjustment", r.AD);
-      add(sku, m, "other", r.AG);
-    } else if (type === "FBA Customer Return Fee" || type === "Liquidations") {
-      const s = fnskuSku.get(sku);
-      if (s) add(s, m, "other", r.AD);
+      add(sku, m, "bra", r.AG);
+    } else if (type === "FBA Customer Return Fee") {
+      const s2 = fnskuSku.get(sku);
+      if (s2) add(s2, m, "custret", r.AD);
+    } else if (type === "Liquidations") {
+      const s2 = fnskuSku.get(sku);
+      if (s2) add(s2, m, "liq", r.AD);
     }
     const asin = str(r.AN);
-    if (asin) for (const s of asinSkus.get(asin) || []) add(s, m, "other", r.AD);
+    if (asin) for (const s2 of asinSkus.get(asin) || []) add(s2, m, "custret", r.AD);
     const removalSku = str(r.AO);
-    if (removalSku) add(removalSku, m, "other", r.AD);
+    if (removalSku) add(removalSku, m, "removal", r.AD);
   }
   for (const r of iterRows(raw.lk)) add(str(r.J), monthOf(r.H), "storage", -Number(r.G || 0));
-  for (const r of iterRows(raw.pl)) for (const s of asinSkus.get(str(r.F)) || []) add(s, monthOf(r.W), "placement", -Number(r.V || 0));
-  for (const r of iterRows(raw.lt)) for (const s of asinSkus.get(str(r.D)) || []) add(s, monthOf(r.O), "other", -Number(r.L || 0));
-  for (const r of iterRows(raw.rm)) add(str(r.G), monthOf(r.U), "other", -Number(r.S || 0));
+  for (const r of iterRows(raw.pl)) for (const s2 of asinSkus.get(str(r.F)) || []) add(s2, monthOf(r.W), "placement", -Number(r.V || 0));
+  for (const r of iterRows(raw.lt)) for (const s2 of asinSkus.get(str(r.D)) || []) add(s2, monthOf(r.O), "longterm", -Number(r.L || 0));
+  for (const r of iterRows(raw.rm)) {
+    const m = monthOf(r.U);
+    add(str(r.G), m, "removal", -Number(r.S || 0));
+    add(str(r.G), m, "bcRemoval", -Number(r.S || 0) - Number(r.O || 0));
+  }
   for (const r of iterRows(raw.tl)) {
-    if (str(r.A).toUpperCase() === storeName) add(str(r.D), monthOf(r.AD), "other", -Number(r.AC || 0));
+    if (str(r.A).toUpperCase() === storeName) add(str(r.D), monthOf(r.AD), "thanhly", -Number(r.AC || 0));
+  }
+  // Other fees (tab tổng hợp): =-SUMIFS(Transparency!G, Transparency!C, ASIN) — không lọc tháng, áp cho mọi tháng
+  const otherFeesByAsin = new Map<string, number>();
+  for (const r of iterRows(raw.tp)) {
+    const asin = str(r.C);
+    const v = Number(r.G || 0);
+    if (asin && Number.isFinite(v) && v) otherFeesByAsin.set(asin, (otherFeesByAsin.get(asin) || 0) - v);
   }
 
-  const rows = Array.from(acc.entries()).map(([key, a]) => {
-    const [month, sku] = [Number(key.split("|")[0]), key.slice(key.indexOf("|") + 1)];
+  const rows = Array.from(acc.entries()).flatMap(([key, a]) => {
+    const month = Number(key.split("|")[0]);
+    const sku = key.slice(key.indexOf("|") + 1);
     const meta2 = info.get(sku);
-    const m = {
+    const otherFees = (meta2?.asin && otherFeesByAsin.get(meta2.asin)) || 0;
+    const base = a.revenue + a.ads + a.basecost + a.amazon + a.adsTax + a.tncn + a.ret + a.adjustment + a.storage + a.placement;
+    const common = {
+      period: `${year}-${String(month).padStart(2, "0")}`,
+      sku,
+      asin: meta2?.asin || null,
+      product_type: meta2?.type || null,
+      status: meta2?.status || null,
       revenue: a.revenue,
       quantity: a.quantity,
       ads_fee: -a.ads,
@@ -569,16 +609,33 @@ export async function importKpiHistoryFromSheet(
       ref_tax: 0,
       return_amount: -a.ret,
       storage_fee: -a.storage,
-      other_fee: -a.other,
       adjustment: -a.adjustment,
       placement_fee: -a.placement,
-      profit: a.revenue + a.ads + a.basecost + a.amazon + a.adsTax + a.tncn + a.ret + a.adjustment + a.storage + a.placement + a.other,
     };
-    return { period: `${year}-${String(month).padStart(2, "0")}`, sku, asin: meta2?.asin || null, product_type: meta2?.type || null, status: meta2?.status || null, ...m };
+    // SKU-monthly: Profit = E + SUM(G:T) − AD; "Lưu kho + CP khác" (INPUT cùng kì) = M+N+O+P+Q+R+S
+    const mOther = a.longterm + a.custret + a.liq + a.bra + a.removal + a.thanhly;
+    const monthly = {
+      ...common,
+      variant: "monthly",
+      other_fee: -mOther,
+      storage_other: -(a.adjustment + a.storage + a.placement + a.longterm + a.custret + a.liq + a.bra),
+      profit: base + mOther,
+    };
+    // tổng hợp: Profit = E + SUM(G:S) − Z; "Lưu kho + CP khác" (INPUT cùng kì tháng sau) = M+N+O+P+Q+R+S
+    const tOther = a.bra + a.bcRemoval + a.liq + otherFees + a.thanhly;
+    const tonghop = {
+      ...common,
+      variant: "tonghop",
+      other_fee: -tOther,
+      storage_other: -(a.adjustment + a.storage + a.placement + a.bra + a.bcRemoval + a.liq + otherFees),
+      profit: base + tOther,
+    };
+    return [monthly, tonghop];
   });
 
   const byMonth = new Map<string, { skus: number; revenue: number; profit: number }>();
   for (const r of rows) {
+    if (r.variant !== "monthly") continue;
     const cur = byMonth.get(r.period) || { skus: 0, revenue: 0, profit: 0 };
     cur.skus += 1;
     cur.revenue += r.revenue;
@@ -605,7 +662,7 @@ export async function importKpiHistoryFromSheet(
       await tx`INSERT INTO accounting_kpi_sku_history ${tx(chunk,
         "store_id", "period", "sku", "asin", "product_type", "status", "revenue", "quantity", "ads_fee", "basecost",
         "amazon_fee", "thue", "ads_tax", "tncn_tax", "ref_tax", "return_amount", "storage_fee", "other_fee",
-        "adjustment", "placement_fee", "profit", "source", "imported_by")}`;
+        "adjustment", "placement_fee", "storage_other", "variant", "profit", "source", "imported_by")}`;
     }
   });
   for (const key of Array.from(liveCache.keys())) if (key.startsWith(`${storeId}:`)) liveCache.delete(key);

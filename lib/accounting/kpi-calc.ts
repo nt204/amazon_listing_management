@@ -25,6 +25,8 @@ export interface KpiMetrics {
   other_fee: number;
   adjustment: number;
   placement_fee: number;
+  /** "Lưu kho + CP khác" đúng như cột của sheet ở các nhóm kết quả tháng (công thức tuỳ tab nguồn) */
+  storage_other: number;
   profit: number;
 }
 
@@ -42,6 +44,7 @@ export const KPI_METRIC_KEYS: (keyof KpiMetrics)[] = [
   "other_fee",
   "adjustment",
   "placement_fee",
+  "storage_other",
   "profit",
 ];
 
@@ -78,6 +81,7 @@ export function emptyMetrics(): KpiMetrics {
     other_fee: 0,
     adjustment: 0,
     placement_fee: 0,
+    storage_other: 0,
     profit: 0,
   };
 }
@@ -133,6 +137,7 @@ export function computeTarget(input: KpiTargetInput | null | undefined, unit: Kp
     other_fee: 0,
     adjustment: 0,
     placement_fee: 0,
+    storage_other: storage,
     profit: revenue - ads - basecost - amazon - adsTax - tncn - refTax - ret - storage,
   };
 }
@@ -152,7 +157,24 @@ export function achievement(actual: number | null | undefined, target: number | 
 export function growth(a: number | null | undefined, b: number | null | undefined): number | null {
   // Gốc so sánh dưới $1 (hoặc 1 đơn vị) thì % vô nghĩa → để trống
   if (a == null || b == null || Math.abs(b) < 1) return null;
-  return (a - b) / Math.abs(b);
+  // Như sheet: =IFERROR(a/b-1)
+  return a / b - 1;
+}
+
+/** Tỷ lệ như các cột "[Result] Tăng trưởng" / "Tỷ lệ đạt KPI" của BÁO CÁO THÁNG: =IFERROR(a/b) */
+export function ratioOf(a: number | null | undefined, b: number | null | undefined): number | null {
+  if (a == null || b == null || Math.abs(b) < 1e-9) return null;
+  return a / b;
+}
+
+/** "Lưu kho + CP khác" như CHI TIẾT SKU (các nhóm kết quả tháng): phần còn lại sau các khoản tách riêng */
+export function storageAndOther(m: KpiMetrics): number {
+  return m.storage_other;
+}
+
+/** Phần còn lại sau các khoản tách riêng (= cột "Lưu kho + CP khác" của tab INPUT tháng trước, dữ liệu năm nay) */
+export function residualOther(m: Omit<KpiMetrics, "storage_other">): number {
+  return m.revenue - m.ads_fee - m.basecost - m.amazon_fee - m.ads_tax - m.tncn_tax - m.ref_tax - m.return_amount - m.profit;
 }
 
 export function shiftPeriod(period: string, n: number): string {
@@ -164,4 +186,144 @@ export function shiftPeriod(period: string, n: number): string {
 export function periodLabel(period: string): string {
   const [y, m] = period.split("-");
   return `T${Number(m)}/${y}`;
+}
+
+// ───────────── BÁO CÁO THÁNG (tab "BÁO CÁO THÁNG <n>") ─────────────
+// Tổng team = SKU phát triển; SKU test = dòng "P/L SKU testing".
+// - Cột kết quả tháng cũ (tháng trước, cùng kỳ, cùng kỳ tháng sau): "Chi phí lưu kho" = Lưu kho + CP khác gộp,
+//   Gross Profit = tổng Profit SKU (=SUM cột Profit của CHI TIẾT SKU).
+// - Cột kết quả tháng đang báo cáo: tách Lưu kho / CP khác / Adjustment / Placement Fee;
+//   Gross Profit = SUM(Profit) + AWD/Subscription (ô 'INPUT KQ hiện tại'!AE2) − Adjustment + Placement Fee.
+//   Adjustment hiện dấu như sheet (chi phí là số âm), Placement Fee là số dương.
+// - Tăng trưởng/tháng trước = E/B, Tăng trưởng/cùng kỳ = E/D, Tỷ lệ đạt KPI = E/C (Revenue, Quantity, Ads, TAcos, Gross Profit),
+//   [Target] Tăng trưởng/tháng trước = J/C − 1.
+
+export const REPORT_ROWS = [
+  { key: "revenue", label: "Revenue", kind: "usd" },
+  { key: "quantity", label: "Quantity", kind: "int" },
+  { key: "ads_fee", label: "Ads Fee", kind: "usd" },
+  { key: "basecost", label: "Basecost", kind: "usd" },
+  { key: "amazon_fee", label: "Amazon Fee", kind: "usd" },
+  { key: "tacos", label: "TAcos", kind: "pct" },
+  { key: "ads_tax", label: "Ads tax fee 10% Ads", kind: "usd" },
+  { key: "tncn_tax", label: "TNCN tax 1% Rev", kind: "usd" },
+  { key: "ref_tax", label: "Ref tax", kind: "usd" },
+  { key: "return_amount", label: "Return", kind: "usd" },
+  { key: "storage", label: "Chi phí lưu kho", kind: "usd" },
+  { key: "other_fee", label: "CP khác", kind: "usd" },
+  { key: "gross", label: "Gross Profit", kind: "usd" },
+  { key: "adjustment", label: "Adjustment", kind: "usd" },
+  { key: "placement_fee", label: "Placement Fee", kind: "usd" },
+  { key: "pl_test", label: "P/L SKU testing", kind: "usd" },
+] as const;
+export type ReportRowKey = (typeof REPORT_ROWS)[number]["key"];
+export type ReportCol = "prev" | "tCur" | "ly" | "cur" | "rPrev" | "rLy" | "kpi" | "lyNext" | "tNextDev" | "tNextGrowth" | "tNextTest";
+export type MonthReport = Record<ReportRowKey, Partial<Record<ReportCol, number | null>>>;
+
+export interface MonthReportInput {
+  dev: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null; tCur: KpiMetrics | null; tNext: KpiMetrics | null };
+  test: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null; tNext: KpiMetrics | null };
+  /** Phí AWD/Subscription/Disposal cấp store của tháng đang báo cáo (chi phí dương) */
+  storeFeeCur: number | null;
+}
+
+const KPI_ROWS = new Set<ReportRowKey>(["revenue", "quantity", "ads_fee", "tacos", "gross"]);
+
+function pastValue(m: KpiMetrics | null, key: ReportRowKey): number | null {
+  if (!m) return null;
+  switch (key) {
+    case "tacos":
+      return tacosOf(m);
+    case "storage":
+      return storageAndOther(m);
+    case "gross":
+      return m.profit;
+    case "other_fee":
+    case "adjustment":
+    case "placement_fee":
+    case "pl_test":
+      return null;
+    default:
+      return m[key];
+  }
+}
+function currentValue(m: KpiMetrics | null, key: ReportRowKey, storeFee: number | null): number | null {
+  if (!m) return null;
+  switch (key) {
+    case "tacos":
+      return tacosOf(m);
+    case "storage":
+      return m.storage_fee;
+    case "other_fee":
+      return m.other_fee;
+    case "adjustment":
+      return -m.adjustment;
+    case "placement_fee":
+      return m.placement_fee;
+    case "gross":
+      return m.profit - (storeFee ?? 0) + m.adjustment + m.placement_fee;
+    case "pl_test":
+      return null;
+    default:
+      return m[key];
+  }
+}
+function targetValue(m: KpiMetrics | null, key: ReportRowKey): number | null {
+  if (!m) return null;
+  switch (key) {
+    case "tacos":
+      return tacosOf(m);
+    case "storage":
+      return m.storage_fee;
+    case "gross":
+      return m.profit;
+    case "other_fee":
+    case "adjustment":
+    case "placement_fee":
+    case "pl_test":
+      return null;
+    default:
+      return m[key];
+  }
+}
+
+export function buildMonthReport(input: MonthReportInput): MonthReport {
+  const { dev, test } = input;
+  const out = {} as MonthReport;
+  for (const { key } of REPORT_ROWS) {
+    if (key === "pl_test") {
+      const prev = test.prev?.profit ?? null;
+      const cur = test.cur?.profit ?? null;
+      out[key] = {
+        prev,
+        ly: test.ly?.profit ?? null,
+        cur,
+        rPrev: ratioOf(cur, prev),
+        rLy: ratioOf(cur, test.ly?.profit ?? null),
+        lyNext: test.lyNext?.profit ?? null,
+        tNextTest: test.tNext?.profit ?? null,
+      };
+      continue;
+    }
+    const prev = pastValue(dev.prev, key);
+    const ly = pastValue(dev.ly, key);
+    const cur = currentValue(dev.cur, key, input.storeFeeCur);
+    const tCur = targetValue(dev.tCur, key);
+    const tNextDev = targetValue(dev.tNext, key);
+    const g = (a: number | null, b: number | null) => (a == null || b == null || Math.abs(b) < 1e-9 ? null : a / b - 1);
+    out[key] = {
+      prev,
+      tCur,
+      ly,
+      cur,
+      rPrev: ratioOf(cur, prev),
+      rLy: ratioOf(cur, ly),
+      kpi: KPI_ROWS.has(key) ? ratioOf(cur, tCur) : null,
+      lyNext: pastValue(dev.lyNext, key),
+      tNextDev,
+      tNextGrowth: g(tNextDev, tCur),
+      tNextTest: targetValue(test.tNext, key),
+    };
+  }
+  return out;
 }

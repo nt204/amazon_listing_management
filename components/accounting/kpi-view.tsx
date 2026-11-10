@@ -19,8 +19,12 @@ import {
   achievement,
   addMetrics,
   computeTarget,
+  buildMonthReport,
   emptyMetrics,
   grossProfit,
+  REPORT_ROWS,
+  storageAndOther,
+  type ReportCol,
   growth,
   periodLabel,
   shiftPeriod,
@@ -301,9 +305,17 @@ function OverviewPage({
   const lyNextOk = data.sources.lyNext !== "none";
   const tCur = a.hasTCur ? a.tCur : null;
   const tNext = a.hasTNext ? a.tNext : null;
-  const testTCur = t.hasTCur ? t.tCur : null;
   const testTNext = t.hasTNext ? t.tNext : null;
   const fees = data.storeFees ?? { prev: null, cur: null, ly: null, lyNext: null };
+  const report = useMemo(
+    () =>
+      buildMonthReport({
+        dev: { prev: a.prev, cur: a.cur, ly: lyOk ? a.ly : null, lyNext: lyNextOk ? a.lyNext : null, tCur, tNext },
+        test: { prev: t.prev, cur: t.cur, ly: lyOk ? t.ly : null, lyNext: lyNextOk ? t.lyNext : null, tNext: testTNext },
+        storeFeeCur: fees.cur,
+      }),
+    [a, t, lyOk, lyNextOk, tCur, tNext, testTNext, fees.cur],
+  );
 
   const [note, setNote] = useState(data.note?.note ?? "");
   const [savingNote, setSavingNote] = useState(false);
@@ -311,6 +323,22 @@ function OverviewPage({
 
   const th = "px-3 py-2 text-right text-[11px] font-semibold text-slate-600 whitespace-nowrap";
   const td = "px-3 py-1.5 text-right tabular-nums whitespace-nowrap";
+  // Bảng BÁO CÁO THÁNG: lưới đen, tên cột như sheet
+  const hd = "border-r border-b border-black px-2.5 py-1.5 text-[11px] font-bold text-black whitespace-nowrap";
+  const cell = "border-r border-b border-black px-2.5 py-1.5 whitespace-nowrap";
+  const REPORT_COLS: { key: ReportCol; label: string; ratio?: boolean; bg: string }[] = [
+    { key: "prev", label: `[Result] ${periodLabel(periods.prev)}`, bg: "" },
+    { key: "tCur", label: `[Target] ${periodLabel(periods.cur)}`, bg: "bg-[#fff2cc]" },
+    { key: "ly", label: `[Result] ${periodLabel(periods.ly)}`, bg: "" },
+    { key: "cur", label: `[Result] ${periodLabel(periods.cur)}`, bg: "bg-[#cfe2f3]" },
+    { key: "rPrev", label: "[Result] Tăng trưởng/tháng trước", ratio: true, bg: "" },
+    { key: "rLy", label: "[Result] Tăng trưởng/cùng kỳ", ratio: true, bg: "" },
+    { key: "kpi", label: "Tỷ lệ đạt KPI", ratio: true, bg: "bg-[#d9ead3]" },
+    { key: "lyNext", label: `[Result] ${periodLabel(periods.lyNext)}`, bg: "" },
+    { key: "tNextDev", label: `[Target] SKU WIN ${periodLabel(periods.next)}`, bg: "bg-[#fff2cc]" },
+    { key: "tNextGrowth", label: "[Target] Tăng trưởng/tháng trước", ratio: true, bg: "" },
+    { key: "tNextTest", label: `[Target] SKU TEST ${periodLabel(periods.next)}`, bg: "bg-[#fff2cc]" },
+  ];
 
   return (
     <div className="flex flex-col gap-3 p-3">
@@ -318,10 +346,10 @@ function OverviewPage({
         <Tile label={`Revenue SKU phát triển ${periodLabel(periods.cur)}`} actual={a.cur.revenue} target={tCur?.revenue ?? null} prev={a.prev.revenue} ly={lyOk ? a.ly.revenue : null} kind="usd" />
         <Tile
           label="Gross Profit"
-          actual={metricValue(a.cur, "gross", fees.cur)}
-          target={grossProfit(tCur)}
-          prev={metricValue(a.prev, "gross", fees.prev)}
-          ly={lyOk ? metricValue(a.ly, "gross", fees.ly) : null}
+          actual={report.gross.cur ?? null}
+          target={report.gross.tCur ?? null}
+          prev={report.gross.prev ?? null}
+          ly={report.gross.ly ?? null}
           kind="usd"
         />
         <Tile label="Quantity" actual={a.cur.quantity} target={tCur?.quantity ?? null} prev={a.prev.quantity} ly={lyOk ? a.ly.quantity : null} kind="int" />
@@ -334,71 +362,42 @@ function OverviewPage({
           <span className="text-[11px] text-slate-500">Tổng team = SKU phát triển (FBA) · SKU test tính riêng ở dòng P/L SKU testing</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] border-collapse text-xs">
+          <table className="w-full min-w-[1100px] border-separate border-spacing-0 border-l border-t border-black text-xs">
             <thead>
-              <tr className="bg-slate-50">
-                <th className="sticky left-0 z-10 bg-slate-50 px-3 py-1.5" />
-                <th colSpan={7} className="border-l border-slate-200 px-3 py-1.5 text-center text-[11px] font-bold uppercase tracking-wide text-slate-700">
-                  Báo cáo tháng
-                </th>
-                <th colSpan={4} className="border-l border-slate-200 bg-indigo-50/60 px-3 py-1.5 text-center text-[11px] font-bold uppercase tracking-wide text-indigo-800">
-                  Mục tiêu tháng sau
-                </th>
+              <tr>
+                <th className={`${hd} sticky left-0 z-10 bg-white text-left`} />
+                <th colSpan={7} className={`${hd} bg-[#d9ead3] text-center uppercase`}>Báo cáo tháng</th>
+                <th colSpan={4} className={`${hd} bg-[#fce5cd] text-center uppercase`}>Mục tiêu tháng</th>
               </tr>
-              <tr className="border-b border-slate-200 bg-slate-50">
-                <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2 text-left text-[11px] font-semibold text-slate-600">Chỉ số</th>
-                <th className={`${th} border-l border-slate-200`}>Thực tế {periodLabel(periods.prev)}</th>
-                <th className={th}>Cùng kỳ {periodLabel(periods.ly)}</th>
-                <th className={`${th} bg-amber-50/70`}>Mục tiêu {periodLabel(periods.cur)}</th>
-                <th className={`${th} bg-blue-50/70 text-blue-900`}>Thực tế {periodLabel(periods.cur)}</th>
-                <th className={th}>Tỷ lệ đạt KPI</th>
-                <th className={th}>vs tháng trước</th>
-                <th className={th}>vs cùng kỳ</th>
-                <th className={`${th} border-l border-slate-200`}>Cùng kỳ {periodLabel(periods.lyNext)}</th>
-                <th className={th}>Mục tiêu SKU phát triển</th>
-                <th className={th}>Mục tiêu SKU test</th>
-                <th className={`${th} bg-indigo-50/60 text-indigo-900`}>Tăng trưởng mục tiêu</th>
+              <tr>
+                <th className={`${hd} sticky left-0 z-10 bg-white text-left`}>Chỉ số</th>
+                {REPORT_COLS.map((c) => (
+                  <th key={c.key} className={`${hd} text-right ${c.bg}`}>
+                    {c.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {PL_ROWS.map((r) => {
-                const v = (m: KpiMetrics | null | undefined, fee: number | null = null) => metricValue(m, r.key, fee);
-                const cur = v(a.cur, fees.cur);
-                const isPct = r.kind === "pct";
-                const ach = r.cost ? null : achievement(cur, v(tCur));
-                const gp = isPct ? null : growth(cur, v(a.prev, fees.prev));
-                const gl = isPct || !lyOk ? null : growth(cur, v(a.ly, fees.ly));
+              {REPORT_ROWS.map((r) => {
+                const row = report[r.key];
+                const strong = r.key === "revenue" || r.key === "gross";
                 return (
-                  <tr key={r.key} className={`border-b border-slate-100 ${r.strong ? "bg-slate-50/50 font-bold" : ""}`}>
-                    <td className={`sticky left-0 z-10 whitespace-nowrap bg-white py-1.5 text-left ${r.sub ? "pl-6 pr-3 font-medium text-slate-600" : "px-3 font-semibold text-slate-800"}`}>{r.label}</td>
-                    <td className={`${td} border-l border-slate-200 text-slate-600`}>{fmtMetric(v(a.prev, fees.prev), r.kind)}</td>
-                    <td className={`${td} text-slate-600`}>{lyOk ? fmtMetric(v(a.ly, fees.ly), r.kind) : ""}</td>
-                    <td className={`${td} bg-amber-50/40`}>{fmtMetric(v(tCur), r.kind)}</td>
-                    <td className={`${td} bg-blue-50/40 font-semibold text-slate-900`}>{fmtMetric(cur, r.kind)}</td>
-                    <td className={`${td} font-bold ${achieveTone(ach)}`}>{fmtPct(ach)}</td>
-                    <td className={`${td} ${growthTone(gp, r.cost)}`}>{signed(gp)}</td>
-                    <td className={`${td} ${growthTone(gl, r.cost)}`}>{signed(gl)}</td>
-                    <td className={`${td} border-l border-slate-200 text-slate-600`}>{lyNextOk ? fmtMetric(v(a.lyNext, fees.lyNext), r.kind) : ""}</td>
-                    <td className={`${td} font-semibold`}>{fmtMetric(v(tNext), r.kind)}</td>
-                    <td className={td}>{fmtMetric(v(testTNext), r.kind)}</td>
-                    <td className={`${td} bg-indigo-50/40 ${growthTone(isPct ? null : growth(v(tNext), cur), r.cost)}`}>{isPct ? "" : signed(growth(v(tNext), cur))}</td>
+                  <tr key={r.key} className={strong ? "font-bold" : ""}>
+                    <td className={`${cell} sticky left-0 z-10 bg-white text-left font-semibold`}>{r.label}</td>
+                    {REPORT_COLS.map((c) => {
+                      const v = row[c.key];
+                      const isRatio = c.ratio;
+                      const text = v == null ? "" : isRatio || r.kind === "pct" ? fmtPct(v) : r.kind === "int" ? fmtInt(v) : fmtUsd(v);
+                      return (
+                        <td key={c.key} className={`${cell} text-right tabular-nums ${c.bg}`}>
+                          {text}
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
-              <tr className="border-t-2 border-slate-200 bg-emerald-50/30 font-semibold">
-                <td className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-1.5 text-left text-slate-800">P/L SKU testing</td>
-                <td className={`${td} border-l border-slate-200 text-slate-600`}>{fmtUsd(t.prev.profit)}</td>
-                <td className={`${td} text-slate-600`}>{lyOk ? fmtUsd(t.ly.profit) : ""}</td>
-                <td className={`${td} bg-amber-50/40`}>{fmtUsd(testTCur?.profit)}</td>
-                <td className={`${td} bg-blue-50/40 ${t.cur.profit < 0 ? "text-rose-700" : "text-slate-900"}`}>{fmtUsd(t.cur.profit)}</td>
-                <td className={`${td} ${achieveTone(achievement(t.cur.profit, testTCur?.profit))}`}>{fmtPct(achievement(t.cur.profit, testTCur?.profit))}</td>
-                <td className={`${td} ${growthTone(growth(t.cur.profit, t.prev.profit))}`}>{signed(growth(t.cur.profit, t.prev.profit))}</td>
-                <td className={td} />
-                <td className={`${td} border-l border-slate-200 text-slate-600`}>{lyNextOk ? fmtUsd(t.lyNext.profit) : ""}</td>
-                <td className={td} />
-                <td className={td}>{fmtUsd(testTNext?.profit)}</td>
-                <td className={`${td} bg-indigo-50/40`} />
-              </tr>
             </tbody>
           </table>
         </div>
@@ -546,7 +545,6 @@ const GROUP_PALETTE: Record<string, { head: string; sub: string }> = {
 const NEG_PCT_BG = "bg-[#ea9999]";
 
 const neg = (v: number | null | undefined) => (v == null ? null : -v);
-const otherAll = (m: KpiMetrics) => m.storage_fee + m.other_fee + m.adjustment + m.placement_fee;
 
 /** 12 cột kết quả 1 tháng như sheet (Lưu kho + CP khác gộp) */
 function resultCols(prefix: string, pick: (c: RowCtx) => KpiMetrics | null, tncnLabel = "TNCN tax 1% Rev"): ColDef[] {
@@ -565,7 +563,7 @@ function resultCols(prefix: string, pick: (c: RowCtx) => KpiMetrics | null, tncn
     { id: `${prefix}-tncn`, label: tncnLabel, value: v((m) => -m.tncn_tax) },
     { id: `${prefix}-ref`, label: "Ref tax", value: v((m) => -m.ref_tax) },
     { id: `${prefix}-ret`, label: "Return", value: v((m) => -m.return_amount) },
-    { id: `${prefix}-other`, label: "Lưu kho + CP khác", value: v((m) => -otherAll(m)) },
+    { id: `${prefix}-other`, label: "Lưu kho + CP khác", value: v((m) => -storageAndOther(m)) },
     { id: `${prefix}-profit`, label: "Profit", value: v((m) => m.profit), tone: "good-bad" },
   ];
 }
