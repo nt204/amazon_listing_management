@@ -98,6 +98,9 @@ export interface KpiTargetInput {
   tacos: number | null;
   price: number | null;
   storage_fee: number | null;
+  /** Basecost/unit, Amazon fee/unit leader điền trên sheet; trống thì dùng số hệ thống */
+  basecost_unit?: number | null;
+  amazon_fee_unit?: number | null;
 }
 
 export interface KpiUnitEconomics {
@@ -116,8 +119,8 @@ export function computeTarget(input: KpiTargetInput | null | undefined, unit: Kp
   const ref = unit.referral_pct ?? 0.15;
   const revenue = units * price;
   const ads = (input.tacos ?? 0) * revenue;
-  const basecost = units * (unit.basecost_unit ?? 0);
-  const amazon = units * ((unit.amazon_fee_unit ?? 0) + ref * price);
+  const basecost = units * (input.basecost_unit ?? unit.basecost_unit ?? 0);
+  const amazon = units * ((input.amazon_fee_unit ?? unit.amazon_fee_unit ?? 0) + ref * price);
   const adsTax = KPI_ADS_TAX_RATE * ads;
   const tncn = KPI_TNCN_RATE * revenue;
   const refTax = 0.1 * ref * revenue;

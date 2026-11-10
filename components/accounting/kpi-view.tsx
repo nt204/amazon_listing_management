@@ -80,6 +80,7 @@ interface KpiData {
   storeFees?: Record<"prev" | "cur" | "ly" | "lyNext", number | null>;
   skus: KpiSku[];
   note: { note: string; updated_by: string | null; updated_at: string | null } | null;
+  teamTargets?: Record<"cur" | "next", Partial<Record<"dev" | "test", KpiMetrics>>>;
   historyYears: number[];
   generatedAt: string;
 }
@@ -295,8 +296,14 @@ function OverviewPage({
       g.tCur = addMetrics(g.tCur, tc);
       g.tNext = addMetrics(g.tNext, tn);
     }
+    // Tháng không có mục tiêu từng SKU (sheet đã ghi đè) → dùng số tổng team nạp từ BÁO CÁO THÁNG
+    for (const k of ["dev", "test"] as const) {
+      const team = data.teamTargets;
+      if (!by[k].hasTCur && team?.cur[k]) Object.assign(by[k], { tCur: team.cur[k], hasTCur: true });
+      if (!by[k].hasTNext && team?.next[k]) Object.assign(by[k], { tNext: team.next[k], hasTNext: true });
+    }
     return { by };
-  }, [data.skus]);
+  }, [data.skus, data.teamTargets]);
 
   // Như sheet BÁO CÁO THÁNG: "tổng team" = SKU phát triển; SKU test là dòng "P/L SKU testing" riêng
   const a = sum.by.dev;
@@ -1135,6 +1142,93 @@ function HistoryImportModal({ storeId, storeName, onClose, onDone }: { storeId: 
   );
 }
 
+// ───────────────────────── Hộp nạp mục tiêu từ file KẾ HOẠCH KINH DOANH ─────────────────────────
+type TargetImportResult = {
+  title: string;
+  skuTargets: { tab: string; group: "dev" | "test"; period: string; count: number; notInMaster: string[] }[];
+  teamTargets: { tab: string; group: "dev" | "test"; period: string; revenue: number; profit: number }[];
+};
+function TargetImportModal({ storeId, storeName, onClose, onDone }: { storeId: string; storeName: string; onClose: () => void; onDone: () => void }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<TargetImportResult | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/accounting/financials/kpi/targets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store_id: storeId, url }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Không nạp được");
+      setResult(json);
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Không nạp được");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/30 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-xl bg-white p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 text-sm font-bold text-slate-900">Nạp mục tiêu từ sheet · {storeName}</div>
+        <p className="mb-3 text-xs leading-relaxed text-slate-500">
+          Dán link file <b>{storeName} - KẾ HOẠCH KINH DOANH &lt;năm&gt;</b>. Lấy mục tiêu từng SKU (Quantity, Tacos, Lưu kho, Price, Basecost, Amazon fee) ở khối
+          tháng sau của tab CHI TIẾT SKU / CHI TIẾT SKU TEST, và mục tiêu tổng team ở các tab BÁO CÁO THÁNG. Nạp lại sẽ ghi đè số mục tiêu, giữ nguyên Nguyên nhân /
+          Giải pháp / Action.
+        </p>
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://docs.google.com/spreadsheets/d/..."
+          className="mb-2 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-xs focus:border-blue-500 focus:outline-hidden"
+        />
+        {err && <div className="mb-2 rounded-md bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700">{err}</div>}
+        {result && (
+          <div className="mb-2 max-h-64 overflow-y-auto rounded-md border border-emerald-200 bg-emerald-50/60 p-2 text-xs text-emerald-900">
+            <div className="mb-1 font-bold">Đã nạp {result.title}</div>
+            {result.skuTargets.map((x) => (
+              <div key={x.tab}>
+                {x.tab} → mục tiêu {periodLabel(x.period)}: <b>{x.count} SKU</b>
+                {x.notInMaster.length > 0 && (
+                  <span className="text-amber-800"> · {x.notInMaster.length} SKU không thuộc nhóm này trong Bảng mã: {x.notInMaster.join(", ")}</span>
+                )}
+              </div>
+            ))}
+            {result.teamTargets.length > 0 && <div className="mt-1 font-semibold">Mục tiêu tổng team:</div>}
+            {result.teamTargets.map((x) => (
+              <div key={`${x.period}-${x.group}`} className="tabular-nums">
+                {periodLabel(x.period)} {GROUP_LABEL[x.group]}: Revenue {fmtUsd0(x.revenue)} · Profit {fmtUsd0(x.profit)} <span className="text-emerald-700/70">({x.tab})</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="h-8 cursor-pointer rounded-lg px-3 text-xs font-semibold text-slate-600 hover:bg-slate-100">
+            Đóng
+          </button>
+          <button
+            type="button"
+            disabled={busy || !url.trim()}
+            onClick={run}
+            className="flex h-8 cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy && <ArrowClockwiseIcon size={13} className="animate-spin" />}
+            {busy ? "Đang đọc sheet..." : "Nạp mục tiêu"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // ───────────────────────── Trang chính ─────────────────────────
 export function KpiView() {
   const defaultPeriod = useMemo(() => shiftPeriod(new Date().toISOString().slice(0, 7), -1), []);
@@ -1167,6 +1261,7 @@ export function KpiView() {
   const [onlyActive, setOnlyActive] = useState(false);
   const [openSku, setOpenSku] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [showTargetImport, setShowTargetImport] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -1418,6 +1513,16 @@ export function KpiView() {
                 <span>Nạp số năm trước</span>
               </button>
             )}
+            {canEdit && selectedStore && (
+              <button
+                type="button"
+                onClick={() => setShowTargetImport(true)}
+                className="flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <CloudArrowDownIcon size={14} className="text-slate-600" />
+                <span>Nạp mục tiêu</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => load(true)}
@@ -1478,6 +1583,9 @@ export function KpiView() {
 
       {openSkuRow && data && (
         <SkuDrawer key={`${openSkuRow.sku}:${data.period}`} data={data} sku={openSkuRow} canEdit={canEdit} onClose={() => setOpenSku(null)} onSaveTarget={saveTarget} />
+      )}
+      {showTargetImport && selectedStore && (
+        <TargetImportModal storeId={selectedStore.id} storeName={selectedStore.name} onClose={() => setShowTargetImport(false)} onDone={() => void load(true)} />
       )}
       {showImport && selectedStore && (
         <HistoryImportModal storeId={selectedStore.id} storeName={selectedStore.name} onClose={() => setShowImport(false)} onDone={() => void load(true)} />

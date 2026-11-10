@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { listSkuWin } from "@/lib/accounting/sku-win-db";
 import { readSpreadsheetColumns, readSpreadsheetMeta } from "@/lib/google/sheets";
-import { residualOther, shiftPeriod, splitTax, type KpiMetrics, type KpiTargetInput } from "@/lib/accounting/kpi-calc";
+import { emptyMetrics, residualOther, shiftPeriod, splitTax, type KpiMetrics, type KpiTargetInput } from "@/lib/accounting/kpi-calc";
 
 // Mục "KPI kinh doanh" — file "<STORE> - KẾ HOẠCH KINH DOANH 2026" (team FBA):
 // - BÁO CÁO THÁNG: tổng team = SKU phát triển + SKU test.
@@ -60,6 +60,8 @@ export interface KpiResult {
   storeFees: Record<"prev" | "cur" | "ly" | "lyNext", number | null>;
   skus: KpiSku[];
   note: { note: string; updated_by: string | null; updated_at: string | null } | null;
+  /** Mục tiêu tổng team nạp từ sheet khi tháng đó không có mục tiêu từng SKU */
+  teamTargets: Record<"cur" | "next", Partial<Record<KpiGroup, KpiMetrics>>>;
   /** Các năm đã nạp số từ file TỔNG KẾT (để giao diện báo thiếu) */
   historyYears: number[];
   generatedAt: string;
@@ -213,6 +215,15 @@ async function monthActuals(
   return { source: "live", data: await liveMonth(storeId, period, today) };
 }
 
+function teamTargetMap(rows: { period: string; grp: KpiGroup; metrics: Partial<KpiMetrics> }[], periods: { cur: string; next: string }) {
+  const out: KpiResult["teamTargets"] = { cur: {}, next: {} };
+  for (const r of rows) {
+    const slot = r.period === periods.cur ? "cur" : "next";
+    out[slot][r.grp] = { ...emptyMetrics(), ...r.metrics };
+  }
+  return out;
+}
+
 function mapTarget(r: Record<string, unknown> | undefined): KpiTargetRow | null {
   if (!r) return null;
   return {
@@ -220,6 +231,8 @@ function mapTarget(r: Record<string, unknown> | undefined): KpiTargetRow | null 
     tacos: nullableNum(r.tacos),
     price: nullableNum(r.price),
     storage_fee: nullableNum(r.storage_fee),
+    basecost_unit: nullableNum(r.basecost_unit),
+    amazon_fee_unit: nullableNum(r.amazon_fee_unit),
     cause: (r.cause as string) || null,
     solution: (r.solution as string) || null,
     action: (r.action as string) || null,
@@ -246,7 +259,7 @@ export async function getKpi(storeId: string, period: string, options: { refresh
   }
 
   const statuses = KPI_GROUPS.map((g) => g.status.toLowerCase());
-  const [master, targetRows, noteRows, historyYearRows] = await Promise.all([
+  const [master, targetRows, teamTargetRows, noteRows, historyYearRows] = await Promise.all([
     sql<Record<string, string | number | null>[]>`
       SELECT DISTINCT ON (sku)
         sku, status, brand, asin, product_type, mockup_url, pic_mkt, ton_kho,
@@ -259,8 +272,12 @@ export async function getKpi(storeId: string, period: string, options: { refresh
       ORDER BY sku, row_order NULLS LAST, updated_at DESC
     `,
     sql<Record<string, unknown>[]>`
-      SELECT period, sku, units, tacos, price, storage_fee, cause, solution, action, review, target_action, updated_by, updated_at
+      SELECT period, sku, units, tacos, price, storage_fee, basecost_unit, amazon_fee_unit, cause, solution, action, review, target_action, updated_by, updated_at
       FROM accounting_kpi_targets
+      WHERE store_id = ${storeId} AND period IN (${periods.cur}, ${periods.next})
+    `,
+    sql<{ period: string; grp: KpiGroup; metrics: Partial<KpiMetrics> }[]>`
+      SELECT period, grp, metrics FROM accounting_kpi_team_targets
       WHERE store_id = ${storeId} AND period IN (${periods.cur}, ${periods.next})
     `,
     sql<{ note: string; updated_by: string | null; updated_at: Date }[]>`
@@ -349,6 +366,7 @@ export async function getKpi(storeId: string, period: string, options: { refresh
     storeFees: { prev: prev.storeFee ?? null, cur: cur.storeFee ?? null, ly: ly.storeFee ?? null, lyNext: lyNext.storeFee ?? null },
     skus,
     note,
+    teamTargets: teamTargetMap(teamTargetRows, periods),
     historyYears: historyYearRows.map((r) => Number(r.y)),
     generatedAt: new Date().toISOString(),
   };
@@ -667,4 +685,172 @@ export async function importKpiHistoryFromSheet(
   });
   for (const key of Array.from(liveCache.keys())) if (key.startsWith(`${storeId}:`)) liveCache.delete(key);
   return result;
+}
+
+// ───────────── Nạp mục tiêu từ file "<STORE> - KẾ HOẠCH KINH DOANH <năm>" ─────────────
+// - Từng SKU: khối "Kết quả kinh doanh mục tiêu" tháng sau ở tab CHI TIẾT SKU / CHI TIẾT SKU TEST
+//   (CD = tiêu đề "Tháng M/YYYY"; CE Quantity, CI Tacos, CN Lưu kho; G Price, H Basecost, I Amazon fee leader điền).
+// - Tổng team: các cột "[Target] (SKU WIN|SKU TEST) TM/YYYY" ở các tab BÁO CÁO THÁNG N (số tổng, dùng khi tháng đó
+//   không còn mục tiêu từng SKU — sheet ghi đè khối mục tiêu mỗi tháng).
+
+const TARGET_SKU_TABS = [
+  { tab: "CHI TIẾT SKU", group: "dev" as KpiGroup },
+  { tab: "CHI TIẾT SKU TEST", group: "test" as KpiGroup },
+];
+const TARGET_SKU_COLS = { sku: "D", price: "G", basecost: "H", amazon: "I", head: "CD", units: "CE", tacos: "CI", storage: "CN" };
+const TEAM_ROW_LABELS: [RegExp, keyof KpiMetrics][] = [
+  [/^revenue$/, "revenue"],
+  [/^quantity$/, "quantity"],
+  [/^ads fee$/, "ads_fee"],
+  [/^basecost$/, "basecost"],
+  [/^amazon fee$/, "amazon_fee"],
+  [/^ads tax/, "ads_tax"],
+  [/^(tncn|thuế tncn)/, "tncn_tax"],
+  [/^ref tax/, "ref_tax"],
+  [/^return/, "return_amount"],
+  [/^chi phí lưu kho/, "storage_fee"],
+  [/^gross profit$/, "profit"],
+];
+const LETTERS = Array.from({ length: 16 }, (_, i) => String.fromCharCode(65 + i)); // A..P
+
+function cellNum(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const x = typeof v === "number" ? v : Number(String(v).replace(/[$,\s]/g, "").replace(/%$/, ""));
+  if (!Number.isFinite(x)) return null;
+  return typeof v === "string" && v.trim().endsWith("%") ? x / 100 : x;
+}
+function monthPeriod(text: unknown): string | null {
+  const m = String(text ?? "").match(/T(?:háng\s*)?(\d{1,2})\s*\/\s*(\d{4})/i);
+  if (!m) return null;
+  const mm = Number(m[1]);
+  return mm >= 1 && mm <= 12 ? `${m[2]}-${String(mm).padStart(2, "0")}` : null;
+}
+
+export interface KpiTargetImportResult {
+  title: string;
+  skuTargets: { tab: string; group: KpiGroup; period: string; count: number; notInMaster: string[] }[];
+  teamTargets: { tab: string; group: KpiGroup; period: string; revenue: number; profit: number }[];
+}
+
+export async function importKpiTargetsFromSheet(
+  storeId: string,
+  url: string,
+  actor: string,
+  options: { dryRun?: boolean } = {},
+): Promise<KpiTargetImportResult> {
+  const sql = await getDatabaseClient();
+  const [store] = await sql<{ name: string }[]>`SELECT name FROM stores WHERE id = ${storeId}`;
+  if (!store) throw new ApiError("Không tìm thấy store.", 404);
+  const meta = await readSpreadsheetMeta(url);
+  if (!meta.title.toUpperCase().includes(store.name.trim().toUpperCase())) {
+    throw new ApiError(`File "${meta.title}" không phải của store ${store.name}.`, 400);
+  }
+  const skuTabs = TARGET_SKU_TABS.filter((t) => meta.tabs.includes(t.tab));
+  if (!skuTabs.length) throw new ApiError("File thiếu tab CHI TIẾT SKU / CHI TIẾT SKU TEST.", 400);
+
+  const masterRows = await sql<{ sku: string; status: string | null }[]>`
+    SELECT sku, status FROM accounting_sku_master
+    WHERE store_id = ${storeId} AND deleted_at IS NULL AND UPPER(COALESCE(loai, 'FBA')) = 'FBA'
+  `;
+  const masterGroup = new Map(
+    masterRows.map((r) => [r.sku, (r.status || "").trim().toLowerCase() === "test" ? "test" : (r.status || "").trim().toLowerCase() === "phát triển" ? "dev" : null]),
+  );
+
+  // 1) Mục tiêu từng SKU
+  type SkuTarget = { period: string; sku: string; units: number; tacos: number | null; price: number | null; storage: number | null; basecost: number; amazon: number };
+  const skuRows: SkuTarget[] = [];
+  const skuSummary: KpiTargetImportResult["skuTargets"] = [];
+  for (const { tab, group } of skuTabs) {
+    const c = await readSpreadsheetColumns(meta.spreadsheetId, tab, Object.values(TARGET_SKU_COLS));
+    const col = (k: keyof typeof TARGET_SKU_COLS) => c[TARGET_SKU_COLS[k]] ?? [];
+    const period = monthPeriod(col("head")[0]);
+    const label = (k: keyof typeof TARGET_SKU_COLS) => String(col(k)[2] ?? "").trim().toLowerCase();
+    if (!period || !label("units").startsWith("quantity") || !label("tacos").startsWith("tacos") || !label("storage").startsWith("lưu kho")) {
+      throw new ApiError(`Tab ${tab}: không nhận ra khối mục tiêu tháng sau ở cột CD:CO (tiêu đề "Tháng M/YYYY", Quantity, Tacos, Lưu kho).`, 400);
+    }
+    const seen = new Set<string>();
+    const notInMaster: string[] = [];
+    const len = col("sku").length;
+    for (let i = 3; i < len; i++) {
+      const sku = String(col("sku")[i] ?? "").trim();
+      const units = cellNum(col("units")[i]);
+      if (!sku || units == null || seen.has(sku)) continue;
+      seen.add(sku);
+      if (masterGroup.get(sku) !== group) notInMaster.push(sku);
+      skuRows.push({
+        period,
+        sku,
+        units,
+        tacos: cellNum(col("tacos")[i]),
+        price: cellNum(col("price")[i]),
+        storage: cellNum(col("storage")[i]),
+        // Sheet tính ô trống = 0 (vd tab TEST chưa điền Amazon fee) — giữ như sheet để số mục tiêu khớp
+        basecost: cellNum(col("basecost")[i]) ?? 0,
+        amazon: cellNum(col("amazon")[i]) ?? 0,
+      });
+    }
+    skuSummary.push({ tab, group, period, count: seen.size, notInMaster });
+  }
+
+  // 2) Mục tiêu tổng team từ các tab BÁO CÁO THÁNG N
+  const teamMap = new Map<string, { tab: string; group: KpiGroup; period: string; metrics: Partial<KpiMetrics> }>();
+  const reportTabs = meta.tabs
+    .map((t) => ({ t, n: Number(t.match(/^BÁO CÁO THÁNG (\d{1,2})$/)?.[1]) }))
+    .filter((x) => x.n)
+    .sort((a, b) => a.n - b.n);
+  for (const { t } of reportTabs) {
+    const c = await readSpreadsheetColumns(meta.spreadsheetId, t, LETTERS);
+    const labels = (c.A ?? []).map((v) => String(v ?? "").trim().toLowerCase());
+    for (const L of LETTERS.slice(1)) {
+      const values = c[L] ?? [];
+      const headRow = values.findIndex((v, i) => i < 6 && /^\[target\]\s*(sku (win|test)\s*)?t\d{1,2}\/\d{4}$/i.test(String(v ?? "").trim()));
+      if (headRow < 0) continue;
+      const head = String(values[headRow]).trim();
+      const period = monthPeriod(head);
+      if (!period) continue;
+      const group: KpiGroup = /sku test/i.test(head) ? "test" : "dev";
+      const metrics: Partial<KpiMetrics> = {};
+      labels.forEach((lab, i) => {
+        if (i <= headRow) return;
+        const hit = TEAM_ROW_LABELS.find(([re]) => re.test(lab));
+        const v = cellNum(values[i]);
+        if (hit && v != null && metrics[hit[1]] == null) metrics[hit[1]] = v;
+      });
+      if (metrics.revenue == null) continue;
+      metrics.storage_other = metrics.storage_fee ?? 0;
+      teamMap.set(`${period}|${group}`, { tab: t, group, period, metrics });
+    }
+  }
+  const teamRows = [...teamMap.values()];
+
+  if (!options.dryRun) {
+    await sql.begin(async (tx) => {
+      for (const r of skuRows) {
+        await tx`
+          INSERT INTO accounting_kpi_targets (store_id, period, sku, units, tacos, price, storage_fee, basecost_unit, amazon_fee_unit, updated_by, updated_at)
+          VALUES (${storeId}, ${r.period}, ${r.sku}, ${r.units}, ${r.tacos}, ${r.price}, ${r.storage}, ${r.basecost}, ${r.amazon}, ${actor}, NOW())
+          ON CONFLICT (store_id, period, sku) DO UPDATE SET
+            units = EXCLUDED.units, tacos = EXCLUDED.tacos, price = EXCLUDED.price, storage_fee = EXCLUDED.storage_fee,
+            basecost_unit = EXCLUDED.basecost_unit, amazon_fee_unit = EXCLUDED.amazon_fee_unit,
+            updated_by = EXCLUDED.updated_by, updated_at = NOW()
+        `;
+      }
+      for (const r of teamRows) {
+        await tx`
+          INSERT INTO accounting_kpi_team_targets (store_id, period, grp, metrics, source, updated_by, updated_at)
+          VALUES (${storeId}, ${r.period}, ${r.group}, ${tx.json(r.metrics as Record<string, number>)}, ${`${meta.title} / ${r.tab}`}, ${actor}, NOW())
+          ON CONFLICT (store_id, period, grp) DO UPDATE SET
+            metrics = EXCLUDED.metrics, source = EXCLUDED.source, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+        `;
+      }
+    });
+  }
+
+  return {
+    title: meta.title,
+    skuTargets: skuSummary,
+    teamTargets: teamRows
+      .map((r) => ({ tab: r.tab, group: r.group, period: r.period, revenue: r.metrics.revenue ?? 0, profit: r.metrics.profit ?? 0 }))
+      .sort((a, b) => a.period.localeCompare(b.period) || a.group.localeCompare(b.group)),
+  };
 }
