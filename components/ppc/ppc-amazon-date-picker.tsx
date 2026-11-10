@@ -17,7 +17,8 @@ export interface DateRange {
 
 interface Props {
   value: DateRange;
-  onChange: (range: DateRange) => void;
+  /** presetId: id preset vừa bấm (this_month, last_week…); không có khi chọn ngày trên lịch hoặc bấm xoá. */
+  onChange: (range: DateRange, presetId?: string) => void;
   label?: string;
   minDate?: string; // YYYY-MM-DD
   maxDate?: string; // YYYY-MM-DD
@@ -184,7 +185,7 @@ export function PpcAmazonDatePicker({
       setTempStart("");
       setTempEnd("");
       setIsPickingEnd(false);
-      onChange({ startDate: "", endDate: "" });
+      onChange({ startDate: "", endDate: "" }, presetId);
       setIsOpen(false);
       return;
     }
@@ -245,7 +246,7 @@ export function PpcAmazonDatePicker({
     setLeftViewMonth(start.getMonth());
 
     // Auto apply preset and close popover immediately
-    onChange({ startDate: sStr, endDate: eStr });
+    onChange({ startDate: sStr, endDate: eStr }, presetId);
     setIsOpen(false);
   };
 

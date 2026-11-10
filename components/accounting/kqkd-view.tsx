@@ -159,6 +159,16 @@ const NEG_CELL = "!bg-[#FF0000] !text-slate-950 !font-bold";
 const POS_CELL = "!bg-[#83C75D] !text-slate-950 !font-normal";
 // Hai cột Tổng vốn hàng / Hoàn vốn: nền vàng (như sheet) để dễ so với nhau
 const YELLOW_CELL = "!bg-[#FACE9C]";
+// Cột Profit (SKU Testing): vàng rất nhạt
+const PROFIT_CELL = "!bg-[#FFF9DB]";
+// Ô Trạng thái tô như sheet: Phát triển xanh lá · Test vàng nhạt · Hủy đỏ
+function statusCellClass(status: string | null) {
+  const s = (status || "").trim().toLowerCase();
+  if (s === WIN_STATUS) return POS_CELL;
+  if (s === "test") return "!bg-[#FFF2CC] !text-slate-950";
+  if (s === LOSS_STATUS) return "!bg-[#FF0000] !text-slate-950";
+  return "";
+}
 
 function monthNum(period: string) {
   return Number(period.slice(5, 7));
@@ -916,7 +926,8 @@ function RatePill({ v }: { v: number | null }) {
 
 function StatusPill({ status }: { status: string | null }) {
   if (!status) return null;
-  return <span className={statusKind(status) === "loss" ? "text-slate-400" : ""}>{status}</span>;
+  // Ô đã tô màu theo trạng thái (statusCellClass) nên chữ luôn đen, kể cả Hủy
+  return <span>{status}</span>;
 }
 
 function Kpi({
@@ -925,18 +936,28 @@ function Kpi({
   sub,
   highlight,
   valueClass,
+  onClick,
+  clickTitle,
 }: {
   label: string;
   value: string;
   sub?: ReactNode;
   highlight?: boolean;
   valueClass?: string;
+  /** Bấm thẻ → sang SKU Testing lọc đúng các SKU của thẻ */
+  onClick?: () => void;
+  clickTitle?: string;
 }) {
   return (
     <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={onClick ? (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onClick()) : undefined}
+      title={onClick ? clickTitle : undefined}
       className={`min-w-0 rounded-xl border px-4 py-3.5 shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs select-none ${
         highlight ? "border-emerald-200 bg-emerald-50/70" : "border-slate-200 bg-white"
-      }`}
+      } ${onClick ? "cursor-pointer hover:border-blue-300" : ""}`}
     >
       <div className="text-[12px] font-semibold text-slate-500">{label}</div>
       <div className={`mt-1.5 font-mono text-[26px] font-bold leading-none tracking-tight tabular-nums transition-colors duration-200 ${valueClass ?? (highlight ? "text-emerald-700" : "text-slate-900")}`}>{value}</div>
@@ -1379,6 +1400,10 @@ export function KqkdView() {
   const [search, setSearch] = useState("");
   // Bảng SKU Testing: lọc kiểu Excel trên từng cột
   const [colFilters, setColFilters] = useState<ColFilters>({});
+  // Lọc mang từ thẻ KPI của Tổng quan sang (bấm thẻ): giữ đúng danh sách SKU của thẻ, có nhãn để bỏ
+  // (chỉ áp cho đúng store + năm lúc bấm; đổi store / năm là tự bỏ)
+  const [kpiPresetState, setKpiPreset] = useState<{ scope: string; label: string; skus: Set<string>; outside: number } | null>(null);
+  const kpiPreset = kpiPresetState?.scope === `${selectedStoreId}|${year}` ? kpiPresetState : null;
   const [filterOpen, setFilterOpen] = useState<FilterOpen | null>(null);
   const openFilter = useCallback(
     (key: string, th: HTMLElement) => setFilterOpen({ key, title: th.textContent?.trim() || key, rect: th.getBoundingClientRect() }),
@@ -1519,25 +1544,27 @@ export function KqkdView() {
     [baseSkus, allEvalSkus, fPhoi]
   );
   const deferredSearch = useDeferredValue(search);
-  const activeFilters = (search ? 1 : 0) + Object.keys(colFilters).length;
+  const activeFilters = (search ? 1 : 0) + Object.keys(colFilters).length + (kpiPreset ? 1 : 0);
   const clearFilters = () => {
     setSearch("");
     setColFilters({});
+    setKpiPreset(null);
   };
 
   // SKU Testing: ô tìm kiếm + lọc từng cột kiểu Excel, rồi sắp xếp. Không phụ thuộc bộ lọc Phôi của Tổng quan
   // (cột Product Type có bộ lọc riêng).
   const searchedSkus = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
-    if (!q) return allSkus;
-    return allSkus.filter(
+    const pool = kpiPreset ? allSkus.filter((s) => kpiPreset.skus.has(s.sku)) : allSkus;
+    if (!q) return pool;
+    return pool.filter(
       (s) =>
         s.sku.toLowerCase().includes(q) ||
         (s.asin || "").toLowerCase().includes(q) ||
         (s.product_type || "").toLowerCase().includes(q) ||
         (s.pic_idea || "").toLowerCase().includes(q)
     );
-  }, [allSkus, deferredSearch]);
+  }, [allSkus, deferredSearch, kpiPreset]);
 
   const skus = useMemo(() => {
     const out = searchedSkus.filter((s) => passesColFilters(s, colFilters, year));
@@ -1662,6 +1689,27 @@ export function KqkdView() {
     const notDueN = evals.filter((e) => !e.due).reduce((a, b) => a + b.n, 0);
     return { n, doneN, win, pendingN: n - doneN, notDueN };
   }, [evals]);
+
+  // SKU đã đánh giá (mẫu số của Tỉ lệ WIN): tháng đánh giá trong năm, đã đến hạn, phôi đã điền kết quả WIN
+  const evalDoneSkus = useMemo(() => {
+    const out = new Set<string>();
+    for (const s of evalPool) {
+      if (!s.eval_month || !s.eval_month.startsWith(String(year)) || s.eval_month > currentMonth) continue;
+      if (winMap.has(`${s.eval_month}|${s.product_type || "(trống)"}`)) out.add(s.sku);
+    }
+    return out;
+  }, [evalPool, year, currentMonth, winMap]);
+
+  // Bấm thẻ KPI → sang SKU Testing, lọc đúng các SKU của thẻ (bỏ các lọc cũ). Phôi đang chọn ở Tổng quan đi kèm.
+  const jumpToSkus = (label: string, skus: Iterable<string>) => {
+    const set = new Set(skus);
+    const inTable = allSkus.filter((s) => set.has(s.sku)).length;
+    setSearch("");
+    setColFilters({});
+    setSort(null);
+    setKpiPreset({ scope: `${selectedStoreId}|${year}`, label: fPhoi ? `${label} · ${fPhoi}` : label, skus: set, outside: set.size - inTable });
+    handleMode("skus");
+  };
 
   // Bảng tháng: mở một tháng ra chia theo Phôi (mặc định) hoặc theo người (PIC Idea / PIC MKT / Design).
   // Số tổng của tháng giữ nguyên; chỉ các dòng con đổi cách gom. Theo người: WIN = số SKU "Phát triển" (chỉ xem, không điền).
@@ -1932,6 +1980,23 @@ export function KqkdView() {
               )}
             </div>
 
+            {kpiPreset && (
+              <span
+                className="animate-in fade-in zoom-in-95 duration-150 inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 pl-2.5 pr-1 text-xs font-semibold text-blue-800"
+                title={kpiPreset.outside ? `${kpiPreset.outside} SKU listing năm trước không có trong bảng SKU Testing (chỉ có ở phần đánh giá)` : undefined}
+              >
+                Từ Tổng quan: {kpiPreset.label} ({kpiPreset.skus.size - kpiPreset.outside}
+                {kpiPreset.outside ? ` + ${kpiPreset.outside} SKU năm trước` : ""})
+                <button
+                  type="button"
+                  onClick={() => setKpiPreset(null)}
+                  className="grid h-6 w-6 cursor-pointer place-items-center rounded-md hover:bg-blue-100"
+                  aria-label="Bỏ lọc từ Tổng quan"
+                >
+                  <XIcon size={10} weight="bold" />
+                </button>
+              </span>
+            )}
             <span className="text-[11px] font-medium text-slate-400">Bấm tên cột để lọc / sắp xếp</span>
             {(activeFilters > 0 || sort) && (
               <button
@@ -1981,8 +2046,16 @@ export function KqkdView() {
         {mode === "overview" && allSkus.length > 0 && (
           <AccountingViewTransition transitionKey="overview" className="flex-1 overflow-auto bg-slate-50">
             <div className="grid grid-cols-2 gap-3 p-3 pb-0 md:grid-cols-3 xl:grid-cols-6">
-              <Kpi label="Số lượng SKU" value={fmtInt(listingYear.n)} sub={`Listing ${year}`} />
               <Kpi
+                label="Số lượng SKU"
+                value={fmtInt(listingYear.n)}
+                sub={`Listing ${year}`}
+                onClick={() => jumpToSkus(`SKU listing ${year}`, baseSkus.map((s) => s.sku))}
+                clickTitle="Xem các SKU này ở SKU Testing"
+              />
+              <Kpi
+                onClick={() => jumpToSkus(`SKU listing ${year}`, baseSkus.map((s) => s.sku))}
+                clickTitle="Xem các SKU này ở SKU Testing"
                 label="Tổng vốn test"
                 value={usd0.format(listingYear.von)}
                 sub={`Hoàn vốn ${fmtPct(ratio(listingYear.hoanVon, listingYear.von)) || "0%"}`}
@@ -1995,8 +2068,16 @@ export function KqkdView() {
                 const margin = ratio(profit, rev);
                 return (
                   <>
-                    <Kpi label="Revenue" value={usd0.format(rev)} sub={`TACoS ${fmtPct(ratio(-ads, rev)) || "0%"}`} />
                     <Kpi
+                      label="Revenue"
+                      value={usd0.format(rev)}
+                      sub={`TACoS ${fmtPct(ratio(-ads, rev)) || "0%"}`}
+                      onClick={() => jumpToSkus(`SKU listing ${year}`, baseSkus.map((s) => s.sku))}
+                      clickTitle="Xem các SKU này ở SKU Testing"
+                    />
+                    <Kpi
+                      onClick={() => jumpToSkus(`SKU listing ${year}`, baseSkus.map((s) => s.sku))}
+                      clickTitle="Xem các SKU này ở SKU Testing"
                       label="Profit"
                       value={usd0.format(profit)}
                       valueClass={profit < 0 ? "text-red-600" : undefined}
@@ -2006,6 +2087,8 @@ export function KqkdView() {
                 );
               })()}
               <Kpi
+                onClick={evalDoneSkus.size ? () => jumpToSkus(`SKU đã đánh giá ${year}`, evalDoneSkus) : undefined}
+                clickTitle="Xem các SKU đã đánh giá ở SKU Testing"
                 label="SKU WIN (KQ thực tế)"
                 value={evalYear.doneN ? `${fmtInt(evalYear.win)}/${fmtInt(evalYear.doneN)}` : "—"}
                 sub={evalYear.pendingN ? `${evalYear.pendingN} SKU chưa điền` : "Đã đánh giá"}
@@ -2014,6 +2097,8 @@ export function KqkdView() {
                 const r = ratio(evalYear.win, evalYear.doneN);
                 return (
                   <Kpi
+                    onClick={evalDoneSkus.size ? () => jumpToSkus(`SKU đã đánh giá ${year}`, evalDoneSkus) : undefined}
+                    clickTitle="Xem các SKU đã đánh giá ở SKU Testing"
                     label="Tỉ lệ WIN"
                     value={r != null ? fmtPct(r) : "—"}
                     highlight={r != null && r >= WIN_TARGET_RATE}
@@ -2326,7 +2411,7 @@ export function KqkdView() {
                 <tr>
                   <th colSpan={3} className={`${TH_BASE} text-left bg-[#FF8C00] !text-black !border-black !border-t !border-l sticky left-0 z-30`}>Thông tin cơ bản</th>
                   <th colSpan={5} className={`${TH_BASE} bg-[#FF8C00] !border-black !border-t`} />
-                  <th colSpan={12} className={`${TH_BASE} ${SEP} text-left bg-blue-200 !text-blue-900`}>Life time</th>
+                  <th colSpan={10} className={`${TH_BASE} ${SEP} text-left bg-blue-200 !text-blue-900`}>Life time</th>
                   {tableMonths.map((m, mi) => (
                     <th
                       key={m.month}
@@ -2354,10 +2439,8 @@ export function KqkdView() {
                   <FilterTh k="basecost" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Basecost</FilterTh>
                   <FilterTh k="ads_fee" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Ads Fee</FilterTh>
                   <FilterTh k="tacos" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>TAcos</FilterTh>
-                  <FilterTh k="profit" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Profit</FilterTh>
+                  <FilterTh k="profit" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 text-right`}>Profit</FilterTh>
                   <FilterTh k="roi" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>ROI</FilterTh>
-                  <FilterTh k="hoanVon" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} !bg-yellow-200 !text-yellow-900 text-right`}>Hoàn vốn</FilterTh>
-                  <FilterTh k="hoanVonPct" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>% Hoàn vốn</FilterTh>
                   <FilterTh k="qty_di" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Số lượng đi hàng</FilterTh>
                   <FilterTh k="ton" sort={sort} filters={colFilters} onOpen={openFilter} align="right" className={`${TH_BASE} bg-blue-100 !text-blue-900 text-right`}>Tồn</FilterTh>
                   {tableMonths.map((m) =>
@@ -2391,10 +2474,8 @@ export function KqkdView() {
                   <td className={`${TD} font-semibold`}>{fmtUsd(totals.basecost)}</td>
                   <td className={`${TD} font-semibold`}>{fmtUsd(totals.ads)}</td>
                   <td className={`${TD} font-semibold`}>{fmtPct(ratio(-totals.ads, totals.revenue))}</td>
-                  <td className={`${TD} font-semibold ${signClass(totals.profit)}`}>{fmtUsd(totals.profit)}</td>
+                  <td className={`${TD} ${PROFIT_CELL} font-semibold ${signClass(totals.profit)}`}>{fmtUsd(totals.profit)}</td>
                   <td className={`${TD} font-semibold`}>{fmtPct(ratio(totals.profit, totals.basecost))}</td>
-                  <td className={`${TD} ${totals.von > 0 && totals.hoanVon > totals.von ? POS_CELL : `${YELLOW_CELL} font-semibold`}`}>{fmtUsd(totals.hoanVon)}</td>
-                  <td className={`${TD} font-semibold`}><HoanVonBar v={ratio(totals.hoanVon, totals.von)} /></td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.qtyDi)}</td>
                   <td className={`${TD} font-semibold`}>{fmtInt(totals.ton)}</td>
                   {tableMonths.map((m) =>
@@ -2412,7 +2493,7 @@ export function KqkdView() {
               <tbody>
                 {skus.length === 0 && (
                   <tr>
-                    <td colSpan={20 + tableMonths.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
+                    <td colSpan={18 + tableMonths.length * monthMetrics.length} className="px-4 py-10 text-left text-sm !text-slate-500">
                       Không có SKU khớp bộ lọc.{" "}
                       <button type="button" onClick={clearFilters} className="cursor-pointer font-semibold text-blue-600 hover:underline">
                         Xoá lọc
@@ -2439,7 +2520,7 @@ export function KqkdView() {
                           <span className="font-mono text-[11.5px] font-bold text-slate-900">{s.sku}</span>
                         </span>
                       </td>
-                      <td className={TDL}>
+                      <td className={`${TDL} ${statusCellClass(s.status)}`}>
                         <StatusPill status={s.status} />
                       </td>
                       <td className={TDL}>{s.pic_idea}</td>
@@ -2469,12 +2550,8 @@ export function KqkdView() {
                       <td className={`${TD} ${zc(d.basecost)}`}>{fmtUsd(d.basecost)}</td>
                       <td className={`${TD} ${zc(s.ads_fee)}`}>{fmtUsd(s.ads_fee)}</td>
                       <td className={`${TD} ${zc(d.tacos)}`}>{fmtPct(d.tacos)}</td>
-                      <td className={`${TD} ${s.profit <= -0.005 ? NEG_CELL : `bg-blue-50/40 font-semibold ${profitCls(s.profit)}`}`}>{fmtUsd(s.profit)}</td>
+                      <td className={`${TD} ${s.profit <= -0.005 ? NEG_CELL : `${PROFIT_CELL} font-semibold ${profitCls(s.profit)}`}`}>{fmtUsd(s.profit)}</td>
                       <td className={`${TD} ${zc(d.roi)}`}>{fmtPct(d.roi)}</td>
-                      <td className={`${TD} ${s.von_hang > 0 && d.hoanVon > s.von_hang ? POS_CELL : `${YELLOW_CELL} ${zc(d.hoanVon)}`}`} title={s.von_hang > 0 && d.hoanVon > s.von_hang ? "Đã hoàn vốn: Hoàn vốn > Tổng vốn hàng" : undefined}>{fmtUsd(d.hoanVon)}</td>
-                      <td className={`${TD} bg-blue-50/40`}>
-                        <HoanVonBar v={d.hoanVonPct} />
-                      </td>
                       <td className={`${TD} ${zc(s.qty_di)}`}>{fmtInt(s.qty_di)}</td>
                       <td
                         className={`${TD} ${zc(d.ton)}`}

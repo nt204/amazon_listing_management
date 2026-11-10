@@ -843,12 +843,13 @@ function SkuTable({
               )}
             </tr>
             <tr className="font-bold">
-              <td colSpan={FIX.length} className={`sticky left-0 z-30 border-b-2 bg-white px-2 py-1.5 text-left text-black ${grid}`}>
+              {/* Dòng Tổng tô vàng nhạt để tách khỏi tiêu đề và các dòng SKU */}
+              <td colSpan={FIX.length} className={`sticky left-0 z-30 border-b-2 bg-[#FFF2CC] px-2 py-1.5 text-left text-black ${grid}`}>
                 Tổng
               </td>
               {shown.map((g) =>
                 g.cols.map((col) => (
-                  <td key={col.id} className={`${td} border-b-2 bg-white text-black`}>
+                  <td key={col.id} className={`${td} border-b-2 bg-[#FFF2CC] text-black`}>
                     {totalCell(col)}
                   </td>
                 )),

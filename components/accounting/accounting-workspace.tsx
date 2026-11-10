@@ -5,6 +5,9 @@ import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { AccountingModuleSkeleton, AccountingViewTransition } from "./accounting-skeleton";
 
+// Các mục giữ kiểu kẻ bảng mờ cũ (không lưới đen): Overview, Store Management.
+const PLAIN_GRID_SECTIONS = new Set(["overview", "stores"]);
+
 const ACCOUNTING_IMPORT_JOB_KEY = "accounting_import_active_job";
 
 type TrackedAccountingImport = {
@@ -128,7 +131,7 @@ function AccountingSectionShell({
   sectionKey?: string;
 }) {
   return (
-    <AccBlackGrid enabled={sectionKey !== "overview"} className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+    <AccBlackGrid enabled={!PLAIN_GRID_SECTIONS.has(sectionKey ?? "")} className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
       <AccountingImportTracker />
       <AccountingViewTransition transitionKey={sectionKey}>
         {children}

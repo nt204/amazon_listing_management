@@ -39,12 +39,18 @@ import type {
   DashboardSeriesPoint,
   DashboardStoreRow,
   DashboardTotals,
+  DashboardSkuGroup,
+  DashboardSkuGroupData,
 } from "@/lib/accounting/dashboard-db";
 import {
-  inclusiveDayCount,
+  dashboardChartGranularity,
+  dashboardCompareMode,
+  dashboardPresetRange,
+  dashboardRangeUnit,
   previousMonthRange,
   resolveDashboardPeriods,
-  type DashboardCompareMode,
+  type DashboardChartGranularity,
+  type DashboardPeriodUnit,
 } from "@/lib/accounting/dashboard-periods";
 import { summarizeRange, type DashboardDay, type DashboardTotals as Totals } from "@/lib/accounting/dashboard-totals";
 import { listTeams, parseStoreTeams, storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
@@ -236,8 +242,8 @@ function DeltaPill({ ratio }: { ratio: number | null }) {
         up ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
       }`}
     >
+      {/* Mũi tên + màu đã thể hiện tăng / giảm nên không thêm dấu +/− */}
       {up ? <ArrowUpRightIcon size={12} weight="bold" /> : <ArrowDownRightIcon size={12} weight="bold" />}
-      {up ? "+" : "−"}
       {abs}%
     </span>
   );
@@ -395,7 +401,7 @@ function KpiCard({
         {showDelta && (
           <div className="mt-2.5 flex min-w-0 items-center gap-1.5">
             <DeltaPill ratio={kpi.ratio} />
-            {compareLabel && <span className="truncate text-[11.5px] text-slate-400">vs {compareLabel.toLowerCase()}</span>}
+            {compareLabel && <span className="truncate text-[11.5px] text-slate-400">{compareLabel}</span>}
           </div>
         )}
       </div>
@@ -406,19 +412,13 @@ function KpiCard({
 // ---------- trend chart ----------
 
 type ChartPoint = DashboardSeriesPoint & Partial<Record<`cmp_${SeriesKey}`, number>>;
-type ChartGranularity = "day" | "week" | "month";
-
-const GRANULARITY_UNIT: Record<ChartGranularity, string> = {
-  day: "Ngày",
-  week: "Tuần",
-  month: "Tháng",
-};
+type ChartGranularity = DashboardChartGranularity;
 
 /** So sánh với: kỳ trước hoặc cùng kỳ năm trước; null = không so sánh. */
 type CompareBase = "prev" | "yoy";
 
 /** Đơn vị của khoảng ngày đã chọn: quyết định kỳ so sánh. */
-type PeriodUnit = "day" | "week" | "month" | "year";
+type PeriodUnit = DashboardPeriodUnit;
 
 const PREV_PERIOD_LABELS: Record<PeriodUnit, string> = {
   day: "Hôm qua",
@@ -432,20 +432,7 @@ function compareLabel(base: CompareBase, unit: PeriodUnit): string {
   return base === "yoy" ? "Năm trước" : PREV_PERIOD_LABELS[unit];
 }
 
-/** Nhãn khoảng ngày của 1 ô trên biểu đồ (ngày / tuần / tháng). */
-function bucketRangeLabel(start: string, end: string): string {
-  return start === end ? shortDate(start) : `${shortDate(start)} – ${shortDate(end)}`;
-}
-
-/**
- * Kiểu so sánh gửi server: kỳ liền trước theo đơn vị (ngày → hôm qua, tuần → tuần trước, tháng → tháng trước,
- * năm → năm trước) hoặc năm trước = đúng ngày lịch năm trước (lùi 12 tháng, kể cả khi chọn tuần: 1–7/11 → 1–7/11 năm trước).
- */
-function compareModeFor(unit: PeriodUnit, base: CompareBase | null): DashboardCompareMode {
-  if (!base) return "none";
-  if (base === "yoy" || unit === "year") return "yoy";
-  return unit === "day" ? "day" : unit === "week" ? "week" : "month";
-}
+const compareModeFor = dashboardCompareMode;
 
 /** Đặt trong biểu đồ nhưng điều khiển chung cho KPI, biểu đồ và P&L: so với kỳ nào. */
 function PeriodControls({
@@ -477,12 +464,15 @@ function PeriodControls({
       >
         <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold text-slate-400">So sánh với</div>
         {/* Chọn năm: kỳ liền trước chính là năm trước → chỉ 1 lựa chọn */}
-        {(compareUnit === "year" ? (["prev"] as const) : (["prev", "yoy"] as const)).map((base) => (
+        {(compareUnit === "year" ? (["prev"] as const) : (["prev", "yoy"] as const)).map((base) => {
+          const selected = compareBase === base || (compareUnit === "year" && compareBase === "yoy");
+          return (
           <MenuItem
             key={base}
-            active={compareBase === base || (compareUnit === "year" && compareBase === "yoy")}
+            active={selected}
             onClick={() => {
-              onCompareBaseChange(base);
+              // Bấm lại lựa chọn đang tích = bỏ so sánh
+              onCompareBaseChange(selected ? null : base);
               setCompareOpen(false);
             }}
           >
@@ -491,21 +481,8 @@ function PeriodControls({
               <span className="whitespace-nowrap text-xs font-normal tabular-nums text-slate-400">{comparePreview[base]}</span>
             )}
           </MenuItem>
-        ))}
-        {compareBase && (
-          <>
-            <div className="my-1 h-px bg-slate-100" />
-            <MenuItem
-              active={false}
-              onClick={() => {
-                onCompareBaseChange(null);
-                setCompareOpen(false);
-              }}
-            >
-              <span className="text-slate-500">Bỏ so sánh</span>
-            </MenuItem>
-          </>
-        )}
+          );
+        })}
       </DropdownShell>
     </div>
   );
@@ -522,30 +499,6 @@ function startOfWeek(date: string): string {
   const value = new Date(`${date}T00:00:00Z`);
   value.setUTCDate(value.getUTCDate() - value.getUTCDay());
   return value.toISOString().slice(0, 10);
-}
-
-/**
- * Đơn vị của khoảng ngày đã chọn — quyết định kỳ so sánh của KPI / P&L:
- * 1 ngày → ngày · ≤ 7 ngày (This / Last week) → tuần · từ 1/1 và dài hơn 1 tháng (This / Last year) → năm ·
- * còn lại (This / Last month…) → tháng.
- */
-function rangeUnit(startDate: string, endDate: string): PeriodUnit {
-  if (!startDate || !endDate) return "month";
-  if (startDate === endDate) return "day";
-  const span = inclusiveDayCount(startDate, endDate);
-  if (span <= 7) return "week";
-  if (startDate.endsWith("-01-01") && span > 31) return "year";
-  return "month";
-}
-
-/**
- * Biểu đồ gom nhỏ hơn khoảng đã chọn 1 bậc, chỉ trong khoảng đó:
- * chọn 1 ngày / 1 tuần → theo ngày · chọn tháng (≤ 31 ngày) → theo tuần (CN → T7) · dài hơn → theo tháng.
- */
-function chartGranularityFor(startDate: string, endDate: string): ChartGranularity {
-  const unit = rangeUnit(startDate, endDate);
-  if (unit === "day" || unit === "week") return "day";
-  return startDate && endDate && inclusiveDayCount(startDate, endDate) <= 31 ? "week" : "month";
 }
 
 const seriesOf = (key: string, t: Totals): DashboardSeriesPoint => ({
@@ -679,20 +632,15 @@ function TrendChart({
   data,
   previousPeriod,
   controls,
-  selectedKey,
   compareEmpty = false,
-  onSelect,
   delay,
 }: {
-  /** Các ô ngày / tuần / tháng đã gộp sẵn (dùng chung với P&L). */
+  /** Các ô ngày / tuần / tháng đã gộp sẵn. */
   data: AggregatedChartPoint[];
   previousPeriod: { startDate: string; endDate: string } | null;
   controls: React.ComponentProps<typeof PeriodControls>;
-  /** Ô đang hiển thị trong P&L bên cạnh. */
-  selectedKey: string | null;
   /** Kỳ so sánh hoàn toàn chưa có dữ liệu: không vẽ đường so sánh (tránh hiểu nhầm là $0). */
   compareEmpty?: boolean;
-  onSelect: (key: string) => void;
   delay: number;
 }) {
   const mode = controls.granularity;
@@ -732,7 +680,6 @@ function TrendChart({
       ? shortDate(point.rangeStart)
       : `${shortDate(point.rangeStart)} - ${shortDate(point.rangeEnd)}`;
   };
-  const selectedBandWidth = Math.max(4, Math.min(56, (((chartWidth || 800) - 70) / Math.max(1, data.length)) * 0.7));
   // ~1 nhãn mỗi 58px chiều ngang để số không chồng nhau trên màn hẹp
   const labelEvery = Math.max(1, Math.ceil(data.length / Math.max(3, Math.floor((chartWidth || 800) / 58))));
   // Theo tháng mỗi điểm có kỳ so sánh riêng nên chỉ ghi tên; ngày / tuần ghi kèm khoảng ngày của kỳ so sánh
@@ -795,10 +742,6 @@ function TrendChart({
               key={mode}
               data={chartData}
               margin={{ top: 20, right: 12, bottom: 0, left: 0 }}
-              onClick={(state) => {
-                if (state?.activeLabel != null) onSelect(String(state.activeLabel));
-              }}
-              style={{ cursor: "pointer" }}
             >
               <defs>
                 {SERIES.map((s) =>
@@ -841,10 +784,6 @@ function TrendChart({
                 tickLine={false}
                 width={chartWidth > 0 && chartWidth < 420 ? 44 : 52}
               />
-              {/* Dải nền đánh dấu ô đang xem trong P&L */}
-              {selectedKey && data.length > 1 && (
-                <ReferenceLine x={selectedKey} stroke="#6366f1" strokeOpacity={0.08} strokeWidth={selectedBandWidth} />
-              )}
               <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1.25} />
               <Tooltip
                 cursor={{ stroke: "#cbd5e1", strokeDasharray: "3 3" }}
@@ -896,9 +835,6 @@ function TrendChart({
                           </div>
                         );
                       })}
-                      {point.key !== selectedKey && (
-                        <p className="mt-1.5 border-t border-slate-100 pt-1.5 text-xs text-slate-400">Bấm để xem P&amp;L của kỳ này</p>
-                      )}
                     </div>
                   );
                 }}
@@ -951,202 +887,9 @@ function TrendChart({
   );
 }
 
-// ---------- P&L ----------
-
-// Cùng tên + thứ tự với các cột chi phí của tab Financials (FBA theo ngày)
-const COST_ITEMS = [
-  { key: "adsFee", label: "Ads Fee", color: "#8b5cf6" },
-  { key: "basecost", label: "Base Cost", color: "#0d9488" },
-  { key: "amazonFee", label: "AMZ Fee", color: "#fb923c" },
-  { key: "tax", label: "Thuế", color: "#f472b6" },
-  { key: "promotion", label: "Promotion", color: "#ca8a04" },
-  { key: "returnCost", label: "Refund", color: "#06b6d4" },
-] as const;
-type CostKey = (typeof COST_ITEMS)[number]["key"];
-
-function costValues(t: DashboardTotals): Record<CostKey, number> {
-  return {
-    adsFee: t.adsFee,
-    basecost: t.basecost,
-    amazonFee: t.amazonFee,
-    tax: t.tax,
-    promotion: t.promotion,
-    returnCost: t.returnCost,
-  };
-}
-
-const PNL_GRID = "grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)_auto_3.5rem] items-center gap-3";
-// Khi so sánh: tên | thanh | kỳ này | kỳ trước (mờ) | % thay đổi
-const PNL_GRID_CMP = "grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)_auto_auto_3.25rem] items-center gap-x-2.5";
-
-/** % thay đổi dạng chữ gọn; ẩn khi đổi dấu hoặc lệch quá 999% (vô nghĩa với số nhỏ). */
-function PnlDelta({ cur, prev }: { cur: number; prev: number }) {
-  const change = changeRatio(cur, prev);
-  if (change == null || !Number.isFinite(change) || Math.abs(change) > 9.99 || cur * prev < 0) {
-    return <span className="text-right text-xs text-slate-300">—</span>;
-  }
-  return (
-    <span className={`text-right text-xs font-semibold tabular-nums ${change >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-      {change >= 0 ? "+" : "−"}
-      {Math.abs(change * 100).toFixed(1)}%
-    </span>
-  );
-}
-
-function PnlCostRow({
-  label,
-  value,
-  color,
-  revenue,
-  maxCost,
-  title,
-  grid,
-  compare,
-}: {
-  label: string;
-  value: number;
-  color: string;
-  revenue: number;
-  maxCost: number;
-  title?: string;
-  grid: string;
-  /** Có khi so sánh: số kỳ trước (mờ) + % thay đổi, thay cho % doanh thu. */
-  compare?: React.ReactNode;
-}) {
-  const mounted = useMounted();
-  // Thanh so với khoản chi lớn nhất để dễ so sánh; % bên phải vẫn là % doanh thu.
-  const width = maxCost > 0 ? Math.min(100, Math.max(0, (value / maxCost) * 100)) : 0;
-  return (
-    <div className={`${grid} border-b border-slate-100 py-2.5`} title={title}>
-      <span className="truncate text-sm text-slate-700">{label}</span>
-      <div className="h-3 overflow-hidden rounded-full bg-slate-100/70">
-        <div
-          className="h-full rounded-full transition-[width] duration-700 ease-out"
-          style={{ width: mounted ? `${Math.max(width, value > 0 ? 2 : 0)}%` : "0%", backgroundColor: color }}
-        />
-      </div>
-      <span className="text-right text-sm font-semibold tabular-nums text-slate-800">{money(-value)}</span>
-      {compare ?? (
-        <span className="text-right text-xs tabular-nums text-slate-500">({ratioOrDash(value / (revenue || 1), revenue)})</span>
-      )}
-    </div>
-  );
-}
-
-function PnlStatement({
-  current,
-  previous,
-  periodLabel,
-  compareLabel,
-  compareEmpty = false,
-  onResetRange,
-  delay,
-}: {
-  current: DashboardTotals;
-  previous: DashboardTotals | null;
-  /** Ô đang xem trên biểu đồ, vd "Tuần 6/10 – 11/10". */
-  periodLabel: string;
-  compareLabel: string;
-  /** Kỳ so sánh chưa có dữ liệu: hiện thông báo thay cho cột $0. */
-  compareEmpty?: boolean;
-  /** Có khi đang xem một ô cũ hơn ô mới nhất. */
-  onResetRange?: () => void;
-  delay: number;
-}) {
-  const revenue = current.revenue;
-  const costs = costValues(current);
-  const prevCosts = previous ? costValues(previous) : null;
-  const maxCost = Math.max(0, ...Object.values(costs));
-  const negative = current.profit < 0;
-  const grid = previous ? PNL_GRID_CMP : PNL_GRID;
-  // 2 ô cuối của dòng khi so sánh: số kỳ trước mờ + % thay đổi
-  // cost = khoản chi: hiển thị số âm như các dòng chi phí
-  const compareCells = (cur: number, prev: number, cost = false) => (
-    <>
-      <span className="text-right text-xs tabular-nums text-slate-400" title={compareLabel}>
-        {money(cost ? -prev : prev)}
-      </span>
-      <PnlDelta cur={cur} prev={prev} />
-    </>
-  );
-
-  return (
-    <Card delay={delay} className="flex h-full flex-col p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-bold text-slate-900">Profit &amp; Loss</h2>
-          <p key={`${periodLabel}|${compareLabel}`} className="acc-rise mt-0.5 text-[13px] font-semibold text-indigo-600">
-            {periodLabel}
-            {previous && <span className="font-medium text-slate-500"> · vs {compareLabel}</span>}
-          </p>
-          {compareEmpty && (
-            <p className="acc-rise mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-              <WarningCircleIcon size={13} weight="bold" />
-              Chưa có dữ liệu kỳ so sánh
-            </p>
-          )}
-        </div>
-        {onResetRange && (
-          <button
-            type="button"
-            onClick={onResetRange}
-            className="shrink-0 cursor-pointer rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
-          >
-            Cả khoảng
-          </button>
-        )}
-      </div>
-      <div className="mt-2 flex flex-1 flex-col justify-center">
-        <div className={`${grid} border-b border-slate-200 py-2.5`}>
-          <span className="text-sm font-semibold text-slate-900">Revenue</span>
-          <span />
-          <span className={`text-right text-sm font-bold tabular-nums ${revenue < 0 ? "text-rose-600" : "text-slate-900"}`}>
-            {money(revenue)}
-          </span>
-          {previous ? compareCells(revenue, previous.revenue) : <span />}
-        </div>
-        {COST_ITEMS.map((item) => (
-          <PnlCostRow
-            key={item.key}
-            label={item.label}
-            value={costs[item.key]}
-            color={item.color}
-            revenue={revenue}
-            maxCost={maxCost}
-            grid={grid}
-            compare={prevCosts ? compareCells(costs[item.key], prevCosts[item.key], true) : undefined}
-          />
-        ))}
-      </div>
-      <div
-        className={`mt-3 flex items-center justify-between rounded-xl px-4 py-3 transition-colors duration-300 ${
-          negative ? "bg-rose-50" : "bg-emerald-50"
-        }`}
-      >
-        <span className="text-[15px] font-bold text-slate-900">Profit</span>
-        <span className={`flex items-center gap-2 tabular-nums ${negative ? "text-rose-600" : "text-emerald-600"}`}>
-          <span className="text-lg font-bold">
-            <AnimatedNumber value={current.profit} format={money} />
-          </span>
-          {previous ? (
-            <>
-              <span className="text-xs text-slate-400" title={compareLabel}>
-                {money(previous.profit)}
-              </span>
-              <PnlDelta cur={current.profit} prev={previous.profit} />
-            </>
-          ) : (
-            <span className="text-xs font-medium">({ratioOrDash(current.margin, revenue)})</span>
-          )}
-        </span>
-      </div>
-    </Card>
-  );
-}
-
 // ---------- store table ----------
 
-type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units";
+type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units" | "stock";
 
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
@@ -1156,6 +899,7 @@ const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "acos", label: "ACOS" },
   { key: "units", label: "Units" },
   { key: "profit", label: "Profit" },
+  { key: "stock", label: "Giá trị tồn" },
 ];
 
 /** Profit: dương xanh, âm đỏ, 0 xám. */
@@ -1182,6 +926,8 @@ function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | str
       return c.revenueAds > 0 ? c.acos : null;
     case "units":
       return c.quantity;
+    case "stock":
+      return row.stockValue ?? null;
   }
 }
 
@@ -1208,11 +954,14 @@ function StoreMetricCells({
   t,
   sub = false,
   hideRatios = false,
+  stockValue,
 }: {
   t: DashboardTotals;
   sub?: boolean;
   /** Bỏ 3 cột Margin / TACOS / ACOS (bảng Team Performance). */
   hideRatios?: boolean;
+  /** Có thì thêm cột Giá trị tồn sau Profit (null = kênh FBM không có tồn → "—"). */
+  stockValue?: number | null;
 }) {
   const cell = `border-b border-slate-100 px-3 text-right tabular-nums ${sub ? "py-1.5 text-[13px] text-slate-600" : "py-2.5"}`;
   return (
@@ -1231,8 +980,57 @@ function StoreMetricCells({
       <td className={`${cell} pr-4`}>
         <span className={`${sub ? "font-semibold" : "font-bold"} ${profitTone(t.profit)}`}>{money(t.profit)}</span>
       </td>
+      {stockValue !== undefined && (
+        <td className={`${cell} pr-4`}>{stockValue == null ? <span className="text-slate-400">—</span> : money(stockValue)}</td>
+      )}
     </>
   );
+}
+
+type SkuGroupFilter = "all" | DashboardSkuGroup;
+const NO_STORE_ROWS: DashboardStoreRow[] = [];
+const SKU_GROUP_OPTIONS: { key: SkuGroupFilter; label: string; title: string }[] = [
+  { key: "all", label: "All", title: "Toàn bộ store" },
+  { key: "win", label: "Win", title: "Chỉ SKU có trạng thái Phát triển trong Bảng mã" },
+  { key: "test", label: "Test", title: "Chỉ SKU có trạng thái Test trong Bảng mã" },
+];
+
+/** Số liệu Stores Performance của nhóm SKU Win / Test (tải riêng, chỉ khi chọn nhóm). */
+function useSkuGroupData(
+  group: SkuGroupFilter,
+  query: { startDate: string; endDate: string; storeIds: string[]; team: string; reloadKey: number },
+) {
+  const [cache, setCache] = useState<Record<string, DashboardSkuGroupData>>({});
+  const [settled, setSettled] = useState<{ key: string; error: string | null } | null>(null);
+  const params = new URLSearchParams();
+  if (group !== "all") params.set("group", group);
+  if (query.startDate) params.set("start_date", query.startDate);
+  if (query.endDate) params.set("end_date", query.endDate);
+  if (query.storeIds.length) params.set("store_ids", query.storeIds.join(","));
+  if (query.team) params.set("team", query.team);
+  const queryKey = params.toString();
+  const requestKey = `${queryKey}#${query.reloadKey}`;
+  useEffect(() => {
+    if (group === "all") return;
+    const controller = new AbortController();
+    fetch(`/api/accounting/dashboard/sku-group?${queryKey}`, { cache: "no-store", signal: controller.signal })
+      .then(async (res) => {
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || `Failed to load data (${res.status})`);
+        setCache((prev) => ({ ...prev, [queryKey]: payload as DashboardSkuGroupData }));
+        setSettled({ key: requestKey, error: null });
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setSettled({ key: requestKey, error: err instanceof Error ? err.message : "Failed to load data" });
+      });
+    return () => controller.abort();
+    // group / queryKey nằm trong requestKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestKey]);
+  if (group === "all") return { data: null, loading: false, error: null };
+  const done = settled?.key === requestKey;
+  return { data: cache[queryKey] ?? null, loading: !done, error: done ? settled.error : null };
 }
 
 function StoresPerformance({
@@ -1240,26 +1038,37 @@ function StoresPerformance({
   colorOf,
   channelLabel,
   onFocusStore,
+  onShowAll,
+  query,
   delay,
 }: {
   data: AccountingDashboardData;
   colorOf: (storeId: string) => string;
   channelLabel: ChannelLabelOf;
   onFocusStore: (storeId: string) => void;
+  /** Bấm tiêu đề "Store": bỏ lọc store / team, về All. */
+  onShowAll: () => void;
+  /** Bộ lọc đang chọn của Dashboard, để tải số liệu nhóm SKU Win / Test. */
+  query: { startDate: string; endDate: string; storeIds: string[]; team: string; reloadKey: number };
   delay: number;
 }) {
-  // Mặc định store lỗ nặng nhất lên đầu
-  const [sort, setSort] = useState<{ key: StoreSortKey; dir: "asc" | "desc" }>({ key: "profit", dir: "asc" });
+  // All = số liệu store như cũ; Win / Test = chỉ cộng SKU thuộc nhóm trong Bảng mã (chỉ đổi bảng này).
+  const [group, setGroup] = useState<SkuGroupFilter>("all");
+  const groupData = useSkuGroupData(group, query);
+  const byStore = group === "all" ? data.byStore : groupData.data?.byStore ?? NO_STORE_ROWS;
+  // Mặc định gom theo team (FBA 1, FBA 2…, FBM), trong team xếp theo tên store
+  const [sort, setSort] = useState<{ key: StoreSortKey; dir: "asc" | "desc" }>({ key: "store", dir: "asc" });
   // Store chạy cả FBA và FBM: tách thành 2 dòng độc lập, mỗi dòng 1 tag kênh, không có dòng gộp.
   const rows = useMemo(() => {
     const sign = sort.dir === "asc" ? 1 : -1;
-    const flat: StorePerfRow[] = data.byStore.flatMap((r): StorePerfRow[] =>
+    const flat: StorePerfRow[] = byStore.flatMap((r): StorePerfRow[] =>
       r.byChannel
         ? r.byChannel.map((c) => ({
             ...r,
             rowKey: `${r.storeId}:${c.channel}`,
             current: c.current,
             previous: c.previous,
+            stockValue: c.stockValue ?? null,
             channels: [c.channel],
             byChannel: undefined,
           }))
@@ -1278,21 +1087,59 @@ function StoresPerformance({
       if (typeof av === "string" || typeof bv === "string") return sign * String(av).localeCompare(String(bv));
       return sign * (av - bv) || b.current.revenue - a.current.revenue;
     });
-  }, [data.byStore, sort, channelLabel]);
+  }, [byStore, sort, channelLabel]);
   // Khi gom theo team: dòng đầu mỗi team (trừ team đầu tiên) có vạch kẻ phân cách
   const teamStart = (idx: number) =>
     sort.key === "store" &&
     idx > 0 &&
     channelLabel(rows[idx].storeId, rows[idx].channels[0] ?? "FBA") !==
       channelLabel(rows[idx - 1].storeId, rows[idx - 1].channels[0] ?? "FBA");
-  const total = data.current;
+  const total = group === "all" ? data.current : groupData.data?.current ?? data.current;
 
-  const toggleSort = (key: StoreSortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "store" ? "asc" : "desc" }));
+  const totalStock = rows.some((r) => r.stockValue != null) ? rows.reduce((sum, r) => sum + (r.stockValue ?? 0), 0) : null;
+
+  // Bấm "Store": về All store (bỏ lọc store / team) và xếp mặc định gom theo team FBA 1 → FBA 2 → … → FBM.
+  const toggleSort = (key: StoreSortKey) => {
+    if (key === "store") onShowAll();
+    setSort((s) =>
+      key === "store"
+        ? { key: "store", dir: "asc" }
+        : s.key === key
+          ? { key, dir: s.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: "desc" },
+    );
+  };
 
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
-      <h2 className="text-lg font-bold text-slate-900">Stores Performance</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-bold text-slate-900">Stores Performance</h2>
+        <div className="flex items-center gap-2">
+          {groupData.loading && <ArrowClockwiseIcon size={13} weight="bold" className="animate-spin text-indigo-500" />}
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5" role="tablist" aria-label="Nhóm SKU">
+            {SKU_GROUP_OPTIONS.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                role="tab"
+                aria-selected={group === o.key}
+                title={o.title}
+                onClick={() => setGroup(o.key)}
+                className={`cursor-pointer rounded-md px-3 py-1 text-[13px] font-semibold transition-colors ${
+                  group === o.key ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {groupData.error && <p className="mt-2 text-[13px] font-medium text-rose-600">{groupData.error}</p>}
+      {group !== "all" && !groupData.data && !groupData.error && (
+        <p className="mt-3 text-[13px] text-slate-400">Đang tải số liệu SKU {group === "win" ? "Win" : "Test"}…</p>
+      )}
+      <div className={`transition-opacity duration-200 ${groupData.loading && groupData.data ? "opacity-60" : ""}`}>
       {/* Màn hẹp: danh sách thẻ thay cho bảng để không phải cuộn ngang */}
       <div className="mt-2 divide-y divide-slate-100 @min-[600px]:hidden">
         {rows.map((row, idx) => {
@@ -1317,6 +1164,7 @@ function StoresPerformance({
                     <span>TACOS {ratioOrDash(c.tacos, c.revenue)}</span>
                     <span>ACOS {ratioOrDash(c.acos, c.revenueAds)}</span>
                     <span>{int.format(c.quantity)} units</span>
+                    {row.stockValue != null && <span>Tồn {money(row.stockValue)}</span>}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
@@ -1349,7 +1197,7 @@ function StoresPerformance({
         )}
       </div>
       <div className="mt-3 hidden overflow-x-auto @min-[600px]:block">
-        <table className="w-full min-w-[620px] border-separate border-spacing-0 text-left">
+        <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
           <thead>
             <tr>
               {STORE_COLUMNS.map((col, i) => {
@@ -1364,15 +1212,17 @@ function StoresPerformance({
                     <button
                       type="button"
                       onClick={() => toggleSort(col.key)}
+                      title={col.key === "store" ? "Xem tất cả store (All)" : undefined}
                       className={`inline-flex cursor-pointer items-center gap-1 !text-[13px] !tracking-normal transition-colors hover:!text-slate-900 ${
                         active ? "!font-bold !text-slate-900" : "!font-bold !text-slate-700"
                       }`}
                     >
                       {col.label}
+                      {/* Cột Store không có mũi tên: bấm vào chỉ để về mặc định gom theo team */}
                       <CaretDownIcon
                         size={10}
                         weight="bold"
-                        className={`transition-all duration-200 ${active ? "opacity-100" : "opacity-0"} ${
+                        className={`transition-all duration-200 ${active && col.key !== "store" ? "opacity-100" : "opacity-0"} ${
                           active && sort.dir === "asc" ? "rotate-180" : ""
                         }`}
                       />
@@ -1406,7 +1256,7 @@ function StoresPerformance({
                       )}
                     </div>
                   </td>
-                  <StoreMetricCells t={c} />
+                  <StoreMetricCells t={c} stockValue={row.stockValue ?? null} />
                 </tr>
               </tbody>
             );
@@ -1425,11 +1275,13 @@ function StoresPerformance({
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.tacos, total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
                 <td className="px-3 py-2.5 text-right">{int.format(total.quantity)}</td>
-                <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                <td className="px-3 py-2.5 pr-4 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right">{totalStock == null ? "—" : money(totalStock)}</td>
               </tr>
             </tfoot>
           )}
         </table>
+      </div>
       </div>
     </Card>
   );
@@ -1622,14 +1474,15 @@ export function AccountingDashboardView() {
   const [selectedIds, setSelectedIds] = useState<string[]>(readSavedStoreIds);
   // Mỗi lần mở Dashboard luôn bắt đầu từ "This month"
   const [dateRange, setDateRange] = useState<DateRange>(() => getThisMonthDateRange(maxDate));
+  // Preset vừa bấm (this_month, last_week…) → đơn vị kỳ chính xác; null = khoảng tự chọn trên lịch.
+  const [datePreset, setDatePreset] = useState<string | null>("this_month");
   const [compareBase, setCompareBase] = useState<CompareBase | null>(readSavedCompareBase);
   // Một bộ điều khiển chung: ngày / tuần / tháng quyết định cả cách gộp biểu đồ lẫn kỳ so sánh.
   // Cách gộp biểu đồ tự suy ra từ khoảng ngày (không có nút chọn), tách khỏi kỳ so sánh (theo đơn vị của khoảng ngày).
-  const granularity = chartGranularityFor(dateRange.startDate, dateRange.endDate);
-  const periodUnit = rangeUnit(dateRange.startDate, dateRange.endDate);
+  const periodUnit = dashboardRangeUnit(dateRange.startDate, dateRange.endDate, datePreset);
+  const granularity = dashboardChartGranularity(periodUnit, dateRange.startDate, dateRange.endDate);
   const compare = compareModeFor(periodUnit, compareBase);
   // Ô (ngày / tuần / tháng) đang xem trong P&L; null = ô mới nhất.
-  const [pickedBucket, setPickedBucket] = useState<string | null>(null);
   const [storeMenuOpen, setStoreMenuOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
@@ -1701,6 +1554,48 @@ export function AccountingDashboardView() {
     return () => controller.abort();
   }, [dateRange.startDate, dateRange.endDate, selectionKey, compare, queryKey, requestKey]);
 
+  // Tải sẵn các preset hay dùng (cùng store / team / kiểu so sánh) sau khi màn hình hiện xong: bấm chuyển preset
+  // là có ngay, đồng thời làm nóng cache server (cả Top sản phẩm). Lần lượt từng preset, dừng khi đổi bộ lọc.
+  const prefetchedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (loading || !data || !maxDate) return;
+    const controller = new AbortController();
+    const run = async () => {
+      for (const presetId of OVERVIEW_DATE_PRESETS) {
+        const range = dashboardPresetRange(presetId, maxDate);
+        if (!range) continue;
+        const mode = dashboardCompareMode(dashboardRangeUnit(range.startDate, range.endDate, presetId), compareBase);
+        const key = `${range.startDate}|${range.endDate}|${selectionKey}|${mode}`;
+        if (prefetchedRef.current.has(`${key}|${reloadKey}`)) continue;
+        prefetchedRef.current.add(`${key}|${reloadKey}`);
+        const params = new URLSearchParams({ start_date: range.startDate, end_date: range.endDate, compare: mode });
+        if (validSelectedIds.length) params.set("store_ids", validSelectedIds.join(","));
+        if (selectedTeam) params.set("team", selectedTeam);
+        try {
+          const res = await fetch(`/api/accounting/dashboard?${params.toString()}`, { cache: "no-store", signal: controller.signal });
+          if (!res.ok) continue;
+          const payload = (await res.json()) as AccountingDashboardData;
+          setResponses((prev) => (prev[key] ? prev : { ...prev, [key]: payload }));
+          // Top sản phẩm: chỉ gọi để server tính sẵn (bảng Top có cache riêng ở client)
+          params.delete("compare");
+          void fetch(`/api/accounting/dashboard/top-products?${params.toString()}`, { cache: "no-store", signal: controller.signal }).catch(() => {});
+        } catch {
+          // Bị huỷ giữa chừng (đổi bộ lọc) → lần sau tải lại preset này
+          prefetchedRef.current.delete(`${key}|${reloadKey}`);
+          if (controller.signal.aborted) return;
+        }
+      }
+    };
+    // Chờ màn hình hiện xong rồi mới tải sẵn
+    const timer = setTimeout(() => void run(), 800);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+    // validSelectedIds / selectedTeam nằm trong selectionKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, Boolean(data), maxDate, selectionKey, compareBase, reloadKey]);
+
   const refresh = useCallback(() => {
     freshRef.current = true;
     setReloadKey((k) => k + 1);
@@ -1760,9 +1655,9 @@ export function AccountingDashboardView() {
   };
 
   // Chọn khoảng ngày → biểu đồ tự đổi cách gộp (tuần → từng ngày, tháng → từng tuần).
-  const handleRangeChange = (next: DateRange) => {
+  const handleRangeChange = (next: DateRange, presetId?: string) => {
     setDateRange(next);
-    setPickedBucket(null);
+    setDatePreset(presetId ?? null);
   };
 
   const handleCompareBaseChange = (next: CompareBase | null) => {
@@ -1892,27 +1787,6 @@ export function AccountingDashboardView() {
     }
     return aggregateTrend(data.daily, granularity);
   }, [data, granularity, periodUnit, compareBase]);
-  const selectedBucket = buckets.find((b) => b.key === pickedBucket) ?? null;
-  const bucketPnl = useMemo(() => {
-    if (!data || !selectedBucket) return null;
-    const days = data.days ?? [];
-    const { rangeStart, rangeEnd, compareRangeStart, compareRangeEnd } = selectedBucket;
-    const hasCompare = Boolean(data.previous && compareRangeStart && compareRangeEnd);
-    return {
-      current: summarizeRange(days, rangeStart, rangeEnd),
-      previous: hasCompare ? summarizeRange(days, compareRangeStart!, compareRangeEnd!) : null,
-      periodLabel: `${GRANULARITY_UNIT[granularity]} ${bucketRangeLabel(rangeStart, rangeEnd)}`,
-      compareLabel:
-        hasCompare && compareBase
-          ? `${compareLabel(compareBase, periodUnit)} (${bucketRangeLabel(compareRangeStart!, compareRangeEnd!)})`
-          : "",
-    };
-  }, [data, selectedBucket, granularity, periodUnit, compareBase]);
-  const rangeLabel = data?.period.startDate ? bucketRangeLabel(data.period.startDate, data.period.endDate) : "";
-  const rangeCompareLabel =
-    data?.previousPeriod && compareBase
-      ? `${compareLabel(compareBase, periodUnit)} (${bucketRangeLabel(data.previousPeriod.startDate, data.previousPeriod.endDate)})`
-      : "";
   const comparePreview = useMemo(() => {
     const period = data?.period;
     if (!period?.startDate || !period.endDate) return {};
@@ -2281,13 +2155,12 @@ export function AccountingDashboardView() {
               ))}
             </div>
 
+            {/* Row 2: biểu đồ Revenue & Profit (2 cột) + Team Performance (1 cột) */}
             <div className="grid gap-4 @min-[900px]:grid-cols-3">
               <div className="min-w-0 @min-[900px]:col-span-2">
                 <TrendChart
                   data={buckets}
-                  selectedKey={selectedBucket?.key ?? null}
                   compareEmpty={compareEmpty}
-                  onSelect={(key) => setPickedBucket((prev) => (prev === key ? null : key))}
                   previousPeriod={data.previousPeriod}
                   controls={{
                     granularity,
@@ -2299,38 +2172,33 @@ export function AccountingDashboardView() {
                   delay={120}
                 />
               </div>
-              <PnlStatement
-                current={bucketPnl?.current ?? data.current}
-                previous={compareEmpty ? null : bucketPnl ? bucketPnl.previous : data.previous}
-                compareEmpty={compareEmpty}
-                periodLabel={bucketPnl?.periodLabel ?? rangeLabel}
-                compareLabel={bucketPnl?.compareLabel ?? rangeCompareLabel}
-                onResetRange={selectedBucket ? () => setPickedBucket(null) : undefined}
-                delay={150}
-              />
-            </div>
-
-            {/* Row 3: Stores Performance (2 cols) & Team Performance (1 col, bảng gọn 4 cột) */}
-            <div className="grid gap-4 @min-[900px]:grid-cols-3">
-              <div className="min-w-0 @min-[900px]:col-span-2">
-                <StoresPerformance
-                  data={data}
-                  colorOf={colorOf}
-                  channelLabel={channelLabel}
-                  onFocusStore={(id) => updateSelection([id])}
-                  delay={160}
-                />
-              </div>
               <div className="min-w-0">
                 <TeamPerformance
                   data={data}
                   channelLabel={channelLabel}
                   teams={teams}
                   onFocusTeam={handleSelectTeam}
-                  delay={190}
+                  delay={150}
                 />
               </div>
             </div>
+
+            {/* Row 3: Stores Performance (cả hàng), lọc All / Win / Test chỉ đổi bảng này */}
+            <StoresPerformance
+              data={data}
+              colorOf={colorOf}
+              channelLabel={channelLabel}
+              onFocusStore={(id) => updateSelection([id])}
+              onShowAll={handleSelectAll}
+              query={{
+                startDate: dateRange.startDate,
+                endDate: dateRange.endDate,
+                storeIds: validSelectedIds,
+                team: selectedTeam ?? "",
+                reloadKey,
+              }}
+              delay={160}
+            />
 
             {/* Row 4: Top Products FBA | FBM (chỉ kênh có trong bộ lọc), chia đôi hàng để đủ cột chỉ số */}
             <TopSellingProducts

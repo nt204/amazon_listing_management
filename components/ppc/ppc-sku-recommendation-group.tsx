@@ -218,6 +218,16 @@ function RecFinalBidInput({ initialValue, onCommit, disabled, large = false }: R
   );
 }
 
+/** Ghi chiều cao tiêu đề campaign vào --camp-h của khung campaign để dòng tiêu đề cột dính ngay bên dưới. */
+function syncCampaignHeaderHeight(el: HTMLDivElement | null) {
+  if (!el) return;
+  const update = () => el.parentElement?.style.setProperty("--camp-h", `${el.offsetHeight}px`);
+  update();
+  const ro = new ResizeObserver(update);
+  ro.observe(el);
+  return () => ro.disconnect();
+}
+
 export function PpcSkuRecommendationGroupView({
   isActive,
   groups,
@@ -2269,12 +2279,16 @@ export function PpcSkuRecommendationGroupView({
                       return (
                         <div
                           key={cg.campaignName}
-                          className={`rounded-xl border overflow-hidden transition ${isExpanded ? "border-indigo-200" : "border-slate-200 hover:border-indigo-200"}`}
+                          // overflow-clip (không phải hidden): vẫn bo góc nhưng không tạo khung cuộn → tiêu đề campaign / bảng dính được
+                          className={`rounded-xl border overflow-clip transition ${isExpanded ? "border-indigo-200" : "border-slate-200 hover:border-indigo-200"}`}
                         >
-                          {/* Campaign header — click để mở / thu gọn */}
+                          {/* Campaign header — click để mở / thu gọn; đang mở thì dính trên cùng khi cuộn tới hết campaign */}
                           <div
+                            ref={syncCampaignHeaderHeight}
                             onClick={() => toggleCampaignExpanded(cg.campaignName)}
-                            className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 cursor-pointer select-none hover:bg-slate-50/70"
+                            className={`flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 cursor-pointer select-none ${
+                              isExpanded ? "sticky top-0 z-20 bg-white hover:bg-slate-50" : "hover:bg-slate-50/70"
+                            }`}
                           >
                             <div className="flex items-center gap-3 flex-1 min-w-[260px]">
                               {campaignCheckbox}
@@ -2340,9 +2354,11 @@ export function PpcSkuRecommendationGroupView({
 
                           {/* Target table */}
                           {isExpanded && (
-                            <div className="overflow-x-auto border-t border-slate-100">
+                            // Màn rộng: không tạo khung cuộn ngang để dòng tiêu đề cột dính được khi cuộn dọc
+                            <div className="overflow-x-auto lg:overflow-x-visible border-t border-slate-100">
                               <table className="w-full text-left text-xs">
-                                <thead className="text-slate-500 text-[11px] font-semibold border-b border-slate-100">
+                                {/* Dòng tiêu đề cột dính ngay dưới tiêu đề campaign (--camp-h) cho tới khi hết campaign */}
+                                <thead className="text-slate-500 text-[11px] font-semibold border-b border-slate-100 [&_th]:sticky [&_th]:top-[var(--camp-h,0px)] [&_th]:z-10 [&_th]:bg-slate-50 [&_th]:shadow-[inset_0_-2px_0_#000]">
                                   <tr>
                                     <th className="py-2.5 pl-4 pr-2 w-8">{campaignCheckbox}</th>
                                     <th className="py-2.5 px-2">Target / Keyword</th>

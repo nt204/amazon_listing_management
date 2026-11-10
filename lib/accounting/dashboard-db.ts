@@ -2,7 +2,16 @@ import "server-only";
 
 import { getLatestAvailableAccountingDate, listStores } from "@/lib/accounting/accounting-db";
 import { listFbaDaily, type FbaDailyItem } from "@/lib/accounting/fba-daily-db";
-import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
+import {
+  DASHBOARD_CACHE_PREFIX,
+  RECENT_DAYS,
+  getDashboardCacheScope,
+  invalidateAccountingDashboardCache,
+  recentStamp,
+  stampedParts,
+  stampedValue,
+  type DashboardCacheScope,
+} from "@/lib/accounting/dashboard-cache";
 import { getDatabaseClient } from "@/lib/db";
 import {
   addDays,
@@ -16,6 +25,7 @@ import { listFbmDaily, listFbmSkuFixed } from "@/lib/accounting/fbm-financials-d
 import { listSkuWin } from "@/lib/accounting/sku-win-db";
 import { storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
 import { summarizeDays, type DashboardDay, type DashboardTotals } from "@/lib/accounting/dashboard-totals";
+import { skuStockValueJoins, skuStockValueSelect } from "@/lib/accounting/inventory-db";
 
 export type { DashboardDay, DashboardTotals };
 
@@ -34,6 +44,8 @@ export interface DashboardStoreChannelRow {
   channel: "FBA" | "FBM";
   current: DashboardTotals;
   previous: DashboardTotals | null;
+  /** Giá trị tồn hiện tại (Bảng mã FBA, Tồn × Giá TB năm); FBM không có tồn → null. */
+  stockValue?: number | null;
 }
 
 export interface DashboardStoreRow {
@@ -46,6 +58,8 @@ export interface DashboardStoreRow {
   channels: ("FBA" | "FBM")[];
   /** Tách riêng từng kênh, chỉ có khi store chạy cả FBA và FBM. */
   byChannel?: DashboardStoreChannelRow[];
+  /** Giá trị tồn hiện tại của kênh FBA (null khi store chỉ tính FBM). */
+  stockValue?: number | null;
 }
 
 export interface TopProductItem {
@@ -164,31 +178,32 @@ const emptyPoint = (key: string): DashboardSeriesPoint => ({
   quantity: 0,
 });
 
-// v2: FbaDailyItem có thêm trường orders
-const DASHBOARD_CACHE_PREFIX = "acc:dashboard:v2:";
-// Key cache chứa phiên bản dữ liệu (migration 123) nên mọi lệnh ghi đều làm cache cũ hết hiệu lực -> giữ lâu được.
-const DASHBOARD_CACHE_TTL_SECONDS = 3600;
-// DB chưa chạy migration 123: không biết dữ liệu đổi lúc nào nên chỉ giữ ngắn như trước.
-const DASHBOARD_CACHE_FALLBACK_TTL_SECONDS = 300;
+export { invalidateAccountingDashboardCache };
 
-interface DashboardCacheScope {
-  prefix: string;
-  ttl: number;
+/** Dữ liệu kết thúc trước cửa sổ "gần đây" → dùng phiên bản dữ liệu cũ (crawler ghi dữ liệu mới không làm nguội). */
+function rangeStamp(cache: DashboardCacheScope, endDate: string): string {
+  return endDate && cache.historyVersion && endDate < addDays(cache.today, -RECENT_DAYS)
+    ? `h${cache.historyVersion}`
+    : recentStamp(cache);
 }
 
-async function getDashboardCacheScope(): Promise<DashboardCacheScope> {
-  try {
-    const sql = await getDatabaseClient();
-    const rows = await sql<{ last_value: string }[]>`SELECT last_value::text FROM accounting_dashboard_data_version`;
-    return { prefix: `${DASHBOARD_CACHE_PREFIX}d${rows[0].last_value}:`, ttl: DASHBOARD_CACHE_TTL_SECONDS };
-  } catch {
-    return { prefix: DASHBOARD_CACHE_PREFIX, ttl: DASHBOARD_CACHE_FALLBACK_TTL_SECONDS };
+const monthLastDay = (ym: string) => {
+  const [y, m] = ym.split("-").map(Number);
+  return `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
+};
+
+function monthsBetween(startDate: string, endDate: string): string[] {
+  const out: string[] = [];
+  let [y, m] = startDate.slice(0, 7).split("-").map(Number);
+  const [ey, em] = endDate.slice(0, 7).split("-").map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    if (++m > 12) {
+      m = 1;
+      y += 1;
+    }
   }
-}
-
-/** Xóa cache Dashboard (gọi sau khi nạp dữ liệu kế toán mới). */
-export async function invalidateAccountingDashboardCache(): Promise<void> {
-  await invalidateCachePattern(`${DASHBOARD_CACHE_PREFIX}*`);
+  return out;
 }
 
 type DashboardChannel = "Amazon" | "Merchant";
@@ -217,32 +232,72 @@ function storeChannels(
 /** Phân quyền kế toán: kênh được xem của từng store (không truyền = toàn quyền). */
 export type DashboardAllowedChannels = (storeId: string) => ("FBA" | "FBM")[];
 
-// Cache theo từng store + khoảng ngày + channel để đổi lựa chọn store không phải tính lại các store khác.
-// FBM dùng công thức tab FBM (listFbmDaily, khớp workbook "FBM - <STORE>"), FBA dùng listFbaDaily.
-function loadStoreDaily(
+async function fetchStoreDaily(storeId: string, startDate: string, endDate: string, channel: DashboardChannel): Promise<FbaDailyItem[]> {
+  const options = {
+    startDate: startDate || undefined,
+    endDate: endDate || undefined,
+    sortField: "date",
+    sortDirection: "asc" as const,
+    limit: 100_000,
+  };
+  const res = channel === "Merchant" ? await listFbmDaily(storeId, options) : await listFbaDaily(storeId, { ...options, channel });
+  return res.items;
+}
+
+/**
+ * Số liệu từng ngày của 1 store + kênh trong [startDate, endDate], cache theo từng THÁNG lịch:
+ * đổi khoảng ngày (This month → Last week…) dùng lại các tháng đã có; tháng cũ không bị crawler làm nguội
+ * (xem dashboard-cache.ts). Các tháng thiếu liền nhau tính bằng 1 truy vấn rồi tách theo tháng.
+ * Số liệu 1 ngày không phụ thuộc khoảng truy vấn (FBM lấy đủ mọi dòng của đơn có dòng trong khoảng).
+ * FBM dùng công thức tab FBM (listFbmDaily, khớp workbook "FBM - <STORE>"), FBA dùng listFbaDaily.
+ */
+async function loadStoreDaily(
   cache: DashboardCacheScope,
   storeId: string,
   startDate: string,
   endDate: string,
   channel: DashboardChannel,
 ): Promise<FbaDailyItem[]> {
-  return getCachedOrFetch(
-    `${cache.prefix}${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "Amazon"}`,
-    cache.ttl,
-    async () => {
-      const options = {
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-        sortField: "date",
-        sortDirection: "asc" as const,
-        limit: 100_000,
-      };
-      const res = channel === "Merchant"
-        ? await listFbmDaily(storeId, options)
-        : await listFbaDaily(storeId, { ...options, channel });
-      return res.items;
+  const ch = channel === "Merchant" ? "fbm" : "fba";
+  if (!startDate || !endDate) {
+    // Toàn thời gian: 1 key
+    return stampedValue(cache, `${DASHBOARD_CACHE_PREFIX}all:${storeId}:${ch}`, recentStamp(cache), () =>
+      fetchStoreDaily(storeId, "", "", channel),
+    );
+  }
+  const months = monthsBetween(startDate, endDate);
+  const parts = months.map((ym) => ({
+    id: ym,
+    key: `${DASHBOARD_CACHE_PREFIX}m:${storeId}:${ch}:${ym}`,
+    stamp: rangeStamp(cache, monthLastDay(ym)),
+  }));
+  const byMonth = await stampedParts<FbaDailyItem[]>(
+    cache,
+    parts,
+    async (ids) => {
+      // Gom các tháng liền nhau thành 1 khoảng → 1 truy vấn
+      const sorted = [...ids].sort();
+      const spans: string[][] = [];
+      for (const ym of sorted) {
+        const last = spans[spans.length - 1];
+        if (last && monthsBetween(last[last.length - 1], ym).length === 2) last.push(ym);
+        else spans.push([ym]);
+      }
+      const out = new Map<string, FbaDailyItem[]>(sorted.map((ym) => [ym, []]));
+      await Promise.all(
+        spans.map(async (span) => {
+          const items = await fetchStoreDaily(storeId, `${span[0]}-01`, monthLastDay(span[span.length - 1]), channel);
+          for (const it of items) out.get(it.date.slice(0, 7))?.push(it);
+        }),
+      );
+      return out;
     },
+    `daily:${storeId}:${ch}`,
   );
+  return months
+    .flatMap((ym) => byMonth.get(ym) ?? [])
+    .filter((it) => it.date >= startDate && it.date <= endDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 const inRange = (date: string, range: { startDate: string; endDate: string }) =>
@@ -263,11 +318,10 @@ export async function getAccountingDashboard(options: {
   team?: string;
   allowedChannels?: DashboardAllowedChannels;
 }): Promise<AccountingDashboardData> {
-  if (options.fresh) await invalidateAccountingDashboardCache();
   const [allStores, latestDate, cache] = await Promise.all([
     listStores(),
     getLatestAvailableAccountingDate(),
-    getDashboardCacheScope(),
+    getDashboardCacheScope(Boolean(options.fresh)),
   ]);
   const requested = new Set((options.storeIds ?? []).filter(Boolean));
   // Chọn theo team: chỉ giữ các store thuộc team đó (vd FBA 2 = mọi store có "FBA 2" trong cột Team).
@@ -294,6 +348,11 @@ export async function getAccountingDashboard(options: {
   const fetchEnd = periods.current.endDate;
 
   const hasRange = Boolean(fetchStart && fetchEnd);
+  // Giá trị tồn chạy song song với số liệu ngày (không chờ nhau)
+  const stockPromise = loadStockValues(
+    cache,
+    stores.filter((s) => storeChannels(s.team, options.team, options.allowedChannels?.(s.id)).includes("Amazon")).map((s) => s.id),
+  );
   const perStore = await Promise.all(
     stores.map(async (store) => {
       const channels = await Promise.all(
@@ -306,6 +365,7 @@ export async function getAccountingDashboard(options: {
       return { store, channels, items: channels.flatMap((c) => c.items) };
     }),
   );
+  const stockValues = await stockPromise;
   const periodTotals = (items: FbaDailyItem[]) => ({
     current: summarize(items.filter((it) => inRange(it.date, periods.current))),
     previous: periods.previous ? summarize(items.filter((it) => inRange(it.date, periods.previous!))) : null,
@@ -351,7 +411,10 @@ export async function getAccountingDashboard(options: {
       marketplace: store.marketplace,
       ...periodTotals(items),
       channels: channels.map((c) => c.channel),
-      byChannel: channels.length > 1 ? channels.map((c) => ({ channel: c.channel, ...periodTotals(c.items) })) : undefined,
+      byChannel: channels.length > 1
+        ? channels.map((c) => ({ channel: c.channel, ...periodTotals(c.items), stockValue: c.channel === "FBA" ? stockValues.get(store.id) ?? 0 : null }))
+        : undefined,
+      stockValue: channels.some((c) => c.channel === "FBA") ? stockValues.get(store.id) ?? 0 : null,
     })),
     trendStartDate: periods.trendStartDate,
     days: sumByDate(allItems),
@@ -384,9 +447,11 @@ function loadStoreSkuPerformance(
   endDate: string,
   channel: DashboardChannel,
 ): Promise<SkuPerformance[]> {
-  return getCachedOrFetch(
-    `${cache.prefix}sku3:${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "fba"}`,
-    cache.ttl,
+  // Khoảng đã qua hẳn (trước cửa sổ gần đây) dùng phiên bản dữ liệu cũ → không nguội mỗi lần crawler ghi
+  return stampedValue(
+    cache,
+    `${DASHBOARD_CACHE_PREFIX}sku4:${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "fba"}`,
+    rangeStamp(cache, endDate),
     async () => {
       const options = { status: "all", startDate, endDate, limit: 100_000, includeAllTime: false };
       const [res, nonFbaSkus] = await Promise.all([
@@ -524,4 +589,208 @@ export async function getDashboardTopProducts(options: {
     loss: l.loss.map(withName),
   });
   return { period, channels, FBA: named(byChannel.FBA), FBM: named(byChannel.FBM) };
+}
+
+// ----------------- STORES PERFORMANCE THEO NHÓM SKU (WIN / TEST) -----------------
+
+/** Nhóm SKU theo cột Trạng thái của Bảng mã: Win = "Phát triển", Test = "Test". */
+export type DashboardSkuGroup = "win" | "test";
+const SKU_GROUP_STATUS: Record<DashboardSkuGroup, string> = { win: "phát triển", test: "test" };
+
+export interface DashboardSkuGroupData {
+  group: DashboardSkuGroup;
+  period: { startDate: string; endDate: string };
+  /** Cùng dạng byStore của getAccountingDashboard nhưng chỉ cộng các SKU thuộc nhóm (previous = null). */
+  byStore: DashboardStoreRow[];
+  current: DashboardTotals;
+}
+
+/**
+ * SKU của nhóm trong Bảng mã, khoá `${storeId}|FBA` / `${storeId}|FBM`:
+ * FBA = BẢNG MÃ (accounting_sku_master, Loại FBA), FBM = BẢNG MÃ FBM (accounting_sku_master_fbm).
+ * Mỗi SKU lấy dòng đầu trong bảng (như KPI kinh doanh) rồi mới xét trạng thái.
+ */
+async function loadGroupSkus(storeIds: string[], group: DashboardSkuGroup): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
+  if (!storeIds.length) return out;
+  const sql = await getDatabaseClient();
+  const status = SKU_GROUP_STATUS[group];
+  const [fba, fbm] = await Promise.all([
+    sql<{ store_id: string; sku: string }[]>`
+      SELECT store_id::text, sku FROM (
+        SELECT DISTINCT ON (store_id, sku) store_id, sku, status
+        FROM accounting_sku_master
+        WHERE store_id::text IN ${sql(storeIds)} AND deleted_at IS NULL
+          AND UPPER(TRIM(COALESCE(NULLIF(loai, ''), 'FBA'))) = 'FBA'
+        ORDER BY store_id, sku, row_order NULLS LAST, updated_at DESC
+      ) m
+      WHERE LOWER(TRIM(COALESCE(status, ''))) = ${status}
+    `,
+    sql<{ store_id: string; sku: string }[]>`
+      SELECT store_id::text, sku FROM (
+        SELECT DISTINCT ON (store_id, sku) store_id, sku, status
+        FROM accounting_sku_master_fbm
+        WHERE store_id::text IN ${sql(storeIds)} AND deleted_at IS NULL
+        ORDER BY store_id, sku, row_order NULLS LAST, updated_at DESC
+      ) m
+      WHERE LOWER(TRIM(COALESCE(status, ''))) = ${status}
+    `,
+  ]);
+  const add = (rows: { store_id: string; sku: string }[], channel: "FBA" | "FBM") => {
+    for (const r of rows) {
+      const key = `${r.store_id}|${channel}`;
+      if (!out.has(key)) out.set(key, new Set());
+      out.get(key)!.add(r.sku);
+    }
+  };
+  add(fba, "FBA");
+  add(fbm, "FBM");
+  return out;
+}
+
+/**
+ * Giá trị tồn hiện tại theo store = tổng cột "Giá trị tồn" của BẢNG MÃ FBA (Tồn × Giá TB năm, như màn Bảng mã).
+ * Truyền status để chỉ cộng SKU của nhóm (Win = "phát triển", Test = "test").
+ */
+// Chi Tiết Đi Hàng (accounting_inbound_shipments) không tăng phiên bản dữ liệu Dashboard → tính lại sau mỗi 5 phút.
+const STOCK_CACHE_TTL_SECONDS = 300;
+
+async function loadStockValues(cache: DashboardCacheScope, storeIds: string[], status?: string): Promise<Map<string, number>> {
+  if (!storeIds.length) return new Map();
+  // Cache theo từng store (đổi lựa chọn store không phải tính lại), mỗi store 1 số
+  const values = await Promise.all(
+    storeIds.map((id) =>
+      // Chi Tiết Đi Hàng không có phiên bản dữ liệu → stamp thêm khung 5 phút
+      stampedValue(
+        cache,
+        `${DASHBOARD_CACHE_PREFIX}stock:${id}:${status || "all"}`,
+        `${recentStamp(cache)}:${Math.floor(Date.now() / (STOCK_CACHE_TTL_SECONDS * 1000))}`,
+        async () => (await queryStockValues([id], status)).get(id) ?? 0,
+      ),
+    ),
+  );
+  return new Map(storeIds.map((id, i) => [id, Number(values[i]) || 0]));
+}
+
+async function queryStockValues(storeIds: string[], status?: string): Promise<Map<string, number>> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ store_id: string; value: number | null }[]>`
+    SELECT store_id, SUM(gia_tri_ton)::float AS value FROM (
+      SELECT asm.store_id::text AS store_id, ${skuStockValueSelect(sql)}
+      FROM accounting_sku_master asm
+      ${skuStockValueJoins(sql)}
+      WHERE asm.store_id::text IN ${sql(storeIds)} AND asm.deleted_at IS NULL
+        AND asm.ton_kho > 0
+        ${status ? sql`AND LOWER(TRIM(COALESCE(asm.status, ''))) = ${status}` : sql``}
+    ) x
+    GROUP BY store_id
+  `;
+  return new Map(rows.map((r) => [r.store_id, Number(r.value) || 0]));
+}
+
+/** Tổng của các SKU (cùng công thức SKU WIN / LỌC SKU CỐ ĐỊNH như Top sản phẩm). */
+function skuTotals(items: SkuPerformance[]): DashboardTotals {
+  let revenue = 0, quantity = 0, adsFee = 0, profit = 0, revenueAds = 0;
+  for (const i of items) {
+    revenue += i.revenue;
+    quantity += i.units;
+    adsFee += i.adsFee;
+    profit += i.profit;
+    revenueAds += i.revenueAds;
+  }
+  return {
+    days: 0,
+    revenue,
+    quantity,
+    orders: 0,
+    adsFee,
+    basecost: 0,
+    amazonFee: 0,
+    tax: 0,
+    promotion: 0,
+    returnCost: 0,
+    serviceCost: 0,
+    profit,
+    netProfit: profit,
+    revenueAds,
+    clicks: 0,
+    margin: revenue > 0 ? profit / revenue : 0,
+    netMargin: revenue > 0 ? profit / revenue : 0,
+    roi: 0,
+    tacos: revenue > 0 ? adsFee / revenue : 0,
+    acos: revenueAds > 0 ? adsFee / revenueAds : 0,
+  };
+}
+
+/**
+ * Stores Performance chỉ tính SKU Win (Bảng mã trạng thái "Phát triển") hoặc SKU Test (trạng thái "Test"):
+ * cộng số liệu từng SKU (SKU WIN cho FBA, LỌC SKU CỐ ĐỊNH cho FBM) của SKU thuộc nhóm, khớp Loại của Bảng mã với kênh.
+ * Cùng bộ lọc store / team / phân quyền kênh với getAccountingDashboard.
+ */
+export async function getDashboardSkuGroup(options: {
+  group: DashboardSkuGroup;
+  startDate?: string;
+  endDate?: string;
+  storeIds?: string[];
+  team?: string;
+  allowedChannels?: DashboardAllowedChannels;
+}): Promise<DashboardSkuGroupData> {
+  const [allStores, latestDate, cache] = await Promise.all([
+    listStores(),
+    getLatestAvailableAccountingDate(),
+    getDashboardCacheScope(),
+  ]);
+  const requested = new Set((options.storeIds ?? []).filter(Boolean));
+  const stores = allStores.filter(
+    (s) =>
+      (!requested.size || requested.has(s.id)) &&
+      (!options.team || storeHasTeam(s.team, options.team)) &&
+      storeChannels(s.team, options.team, options.allowedChannels?.(s.id)).length > 0,
+  );
+  const period = resolveDashboardPeriods(options.startDate ?? "", options.endDate ?? "", latestDate, "none").current;
+  const [groupSkus, stockValues] = await Promise.all([
+    loadGroupSkus(stores.map((s) => s.id), options.group),
+    loadStockValues(cache, stores.map((s) => s.id), SKU_GROUP_STATUS[options.group]),
+  ]);
+
+  const perStore = await Promise.all(
+    stores.map(async (store) => {
+      const channels = await Promise.all(
+        storeChannels(store.team, options.team, options.allowedChannels?.(store.id)).map(async (channel) => {
+          const label = channel === "Merchant" ? ("FBM" as const) : ("FBA" as const);
+          const skus = groupSkus.get(`${store.id}|${label}`);
+          const items = skus?.size
+            ? (await loadStoreSkuPerformance(cache, store.id, period.startDate, period.endDate, channel)).filter((i) => skus.has(i.sku))
+            : [];
+          return { channel: label, items };
+        }),
+      );
+      return { store, channels };
+    }),
+  );
+
+  const byStore: DashboardStoreRow[] = perStore.map(({ store, channels }) => ({
+    storeId: store.id,
+    storeName: store.name,
+    marketplace: store.marketplace,
+    current: skuTotals(channels.flatMap((c) => c.items)),
+    previous: null,
+    channels: channels.map((c) => c.channel),
+    byChannel:
+      channels.length > 1
+        ? channels.map((c) => ({
+            channel: c.channel,
+            current: skuTotals(c.items),
+            previous: null,
+            stockValue: c.channel === "FBA" ? stockValues.get(store.id) ?? 0 : null,
+          }))
+        : undefined,
+    stockValue: channels.some((c) => c.channel === "FBA") ? stockValues.get(store.id) ?? 0 : null,
+  }));
+  return {
+    group: options.group,
+    period,
+    byStore,
+    current: skuTotals(perStore.flatMap((s) => s.channels.flatMap((c) => c.items))),
+  };
 }
