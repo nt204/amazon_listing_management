@@ -291,6 +291,63 @@ export function AdminHelium10SyncPanel() {
         </button>
       </div>
 
+      {/* Thanh Tóm Tắt Nhanh: Luôn hiển thị tức thì ASIN & Từ khóa trên tổng bao nhiêu (bất kể ở tab nào) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 border-b border-slate-200 bg-slate-50/60 px-4 py-2.5 sm:px-5 text-xs">
+        <div className="rounded-lg bg-white p-2.5 border border-slate-200/80 shadow-2xs">
+          <span className="text-[10.5px] font-medium text-slate-500 block">ASIN đã quét</span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="font-mono text-sm font-black text-slate-900">
+              {formatCount(asins?.done)}
+            </span>
+            <span className="text-[11px] text-slate-500 font-mono">
+              / {formatCount(asins?.total)}
+            </span>
+            {asins?.total && asins?.done !== null ? (
+              <span className="ml-auto rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-800">
+                {Math.round((asins.done / asins.total) * 100)}%
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-lg bg-white p-2.5 border border-slate-200/80 shadow-2xs">
+          <span className="text-[10.5px] font-medium text-slate-500 block">ASIN còn lại</span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="font-mono text-sm font-black text-amber-700">
+              {formatCount(asins?.pending)}
+            </span>
+            <span className="text-[11px] text-slate-500 font-medium">ASIN</span>
+          </div>
+        </div>
+
+        <div className="rounded-lg bg-white p-2.5 border border-slate-200/80 shadow-2xs">
+          <span className="text-[10.5px] font-medium text-slate-500 block">Từ khóa có Volume</span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="font-mono text-sm font-black text-emerald-700">
+              {formatCount(status?.coverage?.withVolume)}
+            </span>
+            <span className="text-[11px] text-slate-500 font-mono">
+              / {formatCount(status?.coverage?.keywords)}
+            </span>
+            {status?.coverage?.keywords && status?.coverage?.withVolume ? (
+              <span className="ml-auto rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                {Math.round((status.coverage.withVolume / status.coverage.keywords) * 100)}%
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-lg bg-white p-2.5 border border-slate-200/80 shadow-2xs">
+          <span className="text-[10.5px] font-medium text-slate-500 block">Từ khóa còn thiếu</span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="font-mono text-sm font-black text-slate-700">
+              {formatCount(status?.coverage?.missing)}
+            </span>
+            <span className="text-[11px] text-slate-500 font-medium">từ khóa</span>
+          </div>
+        </div>
+      </div>
+
       <div className="p-4 sm:p-5 space-y-4">
         {/* Thông báo kết quả */}
         {error && (
@@ -602,7 +659,16 @@ export function AdminHelium10SyncPanel() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(!status?.recentRuns || status.recentRuns.length === 0) ? (
+                  {loadingStatus && !status ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-xs text-slate-500">
+                        <div className="flex items-center justify-center gap-2">
+                          <CircleNotch size={15} className="animate-spin text-sky-600" />
+                          <span>Đang tải thông tin tiến độ & lịch sử quét...</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (!status?.recentRuns || status.recentRuns.length === 0) ? (
                     <tr>
                       <td colSpan={7} className="px-4 py-6 text-center text-xs text-slate-400">
                         Chưa có lượt chạy nào được ghi nhận.

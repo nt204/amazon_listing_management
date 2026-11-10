@@ -821,24 +821,31 @@ export async function getSearchVolumeStatus(teamId: string, storeName: string): 
   let coverage: SearchVolumeCoverage = { keywords: null, withVolume: null, missing: null };
   let asins: SearchVolumeAsinCoverage | null = null;
 
-  if (latestRun?.status === "running" && latestRun.store_id === scopeStoreId) {
-    // Đang chạy đúng phạm vi đang xem: lấy số run vừa ghi (cập nhật mỗi lượt), null khi còn đang gom
-    if (latestRun.keywords_total !== null) {
-      coverage = {
-        keywords: latestRun.keywords_total,
-        withVolume: latestRun.keywords_total - latestRun.missing_after,
-        missing: latestRun.missing_after,
-      };
-    }
-    if (latestRun.asins_total !== null && latestRun.asins_done !== null) {
-      asins = {
-        total: latestRun.asins_total,
-        done: latestRun.asins_done,
-        pending: latestRun.asins_total - latestRun.asins_done,
-        failed: null,
-        withRank: null,
-      };
-    }
+  // Tối ưu hóa siêu tốc: Tận dụng ngay số liệu ASIN & Keyword từ run gần nhất đã lưu trong DB
+  // Tránh việc mỗi lần mở trang hoặc đổi tab lại quét gom 126,000 từ khóa từ bảng raw facts mất 15-20s.
+  const runWithStats = runs.find(
+    (r) => r.store_id === scopeStoreId && r.keywords_total !== null && r.asins_total !== null,
+  );
+
+  if (runWithStats) {
+    const isLatest = latestRun?.id === runWithStats.id;
+    const asinsDone = isLatest ? (latestRun.asins_done ?? runWithStats.asins_done) : runWithStats.asins_done;
+    const asinsTotal = runWithStats.asins_total ?? 0;
+    const keywordsTotal = runWithStats.keywords_total ?? 0;
+    const missingAfter = isLatest ? (latestRun.missing_after ?? runWithStats.missing_after) : runWithStats.missing_after;
+
+    coverage = {
+      keywords: keywordsTotal,
+      withVolume: Math.max(0, keywordsTotal - (missingAfter ?? 0)),
+      missing: missingAfter ?? 0,
+    };
+    asins = {
+      total: asinsTotal,
+      done: asinsDone ?? 0,
+      pending: Math.max(0, asinsTotal - (asinsDone ?? 0)),
+      failed: null,
+      withRank: null,
+    };
   } else {
     try {
       const { getCachedOrFetch } = await import("@/lib/redis");
