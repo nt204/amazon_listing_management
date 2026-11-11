@@ -40,8 +40,8 @@ export type Attribution = {
   campaignSku: Map<string, string>;
 };
 
-/** Ngày báo cáo hiển thị trên UI (7D/14D/30D/60D); tính sẵn cho những kỳ có snapshot active. */
-const PREWARM_COVERAGE_DAYS = [7, 14, 30, 60];
+/** Chỉ tính sẵn kỳ mặc định 30D; 7D/14D/60D tính khi người dùng bấm vào (đỡ ~nửa lượt đọc đĩa sau mỗi deploy). */
+const PREWARM_COVERAGE_DAYS = [30];
 const PREWARM_INTERVAL_MS = 5 * 60_000;
 const PREWARM_START_DELAY_MS = 20_000;
 // Khoá có snapshot_id + activated_at → dữ liệu dưới một khoá không đổi, không cần hết hạn (chỉ đẩy bớt khi đầy).
@@ -189,7 +189,7 @@ export function getManualBidAttribution(sql: Sql, storeId: string, snaps: Report
 }
 
 /**
- * Tính sẵn cache Manual Bid cho mọi store có snapshot active (kỳ 7/14/30/60 ngày) lúc app khởi động,
+ * Tính sẵn cache Manual Bid kỳ 30 ngày cho mọi store có snapshot active lúc app khởi động,
  * rồi cứ 5 phút kiểm tra lại: snapshot đổi (vừa nạp báo cáo) thì khoá đổi → tính lại; không đổi thì trúng cache, không tốn gì.
  * Chạy lần lượt từng store để không dồn tải lên DB. Tắt bằng PPC_MANUAL_BID_PREWARM=off.
  */
