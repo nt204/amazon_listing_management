@@ -4386,9 +4386,23 @@ export async function syncMonthlyBaseCostFromInbound(
       id: sm.id,
       brand: sm.brand,
       product_type: sm.product_type,
-      fallbackBasecost: 0,
+      // Giá tham chiếu khi chưa có giá tồn: "Basecost trung bình" của Bảng mã
+      fallbackBasecost: Number(sm.basecost_tb) > 0 ? Number(sm.basecost_tb) : 0,
     });
   }
+
+  // Giá nhập bình quân các lô đã về tới hết kỳ này (dự phòng cuối khi có tồn mà không có giá nào khác)
+  const periodEnd = `${period}-31`;
+  const inboundAvgRows = await sql<{ sku: string; avg_cost: number }[]>`
+    SELECT TRIM(sku) AS sku,
+      (SUM(COALESCE(total_basecost, final_basecost * quantity, 0)) / NULLIF(SUM(quantity), 0))::float AS avg_cost
+    FROM accounting_inbound_shipments
+    WHERE store_id = ${storeId} AND deleted_at IS NULL AND COALESCE(quantity, 0) > 0
+      AND REPLACE(ngay_den, '/', '-') <= ${periodEnd}
+    GROUP BY TRIM(sku)
+  `;
+  const inboundAvgMap = new Map<string, number>();
+  for (const r of inboundAvgRows) if (r.sku && Number(r.avg_cost) > 0) inboundAvgMap.set(r.sku, Number(r.avg_cost));
   for (const [inboundSku, data] of inboundMap.entries()) {
     if (!allSkuMap.has(inboundSku)) {
       allSkuMap.set(inboundSku, {
@@ -4516,6 +4530,11 @@ export async function syncMonthlyBaseCostFromInbound(
         basecostDauKy = existing.basecost_dau_ky;
       } else {
         basecostDauKy = meta.fallbackBasecost;
+      }
+      // Có tồn thật mà giá đầu kỳ = 0 (mốc lịch sử thiếu giá) → không để kéo bình quân về 0:
+      // lấy Basecost trung bình của Bảng mã, rồi tới giá nhập bình quân các lô đã về.
+      if (slTon > 0 && !(basecostDauKy > 0)) {
+        basecostDauKy = meta.fallbackBasecost > 0 ? meta.fallbackBasecost : inboundAvgMap.get(sku) ?? 0;
       }
 
       // Hàng nhập trong tháng từ Chi Tiết Đi Hàng
