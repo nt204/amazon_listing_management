@@ -4485,15 +4485,15 @@ export async function syncMonthlyBaseCostFromInbound(
       const existing = currentMonthMap.get(sku);
       const inbound = inboundMap.get(sku);
 
-      // Số lượng tồn đầu kỳ: ưu tiên lấy từ báo cáo tồn kho (FBA + AWD) của ngày chốt cuối tháng trước.
-      // Nếu có dữ liệu trong báo cáo Ledger (>= 0) thì dùng số thực tế này.
-      // Nếu không có trong ledger thì fallback theo số đã lưu (nếu > 0) hoặc 0.
+      // Số lượng tồn đầu kỳ: luôn ưu tiên tồn thực tế từ file Amazon (FBA + AWD) chốt cuối tháng trước.
+      // Chỉ khi file Amazon không có SKU này mới tính theo sổ (tồn đầu + nhập − hàng ra kho tháng trước),
+      // rồi tới số đã lưu (nếu > 0) hoặc 0. Không để sổ (dễ âm do mốc sai) đè lên tồn thật của Amazon.
       let slTon = 0;
       const ledgerKey = sku.toUpperCase();
-      if (bookMode && prevClosingMap.has(sku)) {
-        slTon = prevClosingMap.get(sku)!;
-      } else if (ledgerStockMap.has(ledgerKey)) {
+      if (ledgerStockMap.has(ledgerKey)) {
         slTon = ledgerStockMap.get(ledgerKey)!;
+      } else if (bookMode && prevClosingMap.has(sku)) {
+        slTon = prevClosingMap.get(sku)!;
       } else if (existing && existing.sl_ton_dau_ky > 0) {
         slTon = existing.sl_ton_dau_ky;
       }
