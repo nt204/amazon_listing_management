@@ -67,9 +67,10 @@ type SkuRow = SkuMetrics & {
   mockupUrl: string | null;
   breakEvenAcos: number;
 };
-type Draft = { kind: "bid"; bid: number } | { kind: "pause" };
+/** factor: hệ số đã gõ ở ô × (0.95 → hiện 95%); bid gõ tay thì không có. */
+type Draft = { kind: "bid"; bid: number; factor?: number } | { kind: "pause" };
 type SortKey = "spend" | "clicks" | "orders" | "acos" | "bid" | "cpc" | "sales" | "keyword" | "matchType" | "campaignName"
-  | "searchVolume" | "organicRank" | "sponsoredRank";
+  | "searchVolume" | "organicRank" | "sponsoredRank" | "impressions";
 
 interface Props {
   isActive: boolean;
@@ -207,6 +208,7 @@ type ColKey =
   | "sp"
   | "matchType"
   | "campaign"
+  | "impr"
   | "clicks"
   | "orders"
   | "spend"
@@ -225,6 +227,7 @@ const DEFAULT_COL_WIDTHS: Record<ColKey, number> = {
   sp: 50,
   matchType: 105,
   campaign: 380,
+  impr: 75,
   clicks: 65,
   orders: 65,
   spend: 80,
@@ -233,6 +236,24 @@ const DEFAULT_COL_WIDTHS: Record<ColKey, number> = {
   cpc: 75,
   bid: 85,
   newBid: 100,
+};
+
+const TIER_NUM_BG: Record<ManualBidTier, string> = {
+  A20: "bg-emerald-300",
+  A40: "bg-sky-300",
+  A60: "bg-amber-300",
+  A60P: "bg-rose-300",
+  NO_ORDER: "bg-fuchsia-300",
+  OTHER: "bg-slate-200",
+};
+
+const TIER_ROW_BG: Record<ManualBidTier, string> = {
+  A20: "bg-emerald-50",
+  A40: "bg-sky-50",
+  A60: "bg-amber-50",
+  A60P: "bg-rose-50",
+  NO_ORDER: "bg-fuchsia-50",
+  OTHER: "bg-white",
 };
 
 const TIER_BORDER: Record<ManualBidTier, string> = {
@@ -392,7 +413,9 @@ export function PpcManualBidView({
     if (!query || !isActive || !selectedStore || selectedStore === "ALL") return;
     if (result?.key === reqKey) return;
     const ctrl = new AbortController();
-    const url = `/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&sku=${encodeURIComponent(query.sku)}`;
+    // Gửi sẵn ASIN (đã có trong danh sách SKU) để API khỏi dò lại trong bảng facts.
+    const knownAsin = skuGroups.find((g) => g.sku.toUpperCase() === query.sku.toUpperCase())?.asin || "";
+    const url = `/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&sku=${encodeURIComponent(query.sku)}${knownAsin ? `&asin=${encodeURIComponent(knownAsin)}` : ""}`;
     fetch(url, { signal: ctrl.signal, cache: "no-store" })
       .then(async (res) => {
         const data = await res.json().catch(() => null);
@@ -419,6 +442,7 @@ export function PpcManualBidView({
         setResult({ key: reqKey, sku: query.sku, items: [], reportRange: null, error: e instanceof Error ? e.message : "Không tải được target." });
       });
     return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- skuGroups chỉ để lấy ASIN, đổi danh sách không cần tải lại
   }, [query, reqKey, isActive, selectedStore, selectedDays, result]);
 
   // Số liệu từng SKU tính từ target (tổng và riêng target active).
@@ -584,12 +608,26 @@ export function PpcManualBidView({
   }>({});
 
   const [colWidths, setColWidths] = useState<Record<ColKey, number>>(DEFAULT_COL_WIDTHS);
+  const [campaignResized, setCampaignResized] = useState(false);
   const resizingRef = useRef<{ key: ColKey; startX: number; startW: number } | null>(null);
+
+  // Cột Campaign tự giãn theo tên dài nhất của SKU đang xem (1 dòng, không xuống dòng);
+  // kéo dãn tay thì giữ độ rộng đã kéo.
+  const shownColWidths = useMemo(() => {
+    if (campaignResized) return colWidths;
+    const longest = rows.reduce((m, r) => Math.max(m, r.campaignName.length + (isLive(r) ? 0 : 7)), 0);
+    const auto = Math.min(760, Math.max(DEFAULT_COL_WIDTHS.campaign, Math.round(longest * 7 + 24)));
+    return { ...colWidths, campaign: auto };
+  }, [colWidths, campaignResized, rows]);
 
   const startResize = (key: ColKey, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    resizingRef.current = { key, startX: e.clientX, startW: colWidths[key] };
+    if (key === "campaign" && !campaignResized) {
+      setColWidths((prev) => ({ ...prev, campaign: shownColWidths.campaign }));
+      setCampaignResized(true);
+    }
+    resizingRef.current = { key, startX: e.clientX, startW: shownColWidths[key] };
 
     const onMouseMove = (ev: MouseEvent) => {
       if (!resizingRef.current) return;
@@ -708,7 +746,10 @@ export function PpcManualBidView({
       list = list.filter((r) => colFilters.tier!.has(r.tier));
     }
 
+    const tierOrder = new Map(MANUAL_BID_TIERS.map((t, i) => [t.key, i]));
     return [...list].sort((a, b) => {
+      if (editedOnly && a.runType !== b.runType) return a.runType.localeCompare(b.runType);
+      if (a.tier !== b.tier) return tierOrder.get(a.tier)! - tierOrder.get(b.tier)!;
       if (sort.key === "keyword") return a.keyword.localeCompare(b.keyword) * sort.dir;
       if (sort.key === "matchType") return shortMatch(a.matchType).localeCompare(shortMatch(b.matchType)) * sort.dir;
       if (sort.key === "campaignName") return a.campaignName.localeCompare(b.campaignName) * sort.dir;
@@ -717,6 +758,11 @@ export function PpcManualBidView({
         const va = a[sort.key], vb = b[sort.key];
         if (va == null || vb == null) return va == null && vb == null ? 0 : va == null ? 1 : -1;
         return (va - vb) * sort.dir;
+      }
+      if (sort.key === "acos") {
+        // Chưa tiêu tiền (không có ACOS) luôn nằm cuối; tiêu tiền mà chưa có sales coi như ACOS cao nhất.
+        const idle = (r: Row) => r.acos == null && r.spend <= 0;
+        if (idle(a) !== idle(b)) return idle(a) ? 1 : -1;
       }
       const valA = sort.key === "acos" ? (a.acos ?? (a.spend > 0 ? 9999 : -1)) : a[sort.key];
       const valB = sort.key === "acos" ? (b.acos ?? (b.spend > 0 ? 9999 : -1)) : b[sort.key];
@@ -766,14 +812,27 @@ export function PpcManualBidView({
     lastClickedRef.current = key;
   };
 
-  // Nhấn giữ chuột trên 1 dòng rồi kéo qua các dòng khác để chọn (hoặc bỏ chọn) cả cụm, như quét ô Excel.
-  const dragRef = useRef<{ anchor: number; on: boolean; base: Set<string> } | null>(null);
+  // Chọn bằng chuột như "tô":
+  // - Bấm 1 dòng: tích / bỏ tích đúng dòng đó.
+  // - Nhấn giữ rồi kéo: vùng từ dòng bắt đầu tới dòng đang trỏ được tích (bắt đầu ở dòng đã tích thì là bỏ tích);
+  //   kéo ngược lại thì các dòng rút khỏi vùng trở về như cũ, quay về đúng dòng bắt đầu là huỷ cả vùng.
+  // - Các dòng đã chọn ngoài vùng kéo giữ nguyên.
+  const dragRef = useRef<{ anchor: number; key: string; on: boolean; base: Set<string>; moved: boolean } | null>(null);
   const opInputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
-    // Quét chọn xong: đưa con trỏ vào ô × để gõ hệ số rồi Enter ngay.
     const end = () => {
-      if (!dragRef.current) return;
+      const d = dragRef.current;
+      if (!d) return;
       dragRef.current = null;
+      if (!d.moved) {
+        setSelected((prev) => {
+          const next = new Set(prev);
+          if (next.has(d.key)) next.delete(d.key);
+          else next.add(d.key);
+          return next;
+        });
+      }
+      // Chọn xong: đưa con trỏ vào ô × để gõ hệ số rồi Enter ngay.
       requestAnimationFrame(() => opInputRef.current?.focus());
     };
     window.addEventListener("mouseup", end);
@@ -788,27 +847,23 @@ export function PpcManualBidView({
       onRowCheck(key, true);
       return;
     }
-    // Như Excel: quét cụm mới thì bỏ cụm cũ và xoá hệ số đã gõ (tránh nhân 2 lần lên cụm cũ).
-    // Giữ Ctrl / ⌘ để cộng thêm hoặc bỏ bớt trong cụm đang chọn.
-    const additive = e.metaKey || e.ctrlKey;
-    const on = additive ? !selected.has(key) : !(selected.size === 1 && selected.has(key));
-    const base = additive ? new Set(selected) : new Set<string>();
-    dragRef.current = { anchor: idx, on, base };
-    if (!additive) setOpValue("");
-    const next = new Set(base);
-    if (on) next.add(key);
-    else next.delete(key);
-    setSelected(next);
+    dragRef.current = { anchor: idx, key, on: !selected.has(key), base: new Set(selected), moved: false };
     lastClickedRef.current = key;
   };
 
   const enterRowDrag = (idx: number) => {
     const d = dragRef.current;
-    if (!d) return;
+    if (!d || (!d.moved && idx === d.anchor)) return;
+    if (!d.moved) {
+      d.moved = true;
+      setOpValue(""); // bắt đầu quét cụm mới → xoá hệ số cũ
+    }
     const next = new Set(d.base);
-    for (const k of visibleKeys.slice(Math.min(d.anchor, idx), Math.max(d.anchor, idx) + 1)) {
-      if (d.on) next.add(k);
-      else next.delete(k);
+    if (idx !== d.anchor) {
+      for (const k of visibleKeys.slice(Math.min(d.anchor, idx), Math.max(d.anchor, idx) + 1)) {
+        if (d.on) next.add(k);
+        else next.delete(k);
+      }
     }
     setSelected(next);
     lastClickedRef.current = visibleKeys[idx];
@@ -835,7 +890,7 @@ export function PpcManualBidView({
       const nb = applyBidOp(op, r);
       if (nb == null) { skipped += 1; continue; }
       if (Math.abs(nb - r.bid) < 0.005) next.delete(k);
-      else next.set(k, { kind: "bid", bid: nb });
+      else next.set(k, { kind: "bid", bid: nb, factor: op.kind === "mul" ? op.value : undefined });
     }
     setDrafts(next);
     if (skipped > 0) notify(`${skipped} target chưa có click nên giữ nguyên bid.`, "error");
@@ -845,6 +900,8 @@ export function PpcManualBidView({
     const v = parseFloat(opValue.replace(",", "."));
     if (!Number.isFinite(v)) return;
     applyToSelected({ kind: "mul", value: v });
+    // Áp xong thì bỏ chọn: cụm tiếp theo quét lại từ đầu, không nhân thêm lần nữa lên cụm vừa sửa.
+    setSelected(new Set());
   };
 
   const pauseSelected = () => {
@@ -954,11 +1011,13 @@ export function PpcManualBidView({
   };
 
   const totals = useMemo(() => {
+    let impressions = 0;
     let clicks = 0;
     let orders = 0;
     let spend = 0;
     let sales = 0;
     for (const r of visible) {
+      impressions += r.impressions;
       clicks += r.clicks;
       orders += r.orders;
       spend += r.spend;
@@ -966,7 +1025,7 @@ export function PpcManualBidView({
     }
     const acos = sales > 0 ? (spend / sales) * 100 : null;
     const cpc = clicks > 0 ? spend / clicks : 0;
-    return { clicks, orders, spend, sales, acos, cpc };
+    return { impressions, clicks, orders, spend, sales, acos, cpc };
   }, [visible]);
 
   const renderAcosBadge = (r: Row) => {
@@ -1236,7 +1295,16 @@ export function PpcManualBidView({
                   key={t.key}
                   type="button"
                   disabled={n === 0 && !on}
-                  onClick={() => setTierSet((prev) => (on ? prev.filter((x) => x !== t.key) : [...prev, t.key]))}
+                  title="Giữ ⌘ (Mac) / Ctrl (Windows) để chọn thêm nấc"
+                  onClick={(e) => {
+                    const multi = e.metaKey || e.ctrlKey;
+                    setTierSet((prev) => {
+                      // Bấm thường = chuyển sang nấc đó (bấm lại nấc đang xem = về Tất cả); giữ phím = thêm / bớt nấc.
+                      if (multi) return on ? prev.filter((x) => x !== t.key) : [...prev, t.key];
+                      return on && prev.length === 1 ? [] : [t.key];
+                    });
+                    if (!multi) setEditedOnly(false);
+                  }}
                   className={`flex h-7 cursor-pointer items-center gap-1.5 rounded border px-2.5 text-xs font-semibold transition disabled:cursor-default ${
                     on ? `${style.chipOn} font-bold` : `${style.chip} ${style.text} hover:brightness-95`
                   } ${n === 0 && !on ? "opacity-40" : ""}`}
@@ -1250,7 +1318,20 @@ export function PpcManualBidView({
             <button
               type="button"
               disabled={editedCount === 0 && !editedOnly}
-              onClick={() => setEditedOnly((v) => !v)}
+              onClick={(e) => {
+                // Bấm thường = xem toàn bộ target đã sửa (bỏ lọc nấc), xếp theo ACOS; ⌘ / Ctrl = kết hợp với nấc đang chọn.
+                if (e.metaKey || e.ctrlKey) {
+                  setEditedOnly((v) => !v);
+                  return;
+                }
+                if (editedOnly && tierSet.length === 0) {
+                  setEditedOnly(false);
+                  return;
+                }
+                setEditedOnly(true);
+                setTierSet([]);
+                setSort({ key: "acos", dir: 1 });
+              }}
               title="Chỉ hiện target đã chỉnh bid của SKU này (mọi dạng chạy)"
               className={`h-7 cursor-pointer rounded border px-2.5 text-xs font-semibold transition disabled:cursor-default disabled:opacity-40 ${
                 editedOnly
@@ -1310,17 +1391,18 @@ export function PpcManualBidView({
           <div className="overflow-x-auto border border-slate-300 bg-white shadow-xs">
             <table
               className="border-collapse text-xs table-fixed w-full"
-              style={{ minWidth: Object.values(colWidths).reduce((a, b) => a + b, 0) }}
+              style={{ minWidth: Object.values(shownColWidths).reduce((a, b) => a + b, 0) }}
             >
               <colgroup>
                 <col style={{ width: colWidths.cb }} />
                 <col style={{ width: colWidths.idx }} />
                 <col style={{ width: colWidths.target }} />
+                <col style={{ width: shownColWidths.campaign }} />
                 <col style={{ width: colWidths.matchType }} />
-                <col style={{ width: colWidths.campaign }} />
                 <col style={{ width: colWidths.sv }} />
                 <col style={{ width: colWidths.org }} />
                 <col style={{ width: colWidths.sp }} />
+                <col style={{ width: colWidths.impr }} />
                 <col style={{ width: colWidths.clicks }} />
                 <col style={{ width: colWidths.orders }} />
                 <col style={{ width: colWidths.spend }} />
@@ -1352,11 +1434,12 @@ export function PpcManualBidView({
                     />
                   </th>
                   {renderHeaderCell({ colKey: "target", sortKey: "keyword", label: "Target", hasFilter: true, distinctItems: targetDistinctItems })}
-                  {renderHeaderCell({ colKey: "matchType", sortKey: "matchType", label: "Match Type", align: "center", hasFilter: true, distinctItems: matchTypeDistinctItems })}
                   {renderHeaderCell({ colKey: "campaign", sortKey: "campaignName", label: "Campaign", hasFilter: true, distinctItems: campaignDistinctItems })}
+                  {renderHeaderCell({ colKey: "matchType", sortKey: "matchType", label: "Match Type", align: "center", hasFilter: true, distinctItems: matchTypeDistinctItems })}
                   {renderHeaderCell({ colKey: "sv", sortKey: "searchVolume", label: "SV", align: "right" })}
                   {renderHeaderCell({ colKey: "org", sortKey: "organicRank", label: "Org", align: "center" })}
                   {renderHeaderCell({ colKey: "sp", sortKey: "sponsoredRank", label: "SP", align: "center" })}
+                  {renderHeaderCell({ colKey: "impr", sortKey: "impressions", label: "Impr", align: "right" })}
                   {renderHeaderCell({ colKey: "clicks", sortKey: "clicks", label: "Click", align: "right" })}
                   {renderHeaderCell({ colKey: "orders", sortKey: "orders", label: "Order", align: "right" })}
                   {renderHeaderCell({ colKey: "spend", sortKey: "spend", label: "Spend", align: "right" })}
@@ -1379,17 +1462,24 @@ export function PpcManualBidView({
                   const queued = queuedByTarget.get(`${r.campaignId}|${r.targetId}`);
                   const isSel = selected.has(r.key);
                   const live = isLive(r);
+                  const newRunType = editedOnly && (idx === 0 || visible[idx - 1].runType !== r.runType);
                   return (
+                    <Fragment key={r.key}>
+                    {newRunType && (
+                      <tr className="bg-slate-200">
+                        <td colSpan={17} className="border-y border-slate-300 px-3 py-1 text-xs font-bold tracking-wide text-slate-900">
+                          {r.runType}
+                          <span className="ml-2 font-normal text-slate-600">
+                            {visible.filter((x) => x.runType === r.runType).length} target
+                          </span>
+                        </td>
+                      </tr>
+                    )}
                     <tr
-                      key={r.key}
                       className={`h-8 transition-colors ${TIER_BORDER[r.tier]} ${
                         isSel
                           ? "bg-indigo-50/80"
-                          : draft
-                          ? "bg-amber-50"
-                          : idx % 2 === 1
-                          ? "bg-slate-50/50"
-                          : "bg-white"
+                          : TIER_ROW_BG[r.tier]
                       } ${live ? "" : "opacity-60"} cursor-pointer select-none hover:bg-slate-100/70`}
                       onMouseDown={(e) => startRowDrag(idx, r.key, e)}
                       onMouseEnter={() => enterRowDrag(idx)}
@@ -1404,7 +1494,7 @@ export function PpcManualBidView({
                       </td>
                       <td
                         className={`border-r border-slate-200 px-1 py-0.5 text-center font-mono text-[11px] select-none ${
-                          draft ? "bg-amber-400 font-bold text-white" : "bg-slate-50/60 text-slate-400"
+                          `${TIER_NUM_BG[r.tier]} ${draft ? "font-bold !text-indigo-700 shadow-[inset_4px_0_0_#4f46e5]" : "text-slate-900"}`
                         }`}
                       >
                         {idx + 1}
@@ -1412,12 +1502,15 @@ export function PpcManualBidView({
                       <td className="border-r border-slate-200 px-2 py-0.5 font-medium text-slate-900 truncate" title={r.keyword}>
                         {r.keyword || "—"}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-center font-medium text-slate-600 truncate">
-                        {shortMatch(r.matchType)}
-                      </td>
-                      <td className="whitespace-normal break-words border-r border-slate-200 px-2 py-1 leading-snug text-slate-600" title={r.adGroupName ? `Ad group: ${r.adGroupName}` : undefined}>
+                      <td
+                        className="truncate whitespace-nowrap border-r border-slate-200 px-2 py-0.5 text-slate-600"
+                        title={r.adGroupName ? `${r.campaignName}\nAd group: ${r.adGroupName}` : r.campaignName}
+                      >
                         <span>{r.campaignName}</span>
                         {!live && <span className="ml-1 text-[11px] text-slate-400 font-normal">(dừng)</span>}
+                      </td>
+                      <td className="border-r border-slate-200 px-2 py-0.5 text-center font-medium text-slate-600 truncate">
+                        {shortMatch(r.matchType)}
                       </td>
                       <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-700">
                         {r.searchVolume != null ? int(r.searchVolume) : <span className="text-slate-400">—</span>}
@@ -1427,6 +1520,9 @@ export function PpcManualBidView({
                       </td>
                       <td className="border-r border-slate-200 px-1 py-0.5 text-center font-mono tabular-nums text-slate-700">
                         {r.sponsoredRank != null ? r.sponsoredRank : <span className="text-slate-400">—</span>}
+                      </td>
+                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-500">
+                        {int(r.impressions)}
                       </td>
                       <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-700">
                         {int(r.clicks)}
@@ -1467,6 +1563,7 @@ export function PpcManualBidView({
                         />
                       </td>
                     </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -1476,6 +1573,9 @@ export function PpcManualBidView({
                     Tổng ({visible.length} target)
                   </td>
                   <td colSpan={3} className="border-r border-slate-300" />
+                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
+                    {int(totals.impressions)}
+                  </td>
                   <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
                     {int(totals.clicks)}
                   </td>
@@ -1597,17 +1697,12 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
   }
 
   const isDraft = draft?.kind === "bid";
-  // Đã sửa: tăng = xanh, giảm = đỏ, kèm % để nhìn lướt là biết.
+  // Đã sửa: tăng = nền xanh, giảm = nền đỏ. Sau số bid mới là hệ số đã gõ (× 0.95 → 95%).
   const up = isDraft && draft.bid > row.bid;
-  const pct = isDraft && row.bid > 0 ? Math.round(((draft.bid - row.bid) / row.bid) * 100) : null;
+  const factorPct = isDraft && draft.factor ? `${Math.round(draft.factor * 1000) / 10}%` : null;
 
   return (
     <div className={`relative flex h-full w-full items-center ${isDraft ? (up ? "bg-emerald-100" : "bg-rose-100") : ""}`}>
-      {isDraft && !focused && pct != null && (
-        <span className={`pointer-events-none absolute left-1.5 font-mono text-[10.5px] font-bold ${up ? "text-emerald-700" : "text-rose-700"}`}>
-          {up ? "▲" : "▼"}{Math.abs(pct)}%
-        </span>
-      )}
       <input
         data-mb-bid={index}
         value={focused ? text : shown}
@@ -1664,7 +1759,7 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className={`h-7 w-full px-2 text-right font-mono text-[12px] font-bold outline-none transition-all ${
+        className={`h-7 min-w-0 flex-1 px-2 text-right font-mono text-[12px] font-bold outline-none transition-all ${
           focused
             ? "bg-white ring-2 ring-indigo-500 ring-inset text-slate-900"
             : isDraft
@@ -1672,6 +1767,11 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
             : "bg-transparent text-slate-700 placeholder:text-slate-300 placeholder:font-normal"
         }`}
       />
+      {factorPct && !focused && (
+        <span className={`pointer-events-none shrink-0 pr-1.5 font-mono text-[10.5px] font-semibold ${up ? "text-emerald-700" : "text-rose-700"}`}>
+          {factorPct}
+        </span>
+      )}
     </div>
   );
 }

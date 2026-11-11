@@ -130,8 +130,6 @@ export function filterSkusExceptTier<T extends SkuLike>(list: T[], f: SkuListFil
   const tokens = searchTokens(f.search);
   const ranges = activeRanges(f);
   return list.filter((g) => {
-    // SKU chưa có click / spend nào không cần chỉnh bid.
-    if (!(g.spend > 0 || g.clicks > 0)) return false;
     if (skipFacet !== "phoi" && f.phoi && (g.productType || "") !== f.phoi) return false;
     if (skipFacet !== "niche" && f.niche && (g.niche || "") !== f.niche) return false;
     if (skipFacet !== "pic" && f.pic && (g.picMkt || "") !== f.pic) return false;

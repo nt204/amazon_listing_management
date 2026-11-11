@@ -50,11 +50,12 @@ test("lọc SKU: nhiều SKU trong ô tìm, khoảng chỉ số, phôi/niche ph�
     g("XX4", 0, 0, 0, "Card", "Army"),
   ];
   const ids = (f: Partial<typeof EMPTY_SKU_FILTER>) => filterSkusExceptTier(list, { ...EMPTY_SKU_FILTER, ...f }).map((x) => x.sku);
-  assert.deepEqual(ids({}), ["BTV1", "BTV2", "POC3"]);
+  // SKU có ads là hiện, kể cả chưa có click / spend.
+  assert.deepEqual(ids({}), ["BTV1", "BTV2", "POC3", "XX4"]);
   assert.deepEqual(ids({ search: "btv1, poc3" }), ["BTV1", "POC3"]);
   assert.deepEqual(ids({ ranges: { spend: { min: "10", max: "" } } }), ["BTV1", "BTV2"]);
   assert.deepEqual(ids({ ranges: { acos: { min: "20", max: "60" } } }), ["BTV1"]);
-  assert.deepEqual(ids({ ranges: { clicks: { min: "", max: "8" } } }), ["BTV2", "POC3"]);
+  assert.deepEqual(ids({ ranges: { clicks: { min: "", max: "8" } } }), ["BTV2", "POC3", "XX4"]);
   // Chọn phôi trước → niche chỉ còn niche của phôi đó; chọn niche trước → phôi chỉ còn phôi của niche đó.
   assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, phoi: "Tumbler" }, "niche"), ["Marine", "Navy"]);
   assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, niche: "Navy" }, "phoi"), ["Card", "Tumbler"]);
