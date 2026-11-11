@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
-import { syncMonthlyBaseCostFromInbound } from "@/lib/accounting/inventory-db";
+import { BASE_COST_AUTO_FROM, syncMonthlyBaseCostFromInbound } from "@/lib/accounting/inventory-db";
 import { enqueueSkuMonthlyRecalcAfterBaseCost } from "@/lib/accounting/sku-monthly-recalc";
 
 // Tự tính lại Base Cost tháng khi lô hàng ở CHI TIẾT ĐI HÀNG thay đổi hoặc khi nạp báo cáo tồn FBA/AWD mới.
@@ -62,7 +62,9 @@ async function processNext(): Promise<boolean> {
     if (!range?.first || !range.last) return true;
 
     const current = currentVietnamPeriod();
-    const start = job.from_period > range.first ? job.from_period : range.first;
+    // Kỳ trước BASE_COST_AUTO_FROM là lịch sử, không tính lại (cũng không tính lại SKU Monthly của các kỳ đó)
+    const floor = range.first > BASE_COST_AUTO_FROM ? range.first : BASE_COST_AUTO_FROM;
+    const start = job.from_period > floor ? job.from_period : floor;
     const end = range.last > current ? range.last : current;
     if (start > end) return true;
 

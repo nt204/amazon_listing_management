@@ -4298,15 +4298,25 @@ export async function deleteMonthlyBaseCostItem(
 }
 
 /**
+ * Kỳ đầu tiên app tự tính Base Cost tháng. Các kỳ trước là dữ liệu lịch sử (nhập từ Excel/sheet), chỉ đọc,
+ * không bao giờ tính lại; kỳ mốc lấy tồn cuối + giá vốn của kỳ lịch sử liền trước làm điểm xuất phát.
+ * Đổi bằng env BASE_COST_AUTO_FROM (YYYY-MM).
+ */
+export const BASE_COST_AUTO_FROM = /^\d{4}-\d{2}$/.test(process.env.BASE_COST_AUTO_FROM || "")
+  ? process.env.BASE_COST_AUTO_FROM!
+  : "2026-09";
+
+/**
  * Tự động tổng hợp số liệu nhập trong tháng từ bảng CHI TIẾT ĐI HÀNG (theo ngay_den),
  * lấy đơn giá tồn từ tháng trước (hoặc Bảng Mã nếu chưa có), kết hợp với số lượng tồn kho đầu kỳ
- * và tính Basecost tháng theo 3 nguyên tắc chuẩn.
+ * và tính Basecost tháng theo 3 nguyên tắc chuẩn. Kỳ trước BASE_COST_AUTO_FROM là lịch sử → bỏ qua.
  */
 export async function syncMonthlyBaseCostFromInbound(
   storeId: string,
   period: string,
   changedBy = "system",
 ): Promise<{ syncedCount: number; errors: string[] }> {
+  if (period < BASE_COST_AUTO_FROM) return { syncedCount: 0, errors: [] };
   const sql = await getDatabaseClient();
   const errors: string[] = [];
 
