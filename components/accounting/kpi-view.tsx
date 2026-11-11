@@ -32,6 +32,7 @@ import {
   shiftPeriod,
   tacosOf,
   type KpiMetrics,
+  type KpiTargetFormula,
   type KpiTargetInput,
 } from "@/lib/accounting/kpi-calc";
 import { AccountingTopProgressBar, AnimatedTabPill } from "./accounting-skeleton";
@@ -84,6 +85,8 @@ interface KpiData {
   note: { note: string; updated_by: string | null; updated_at: string | null } | null;
   teamTargets?: Record<"cur" | "next", Partial<Record<"dev" | "test", KpiMetrics>>>;
   historyYears: number[];
+  /** Công thức tính mục tiêu của store (nạp từ sheet KẾ HOẠCH, sửa tay được) */
+  targetFormula?: KpiTargetFormula & { source?: string | null; updated_by?: string | null };
   generatedAt: string;
 }
 
@@ -125,6 +128,93 @@ const PL_ROWS: { key: PlKey; label: string; kind: "usd" | "int" | "pct"; cost?: 
   { key: "profit", label: "Profit SKU (sau Adj. + Placement)", kind: "usd", strong: true },
 ];
 
+// ───────────────────────── Công thức mục tiêu của store (như khối "Kết quả kinh doanh mục tiêu" của sheet) ─────────────────────────
+function TargetFormulaPanel({
+  formula,
+  canEdit,
+  onSave,
+}: {
+  formula: KpiData["targetFormula"];
+  canEdit: boolean;
+  onSave: (patch: Partial<KpiTargetFormula>) => Promise<void>;
+}) {
+  const f = formula ?? { amazon_mode: "unit_plus_pct" as const, amazon_pct: 0.15, ref_pct: 0.15, return_mode: "rate" as const, return_rate: 0.02 };
+  const [saving, setSaving] = useState(false);
+  const save = async (patch: Partial<KpiTargetFormula>) => {
+    setSaving(true);
+    try {
+      await onSave(patch);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const pctInput = (value: number, onCommit: (v: number) => void, label: string) => (
+    <NumInput
+      value={value}
+      percent
+      width="w-16"
+      ariaLabel={label}
+      disabled={!canEdit || saving}
+      onCommit={(v) => {
+        if (v != null && v >= 0 && v <= 1) onCommit(v);
+      }}
+    />
+  );
+  const sel = "h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-800 disabled:bg-slate-50";
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-slate-900">Công thức mục tiêu của store</h3>
+        <span className="text-[11px] text-slate-400">
+          {formula?.source ? `Nguồn: ${formula.source}` : "Mặc định"}
+          {formula?.updated_by ? ` · ${formula.updated_by}` : ""}
+        </span>
+      </div>
+      <div className="grid gap-2 text-xs text-slate-700 sm:grid-cols-3">
+        <label className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold">AMZ Fee =</span>
+          <select
+            aria-label="Cách tính Amazon fee mục tiêu"
+            className={sel}
+            disabled={!canEdit || saving}
+            value={f.amazon_mode}
+            onChange={(e) => {
+              const mode = e.target.value as KpiTargetFormula["amazon_mode"];
+              void save({ amazon_mode: mode, amazon_pct: mode === "revenue_pct" ? 0.33 : 0.15 });
+            }}
+          >
+            <option value="unit_plus_pct">Unit × Amazon fee + % REV</option>
+            <option value="revenue_pct">% REV</option>
+          </select>
+          {pctInput(f.amazon_pct, (v) => void save({ amazon_pct: v }), "% REV của Amazon fee mục tiêu")}
+        </label>
+        <label className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold">Return =</span>
+          <select
+            aria-label="Cách tính Return mục tiêu"
+            className={sel}
+            disabled={!canEdit || saving}
+            value={f.return_mode}
+            onChange={(e) => void save({ return_mode: e.target.value as KpiTargetFormula["return_mode"] })}
+          >
+            <option value="rate">% REV</option>
+            <option value="actual">Return thực tế tháng trước</option>
+          </select>
+          {f.return_mode === "rate" && pctInput(f.return_rate, (v) => void save({ return_rate: v }), "% Return mục tiêu")}
+        </label>
+        <label className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold">Ref tax = 10% ×</span>
+          {pctInput(f.ref_pct, (v) => void save({ ref_pct: v }), "% referral của Ref tax mục tiêu")}
+          <span>REV</span>
+        </label>
+      </div>
+      <p className="mt-2 text-[11px] text-slate-400">
+        Tự lấy theo công thức sheet KẾ HOẠCH KINH DOANH khi nạp mục tiêu. Ads tax = 10% Ads, TNCN = 1% REV, Lưu kho = số leader nhập.
+      </p>
+    </section>
+  );
+}
+
 /** storeFee: phí AWD/Subscription cấp store của tháng (chỉ trang Tổng quan); Gross Profit trừ phí này như sheet */
 function metricValue(m: KpiMetrics | null | undefined, key: PlKey, storeFee: number | null = null): number | null {
   if (!m) return null;
@@ -155,8 +245,13 @@ const signed = (v: number | null) => (v == null ? "" : `${v > 0 ? "+" : ""}${fmt
 function unitEcon(s: KpiSku) {
   return { price: s.price, basecost_unit: s.basecost_unit, amazon_fee_unit: s.amazon_fee_unit, referral_pct: s.referral_pct };
 }
-function targetOf(s: KpiSku, slot: TargetSlot) {
-  return computeTarget(s.target[slot], unitEcon(s));
+/**
+ * Mục tiêu theo công thức của store. Return "theo thực tế" (MALFIRST: =BH) = Return thực tế tháng trước tháng mục tiêu:
+ * mục tiêu tháng sau ← thực tế tháng đang xem, mục tiêu tháng đang xem ← thực tế tháng trước.
+ */
+function targetOf(s: KpiSku, slot: TargetSlot, formula?: KpiTargetFormula) {
+  const base = slot === "next" ? s.actual.cur : s.actual.prev;
+  return computeTarget(s.target[slot], unitEcon(s), formula, base ? Math.abs(base.return_amount) : null);
 }
 
 function monthOptions(center: string) {
@@ -382,10 +477,12 @@ function OverviewPage({
   data,
   canEdit,
   onSaveNote,
+  onSaveFormula,
 }: {
   data: KpiData;
   canEdit: boolean;
   onSaveNote: (note: string) => Promise<void>;
+  onSaveFormula: (patch: Partial<KpiTargetFormula>) => Promise<void>;
 }) {
   const { periods } = data;
   const sum = useMemo(() => {
@@ -397,8 +494,8 @@ function OverviewPage({
       g.cur = addMetrics(g.cur, s.actual.cur);
       g.ly = addMetrics(g.ly, s.actual.ly);
       g.lyNext = addMetrics(g.lyNext, s.actual.lyNext);
-      const tc = targetOf(s, "cur");
-      const tn = targetOf(s, "next");
+      const tc = targetOf(s, "cur", data.targetFormula);
+      const tn = targetOf(s, "next", data.targetFormula);
       if (tc) g.hasTCur = true;
       if (tn) g.hasTNext = true;
       g.tCur = addMetrics(g.tCur, tc);
@@ -411,7 +508,7 @@ function OverviewPage({
       if (!by[k].hasTNext && team?.next[k]) Object.assign(by[k], { tNext: team.next[k], hasTNext: true });
     }
     return { by };
-  }, [data.skus, data.teamTargets]);
+  }, [data.skus, data.teamTargets, data.targetFormula]);
 
   // Như sheet BÁO CÁO THÁNG: "tổng team" = SKU phát triển; SKU test là dòng "P/L SKU testing" riêng
   const a = sum.by.dev;
@@ -580,6 +677,8 @@ function OverviewPage({
         </div>
       </section>
 
+      <TargetFormulaPanel formula={data.targetFormula} canEdit={canEdit} onSave={onSaveFormula} />
+
       <section className="rounded-xl border border-slate-200 bg-white p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h3 className="text-sm font-bold text-slate-900">Đánh giá tổng quan</h3>
@@ -723,10 +822,10 @@ function SkuTable({
         prev: s.actual.prev,
         cur: s.actual.cur,
         lyNext: s.actual.lyNext,
-        tc: targetOf(s, "cur"),
-        tn: targetOf(s, "next"),
+        tc: targetOf(s, "cur", data.targetFormula),
+        tn: targetOf(s, "next", data.targetFormula),
       })),
-    [skus],
+    [skus, data.targetFormula],
   );
 
   // Dòng tổng: cộng từng tháng; mục tiêu chỉ cộng SKU đã nhập
@@ -1043,8 +1142,8 @@ function SkuDrawer({
   onSaveTarget: (sku: string, slot: TargetSlot, patch: Partial<TargetRow>) => void;
 }) {
   const { periods } = data;
-  const tc = targetOf(sku, "cur");
-  const tn = targetOf(sku, "next");
+  const tc = targetOf(sku, "cur", data.targetFormula);
+  const tn = targetOf(sku, "next", data.targetFormula);
   const cols: { label: string; m: KpiMetrics | null; tone?: string }[] = [
     { label: `Cùng kỳ ${periodLabel(periods.ly)}`, m: sku.actual.ly },
     { label: `Tháng trước ${periodLabel(periods.prev)}`, m: sku.actual.prev },
@@ -1469,7 +1568,9 @@ export function KpiView() {
           skus: prev.skus.map((s) => {
             if (s.sku !== sku) return s;
             const base: TargetRow = s.target[slot] || { units: null, tacos: null, price: null, storage_fee: null, cause: null, solution: null, action: null, review: null, target_action: null, updated_by: null, updated_at: null };
-            return { ...s, target: { ...s.target, [slot]: { ...base, ...patch } } };
+            // Sửa Unit / TACoS / giá / lưu kho thì bỏ số gõ tay nạp từ sheet (server cũng xoá) → tính lại theo công thức
+            const edited = ["units", "tacos", "price", "storage_fee"].some((k) => k in patch);
+            return { ...s, target: { ...s.target, [slot]: { ...base, ...patch, ...(edited ? { sheet_metrics: null } : {}) } } };
           }),
         };
       });
@@ -1507,6 +1608,24 @@ export function KpiView() {
     [data, selectedStoreId],
   );
 
+  const saveFormula = useCallback(
+    async (patch: Partial<KpiTargetFormula>) => {
+      if (!data || !selectedStoreId) return;
+      const res = await fetch("/api/accounting/financials/kpi", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store_id: selectedStoreId, period: data.periods.cur, target_formula: patch }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json?.error || "Không lưu được công thức mục tiêu");
+        return;
+      }
+      setData((prev) => (prev ? { ...prev, targetFormula: json.targetFormula } : prev));
+    },
+    [data, selectedStoreId],
+  );
+
   const deferredSearch = useDeferredValue(search);
   const groupSkus = useMemo(() => (data?.skus || []).filter((s) => s.group === (mode === "test" ? "test" : "dev")), [data, mode]);
   const typeOptions = useMemo(() => Array.from(new Set(groupSkus.map((s) => s.product_type || "(trống)"))).sort(), [groupSkus]);
@@ -1533,7 +1652,7 @@ export function KpiView() {
 
   let body: ReactNode = null;
   if (data) {
-    if (mode === "overview") body = <OverviewPage key={`${selectedStoreId}:${data.period}`} data={data} canEdit={canEdit} onSaveNote={saveNote} />;
+    if (mode === "overview") body = <OverviewPage key={`${selectedStoreId}:${data.period}`} data={data} canEdit={canEdit} onSaveNote={saveNote} onSaveFormula={saveFormula} />;
     else body = <SkuTable data={data} skus={visibleSkus} canEdit={canEdit} onSaveTarget={saveTarget} onOpen={setOpenSku} />;
   }
 

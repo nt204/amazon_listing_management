@@ -1,6 +1,6 @@
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
-import { getKpi, setKpiNote, setKpiTarget, type KpiTargetPatch } from "@/lib/accounting/kpi-db";
+import { getKpi, setKpiNote, setKpiTarget, setKpiTargetFormula, type KpiTargetPatch } from "@/lib/accounting/kpi-db";
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -61,6 +61,24 @@ export async function PUT(request: Request) {
       if (note.length > 20_000) return Response.json({ error: "Nội dung quá dài." }, { status: 400 });
       await setKpiNote(storeId, period, note, who);
       return Response.json({ success: true });
+    }
+
+    // Công thức mục tiêu của store ({ store_id, period, target_formula: { amazon_mode, amazon_pct, ref_pct, return_mode, return_rate } })
+    if ("target_formula" in body) {
+      const f = (body.target_formula ?? {}) as Record<string, unknown>;
+      const patch: Record<string, unknown> = {};
+      if (f.amazon_mode === "unit_plus_pct" || f.amazon_mode === "revenue_pct") patch.amazon_mode = f.amazon_mode;
+      if (f.return_mode === "rate" || f.return_mode === "actual") patch.return_mode = f.return_mode;
+      try {
+        for (const k of ["amazon_pct", "ref_pct", "return_rate"] as const) {
+          const v = numOrNull(f[k], 0, 1);
+          if (v != null) patch[k] = v;
+        }
+      } catch {
+        return Response.json({ error: "Tỷ lệ phải từ 0 đến 100%." }, { status: 400 });
+      }
+      const saved = await setKpiTargetFormula(storeId, patch, who);
+      return Response.json({ success: true, targetFormula: saved });
     }
 
     const sku = String(body.sku || "").trim();

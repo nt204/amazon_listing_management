@@ -101,6 +101,8 @@ export interface KpiTargetInput {
   /** Basecost/unit, Amazon fee/unit leader điền trên sheet; trống thì dùng số hệ thống */
   basecost_unit?: number | null;
   amazon_fee_unit?: number | null;
+  /** Dòng leader gõ tay số trên sheet: dùng nguyên các số này thay cho công thức (chi phí số dương) */
+  sheet_metrics?: Partial<KpiMetrics> | null;
 }
 
 export interface KpiUnitEconomics {
@@ -111,20 +113,73 @@ export interface KpiUnitEconomics {
   referral_pct: number | null;
 }
 
-/** Mục tiêu đầy đủ từ các ô leader nhập; null khi chưa nhập Unit */
-export function computeTarget(input: KpiTargetInput | null | undefined, unit: KpiUnitEconomics): KpiMetrics | null {
+/**
+ * Công thức khối "Kết quả kinh doanh mục tiêu" — mỗi store một kiểu (đọc từ sheet KẾ HOẠCH khi nạp, sửa tay được):
+ *  - FASTPEACE/LIMIMA/WARMSTOREY: AMZ Fee = Unit × Amazon fee + 15% REV; Return = 2% REV
+ *  - BOZSPACER: như trên, Return = 3% REV
+ *  - MALFIRST: AMZ Fee = 33% REV; Return = Return thực tế tháng trước tháng mục tiêu (=BH)
+ * Ref tax = 10% × 15% REV, Ads tax = 10% Ads, TNCN = 1% REV ở mọi store.
+ */
+export interface KpiTargetFormula {
+  /** "unit_plus_pct": Unit × Amazon fee/unit + pct × REV; "revenue_pct": pct × REV */
+  amazon_mode: "unit_plus_pct" | "revenue_pct";
+  amazon_pct: number;
+  /** % referral dùng cho Ref tax (Ref tax = 10% × ref_pct × REV) */
+  ref_pct: number;
+  /** "rate": return_rate × REV; "actual": Return thực tế tháng trước tháng mục tiêu */
+  return_mode: "rate" | "actual";
+  return_rate: number;
+}
+
+export const DEFAULT_TARGET_FORMULA: KpiTargetFormula = {
+  amazon_mode: "unit_plus_pct",
+  amazon_pct: 0.15,
+  ref_pct: 0.15,
+  return_mode: "rate",
+  return_rate: KPI_RETURN_RATE,
+};
+
+export function normalizeTargetFormula(v: unknown): KpiTargetFormula {
+  const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  const pct = (x: unknown, d: number) => (x != null && x !== "" && Number.isFinite(Number(x)) && Number(x) >= 0 && Number(x) <= 1 ? Number(x) : d);
+  return {
+    amazon_mode: o.amazon_mode === "revenue_pct" ? "revenue_pct" : "unit_plus_pct",
+    amazon_pct: pct(o.amazon_pct, o.amazon_mode === "revenue_pct" ? 0.33 : 0.15),
+    ref_pct: pct(o.ref_pct, 0.15),
+    return_mode: o.return_mode === "actual" ? "actual" : "rate",
+    return_rate: pct(o.return_rate, KPI_RETURN_RATE),
+  };
+}
+
+/**
+ * Mục tiêu đầy đủ từ các ô leader nhập; null khi chưa nhập Unit.
+ * returnActual: Return thực tế (số dương) của tháng trước tháng mục tiêu — dùng khi formula.return_mode = "actual".
+ */
+export function computeTarget(
+  input: KpiTargetInput | null | undefined,
+  unit: KpiUnitEconomics,
+  formula: KpiTargetFormula = DEFAULT_TARGET_FORMULA,
+  returnActual: number | null = null,
+): KpiMetrics | null {
   if (!input || input.units == null) return null;
+  if (input.sheet_metrics && input.sheet_metrics.revenue != null) {
+    const m = { ...emptyMetrics(), ...input.sheet_metrics };
+    m.storage_other = m.storage_fee;
+    return m;
+  }
   const units = input.units;
   const price = input.price ?? unit.price ?? 0;
-  const ref = unit.referral_pct ?? 0.15;
   const revenue = units * price;
   const ads = (input.tacos ?? 0) * revenue;
   const basecost = units * (input.basecost_unit ?? unit.basecost_unit ?? 0);
-  const amazon = units * ((input.amazon_fee_unit ?? unit.amazon_fee_unit ?? 0) + ref * price);
+  const amazon =
+    formula.amazon_mode === "revenue_pct"
+      ? formula.amazon_pct * revenue
+      : units * (input.amazon_fee_unit ?? unit.amazon_fee_unit ?? 0) + formula.amazon_pct * revenue;
   const adsTax = KPI_ADS_TAX_RATE * ads;
   const tncn = KPI_TNCN_RATE * revenue;
-  const refTax = 0.1 * ref * revenue;
-  const ret = KPI_RETURN_RATE * revenue;
+  const refTax = 0.1 * formula.ref_pct * revenue;
+  const ret = formula.return_mode === "actual" ? (returnActual ?? 0) : formula.return_rate * revenue;
   const storage = input.storage_fee ?? 0;
   return {
     revenue,

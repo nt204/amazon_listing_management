@@ -95,12 +95,13 @@ export async function readSpreadsheetColumns(
   spreadsheetId: string,
   tab: string,
   columns: string[],
+  render: "UNFORMATTED_VALUE" | "FORMULA" = "UNFORMATTED_VALUE",
 ): Promise<Record<string, (string | number | null)[]>> {
   const qs = columns
     .map((c) => `ranges=${encodeURIComponent(`'${tab.replace(/'/g, "''")}'!${c}:${c}`)}`)
     .join("&");
   const data = await sheetsGet<{ valueRanges: { values?: (string | number | boolean)[][] }[] }>(
-    `${spreadsheetId}/values:batchGet?${qs}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER&majorDimension=COLUMNS`,
+    `${spreadsheetId}/values:batchGet?${qs}&valueRenderOption=${render}&dateTimeRenderOption=SERIAL_NUMBER&majorDimension=COLUMNS`,
   );
   const out: Record<string, (string | number | null)[]> = {};
   columns.forEach((c, i) => {
@@ -108,6 +109,20 @@ export async function readSpreadsheetColumns(
     out[c] = values.map((cell) => (cell === "" ? null : typeof cell === "boolean" ? String(cell) : cell));
   });
   return out;
+}
+
+/**
+ * Đọc 1 vùng nhỏ (vd. 'Tab'!A1:AZ4) theo hàng. render = "FORMULA" để lấy công thức thay vì giá trị.
+ */
+export async function readSpreadsheetRange(
+  spreadsheetId: string,
+  range: string,
+  render: "FORMULA" | "UNFORMATTED_VALUE" | "FORMATTED_VALUE" = "UNFORMATTED_VALUE",
+): Promise<(string | number | null)[][]> {
+  const data = await sheetsGet<{ values?: (string | number | boolean)[][] }>(
+    `${spreadsheetId}/values/${encodeURIComponent(range)}?valueRenderOption=${render}&dateTimeRenderOption=SERIAL_NUMBER`,
+  );
+  return (data.values ?? []).map((row) => row.map((cell) => (cell === "" ? null : typeof cell === "boolean" ? String(cell) : cell)));
 }
 
 /**
