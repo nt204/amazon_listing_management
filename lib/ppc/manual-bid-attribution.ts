@@ -92,9 +92,9 @@ export async function resolveReportSnapshots(sql: Sql, storeId: string, days: nu
   return Array.from(fallback);
 }
 
-async function computeAttribution(sql: Sql, storeId: string, snaps: ReportSnapshot[]): Promise<Attribution> {
+async function loadGroups(sql: Sql, storeId: string, snaps: ReportSnapshot[]) {
   const snapFilter = snapshotFilter(sql, snaps);
-  const groups = await sql<TargetGroup[]>`
+  return sql<TargetGroup[]>`
     WITH
     ag AS (
       SELECT DISTINCT p.campaign_id, p.ad_group_id, upper(trim(p.sku)) AS sku
@@ -142,6 +142,16 @@ async function computeAttribution(sql: Sql, storeId: string, snaps: ReportSnapsh
     LEFT JOIN ag ON ag.campaign_id = g.campaign_id AND ag.ad_group_id = g.ad_group_id
     LEFT JOIN camp_sku cs ON cs.campaign_id = g.campaign_id
   `;
+}
+
+async function computeAttribution(sql: Sql, storeId: string, snaps: ReportSnapshot[]): Promise<Attribution> {
+  // Câu này được prepare và chạy lặp cho nhiều store → sau ~5 lần Postgres chuyển sang "generic plan" (không biết
+  // store nào nên đoán vài nghìn dòng, chi phí ~2,4 nghìn thay vì ~3,9 triệu) → FASTPEACE 40–70s thay vì ~8s.
+  // Ép plan theo đúng tham số từng lần chạy (SET LOCAL chỉ có hiệu lực trong transaction này).
+  const groups = await sql.begin(async (tx) => {
+    await tx`SET LOCAL plan_cache_mode = force_custom_plan`;
+    return loadGroups(tx as unknown as Sql, storeId, snaps);
+  });
   const adGroupSkus = new Map<string, Set<string>>();
   const campaignSku = new Map<string, string>();
   for (const g of groups) {
@@ -200,7 +210,12 @@ export function startManualBidPrewarm(getSql: () => Promise<Sql>) {
       for (const row of rows) {
         try {
           const snaps = await resolveReportSnapshots(sql, row.store_id, row.coverage_days);
-          if (snaps.length > 0) await getManualBidAttribution(sql, row.store_id, snaps);
+          if (snaps.length === 0) continue;
+          const started = Date.now();
+          const result = await getManualBidAttribution(sql, row.store_id, snaps);
+          const ms = Date.now() - started;
+          // Trúng cache thì gần 0ms → không ghi log; chỉ ghi lần thực sự tính (khởi động / vừa nạp báo cáo mới).
+          if (ms > 200) console.log(`[manual-bid] prewarm store ${row.store_id} ${row.coverage_days}d: ${result.groups.length} nhóm, ${ms}ms`);
         } catch (error) {
           console.warn("[manual-bid] prewarm store failed", row.store_id, row.coverage_days, error);
         }
