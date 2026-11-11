@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getServiceAccountEmail, parseSpreadsheetId, readSpreadsheetTab } from "@/lib/google/sheets";
 import { getStoreById } from "@/lib/accounting/accounting-db";
+import { syncBaseCostOpeningFromSheet } from "@/lib/accounting/base-cost-opening-sheet";
 import { storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
 import {
   INBOUND_HEADER_MAP,
@@ -1000,7 +1001,17 @@ async function runLink(
   const results: Partial<Record<SheetType, SheetPartOutcome>> = {};
   // Bảng mã chạy trước để Chi tiết đi hàng gắn đúng SKU
   for (const part of parts) results[part] = await runPart(link, part, trigger, actor, preloaded[part], force);
-  // Base Cost tháng KHÔNG đồng bộ từ sheet (tab BASECOST THÁNG): app tự tính real time từ tồn file Amazon + Chi tiết đi hàng.
+  // Base Cost tháng: từ sheet chỉ nạp tồn + giá đầu năm (tab TỒN); các tháng sau app tự tính từ dữ liệu server
+  // (không đọc tab BASECOST THÁNG). Không chặn kết quả đồng bộ.
+  if (link.link_type === "inventory") {
+    await syncBaseCostOpeningFromSheet(link.store_id, link.sheet_url, `google-sheet:${trigger}:${actor}`)
+      .then((r) => {
+        if (r.updated || r.inserted) {
+          console.log(`[InventorySheetSync] ${link.store_id} TỒN 1/1: cập nhật ${r.updated}, thêm ${r.inserted} SKU → tính lại Base Cost từ ${r.resyncFrom}`);
+        }
+      })
+      .catch((error) => console.error(`[InventorySheetSync] ${link.store_id} TỒN 1/1 lỗi:`, error instanceof Error ? error.message : error));
+  }
   const errors = parts.filter((p) => !results[p]!.ok).map((p) => `${SHEET_TYPE_LABELS[p]}: ${results[p]!.error}`);
   return { ok: errors.length === 0, parts: results, error: errors.length ? errors.join(" | ") : undefined };
 }

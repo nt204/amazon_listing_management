@@ -4298,13 +4298,16 @@ export async function deleteMonthlyBaseCostItem(
 }
 
 /**
- * Kỳ đầu tiên app tự tính Base Cost tháng. Các kỳ trước là dữ liệu lịch sử (nhập từ Excel/sheet), chỉ đọc,
- * không bao giờ tính lại; kỳ mốc lấy tồn cuối + giá vốn của kỳ lịch sử liền trước làm điểm xuất phát.
- * Đổi bằng env BASE_COST_AUTO_FROM (YYYY-MM).
+ * Kỳ mốc: app tự tính Base Cost tháng từ kỳ này trở đi. Tồn + giá đầu kỳ mốc là số nạp từ tab TỒN
+ * ("Hàng tồn 1/1/2026", "Trung bình giá 1/1/2026" — base-cost-opening-sheet.ts); mọi kỳ sau tự tính từ dữ liệu server.
+ * Kỳ trước mốc không tính lại. Đổi bằng env BASE_COST_AUTO_FROM (YYYY-MM).
  */
 export const BASE_COST_AUTO_FROM = /^\d{4}-\d{2}$/.test(process.env.BASE_COST_AUTO_FROM || "")
   ? process.env.BASE_COST_AUTO_FROM!
-  : "2026-09";
+  : "2026-01";
+
+/** Dòng Base Cost do import Excel (bản chụp sheet) — không coi là khóa của người dùng, app được tính lại. */
+const IMPORT_SNAPSHOT_RULE = "excel_source_snapshot";
 
 /**
  * Tự động tổng hợp số liệu nhập trong tháng từ bảng CHI TIẾT ĐI HÀNG (theo ngay_den),
@@ -4437,7 +4440,7 @@ export async function syncMonthlyBaseCostFromInbound(
   }
 
   // 4. Lấy tồn kho thực tế từ báo cáo tồn kho (FBA + AWD) chốt vào cuối tháng trước
-  // Ví dụ period = "2026-10" thì lấy snapshot gần nhất trước ngày 2026-10-01.
+  // Ví dụ period = "2026-10" thì cần snapshot đúng ngày 2026-09-30.
   // FBA và AWD crawl vào các ngày khác nhau nên mỗi báo cáo lấy snapshot mới nhất của riêng nó;
   // mỗi snapshot đã là toàn bộ tồn tại ngày đó nên chỉ lấy đúng 1 snapshot, không cộng dồn các ngày.
   const firstDayOfMonth = `${period}-01`;
@@ -4449,8 +4452,17 @@ export async function syncMonthlyBaseCostFromInbound(
         WHERE store_id = ${storeId} AND snapshot_date < ${firstDayOfMonth}) AS awd_date
   `;
 
+  // Chỉ dùng file Amazon khi có ảnh chụp ĐÚNG ngày cuối tháng trước (crawler chạy theo tuần: ảnh 24–25/10
+  // làm tồn đầu tháng 11 sẽ thừa đúng lượng bán cuối tháng). FBA phải đúng ngày; AWD nếu store có thì cũng phải đúng ngày.
+  // Không đủ thì để trống → tính theo sổ.
+  const prevMonthEnd = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 0))
+    .toISOString()
+    .slice(0, 10);
+  const ledgerUsable =
+    ledgerDates?.fba_date === prevMonthEnd && (!ledgerDates.awd_date || ledgerDates.awd_date === prevMonthEnd);
+
   const ledgerStockMap = new Map<string, number>();
-  if (ledgerDates?.fba_date) {
+  if (ledgerUsable && ledgerDates?.fba_date) {
     const fbaLedgerRows = await sql<{ sku: string; fba_ton: number }[]>`
       SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(ending_warehouse_balance + in_transit_between_warehouses), 0)::float as fba_ton
       FROM accounting_inventory_ledger
@@ -4462,7 +4474,7 @@ export async function syncMonthlyBaseCostFromInbound(
       ledgerStockMap.set(r.sku, (ledgerStockMap.get(r.sku) || 0) + r.fba_ton);
     }
   }
-  if (ledgerDates?.awd_date) {
+  if (ledgerUsable && ledgerDates?.awd_date) {
     const awdLedgerRows = await sql<{ sku: string; awd_ton: number }[]>`
       SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(ton_kho_units), 0)::float as awd_ton
       FROM accounting_awd_inventory_ledger
@@ -4481,10 +4493,11 @@ export async function syncMonthlyBaseCostFromInbound(
     sl_ton_dau_ky: number;
     basecost_dau_ky: number;
     is_overridden: boolean;
+    calculation_rule: string | null;
     basecost_thang: number;
     note: string | null;
   }[]>`
-    SELECT sku, sl_ton_dau_ky::float, basecost_dau_ky::float, is_overridden, basecost_thang::float, note
+    SELECT sku, sl_ton_dau_ky::float, basecost_dau_ky::float, is_overridden, calculation_rule, basecost_thang::float, note
     FROM accounting_monthly_base_cost
     WHERE store_id = ${storeId}
       AND period = ${period}
@@ -4495,11 +4508,13 @@ export async function syncMonthlyBaseCostFromInbound(
     currentMonthMap.set(r.sku.trim(), {
       sl_ton_dau_ky: r.sl_ton_dau_ky,
       basecost_dau_ky: r.basecost_dau_ky,
-      is_overridden: r.is_overridden,
+      // Chỉ khóa do người dùng sửa tay mới giữ; bản chụp import Excel thì app tính lại
+      is_overridden: r.is_overridden && r.calculation_rule !== IMPORT_SNAPSHOT_RULE,
       basecost_thang: r.basecost_thang,
       note: r.note,
     });
   }
+  const isSeedPeriod = period === BASE_COST_AUTO_FROM;
 
   let syncedCount = 0;
 
@@ -4512,9 +4527,12 @@ export async function syncMonthlyBaseCostFromInbound(
       // Số lượng tồn đầu kỳ: luôn ưu tiên tồn thực tế từ file Amazon (FBA + AWD) chốt cuối tháng trước.
       // Chỉ khi file Amazon không có SKU này mới tính theo sổ (tồn đầu + nhập − hàng ra kho tháng trước),
       // rồi tới số đã lưu (nếu > 0) hoặc 0. Không để sổ (dễ âm do mốc sai) đè lên tồn thật của Amazon.
+      // Kỳ mốc: tồn đầu kỳ là số nạp từ tab TỒN (Hàng tồn 1/1), không tính từ kỳ trước.
       let slTon = 0;
       const ledgerKey = sku.toUpperCase();
-      if (ledgerStockMap.has(ledgerKey)) {
+      if (isSeedPeriod) {
+        slTon = existing?.sl_ton_dau_ky ?? 0;
+      } else if (ledgerStockMap.has(ledgerKey)) {
         slTon = ledgerStockMap.get(ledgerKey)!;
       } else if (bookMode && prevClosingMap.has(sku)) {
         slTon = prevClosingMap.get(sku)!;
@@ -4524,7 +4542,10 @@ export async function syncMonthlyBaseCostFromInbound(
 
       // Đơn giá tồn đầu kỳ: ưu tiên tháng trước -> nếu không có thì lấy fallbackBasecost từ Bảng Mã -> nếu có existing.basecost_dau_ky > 0 thì giữ
       let basecostDauKy = 0;
-      if (prevMonthMap.has(sku)) {
+      if (isSeedPeriod) {
+        // Kỳ mốc: giá đầu kỳ là "Trung bình giá 1/1" nạp từ tab TỒN
+        basecostDauKy = existing?.basecost_dau_ky ?? 0;
+      } else if (prevMonthMap.has(sku)) {
         basecostDauKy = prevMonthMap.get(sku)!;
       } else if (existing && existing.basecost_dau_ky > 0) {
         basecostDauKy = existing.basecost_dau_ky;
@@ -4580,13 +4601,17 @@ export async function syncMonthlyBaseCostFromInbound(
           don_gia_nhap_tb = EXCLUDED.don_gia_nhap_tb,
           tong_sl_kha_dung = EXCLUDED.tong_sl_kha_dung,
           tong_gtri_kha_dung = EXCLUDED.tong_gtri_kha_dung,
-          basecost_thang = CASE 
-            WHEN accounting_monthly_base_cost.is_overridden THEN accounting_monthly_base_cost.basecost_thang
+          -- Khóa của người dùng (sửa tay) thì giữ; bản chụp import Excel (excel_source_snapshot) thì tính lại + bỏ khóa
+          basecost_thang = CASE
+            WHEN accounting_monthly_base_cost.is_overridden
+              AND accounting_monthly_base_cost.calculation_rule IS DISTINCT FROM ${IMPORT_SNAPSHOT_RULE}
+              THEN accounting_monthly_base_cost.basecost_thang
             ELSE EXCLUDED.basecost_thang
           END,
           calculation_rule = EXCLUDED.calculation_rule,
-          -- Dòng đang khóa giữ người khóa: đồng bộ sheet chỉ tự mở khóa do import, không mở khóa người dùng sửa tay
+          is_overridden = EXCLUDED.is_overridden,
           last_changed_by = CASE WHEN accounting_monthly_base_cost.is_overridden
+              AND accounting_monthly_base_cost.calculation_rule IS DISTINCT FROM ${IMPORT_SNAPSHOT_RULE}
             THEN accounting_monthly_base_cost.last_changed_by ELSE ${changedBy} END,
           updated_at = NOW()
         WHERE accounting_monthly_base_cost.deleted_at IS NULL
@@ -4598,7 +4623,9 @@ export async function syncMonthlyBaseCostFromInbound(
             EXCLUDED.sl_ton_dau_ky, EXCLUDED.basecost_dau_ky, EXCLUDED.gtri_ton_dau_ky,
             EXCLUDED.sl_nhap, EXCLUDED.gtri_nhap, EXCLUDED.don_gia_nhap_tb,
             EXCLUDED.tong_sl_kha_dung, EXCLUDED.tong_gtri_kha_dung,
-            CASE WHEN accounting_monthly_base_cost.is_overridden THEN accounting_monthly_base_cost.basecost_thang ELSE EXCLUDED.basecost_thang END,
+            CASE WHEN accounting_monthly_base_cost.is_overridden
+              AND accounting_monthly_base_cost.calculation_rule IS DISTINCT FROM ${IMPORT_SNAPSHOT_RULE}
+              THEN accounting_monthly_base_cost.basecost_thang ELSE EXCLUDED.basecost_thang END,
             EXCLUDED.calculation_rule
           ) IS DISTINCT FROM (
             accounting_monthly_base_cost.sku_id,
