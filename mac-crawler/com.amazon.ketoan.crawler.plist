@@ -14,9 +14,9 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>15</integer>
+        <integer>16</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>10</integer>
     </dict>
 
     <key>ProcessType</key>
