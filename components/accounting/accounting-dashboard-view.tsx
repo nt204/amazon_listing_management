@@ -991,8 +991,8 @@ type SkuGroupFilter = "all" | DashboardSkuGroup;
 const NO_STORE_ROWS: DashboardStoreRow[] = [];
 const SKU_GROUP_OPTIONS: { key: SkuGroupFilter; label: string; title: string }[] = [
   { key: "all", label: "All", title: "Toàn bộ store" },
-  { key: "win", label: "Win", title: "Chỉ SKU có trạng thái Phát triển trong Bảng mã" },
-  { key: "test", label: "Test", title: "Chỉ SKU có trạng thái Test trong Bảng mã" },
+  { key: "win", label: "Win", title: "FBA: SKU trạng thái Phát triển trong Bảng mã · FBM: toàn bộ FBM" },
+  { key: "test", label: "Test", title: "FBA: SKU trạng thái Test trong Bảng mã (không tính FBM)" },
 ];
 
 /** Số liệu Stores Performance của nhóm SKU Win / Test (tải riêng, chỉ khi chọn nhóm). */

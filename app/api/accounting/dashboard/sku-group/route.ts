@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const GROUPS = new Set<DashboardSkuGroup>(["win", "test"]);
 
-/** Stores Performance chỉ tính SKU Win (Bảng mã "Phát triển") hoặc SKU Test (Bảng mã "Test"). */
+/** Stores Performance theo nhóm SKU: FBA lọc theo Trạng thái Bảng mã (Phát triển / Test); FBM Win = toàn bộ FBM, Test = không có. */
 export async function GET(request: Request) {
   try {
     const actor = await authorize(request, "read", "accounting");

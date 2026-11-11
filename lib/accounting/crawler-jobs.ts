@@ -16,7 +16,7 @@ export const ACCOUNTING_CRAWLERS: Record<
   accounting_daily: {
     label: "Báo cáo kế toán hằng ngày",
     description: "File 01–08: Portfolios, All Orders (+14 ngày gần nhất), Returns, Service Fees, Campaigns, FBA Inventory, Shipments, DC Shipments.",
-    schedule: "15:00 mỗi ngày",
+    schedule: "16:10 mỗi ngày",
     dateHint: "Ngày chốt sổ (trống = hôm qua, trước 15:00 là hôm kia)",
     freshnessLabel: "Đơn hàng mới nhất",
   },

@@ -450,7 +450,7 @@ function loadStoreSkuPerformance(
   // Khoảng đã qua hẳn (trước cửa sổ gần đây) dùng phiên bản dữ liệu cũ → không nguội mỗi lần crawler ghi
   return stampedValue(
     cache,
-    `${DASHBOARD_CACHE_PREFIX}sku4:${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "fba"}`,
+    `${DASHBOARD_CACHE_PREFIX}sku5:${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "fba"}`,
     rangeStamp(cache, endDate),
     async () => {
       const options = { status: "all", startDate, endDate, limit: 100_000, includeAllTime: false };
@@ -460,7 +460,8 @@ function loadStoreSkuPerformance(
       ]);
       return res.items
         .filter((i) => !nonFbaSkus.has(i.sku))
-        .filter((i) => i.quantity > 0 || i.revenue !== 0 || i.ads_fee > 0)
+        // Giữ cả SKU chỉ có hoàn hàng / phí trong kỳ (profit ≠ 0) — bỏ đi thì mất Refund, Profit cao hơn BÁO CÁO TUẦN
+        .filter((i) => i.quantity > 0 || i.revenue !== 0 || i.ads_fee > 0 || i.profit !== 0)
         .map((i) => ({
           sku: i.sku,
           asin: i.asin,
@@ -593,7 +594,10 @@ export async function getDashboardTopProducts(options: {
 
 // ----------------- STORES PERFORMANCE THEO NHÓM SKU (WIN / TEST) -----------------
 
-/** Nhóm SKU theo cột Trạng thái của Bảng mã: Win = "Phát triển", Test = "Test". */
+/**
+ * Nhóm SKU theo cột Trạng thái của Bảng mã FBA: Win = "Phát triển", Test = "Test".
+ * FBM tính như BÁO CÁO TUẦN: Win = toàn bộ FBM của store (tab FBM của BÁO CÁO THÁNG), Test không có FBM.
+ */
 export type DashboardSkuGroup = "win" | "test";
 const SKU_GROUP_STATUS: Record<DashboardSkuGroup, string> = { win: "phát triển", test: "test" };
 
@@ -606,45 +610,29 @@ export interface DashboardSkuGroupData {
 }
 
 /**
- * SKU của nhóm trong Bảng mã, khoá `${storeId}|FBA` / `${storeId}|FBM`:
- * FBA = BẢNG MÃ (accounting_sku_master, Loại FBA), FBM = BẢNG MÃ FBM (accounting_sku_master_fbm).
- * Mỗi SKU lấy dòng đầu trong bảng (như KPI kinh doanh) rồi mới xét trạng thái.
+ * SKU FBA của nhóm trong BẢNG MÃ (accounting_sku_master, Loại FBA), khoá `${storeId}|FBA`.
+ * Mỗi SKU lấy dòng đầu trong bảng (như KPI kinh doanh) rồi mới xét trạng thái. FBM không lọc theo Bảng mã.
  */
 async function loadGroupSkus(storeIds: string[], group: DashboardSkuGroup): Promise<Map<string, Set<string>>> {
   const out = new Map<string, Set<string>>();
   if (!storeIds.length) return out;
   const sql = await getDatabaseClient();
   const status = SKU_GROUP_STATUS[group];
-  const [fba, fbm] = await Promise.all([
-    sql<{ store_id: string; sku: string }[]>`
-      SELECT store_id::text, sku FROM (
-        SELECT DISTINCT ON (store_id, sku) store_id, sku, status
-        FROM accounting_sku_master
-        WHERE store_id::text IN ${sql(storeIds)} AND deleted_at IS NULL
-          AND UPPER(TRIM(COALESCE(NULLIF(loai, ''), 'FBA'))) = 'FBA'
-        ORDER BY store_id, sku, row_order NULLS LAST, updated_at DESC
-      ) m
-      WHERE LOWER(TRIM(COALESCE(status, ''))) = ${status}
-    `,
-    sql<{ store_id: string; sku: string }[]>`
-      SELECT store_id::text, sku FROM (
-        SELECT DISTINCT ON (store_id, sku) store_id, sku, status
-        FROM accounting_sku_master_fbm
-        WHERE store_id::text IN ${sql(storeIds)} AND deleted_at IS NULL
-        ORDER BY store_id, sku, row_order NULLS LAST, updated_at DESC
-      ) m
-      WHERE LOWER(TRIM(COALESCE(status, ''))) = ${status}
-    `,
-  ]);
-  const add = (rows: { store_id: string; sku: string }[], channel: "FBA" | "FBM") => {
-    for (const r of rows) {
-      const key = `${r.store_id}|${channel}`;
-      if (!out.has(key)) out.set(key, new Set());
-      out.get(key)!.add(r.sku);
-    }
-  };
-  add(fba, "FBA");
-  add(fbm, "FBM");
+  const fba = await sql<{ store_id: string; sku: string }[]>`
+    SELECT store_id::text, sku FROM (
+      SELECT DISTINCT ON (store_id, sku) store_id, sku, status
+      FROM accounting_sku_master
+      WHERE store_id::text IN ${sql(storeIds)} AND deleted_at IS NULL
+        AND UPPER(TRIM(COALESCE(NULLIF(loai, ''), 'FBA'))) = 'FBA'
+      ORDER BY store_id, sku, row_order NULLS LAST, updated_at DESC
+    ) m
+    WHERE LOWER(TRIM(COALESCE(status, ''))) = ${status}
+  `;
+  for (const r of fba) {
+    const key = `${r.store_id}|FBA`;
+    if (!out.has(key)) out.set(key, new Set());
+    out.get(key)!.add(r.sku);
+  }
   return out;
 }
 
@@ -758,6 +746,12 @@ export async function getDashboardSkuGroup(options: {
       const channels = await Promise.all(
         storeChannels(store.team, options.team, options.allowedChannels?.(store.id)).map(async (channel) => {
           const label = channel === "Merchant" ? ("FBM" as const) : ("FBA" as const);
+          // FBM: Win = toàn bộ FBM của store, Test = không có (như BÁO CÁO TUẦN)
+          if (label === "FBM") {
+            const items =
+              options.group === "win" ? await loadStoreSkuPerformance(cache, store.id, period.startDate, period.endDate, channel) : [];
+            return { channel: label, items };
+          }
           const skus = groupSkus.get(`${store.id}|${label}`);
           const items = skus?.size
             ? (await loadStoreSkuPerformance(cache, store.id, period.startDate, period.endDate, channel)).filter((i) => skus.has(i.sku))
