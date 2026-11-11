@@ -536,20 +536,27 @@ function OverviewPage({
   const th = "px-3 py-2 text-right text-[11px] font-semibold text-slate-600 whitespace-nowrap";
   const td = "px-3 py-1.5 text-right tabular-nums whitespace-nowrap";
   // Bảng BÁO CÁO THÁNG: lưới đen, tên cột như sheet
-  const hd = "border-r border-b border-black px-2.5 py-1.5 text-[11px] font-bold text-black whitespace-nowrap";
-  const cell = "border-r border-b border-black px-2.5 py-1.5 whitespace-nowrap";
-  const REPORT_COLS: { key: ReportCol; label: string; ratio?: boolean; bg: string }[] = [
-    { key: "prev", label: `[Result] ${periodLabel(periods.prev)}`, bg: "" },
-    { key: "tCur", label: `[Target] ${periodLabel(periods.cur)}`, bg: "bg-[#fff2cc]" },
-    { key: "ly", label: `[Result] ${periodLabel(periods.ly)}`, bg: "" },
-    { key: "cur", label: `[Result] ${periodLabel(periods.cur)}`, bg: "bg-[#cfe2f3]" },
-    { key: "rPrev", label: "[Result] Tăng trưởng/tháng trước", ratio: true, bg: "" },
-    { key: "rLy", label: "[Result] Tăng trưởng/cùng kỳ", ratio: true, bg: "" },
-    { key: "kpi", label: "Tỷ lệ đạt KPI", ratio: true, bg: "bg-[#d9ead3]" },
-    { key: "lyNext", label: `[Result] ${periodLabel(periods.lyNext)}`, bg: "" },
-    { key: "tNextDev", label: `[Target] SKU WIN ${periodLabel(periods.next)}`, bg: "bg-[#fff2cc]" },
-    { key: "tNextGrowth", label: "[Target] Tăng trưởng/tháng trước", ratio: true, bg: "" },
-    { key: "tNextTest", label: `[Target] SKU TEST ${periodLabel(periods.next)}`, bg: "bg-[#fff2cc]" },
+  const hd = "border-r border-b border-black px-2 py-1 text-[11px] font-bold text-black whitespace-nowrap";
+  const cell = "border-r border-b border-black px-2 py-1 whitespace-nowrap";
+  // Tên cột 2 dòng ngắn gọn (dòng trên [Result]/[Target], dòng dưới tháng / chỉ số) để bảng không bị kéo ngang.
+  // Màu tiêu đề đúng như sheet BÁO CÁO THÁNG: [Result] vàng #ffe599, [Target] + tỷ lệ cam #ff9900, SKU WIN xanh #b6d7a8.
+  const RESULT_BG = "bg-[#ffe599]";
+  const TARGET_BG = "bg-[#ff9900]";
+  const WIN_BG = "bg-[#b6d7a8]";
+  // Nền ô số: cùng tông với tiêu đề cột nhưng nhạt hơn để dễ dò theo cột
+  const BODY_BG: Record<string, string> = { [RESULT_BG]: "bg-[#fff8dc]", [TARGET_BG]: "bg-[#ffe8c2]", [WIN_BG]: "bg-[#e6f2df]" };
+  const REPORT_COLS: { key: ReportCol; label: string[]; title: string; ratio?: boolean; bg: string }[] = [
+    { key: "prev", label: ["[Result]", periodLabel(periods.prev)], title: `[Result] ${periodLabel(periods.prev)}`, bg: RESULT_BG },
+    { key: "ly", label: ["[Result]", periodLabel(periods.ly)], title: `[Result] ${periodLabel(periods.ly)}`, bg: RESULT_BG },
+    { key: "tCur", label: ["[Target]", periodLabel(periods.cur)], title: `[Target] ${periodLabel(periods.cur)}`, bg: TARGET_BG },
+    { key: "cur", label: ["[Result]", periodLabel(periods.cur)], title: `[Result] ${periodLabel(periods.cur)}`, bg: RESULT_BG },
+    { key: "rPrev", label: ["[Result]", "Tăng trưởng", "/tháng trước"], title: "[Result] Tăng trưởng/tháng trước", ratio: true, bg: TARGET_BG },
+    { key: "rLy", label: ["[Result]", "Tăng trưởng", "/cùng kỳ"], title: "[Result] Tăng trưởng/cùng kỳ", ratio: true, bg: TARGET_BG },
+    { key: "kpi", label: ["Tỷ lệ", "đạt KPI"], title: "Tỷ lệ đạt KPI", ratio: true, bg: TARGET_BG },
+    { key: "lyNext", label: ["[Result]", periodLabel(periods.lyNext)], title: `[Result] ${periodLabel(periods.lyNext)}`, bg: RESULT_BG },
+    { key: "tNextDev", label: ["[Target]", "SKU WIN", periodLabel(periods.next)], title: `[Target] SKU WIN ${periodLabel(periods.next)}`, bg: WIN_BG },
+    { key: "tNextGrowth", label: ["[Target]", "Tăng trưởng", "/tháng trước"], title: "[Target] Tăng trưởng/tháng trước", ratio: true, bg: WIN_BG },
+    { key: "tNextTest", label: ["[Target]", "SKU TEST", periodLabel(periods.next)], title: `[Target] SKU TEST ${periodLabel(periods.next)}`, bg: RESULT_BG },
   ];
 
   // Tháng đang chạy: phần tháng đã qua (số liệu tới hết hôm qua) → vạch nhịp + dự kiến cả tháng
@@ -592,18 +599,22 @@ function OverviewPage({
           <h3 className="text-sm font-bold text-slate-900">Báo cáo tổng team · {periodLabel(periods.cur)}</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] border-separate border-spacing-0 border-l border-t border-black text-xs">
+          <table className="w-full border-separate border-spacing-0 border-l border-t border-black text-xs">
             <thead>
               <tr>
                 <th className={`${hd} sticky left-0 z-10 bg-white text-left`} />
-                <th colSpan={7} className={`${hd} bg-[#d9ead3] text-center uppercase`}>Báo cáo tháng</th>
-                <th colSpan={4} className={`${hd} bg-[#fce5cd] text-center uppercase`}>Mục tiêu tháng</th>
+                <th colSpan={7} className={`${hd} bg-[#fff2cc] text-center uppercase`}>Báo cáo tháng</th>
+                <th colSpan={4} className={`${hd} bg-[#fff2cc] text-center uppercase`}>Mục tiêu tháng</th>
               </tr>
               <tr>
                 <th className={`${hd} sticky left-0 z-10 bg-white text-left`}>Chỉ số</th>
                 {REPORT_COLS.map((c) => (
-                  <th key={c.key} className={`${hd} text-right ${c.bg}`}>
-                    {c.label}
+                  <th key={c.key} title={c.title} className={`${hd} text-right align-bottom leading-tight ${c.bg}`}>
+                    {c.label.map((line, i) => (
+                      <span key={i} className={`block ${i === 0 ? "text-[10.5px] font-semibold text-black/60" : ""}`}>
+                        {line}
+                      </span>
+                    ))}
                   </th>
                 ))}
               </tr>
@@ -611,16 +622,17 @@ function OverviewPage({
             <tbody>
               {REPORT_ROWS.map((r) => {
                 const row = report[r.key];
-                const strong = r.key === "revenue" || r.key === "gross";
+                // Như sheet: cột tên chỉ số và cả dòng Gross Profit tô cam #ff9900, chữ đậm
+                const profitRow = r.key === "gross";
                 return (
-                  <tr key={r.key} className={strong ? "font-bold" : ""}>
-                    <td className={`${cell} sticky left-0 z-10 bg-white text-left font-semibold`}>{r.label}</td>
+                  <tr key={r.key} className={profitRow || r.key === "revenue" ? "font-bold" : ""}>
+                    <td className={`${cell} sticky left-0 z-10 bg-[#ff9900] text-left font-bold`}>{r.label}</td>
                     {REPORT_COLS.map((c) => {
                       const v = row[c.key];
                       const isRatio = c.ratio;
                       const text = v == null ? "" : isRatio || r.kind === "pct" ? fmtPct(v) : r.kind === "int" ? fmtInt(v) : fmtUsd(v);
                       return (
-                        <td key={c.key} className={`${cell} text-right tabular-nums ${c.bg}`}>
+                        <td key={c.key} className={`${cell} text-right tabular-nums ${profitRow ? "bg-[#ff9900]" : BODY_BG[c.bg] ?? "bg-white"}`}>
                           {text}
                         </td>
                       );

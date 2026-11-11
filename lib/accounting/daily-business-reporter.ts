@@ -69,7 +69,7 @@ const titleCase = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
  * Chuỗi số liệu từng kênh (store × FBA/FBM) đúng công thức Dashboard: FBA theo listFbaDaily,
  * FBM theo listFbmDaily; kênh và team lấy theo cột Team của store.
  */
-async function loadChannelSeries(date: string, storeNames?: string[], from?: string): Promise<ChannelSeriesInput[]> {
+export async function loadChannelSeries(date: string, storeNames?: string[], from?: string): Promise<ChannelSeriesInput[]> {
   const sql = await getDatabaseClient();
   const activeFrom = shiftIsoDate(date, -(ACTIVE_STORE_WINDOW_DAYS - 1));
   const last7From = shiftIsoDate(date, -7);
@@ -219,7 +219,7 @@ async function loadTeamLeads(teamId: string): Promise<Record<string, string>> {
 }
 
 /** Ngày mới nhất (< hôm nay) mà mọi store ĐANG HOẠT ĐỘNG (có đơn trong 7 ngày gần nhất) đều đã có đơn. */
-async function latestCompleteDate(): Promise<string | undefined> {
+export async function latestCompleteDate(): Promise<string | undefined> {
   const sql = await getDatabaseClient();
   const rows = await sql<Array<{ latest_date: string }>>`
     WITH active AS (
@@ -540,6 +540,16 @@ export async function triggerDailyReportCheckAfterImport(teamId: string = "defau
     }
   } catch (err) {
     console.warn("[Auto Daily Report] Lỗi khi tự động kích hoạt báo cáo kế toán:", err);
+  }
+  // Cảnh báo bất thường: tắt sẵn, chỉ chạy khi LARK_ANOMALY_ALERTS_ENABLED=1 (mỗi ngày dữ liệu gửi 1 lần)
+  if (process.env.LARK_ANOMALY_ALERTS_ENABLED?.trim() === "1") {
+    try {
+      const { sendAnomalyAlerts } = await import("./lark-proactive-alerts");
+      const result = await sendAnomalyAlerts();
+      console.log(`[Lark Alerts] Sau import: ${JSON.stringify({ ...result, previews: undefined })}`);
+    } catch (err) {
+      console.warn("[Lark Alerts] Lỗi khi gửi cảnh báo bất thường:", err);
+    }
   }
 }
 

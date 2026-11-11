@@ -1,6 +1,7 @@
 import os from "node:os";
 import Redis from "ioredis";
 import { runAccountingAgent } from "../lib/accounting/lark-agent-service";
+import { maybeSendWeeklySummary, weeklySummaryEnabled } from "../lib/accounting/lark-proactive-alerts";
 import {
   addLarkMessageReaction,
   getLarkMessageCreatedAt,
@@ -136,6 +137,17 @@ async function main() {
   await recoverInterruptedJobs();
   console.info(`[LarkAgentWorker] Started ${workerId}, concurrency=${concurrency}`);
 
+  // Tóm tắt tuần sáng Thứ Hai: chỉ chạy khi LARK_WEEKLY_SUMMARY_ENABLED=1 (khóa trong DB chống gửi trùng)
+  const weeklyTimer = weeklySummaryEnabled()
+    ? setInterval(() => {
+        void maybeSendWeeklySummary()
+          .then((result) => {
+            if (result && "sent" in result && result.sent) console.info(`[LarkAgentWorker] Đã gửi tóm tắt tuần cho ${result.sent} người.`);
+          })
+          .catch((error) => console.error("[LarkAgentWorker] Tóm tắt tuần lỗi:", error));
+      }, 10 * 60_000)
+    : null;
+
   while (!stopping) {
     dispatchPending();
 
@@ -162,6 +174,7 @@ async function main() {
     }
   }
 
+  if (weeklyTimer) clearInterval(weeklyTimer);
   while (activeCount > 0) await sleep(250);
   await redis.quit();
   console.info("[LarkAgentWorker] Stopped");

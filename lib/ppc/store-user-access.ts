@@ -95,8 +95,13 @@ export async function resolveLarkActorStoreAccess(larkSenderId: string) {
   const actorId = users[0]?.actor_id;
   const teamId = users[0]?.team_id;
   if (!actorId || !teamId) return { teamId: null, actorId: null, stores: [] as PpcStoreAccessStore[] };
+  return { teamId, actorId, stores: await listActorLarkStores(teamId, actorId) };
+}
 
-  const stores = await sql<Array<PpcStoreAccessStore>>`
+/** Store người dùng được hỏi đáp qua bot (cột "Hỏi đáp" trong bảng Phân quyền Store). */
+export async function listActorLarkStores(teamId: string, actorId: string): Promise<PpcStoreAccessStore[]> {
+  const sql = await getDatabaseClient();
+  return await sql<Array<PpcStoreAccessStore>>`
     SELECT store.id, store.name
     FROM ppc_store_user_access access
     JOIN ppc_stores store ON store.id = access.store_id AND store.team_id = access.team_id
@@ -104,7 +109,6 @@ export async function resolveLarkActorStoreAccess(larkSenderId: string) {
       AND access.can_ask_lark = TRUE
     ORDER BY store.name ASC
   `;
-  return { teamId, actorId, stores };
 }
 
 export async function assertActorPpcStoreActionAccess(

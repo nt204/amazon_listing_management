@@ -32,6 +32,7 @@
     "ppc:ai-review": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-ai-reviewer-runner.ts",
     "ppc:harness-eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-harness-eval.ts",
     "lark:ws-worker": "node --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/lark-ws-worker.ts",
+    "lark:alerts-preview": "node --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/lark-alerts-preview.ts",
     "lark:agent-worker": "node --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/lark-agent-worker.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

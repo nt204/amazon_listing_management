@@ -36,7 +36,7 @@ import {
   PendingPpcAction,
 } from "./lark-conversation-memory";
 import { sendLarkCardNotification, sendLarkTextNotification } from "@/lib/lark-notifications";
-import { resolveLarkActorStoreAccess, type PpcStoreAccessStore } from "@/lib/ppc/store-user-access";
+import { listActorLarkStores, resolveLarkActorStoreAccess, type PpcStoreAccessStore } from "@/lib/ppc/store-user-access";
 import { getDatabaseClient } from "@/lib/db";
 import {
   getDailyBusinessReview,
@@ -45,6 +45,14 @@ import {
   sendDailyReportDetail,
   sendChannelDiagnosis,
 } from "@/lib/accounting/daily-business-reporter";
+import {
+  getInventoryStatus,
+  getKpiProgress,
+  getListingJobsStatus,
+  getSkuProfit,
+  toAccountingStoreName,
+} from "@/lib/accounting/lark-insight-tools";
+import { buildHelpCard, buildHelpText, isHelpCommand } from "@/lib/accounting/lark-insights-calc";
 
 const AUTO_BID_TOOLS = new Set([
   "listBidRecommendations",
@@ -112,6 +120,25 @@ export function resolveContextualReconciliationLinks(
   if (isAutoBid) {
     add("🎯 Mở Auto Bid", AUTO_BID_URL);
     add("📋 Xem Lịch Sử Auto Upload", AUTO_BID_HISTORY_URL);
+    return buttons;
+  }
+
+  // 1c. KPI / Tồn kho / Lãi SKU / Trello: link đúng trang đối soát
+  if (toolsUsed.includes("getKpiProgress")) {
+    add("🎯 Mở KPI kinh doanh", "https://ncehub.net/?view=accounting&section=kpi");
+    return buttons;
+  }
+  if (toolsUsed.includes("getInventoryStatus")) {
+    add("📦 Đối soát Tồn kho", "https://ncehub.net/?view=accounting&section=inventory");
+    return buttons;
+  }
+  if (toolsUsed.includes("getSkuProfit")) {
+    add("💵 Mở KQKD SKU", "https://ncehub.net/?view=accounting&section=kqkd");
+    return buttons;
+  }
+  if (toolsUsed.includes("getListingJobsStatus")) {
+    add("🧩 Mở Listing", "https://ncehub.net/?view=listing");
+    add("🖼️ Mở Mockup", "https://ncehub.net/?view=mockups");
     return buttons;
   }
 
@@ -216,6 +243,8 @@ export interface RunAgentOptions {
   larkSenderId?: string;
   replyToMessageId?: string; // Reply đúng tin nhắn của người hỏi (tránh nhầm khi nhóm đông)
   sendToLark?: boolean;
+  /** Gọi từ web (đã đăng nhập): giới hạn store theo quyền của người dùng này thay cho larkSenderId. */
+  webActor?: { teamId: string; actorId: string };
 }
 
 export interface AgentResult {
@@ -590,6 +619,72 @@ const TOOLS_SCHEMA = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "getKpiProgress",
+      description: "KPI so với kế hoạch (trang KPI kinh doanh / sheet KẾ HOẠCH KINH DOANH) của MỘT store trong 1 tháng: Revenue, Units, Ads, TACoS, Gross Profit thực tế vs mục tiêu, % đạt KPI, mục tiêu tới hôm nay và dự kiến cả tháng (tháng đang chạy), SKU chậm / vượt KPI. Dùng cho: 'đạt bao nhiêu % KPI', 'có kịp KPI không', 'SKU nào chậm KPI'. BẮT BUỘC có storeQuery.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "BẮT BUỘC: Tên store." },
+          period: { type: "string", description: "Tháng YYYY-MM. Bỏ trống = tháng có dữ liệu mới nhất ('tháng này')." },
+        },
+        required: ["storeQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getInventoryStatus",
+      description: "Tồn kho FBA của MỘT store: tồn sẵn bán, hàng đang chuyển kho, lô đang về, tốc độ bán/ngày, số ngày còn bán, SKU hết hàng / sắp hết / cần nhập thêm và gợi ý số lượng nhập. Dùng cho: 'SKU nào sắp hết hàng', 'cần nhập thêm SKU nào', 'tồn kho SKU X còn bao nhiêu ngày'. BẮT BUỘC có storeQuery.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "BẮT BUỘC: Tên store." },
+          sku: { type: "string", description: "Mã SKU nếu hỏi 1 SKU." },
+          filter: { type: "string", enum: ["attention", "all"], description: "attention (mặc định) = chỉ SKU hết / sắp hết / cần nhập; all = mọi SKU đang bán." },
+          lowDays: { type: "number", description: "Ngưỡng 'sắp hết' (ngày còn bán). Chỉ truyền khi người dùng nêu rõ." },
+          reorderDays: { type: "number", description: "Ngưỡng 'cần nhập' (ngày, tính cả hàng đang về). Chỉ truyền khi người dùng nêu rõ." },
+          limit: { type: "number", description: "Số SKU trả về (mặc định 15)." },
+        },
+        required: ["storeQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getSkuProfit",
+      description: "Lãi / lỗ theo SKU trong một KHOẢNG NGÀY cụ thể của MỘT store (Revenue, Units, Basecost, Basecost/unit, Amazon Fee, Ads, Thuế, Return, Profit, Margin) — cùng công thức Lọc SKU Win / KQKD SKU. Dùng cho: 'SKU nào lỗ tuần này', 'top SKU lãi tháng này', 'Basecost / lãi của SKU X tuần trước'. Mặc định 'tuần này' = từ Thứ Hai tới ngày có dữ liệu mới nhất. BẮT BUỘC có storeQuery.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "BẮT BUỘC: Tên store." },
+          startDate: { type: "string", description: "YYYY-MM-DD. Bỏ trống = Thứ Hai tuần này." },
+          endDate: { type: "string", description: "YYYY-MM-DD. Bỏ trống = ngày có dữ liệu mới nhất." },
+          sort: { type: "string", enum: ["loss", "profit"], description: "loss (mặc định) = chỉ SKU lỗ, lỗ nhiều nhất trước; profit = lãi nhiều nhất trước." },
+          sku: { type: "string", description: "Lọc theo mã SKU." },
+          limit: { type: "number", description: "Số SKU (mặc định 10)." },
+        },
+        required: ["storeQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getListingJobsStatus",
+      description: "Tiến độ batch Trello tạo listing và job mockup DO CHÍNH NGƯỜI HỎI tạo trong ngày (mặc định hôm nay) + các job đang chạy: xong bao nhiêu card, card nào lỗi và lý do. Dùng cho: 'batch Trello hôm nay xong chưa', 'mockup có job nào lỗi'. Không cần store.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: { type: "string", description: "Ngày YYYY-MM-DD. Bỏ trống = hôm nay." },
+        },
+      },
+    },
+  },
 ];
 
 const SESSION_STATE_TOOLS = new Set([
@@ -605,6 +700,18 @@ const SESSION_STATE_TOOLS = new Set([
   "getSkuWatchlist",
 ]);
 
+/** Tool đọc dữ liệu kế toán (bảng stores): nhận tên store kế toán, không phải tên store PPC. */
+const ACCOUNTING_DATA_TOOLS = new Set([
+  "getDailyMetricsSummary",
+  "getOrderBreakdown",
+  "getReturnBreakdown",
+  "comparePerformancePeriods",
+  "getInboundShipments",
+  "getKpiProgress",
+  "getInventoryStatus",
+  "getSkuProfit",
+]);
+
 /** Trạng thái trong một lượt hỏi: chỉ SKU đầu tiên được đánh số đề xuất bid để "duyệt số N" không nhầm SKU. */
 interface ToolTurnState {
   skuInsightCalls: number;
@@ -616,14 +723,19 @@ async function executeTool(
   sessionId?: string,
   turn: ToolTurnState = { skuInsightCalls: 0 },
   allowedStores?: PpcStoreAccessStore[],
+  actor: { teamId: string; actorId: string } | null = null,
 ): Promise<string> {
   try {
     const args = JSON.parse(rawArgs || "{}");
+    // Batch Trello / mockup không theo store: chỉ của chính người hỏi
+    if (name === "getListingJobsStatus") {
+      return JSON.stringify(await getListingJobsStatus(actor, args));
+    }
     // Rà soát tổng hợp: không cần chọn store, tự giới hạn theo các store người hỏi được xem
     if (name === "getBusinessReview") {
       return JSON.stringify(await getDailyBusinessReview({
         targetDate: typeof args.date === "string" ? args.date : undefined,
-        storeNames: allowedStores?.map((store) => store.name),
+        storeNames: allowedStores?.map((store) => toAccountingStoreName(store.name)),
       }));
     }
     if (allowedStores) {
@@ -634,16 +746,18 @@ async function executeTool(
       const requested = typeof args.storeQuery === "string" ? args.storeQuery.trim().toLowerCase() : "";
       if (requested) {
         const allowed = allowedStores.find((store) =>
-          store.id === args.storeQuery || store.name.toLowerCase() === requested
+          store.id === args.storeQuery || store.name.toLowerCase() === requested ||
+          // Store PPC tên khác store kế toán (HSOSTORE = WARMSTOREY): hỏi theo tên nào cũng đúng quyền
+          toAccountingStoreName(store.name).toLowerCase() === requested
         );
         if (!allowed) {
           return JSON.stringify({
             error: `Bạn không có quyền hỏi đáp store "${args.storeQuery}". Store được cấp: ${allowedStores.map((store) => store.name).join(", ")}.`,
           });
         }
-        args.storeQuery = allowed.name;
+        args.storeQuery = ACCOUNTING_DATA_TOOLS.has(name) ? toAccountingStoreName(allowed.name) : allowed.name;
       } else if (allowedStores.length === 1) {
-        args.storeQuery = allowedStores[0].name;
+        args.storeQuery = ACCOUNTING_DATA_TOOLS.has(name) ? toAccountingStoreName(allowedStores[0].name) : allowedStores[0].name;
       } else {
         return JSON.stringify({
           needsStoreClarification: true,
@@ -691,6 +805,12 @@ async function executeTool(
         return JSON.stringify(await getSkuInsight({ ...args, numberBids: turn.skuInsightCalls === 1 }, sessionId));
       case "getSkuWatchlist":
         return JSON.stringify(await getSkuWatchlist(args, sessionId));
+      case "getKpiProgress":
+        return JSON.stringify(await getKpiProgress(args));
+      case "getInventoryStatus":
+        return JSON.stringify(await getInventoryStatus(args));
+      case "getSkuProfit":
+        return JSON.stringify(await getSkuProfit(args));
       default:
         return JSON.stringify({ error: `Không tìm thấy công cụ: ${name}` });
     }
@@ -835,7 +955,11 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
   const targetReceiveIdType = (options.receiveIdType || (targetReceiveId.includes("@") ? "email" : "chat_id")).trim();
 
   let allowedStores: PpcStoreAccessStore[] | undefined;
-  if (options.larkSenderId) {
+  let actor: { teamId: string; actorId: string } | null = null;
+  if (options.webActor) {
+    actor = options.webActor;
+    allowedStores = await listActorLarkStores(actor.teamId, actor.actorId);
+  } else if (options.larkSenderId) {
     // 0. HỖ TRỢ TỰ ĐỘNG LIÊN KẾT TÀI KHOẢN LARK VỚI EMAIL NCE HUB QUA CHAT
     const emailMatch = options.message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
     const isLinkIntent = Boolean(emailMatch) && /(?:kết nối|ket noi|link|liên kết|lien ket|tai khoan|tài khoản|email|dang nhap|đăng nhập)/i.test(options.message);
@@ -896,6 +1020,7 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
 
     const access = await resolveLarkActorStoreAccess(options.larkSenderId);
     allowedStores = access.stores;
+    if (access.teamId && access.actorId) actor = { teamId: access.teamId, actorId: access.actorId };
     if (!access.actorId) {
       const replyText = `⚠️ **Tài khoản Lark của bạn chưa được liên kết với NCE HUB.**\n\n🔑 **Mã Open ID của bạn:** \`${options.larkSenderId}\`\n\n👉 **Cách liên kết nhanh nhất:** Hãy nhắn lại cho bot theo cú pháp:\n**\`kết nối <email_đăng_nhập_của_bạn>\`**\n*(Ví dụ: \`kết nối nguyendangtri2507@gmail.com\` hoặc \`kết nối ndtrince@gmail.com\`)*\n\nSau khi kết nối, bot sẽ tự động nhận diện danh tính và cho phép bạn hỏi đáp đúng các Store được phân quyền.`;
       if (options.sendToLark && targetReceiveId) {
@@ -920,6 +1045,22 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
     }
   }
 
+  // /help: danh sách câu hỏi mẫu (không qua AI), điền sẵn store người hỏi được cấp quyền
+  if (isHelpCommand(options.message)) {
+    const storeNames = allowedStores?.map((store) => store.name) ?? [];
+    const replyText = buildHelpText(storeNames);
+    let larkSent = false;
+    if (options.sendToLark && targetReceiveId) {
+      const recipient = { receiveId: targetReceiveId, receiveIdType: targetReceiveIdType, replyToMessageId: options.replyToMessageId };
+      try {
+        larkSent = (await sendLarkCardNotification(buildHelpCard(storeNames), recipient)).sent;
+      } catch {
+        larkSent = (await sendLarkTextNotification(replyText, recipient)).sent;
+      }
+    }
+    return { replyText, toolsUsed: ["help"], larkSent };
+  }
+
   // Bản chi tiết báo cáo kinh doanh ngày: trả thẳng card do code dựng (không qua AI),
   // chỉ gồm các store người hỏi được phân quyền
   const detailRequest = parseDailyReportDetailRequest(options.message);
@@ -927,7 +1068,7 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
     const recipient = { receiveId: targetReceiveId, receiveIdType: targetReceiveIdType, replyToMessageId: options.replyToMessageId };
     const result = await sendDailyReportDetail({
       targetDate: detailRequest.date,
-      storeNames: allowedStores?.map((store) => store.name),
+      storeNames: allowedStores?.map((store) => toAccountingStoreName(store.name)),
       recipient,
       dryRun: !options.sendToLark,
     });
@@ -942,7 +1083,7 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
     const result = await sendChannelDiagnosis({
       message: options.message,
       targetDate: diagnosisRequest.date,
-      storeNames: allowedStores?.map((store) => store.name),
+      storeNames: allowedStores?.map((store) => toAccountingStoreName(store.name)),
       recipient,
       dryRun: !options.sendToLark,
     });
@@ -1474,7 +1615,14 @@ QUY TẮC BẮT BUỘC:
    - "SKU X thế nào", "tình hình SKU X", "trend SKU X", "SKU X nên làm gì" -> gọi "getSkuInsight" (BẮT BUỘC có store và SKU; thiếu thì hỏi lại). Sau đó người dùng nhắn "duyệt số 1" thì gọi requestBidAction như bình thường.
    - "nên chú ý SKU nào", "SKU nào tiềm năng / lỗ / đang giảm" (nhiều SKU) -> gọi "getSkuWatchlist" MỘT lần. TUYỆT ĐỐI KHÔNG gọi getSkuInsight lần lượt cho nhiều SKU. Chỉ gọi getSkuInsight khi người dùng hỏi đích danh 1 SKU.
    - "lịch sử bid của số 3", "keyword X đã chỉnh bid mấy lần" -> gọi "getTargetBidHistory".
-   - Trình bày theo đúng "instructions" tool trả về: danh sách đánh số, KHÔNG dùng bảng ngang nhiều cột.`;
+   - Trình bày theo đúng "instructions" tool trả về: danh sách đánh số, KHÔNG dùng bảng ngang nhiều cột.
+
+11. KPI, TỒN KHO, LÃI SKU, TRELLO / MOCKUP:
+   - "đạt bao nhiêu % KPI", "có kịp KPI / kế hoạch không", "SKU nào chậm KPI" -> gọi "getKpiProgress" (BẮT BUỘC có store theo Rule 0). Nêu rõ % đạt là so với mục tiêu cả tháng; tháng đang chạy thì nói thêm mục tiêu tới nay và dự kiến cả tháng.
+   - "sắp hết hàng", "hết hàng", "cần nhập thêm", "tồn kho còn bao nhiêu ngày" -> gọi "getInventoryStatus" (BẮT BUỘC có store). Hỏi lô hàng đang về cụ thể thì vẫn dùng getInboundShipments như cũ.
+   - "SKU nào lỗ tuần này / tháng này", "top SKU lãi", "Basecost / lãi của SKU X trong khoảng ngày" -> gọi "getSkuProfit" (BẮT BUỘC có store; truyền startDate/endDate theo khoảng người hỏi, 'tuần này' thì bỏ trống). Câu chung "nên chú ý SKU nào / SKU tiềm năng" vẫn dùng getSkuWatchlist.
+   - "batch Trello xong chưa", "listing hôm nay", "mockup có lỗi không" -> gọi "getListingJobsStatus" (không cần store; chỉ thấy job của chính người hỏi).
+   - Chỉ dùng số tool trả về; có "ghi_chu" thì nêu trước các con số.`;
 
   // Tải lịch sử hội thoại gần đây (nếu có sessionId)
   const conversationHistory = options.sessionId
@@ -1552,7 +1700,7 @@ QUY TẮC BẮT BUỘC:
     const toolCalls: ToolCall[] = assistantMsg.tool_calls;
     toolsUsed.push(...toolCalls.map((toolCall) => toolCall.function.name));
     const runTool = (toolCall: ToolCall) =>
-      executeTool(toolCall.function.name, toolCall.function.arguments, options.sessionId, turnState, allowedStores);
+      executeTool(toolCall.function.name, toolCall.function.arguments, options.sessionId, turnState, allowedStores, actor);
     const hasSessionTool = toolCalls.some((toolCall) => SESSION_STATE_TOOLS.has(toolCall.function.name));
     const toolResults: string[] = [];
     if (hasSessionTool) {

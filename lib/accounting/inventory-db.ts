@@ -4348,7 +4348,13 @@ export async function syncMonthlyBaseCostFromInbound(
       ${bookMode
         ? sql`COALESCE(SUM(COALESCE(amazon_received, 0)), 0)::float`
         : sql`COALESCE(SUM(quantity), 0)::float`} as total_qty,
-      COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, 0)), 0)::float as total_cost
+      -- Sổ: số nhập = Amazon Received → lô Amazon chưa nhận (received trống/0) thì chưa cộng tiền,
+      -- nếu không tiền của lô đó dồn vào giá các đơn vị khác (vd EKASPEEK T10: 1,26 → 7,04).
+      -- Lô đã nhận vẫn lấy đủ tiền lô (như sheet: tổng tiền / số nhận).
+      ${bookMode
+        ? sql`COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, 0))
+            FILTER (WHERE COALESCE(amazon_received, 0) > 0), 0)::float`
+        : sql`COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, 0)), 0)::float`} as total_cost
     FROM accounting_inbound_shipments
     WHERE store_id = ${storeId}
       AND deleted_at IS NULL
