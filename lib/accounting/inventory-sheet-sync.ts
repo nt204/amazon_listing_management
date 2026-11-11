@@ -23,7 +23,8 @@ import {
 } from "@/lib/accounting/inventory-db";
 
 // Đồng bộ BẢNG MÃ / BẢNG MÃ FBM / CHI TIẾT ĐI HÀNG / ĐẦU VÀO FBM PW từ link Google Sheet đã lưu theo store.
-// Google Sheet là bản gốc: ô có giá trị trên sheet ghi đè DB; ô trống giữ nguyên giá trị đang có.
+// Google Sheet là bản gốc: ô có giá trị trên sheet ghi đè DB. Ô trống: BẢNG MÃ FBA xóa trống theo sheet (trừ ASIN,
+// mockup); các tab khác giữ nguyên giá trị đang có. BẢNG MÃ FBA còn xóa mềm SKU không còn trên sheet.
 // Chống trùng: SKU khớp không phân biệt hoa/thường + UNIQUE(store_id, sku); đi hàng khớp theo
 // SKU+Shipment ID → SKU+Tên lô → SKU+Ngày request+Số lượng (theo thứ tự xuất hiện), dòng web
 // không còn trên sheet bị xóa mềm (khôi phục được qua Lịch sử). Mỗi store+sheet chạy trong
@@ -49,8 +50,10 @@ export interface SheetSyncResult {
   unchanged: number;
   restored: number;
   deleted: number;
-  /** SKU có trên web nhưng không còn trên sheet (Bảng Mã không tự xóa). */
+  /** SKU có trên web nhưng không còn trên sheet (Bảng Mã: xóa mềm, trừ khi thiếu quá nửa). */
   missingOnSheet: number;
+  /** Bảng Mã: các SKU vừa bị xóa mềm vì không còn trên sheet */
+  deletedSkus?: string[];
   /** Số dòng thay đổi theo từng cột (để biết lần đồng bộ sửa những gì). */
   changedFields: Record<string, number>;
   duplicatesInSheet: string[];
@@ -517,8 +520,13 @@ async function writeSkuRecords(
   }
 
   for (const [key, record] of bySku) {
+    // BẢNG MÃ FBA: ô trống trên sheet (cột có trên sheet) → xóa trống trên web cho y như sheet; cột sheet không có thì
+    // không có trong record nên giữ nguyên. Trừ ASIN (còn bổ sung từ báo cáo Amazon) và ảnh mockup (lấy từ Trello).
+    // BẢNG MÃ FBM giữ cách cũ: ô trống giữ giá trị đang có.
     const fields = Object.fromEntries(
-      Object.entries(record).filter(([field, value]) => allowed.has(field) && value != null),
+      Object.entries(record).filter(
+        ([field, value]) => allowed.has(field) && (value != null || (channel === "fba" && !KEEP_WHEN_BLANK.has(field))),
+      ),
     ) as Row;
     const current = existingByKey.get(key);
     if (!current) {
@@ -558,10 +566,29 @@ async function writeSkuRecords(
     else result.updated++;
   }
 
-  result.missingOnSheet = existing.filter(
-    (row) => row.deleted_at == null && !bySku.has(keyOf(row.sku, row.asin)),
-  ).length;
+  // SKU trên web không còn trong BẢNG MÃ (FBA) của sheet → xóa mềm (sheet là bản gốc). Thêm lại vào sheet thì lần đồng bộ
+  // sau tự khôi phục (nhánh wasDeleted ở trên). Chốt an toàn: thiếu quá nửa Bảng mã (đọc nhầm tab / sheet trống)
+  // thì không xóa gì, chỉ cảnh báo.
+  const missing = existing.filter((row) => row.deleted_at == null && !bySku.has(keyOf(row.sku, row.asin)));
+  result.missingOnSheet = missing.length;
+  const active = existing.filter((row) => row.deleted_at == null).length;
+  // Chỉ BẢNG MÃ FBA: BẢNG MÃ FBM khóa SKU + ASIN, một SKU có nhiều ASIN và đơn — vẫn chỉ cảnh báo.
+  if (channel === "fba" && missing.length && bySku.size > 0 && missing.length <= active * MAX_MISSING_DELETE_RATIO) {
+    await tx`
+      UPDATE ${tx(table)}
+      SET deleted_at = NOW(), last_changed_by = ${actor}, updated_at = NOW()
+      WHERE id = ANY(${missing.map((row) => row.id as string)}::uuid[]) AND deleted_at IS NULL
+    `;
+    result.deleted += missing.length;
+    result.deletedSkus = missing.map((row) => String(row.sku));
+  }
 }
+
+/** BẢNG MÃ FBA: các cột ô trống trên sheet vẫn giữ giá trị đang có trên web */
+const KEEP_WHEN_BLANK = new Set(["asin", "mockup", "mockup_url"]);
+
+/** Bảng mã: chỉ tự xóa SKU thiếu trên sheet khi số thiếu ≤ tỷ lệ này so với số SKU đang có */
+const MAX_MISSING_DELETE_RATIO = 0.5;
 
 async function writeInboundRecords(
   tx: Tx,
@@ -844,8 +871,14 @@ export async function syncSheetToDatabase(
       ? `${result.duplicatesInSheet.length} SKU ghi nhiều dòng trong cùng lô (đã cộng dồn số lượng và tiền).`
       : `${result.duplicatesInSheet.length} dòng trùng trong sheet (giữ dòng sau cùng).`);
   }
-  if (result.missingOnSheet) {
-    result.warnings.push(`${result.missingOnSheet} SKU trên web không có trong sheet (không tự xóa).`);
+  if (result.missingOnSheet && type !== "inbound") {
+    result.warnings.push(
+      result.deletedSkus?.length
+        ? `Đã xóa ${result.deletedSkus.length} SKU không còn trong sheet: ${result.deletedSkus.slice(0, 20).join(", ")}${result.deletedSkus.length > 20 ? "…" : ""}.`
+        : type === "sku_fbm"
+        ? `${result.missingOnSheet} SKU trên web không có trong sheet (Bảng mã FBM không tự xóa).`
+        : `${result.missingOnSheet} SKU trên web không có trong sheet — quá nửa Bảng mã nên KHÔNG tự xóa, kiểm tra lại link/tab sheet.`,
+    );
   }
   if (type === "inbound" && !options.dryRun) {
     // Cập nhật số lượng nhận / trạng thái từ Check Shipment như khi import file

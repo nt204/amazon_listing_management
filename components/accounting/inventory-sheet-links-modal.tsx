@@ -581,7 +581,7 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
           {showGuide && (
             <div className="mt-2 pt-2 border-t border-indigo-200/60 text-[11px] text-indigo-900 leading-relaxed space-y-1">
               <p>• <strong>Bản gốc là Google Sheet:</strong> Ô có giá trị trên sheet sẽ ghi đè lên web; ô trống trên sheet sẽ không xóa dữ liệu cũ đang có trên web.</p>
-              <p>• <strong>Dòng đi hàng:</strong> Nếu không còn trên sheet sẽ bị đánh dấu xóa (có thể khôi phục ở tab Lịch sử). Bảng Mã SKU không tự xóa.</p>
+              <p>• <strong>Dòng đi hàng:</strong> Nếu không còn trên sheet sẽ bị đánh dấu xóa (có thể khôi phục ở tab Lịch sử). <strong>Bảng Mã FBA:</strong> y như sheet — ô trống trên sheet thì xóa trống (trừ ASIN, mockup); SKU không còn trên sheet cũng bị xóa (thêm lại vào sheet thì tự khôi phục); nếu thiếu quá nửa Bảng mã thì không xóa, chỉ cảnh báo.</p>
               <p>• Nút tải lại ở từng bảng sẽ đồng bộ dữ liệu ngay lập tức cho tab và store đang chọn.</p>
             </div>
           )}
