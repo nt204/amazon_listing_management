@@ -9,49 +9,49 @@ import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 export const runtime = "nodejs";
 
 const MAX_ROWS = 3000;
-const INACTIVE_STATES = new Set(["paused", "archived", "disabled"]);
+const SKU_CODE_RE = "([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)";
 
-type AttributedTarget = {
-  ad_type: string;
+// 1 nhóm = các target cùng campaign / ad group / SKU dòng / tên campaign / trạng thái active, đã gán SKU.
+// Store lớn (FASTPEACE ~1,1 triệu target/kỳ) chỉ còn ~57 nghìn nhóm → giữ được trong bộ nhớ.
+type TargetGroup = {
   campaign_id: string;
-  campaign_name: string;
-  campaign_state: string;
   ad_group_id: string;
-  ad_group_name: string;
-  ad_group_state: string;
-  target_id: string;
-  target_expression: string;
-  match_type: string;
-  state: string;
-  bid: string;
-  impressions: string;
+  ag_sku: string | null;
+  cs_sku: string | null;
+  sku_key: string | null;
+  active: boolean;
+  n: number;
   clicks: string;
   spend: string;
   sales: string;
   orders: string;
-  report_end_date: string;
-  snapshot_date: string;
-  sku_key: string;
 };
 
-// Gán target → SKU phải quét toàn bộ dòng PRODUCT của store trong kỳ (chậm khi đĩa đọc nguội), nên tính 1 lần
-// cho mỗi store + snapshot rồi dùng chung cho bảng SKU và từng lần bấm SKU. Khoá có snapshot_id/activated_at
-// nên nạp báo cáo mới là tự tính lại → giữ lâu (dùng chung mọi người xem); fallback không có ppc_active_snapshots
-// thì không có phiên bản nên chỉ giữ ngắn.
-const TARGET_CACHE_TTL_MS = 5 * 60_000;
-const TARGET_CACHE_VERSIONED_TTL_MS = 6 * 60 * 60_000;
-const TARGET_CACHE_MAX = 30;
-const targetCache = new Map<string, { at: number; promise: Promise<AttributedTarget[]> }>();
+type Attribution = {
+  groups: TargetGroup[];
+  /** campaign|adGroup → SKU của product ad trong ad group (có thể nhiều SKU). */
+  adGroupSkus: Map<string, string[]>;
+  /** campaign → SKU dò theo tiền tố tên campaign. */
+  campaignSku: Map<string, string>;
+};
 
-function cachedTargets(key: string, versioned: boolean, load: () => Promise<AttributedTarget[]>) {
+// Gán target → SKU phải quét toàn bộ target + product ad của store trong kỳ (FASTPEACE ~8s), nên tính 1 lần cho
+// mỗi store + snapshot rồi dùng chung cho bảng SKU và từng lần bấm SKU. Khoá có snapshot_id/activated_at nên nạp
+// báo cáo mới là tự tính lại → giữ lâu; fallback không có ppc_active_snapshots thì không có phiên bản nên giữ ngắn.
+const CACHE_TTL_MS = 5 * 60_000;
+const CACHE_VERSIONED_TTL_MS = 6 * 60 * 60_000;
+const CACHE_MAX = 30;
+const attributionCache = new Map<string, { at: number; versioned: boolean; promise: Promise<Attribution> }>();
+
+function cachedAttribution(key: string, versioned: boolean, load: () => Promise<Attribution>) {
   const now = Date.now();
-  const hit = targetCache.get(key);
-  if (hit && now - hit.at < (versioned ? TARGET_CACHE_VERSIONED_TTL_MS : TARGET_CACHE_TTL_MS)) return hit.promise;
-  const promise = load().then((rows) => Array.from(rows));
-  promise.catch(() => { if (targetCache.get(key)?.promise === promise) targetCache.delete(key); });
-  targetCache.delete(key);
-  targetCache.set(key, { at: now, promise });
-  while (targetCache.size > TARGET_CACHE_MAX) targetCache.delete(targetCache.keys().next().value!);
+  const hit = attributionCache.get(key);
+  if (hit && now - hit.at < (hit.versioned ? CACHE_VERSIONED_TTL_MS : CACHE_TTL_MS)) return hit.promise;
+  const promise = load();
+  promise.catch(() => { if (attributionCache.get(key)?.promise === promise) attributionCache.delete(key); });
+  attributionCache.delete(key);
+  attributionCache.set(key, { at: now, versioned, promise });
+  while (attributionCache.size > CACHE_MAX) attributionCache.delete(attributionCache.keys().next().value!);
   return promise;
 }
 
@@ -102,75 +102,100 @@ export async function GET(request: Request) {
     //   1. SKU của product ad trong cùng ad group (camp SP luôn có, đúng cả mã "lạ" như RESIN DOLL_GARDENING);
     //   2. tên campaign bắt đầu bằng 1 SKU đã biết của store (camp SB không có product ad), lấy mã dài nhất;
     //   3. cột SKU của dòng; 4. mã dạng chữ+số ở tên campaign.
-    const attributedTargets = sql`
-      ag AS (
-        SELECT DISTINCT p.campaign_id, p.ad_group_id, upper(trim(p.sku)) AS sku
-        FROM ppc_performance_facts p
-        WHERE p.store_id = ${store.id}
-          AND p.grain = 'PRODUCT'
-          AND trim(p.sku) <> ''
-          AND (${snapFilter})
-      ),
-      known AS (SELECT DISTINCT sku FROM ag),
-      base AS (
-        SELECT p.*
-        FROM ppc_performance_facts p
-        WHERE p.store_id = ${store.id}
-          AND p.grain = 'TARGET'
-          AND NOT p.is_negative
-          AND lower(p.state) <> 'archived'
-          AND lower(p.campaign_state) <> 'archived'
-          AND (${snapFilter})
-      ),
-      -- Dò SKU theo tiền tố tên campaign 1 lần cho mỗi campaign (không lặp theo từng target).
-      camp_sku AS (
-        SELECT DISTINCT ON (c.campaign_id) c.campaign_id, k.sku
-        FROM (SELECT DISTINCT campaign_id, upper(campaign_name) AS name FROM base) c
-        JOIN known k ON left(c.name, length(k.sku)) = k.sku
-        ORDER BY c.campaign_id, length(k.sku) DESC
-      ),
-      t AS (
-        SELECT b.*,
-          COALESCE(
-            ag.sku,
-            cs.sku,
-            NULLIF(upper(trim(b.sku)), ''),
-            upper(substring(b.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'))
-          ) AS sku_key
-        FROM base b
-        LEFT JOIN ag ON ag.campaign_id = b.campaign_id AND ag.ad_group_id = b.ad_group_id
-        LEFT JOIN camp_sku cs ON cs.campaign_id = b.campaign_id
-      )
+    // Ad group có nhiều SKU product ad thì target tính cho từng SKU (như LEFT JOIN trước đây).
+    const targetFilter = sql`
+      p.store_id = ${store.id}
+      AND p.grain = 'TARGET'
+      AND NOT p.is_negative
+      AND lower(p.state) <> 'archived'
+      AND lower(p.campaign_state) <> 'archived'
+      AND (${snapFilter})
     `;
-
     const cacheKey = `${store.id}|${snaps.map((x) => `${x.report_start_date}~${x.report_end_date}~${x.version || ""}`).sort().join(",")}`;
-    const targetRows = await cachedTargets(cacheKey, snaps.every((x) => Boolean(x.version)), () => sql<AttributedTarget[]>`
-      WITH ${attributedTargets}
-      SELECT t.ad_type, t.campaign_id, t.campaign_name, t.campaign_state, t.ad_group_id, t.ad_group_name, t.ad_group_state,
-        t.target_id, t.target_expression, t.match_type, t.state, t.bid,
-        t.impressions, t.clicks, t.spend, t.sales, t.orders, t.report_end_date::text, t.snapshot_date::text, t.sku_key
-      FROM t
-      WHERE t.sku_key IS NOT NULL
-    `);
+    const attribution = await cachedAttribution(cacheKey, snaps.every((x) => Boolean(x.version)), async () => {
+      const groups = await sql<TargetGroup[]>`
+        WITH
+        ag AS (
+          SELECT DISTINCT p.campaign_id, p.ad_group_id, upper(trim(p.sku)) AS sku
+          FROM ppc_performance_facts p
+          WHERE p.store_id = ${store.id}
+            AND p.grain = 'PRODUCT'
+            AND trim(p.sku) <> ''
+            AND (${snapFilter})
+        ),
+        known AS (SELECT DISTINCT sku FROM ag),
+        lens AS (SELECT DISTINCT length(sku) AS l FROM known),
+        base AS MATERIALIZED (
+          SELECT p.campaign_id, p.ad_group_id, p.campaign_name, upper(trim(p.sku)) AS row_sku,
+            COALESCE(
+              lower(p.state) NOT IN ('paused', 'archived', 'disabled')
+              AND lower(p.campaign_state) NOT IN ('paused', 'archived', 'disabled')
+              AND lower(p.ad_group_state) NOT IN ('paused', 'archived', 'disabled'),
+              false
+            ) AS active,
+            p.clicks, p.spend, p.sales, p.orders
+          FROM ppc_performance_facts p
+          WHERE ${targetFilter}
+        ),
+        camp AS (SELECT DISTINCT campaign_id, upper(campaign_name) AS name FROM base),
+        -- Tiền tố tên campaign = SKU đã biết: so bằng nhau theo từng độ dài SKU (hash join), không so chéo
+        -- mọi campaign × mọi SKU (FASTPEACE 55k × 3,9k = 215 triệu phép so, ~66s).
+        camp_sku AS (
+          SELECT DISTINCT ON (c.campaign_id) c.campaign_id, k.sku
+          FROM camp c
+          CROSS JOIN lens
+          JOIN known k ON k.sku = left(c.name, lens.l)
+          ORDER BY c.campaign_id, length(k.sku) DESC
+        ),
+        g AS (
+          SELECT campaign_id, ad_group_id, row_sku, campaign_name, active,
+            COUNT(*)::integer AS n, SUM(clicks) AS clicks, SUM(spend) AS spend, SUM(sales) AS sales, SUM(orders) AS orders
+          FROM base
+          GROUP BY campaign_id, ad_group_id, row_sku, campaign_name, active
+        )
+        SELECT g.campaign_id, g.ad_group_id, ag.sku AS ag_sku, cs.sku AS cs_sku, g.active, g.n,
+          g.clicks::bigint::text AS clicks, g.spend::numeric::text AS spend,
+          g.sales::numeric::text AS sales, g.orders::bigint::text AS orders,
+          COALESCE(ag.sku, cs.sku, NULLIF(g.row_sku, ''), upper(substring(g.campaign_name from ${SKU_CODE_RE}))) AS sku_key
+        FROM g
+        LEFT JOIN ag ON ag.campaign_id = g.campaign_id AND ag.ad_group_id = g.ad_group_id
+        LEFT JOIN camp_sku cs ON cs.campaign_id = g.campaign_id
+      `;
+      const adGroupSkus = new Map<string, Set<string>>();
+      const campaignSku = new Map<string, string>();
+      for (const g of groups) {
+        if (g.ag_sku) {
+          const k = `${g.campaign_id}|${g.ad_group_id}`;
+          const set = adGroupSkus.get(k) || new Set<string>();
+          set.add(g.ag_sku);
+          adGroupSkus.set(k, set);
+        }
+        if (g.cs_sku) campaignSku.set(g.campaign_id, g.cs_sku);
+      }
+      return {
+        groups: Array.from(groups),
+        adGroupSkus: new Map(Array.from(adGroupSkus, ([k, v]) => [k, Array.from(v)])),
+        campaignSku,
+      };
+    });
 
     if (summary) {
-      const isActive = (t: AttributedTarget) => [t.state, t.campaign_state, t.ad_group_state]
-        .every((v) => v != null && !INACTIVE_STATES.has(v.toLowerCase()));
       const agg = new Map<string, {
         sku: string;
         targets: number; clicks: number; spend: number; sales: number; orders: number;
         a_targets: number; a_clicks: number; a_spend: number; a_sales: number; a_orders: number;
       }>();
-      for (const t of targetRows) {
-        let r = agg.get(t.sku_key);
+      for (const g of attribution.groups) {
+        if (!g.sku_key) continue;
+        let r = agg.get(g.sku_key);
         if (!r) {
-          r = { sku: t.sku_key, targets: 0, clicks: 0, spend: 0, sales: 0, orders: 0, a_targets: 0, a_clicks: 0, a_spend: 0, a_sales: 0, a_orders: 0 };
-          agg.set(t.sku_key, r);
+          r = { sku: g.sku_key, targets: 0, clicks: 0, spend: 0, sales: 0, orders: 0, a_targets: 0, a_clicks: 0, a_spend: 0, a_sales: 0, a_orders: 0 };
+          agg.set(g.sku_key, r);
         }
-        const clicks = Number(t.clicks || 0), spend = Number(t.spend || 0), sales = Number(t.sales || 0), orders = Number(t.orders || 0);
-        r.targets += 1; r.clicks += clicks; r.spend += spend; r.sales += sales; r.orders += orders;
-        if (isActive(t)) {
-          r.a_targets += 1; r.a_clicks += clicks; r.a_spend += spend; r.a_sales += sales; r.a_orders += orders;
+        const n = Number(g.n || 0), clicks = Number(g.clicks || 0), spend = Number(g.spend || 0), sales = Number(g.sales || 0), orders = Number(g.orders || 0);
+        r.targets += n; r.clicks += clicks; r.spend += spend; r.sales += sales; r.orders += orders;
+        if (g.active) {
+          r.a_targets += n; r.a_clicks += clicks; r.a_spend += spend; r.a_sales += sales; r.a_orders += orders;
         }
       }
       const skuRows = Array.from(agg.values());
@@ -191,10 +216,50 @@ export async function GET(request: Request) {
       });
     }
 
+    // Chỉ đọc target của các campaign có nhóm gán về SKU này (index campaign), rồi gán lại từng dòng như trên.
+    const skuUpper = sku.toUpperCase();
+    const campaignIds = Array.from(new Set(
+      attribution.groups.filter((g) => g.sku_key?.toUpperCase() === skuUpper).map((g) => g.campaign_id),
+    ));
+    const candidates = campaignIds.length === 0 ? [] : await sql<Array<{
+      ad_type: string;
+      campaign_id: string;
+      campaign_name: string;
+      campaign_state: string;
+      ad_group_id: string;
+      ad_group_name: string;
+      ad_group_state: string;
+      target_id: string;
+      target_expression: string;
+      match_type: string;
+      state: string;
+      bid: string;
+      impressions: string;
+      clicks: string;
+      spend: string;
+      sales: string;
+      orders: string;
+      report_end_date: string;
+      snapshot_date: string;
+      fallback_sku: string | null;
+    }>>`
+      SELECT p.ad_type, p.campaign_id, p.campaign_name, p.campaign_state, p.ad_group_id, p.ad_group_name, p.ad_group_state,
+        p.target_id, p.target_expression, p.match_type, p.state, p.bid,
+        p.impressions, p.clicks, p.spend, p.sales, p.orders, p.report_end_date::text, p.snapshot_date::text,
+        COALESCE(NULLIF(upper(trim(p.sku)), ''), upper(substring(p.campaign_name from ${SKU_CODE_RE}))) AS fallback_sku
+      FROM ppc_performance_facts p
+      WHERE ${targetFilter}
+        AND p.campaign_id = ANY(${campaignIds})
+    `;
+
     // DISTINCT ON (ad_type, campaign, ad group, target, keyword, match type): giữ dòng snapshot mới nhất.
-    const latest = new Map<string, AttributedTarget>();
-    for (const t of targetRows) {
-      if (t.sku_key.toLowerCase() !== sku) continue;
+    const latest = new Map<string, (typeof candidates)[number]>();
+    for (const t of candidates) {
+      const agSkus = attribution.adGroupSkus.get(`${t.campaign_id}|${t.ad_group_id}`);
+      const belongs = agSkus
+        ? agSkus.includes(skuUpper)
+        : (attribution.campaignSku.get(t.campaign_id) ?? t.fallback_sku) === skuUpper;
+      if (!belongs) continue;
       const k = [t.ad_type, t.campaign_id, t.ad_group_id, t.target_id, t.target_expression.toLowerCase(), t.match_type].join("\u0000");
       const prev = latest.get(k);
       if (!prev || t.snapshot_date > prev.snapshot_date) latest.set(k, t);
