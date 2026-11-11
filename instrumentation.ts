@@ -9,5 +9,8 @@ export async function register() {
     startInventorySheetSyncScheduler();
     const { startBaseCostResyncWorker } = await import("@/lib/accounting/base-cost-resync");
     startBaseCostResyncWorker();
+    const { startManualBidPrewarm } = await import("@/lib/ppc/manual-bid-attribution");
+    const { getDatabaseClient } = await import("@/lib/db");
+    startManualBidPrewarm(getDatabaseClient);
   }
 }

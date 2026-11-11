@@ -107,11 +107,14 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
   const mp = options.marketplace || "US";
   const volumes = await getKeywordVolumes(sql, items.map(options.keywordOf), mp);
 
-  // Retrieve rankings from ppc_asin_keyword_rankings
-  const norms = Array.from(new Set(items.map((i) => normalizeKeyword(options.keywordOf(i))).filter(Boolean)));
+  // Rank (organic / sponsored) là vị trí của MỘT ASIN cho một keyword → chỉ lấy đúng cặp ASIN + keyword của dòng.
+  // Dòng không biết ASIN thì để trống (trước đây lấy rank của ASIN bất kỳ có cùng keyword → số của sản phẩm khác).
+  const asinOf = (item: T) => (item.asin || "").trim().toUpperCase();
+  const asins = Array.from(new Set(items.map(asinOf).filter(Boolean)));
+  const norms = Array.from(new Set(items.filter((i) => asinOf(i)).map((i) => normalizeKeyword(options.keywordOf(i))).filter(Boolean)));
   const rankMap = new Map<string, { organicRank: number | null; sponsoredRank: number | null }>();
 
-  if (norms.length > 0) {
+  if (asins.length > 0 && norms.length > 0) {
     try {
       const rankRows = await sql<Array<{
         asin: string;
@@ -121,21 +124,13 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
       }>>`
         SELECT asin, keyword_norm, organic_rank, sponsored_rank
         FROM ppc_asin_keyword_rankings
-        WHERE marketplace = ${mp} AND keyword_norm IN ${sql(norms)}
+        WHERE marketplace = ${mp} AND asin IN ${sql(asins)} AND keyword_norm IN ${sql(norms)}
       `;
       for (const row of rankRows) {
         rankMap.set(`${row.asin}:${row.keyword_norm}`, {
           organicRank: row.organic_rank,
           sponsoredRank: row.sponsored_rank,
         });
-        // Also fallback key by keyword_norm alone (choosing best rank)
-        const kwOnly = rankMap.get(row.keyword_norm);
-        if (!kwOnly) {
-          rankMap.set(row.keyword_norm, {
-            organicRank: row.organic_rank,
-            sponsoredRank: row.sponsored_rank,
-          });
-        }
       }
     } catch {}
   }
@@ -150,7 +145,8 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
       ? Math.round((item.impressions / expectedSearches) * 1000) / 10
       : null;
 
-    const rankInfo = (item.asin ? rankMap.get(`${item.asin}:${kwNorm}`) : null) || rankMap.get(kwNorm);
+    const asin = asinOf(item);
+    const rankInfo = asin ? rankMap.get(`${asin}:${kwNorm}`) : undefined;
 
     return {
       ...item,

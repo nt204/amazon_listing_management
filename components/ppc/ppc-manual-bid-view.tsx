@@ -187,6 +187,8 @@ export function MockupHoverZoom({
 
 const INACTIVE = new Set(["paused", "archived", "disabled"]);
 
+type TargetScope = "active" | "all";
+
 /** Target chạy thật: target, ad group và campaign đều không tạm dừng / lưu trữ. */
 function isLive(r: ManualBidRow) {
   return !INACTIVE.has(r.state) && !INACTIVE.has(r.campaignState) && !INACTIVE.has(r.adGroupState);
@@ -387,10 +389,16 @@ export function PpcManualBidView({
     items: ManualBidRow[];
     reportRange: { start: string; end: string } | null;
     error: string | null;
+    /** "active" = chỉ target đang chạy; "all" = cả campaign đã tắt (bấm Tất cả mới tải). */
+    scope: TargetScope;
   } | null>(null);
   const reqKey = query ? `${selectedStore}|${selectedDays}|${query.sku}|${query.nonce}` : "";
-  const loading = Boolean(query) && result?.key !== reqKey;
-  const sku = loading ? "" : result?.sku || "";
+  const [activeOnly, setActiveOnly] = useState(true);
+  const needScope: TargetScope = activeOnly ? "active" : "all";
+  // Đã có bản "all" thì đủ cho cả Active (lọc tại chỗ); đang có bản "active" mà bấm Tất cả thì tải thêm.
+  const loading = Boolean(query) && (result?.key !== reqKey || (needScope === "all" && result?.scope !== "all"));
+  const refreshing = loading && Boolean(result && !result.error && query && result.sku === query.sku.toUpperCase());
+  const sku = loading && !refreshing ? "" : result?.sku || "";
   const rows = useMemo(() => result?.items || [], [result]);
   const error = result?.error || null;
 
@@ -398,7 +406,6 @@ export function PpcManualBidView({
   // Lọc nhiều nấc cùng lúc; "Đã sửa" gom các target đã chỉnh bid của cả SKU (bỏ qua dạng chạy đang chọn).
   const [tierSet, setTierSet] = useState<ManualBidTier[]>([]);
   const [editedOnly, setEditedOnly] = useState(false);
-  const [activeOnly, setActiveOnly] = useState(true);
   const [keywordFilter, setKeywordFilter] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "spend", dir: -1 });
 
@@ -408,23 +415,50 @@ export function PpcManualBidView({
   const [submitting, setSubmitting] = useState(false);
   const lastClickedRef = useRef<string | null>(null);
 
-  // Tải target khi bấm Xem hoặc đổi số ngày báo cáo.
+  // Bộ nhớ đệm target theo store|kỳ|SKU (5 phút): rê chuột vào SKU là tải trước, quay lại SKU / kỳ cũ hiện ngay.
+  // Lưu luôn promise nên tải trước và bấm mở cùng lúc chỉ gọi API 1 lần.
+  type TargetPayload = { sku: string; items: ManualBidRow[]; reportRange: { start: string; end: string } | null; scope: TargetScope };
+  const targetCacheRef = useRef(new Map<string, { at: number; p: Promise<TargetPayload> }>());
+  const getTargets = (code: string, scope: TargetScope): Promise<TargetPayload> => {
+    const baseKey = `${selectedStore}|${selectedDays}|${code.toUpperCase()}`;
+    const key = `${baseKey}|${scope}`;
+    const fresh = (k: string) => {
+      const h = targetCacheRef.current.get(k);
+      return h && Date.now() - h.at < CACHE_MS ? h : null;
+    };
+    const hit = fresh(key) || (scope === "active" ? fresh(`${baseKey}|all`) : null);
+    if (hit) return hit.p;
+    // Gửi sẵn ASIN (đã có trong danh sách SKU) để API khỏi dò lại trong bảng facts.
+    const knownAsin = skuGroups.find((g) => g.sku.toUpperCase() === code.toUpperCase())?.asin || "";
+    const url = `/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&sku=${encodeURIComponent(code)}${knownAsin ? `&asin=${encodeURIComponent(knownAsin)}` : ""}${scope === "active" ? "&active=1" : ""}`;
+    const promise = fetch(url, { cache: "no-store" }).then(async (res) => {
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "Không tải được target.");
+      return { sku: String(data.sku), items: data.items || [], reportRange: data.reportRange || null, scope };
+    });
+    promise.catch(() => targetCacheRef.current.delete(key));
+    targetCacheRef.current.set(key, { at: Date.now(), p: promise });
+    return promise;
+  };
+  const prefetchTargets = (code: string) => { getTargets(code, needScope).catch(() => undefined); };
+
+  // Tải target khi mở SKU hoặc đổi số ngày báo cáo.
   useEffect(() => {
     if (!query || !isActive || !selectedStore || selectedStore === "ALL") return;
-    if (result?.key === reqKey) return;
-    const ctrl = new AbortController();
-    // Gửi sẵn ASIN (đã có trong danh sách SKU) để API khỏi dò lại trong bảng facts.
-    const knownAsin = skuGroups.find((g) => g.sku.toUpperCase() === query.sku.toUpperCase())?.asin || "";
-    const url = `/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&sku=${encodeURIComponent(query.sku)}${knownAsin ? `&asin=${encodeURIComponent(knownAsin)}` : ""}`;
-    fetch(url, { signal: ctrl.signal, cache: "no-store" })
-      .then(async (res) => {
-        const data = await res.json().catch(() => null);
-        if (!res.ok || !data?.success) throw new Error(data?.error || "Không tải được target.");
-        const sameSku = result?.sku === String(data.sku);
-        const items = data.items || [];
-        setResult({ key: reqKey, sku: String(data.sku), items, reportRange: data.reportRange || null, error: null });
-        setDrafts(new Map());
-        setSelected(new Set());
+    if (result?.key === reqKey && (result.scope === "all" || needScope === "active")) return;
+    // Cùng lần mở, chỉ tải thêm target đã tắt (bấm Tất cả) → giữ nguyên bid đang sửa dở và dòng đang chọn.
+    const expanding = result?.key === reqKey;
+    let cancelled = false;
+    getTargets(query.sku, needScope)
+      .then((data) => {
+        if (cancelled) return;
+        const sameSku = result?.sku === data.sku;
+        const items = data.items;
+        setResult({ key: reqKey, sku: data.sku, items, reportRange: data.reportRange, error: null, scope: data.scope });
+        if (!expanding) {
+          setDrafts(new Map());
+          setSelected(new Set());
+        }
         if (!sameSku) {
           const hasSp03 = items.some((it: ManualBidRow) => it.runType === "SP03");
           if (hasSp03) {
@@ -438,29 +472,40 @@ export function PpcManualBidView({
         }
       })
       .catch((e) => {
-        if (ctrl.signal.aborted) return;
-        setResult({ key: reqKey, sku: query.sku, items: [], reportRange: null, error: e instanceof Error ? e.message : "Không tải được target." });
+        if (cancelled) return;
+        setResult({ key: reqKey, sku: query.sku, items: [], reportRange: null, error: e instanceof Error ? e.message : "Không tải được target.", scope: needScope });
       });
-    return () => ctrl.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- skuGroups chỉ để lấy ASIN, đổi danh sách không cần tải lại
-  }, [query, reqKey, isActive, selectedStore, selectedDays, result]);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getTargets đọc store/kỳ/skuGroups mới nhất; chỉ chạy lại khi đổi yêu cầu
+  }, [query, reqKey, isActive, selectedStore, selectedDays, result, needScope]);
 
   // Số liệu từng SKU tính từ target (tổng và riêng target active).
   const summaryKey = `${selectedStore}|${selectedDays}`;
   const [summary, setSummary] = useState<{ key: string; items: SkuSummaryItem[] } | null>(null);
+  const summaryCacheRef = useRef(new Map<string, { at: number; p: Promise<SkuSummaryItem[]> }>());
   useEffect(() => {
     if (!isActive || !selectedStore || selectedStore === "ALL") return;
     if (summary?.key === summaryKey) return;
-    const ctrl = new AbortController();
-    fetch(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1`, { signal: ctrl.signal, cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setSummary({ key: summaryKey, items: Array.isArray(d?.items) ? d.items : [] }))
-      .catch(() => { if (!ctrl.signal.aborted) setSummary({ key: summaryKey, items: [] }); });
-    return () => ctrl.abort();
+    let cancelled = false;
+    const hit = summaryCacheRef.current.get(summaryKey);
+    let promise = hit && Date.now() - hit.at < CACHE_MS ? hit.p : null;
+    if (!promise) {
+      const key = summaryKey;
+      promise = fetch(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => (Array.isArray(d?.items) ? d.items as SkuSummaryItem[] : []));
+      promise.catch(() => summaryCacheRef.current.delete(key));
+      summaryCacheRef.current.set(key, { at: Date.now(), p: promise });
+    }
+    promise
+      .then((items) => { if (!cancelled) setSummary({ key: summaryKey, items }); })
+      .catch(() => { if (!cancelled) setSummary({ key: summaryKey, items: [] }); });
+    return () => { cancelled = true; };
   }, [isActive, selectedStore, selectedDays, summaryKey, summary]);
+  const skuRefreshing = Boolean(summary && summary.key !== summaryKey);
 
   const skuRows: SkuRow[] | null = useMemo(() => {
-    if (!summary || summary.key !== summaryKey) return null;
+    if (!summary) return null;
     const meta = new Map(skuGroups.map((g) => [g.sku.toUpperCase(), g]));
     return summary.items.map((it) => {
       const m = activeOnly ? it.active : it.all;
@@ -477,7 +522,7 @@ export function PpcManualBidView({
         breakEvenAcos: g?.breakEvenAcos || 0,
       };
     }).filter((r) => r.targets > 0);
-  }, [summary, summaryKey, skuGroups, activeOnly]);
+  }, [summary, skuGroups, activeOnly]);
 
   const load = (code: string) => {
     const v = code.trim().toUpperCase();
@@ -1162,6 +1207,8 @@ export function PpcManualBidView({
     return (
       <ManualBidSkuList
         rows={skuRows}
+        refreshing={skuRefreshing}
+        onHoverSku={prefetchTargets}
         activeOnly={activeOnly}
         onToggleActive={() => setActiveOnly((v) => !v)}
         actionQueue={actionQueue}
@@ -1192,7 +1239,6 @@ export function PpcManualBidView({
           <MockupHoverZoom url={skuMockupUrl} sku={query?.sku} size={28} />
         )}
         <span className="font-mono text-sm font-bold text-slate-900">{query?.sku}</span>
-        {loading && <span className="text-xs text-slate-400">Đang tải…</span>}
 
         {/* Nút tìm kiếm nhấc sang trái */}
         {sku && (
@@ -1264,6 +1310,8 @@ export function PpcManualBidView({
           </div>
         )}
       </div>
+
+      {loading && !refreshing && <LoadingBlock />}
 
       {error && <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>}
 
@@ -1388,7 +1436,8 @@ export function PpcManualBidView({
           </div>
 
           {/* Bảng target dạng lưới Excel với kéo dãn cột & đánh màu ACOS */}
-          <div className="overflow-x-auto border border-slate-300 bg-white shadow-xs">
+          {refreshing && <ProgressBar />}
+          <div className={`overflow-x-auto border border-slate-300 bg-white shadow-xs transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
             <table
               className="border-collapse text-xs table-fixed w-full"
               style={{ minWidth: Object.values(shownColWidths).reduce((a, b) => a + b, 0) }}
@@ -1635,6 +1684,51 @@ function AcosPill({ tier, acos }: { tier: ManualBidTier; acos: number | null }) 
   );
 }
 
+const CACHE_MS = 5 * 60 * 1000;
+
+const LOADING_CSS = `
+@keyframes mb-shimmer { 0% { background-position: -480px 0 } 100% { background-position: 480px 0 } }
+@keyframes mb-bar { 0% { transform: translateX(-100%) } 100% { transform: translateX(320%) } }
+.mb-shimmer { background: linear-gradient(90deg, #e9eef5 25%, #f7f9fc 40%, #e9eef5 60%); background-size: 960px 100%; animation: mb-shimmer 1.3s linear infinite; }
+.mb-bar { animation: mb-bar 1.1s ease-in-out infinite; }
+`;
+
+/** Thanh chạy mảnh khi đang tải lại (bảng cũ vẫn hiện, mờ đi). */
+function ProgressBar() {
+  return (
+    <div className="relative -mb-0.5 h-0.5 overflow-hidden rounded-full bg-indigo-100" role="progressbar" aria-label="Đang tải">
+      <style>{LOADING_CSS}</style>
+      <div className="mb-bar absolute inset-y-0 w-1/4 rounded-full bg-indigo-500" />
+    </div>
+  );
+}
+
+/** Khung chờ: thanh chạy + các dòng bảng giả lấp lánh, đúng chỗ bảng sẽ hiện; không chữ. */
+function LoadingBlock({ bare = false, rows = 8 }: { bare?: boolean; rows?: number }) {
+  return (
+    <div className={bare ? "" : "overflow-hidden rounded border border-slate-200 bg-white"} role="status" aria-label="Đang tải">
+      <style>{LOADING_CSS}</style>
+      {!bare && (
+        <div className="relative h-0.5 overflow-hidden bg-indigo-100">
+          <div className="mb-bar absolute inset-y-0 w-1/4 bg-indigo-500" />
+        </div>
+      )}
+      <div className="divide-y divide-slate-100">
+        {Array.from({ length: rows }, (_, i) => (
+          <div key={i} className="flex items-center gap-4 px-3 py-2.5" style={{ opacity: 1 - i * 0.08 }}>
+            <div className="mb-shimmer h-3 w-5 rounded" />
+            <div className="mb-shimmer h-3 rounded" style={{ width: `${20 - (i % 3) * 3}%` }} />
+            <div className="mb-shimmer h-3 flex-1 rounded" />
+            <div className="mb-shimmer h-3 w-12 rounded" />
+            <div className="mb-shimmer h-3 w-12 rounded" />
+            <div className="mb-shimmer h-3 w-14 rounded" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function shortMatch(m: string): string {
   const v = m.toLowerCase();
   if (v.includes("exact")) return "Exact";
@@ -1839,7 +1933,9 @@ function RangeRow({ label, unit, value, onChange }: {
 const SKU_PAGE = 100;
 
 // Màn đầu: tất cả SKU của store, cùng nguồn số liệu với tab Đề xuất & Auto Bid. Bấm 1 dòng để chỉnh bid.
-function ManualBidSkuList({ rows, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
+function ManualBidSkuList({ rows, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
+  refreshing: boolean;
+  onHoverSku: (sku: string) => void;
   rows: SkuRow[] | null;
   activeOnly: boolean;
   onToggleActive: () => void;
@@ -1866,6 +1962,19 @@ function ManualBidSkuList({ rows, activeOnly, onToggleActive, actionQueue, selec
   });
   const [limit, setLimit] = useState(SKU_PAGE);
   const search = filter.search;
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cuộn gần tới cuối bảng thì tự hiện thêm SKU (thay nút "Xem thêm").
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setLimit((l) => l + SKU_PAGE);
+    }, { rootMargin: "400px" });
+    io.observe(el);
+    return () => io.disconnect();
+  });
 
   const save = (f: SkuListFilter, so: { key: SkuSortKey; dir: 1 | -1 }) => {
     try { localStorage.setItem(SKU_FILTER_STORAGE, JSON.stringify({ filter: { ...f, search: "" }, sort: so })); } catch { /* bỏ qua */ }
@@ -2065,11 +2174,16 @@ function ManualBidSkuList({ rows, activeOnly, onToggleActive, actionQueue, selec
               Xoá lọc
             </button>
           )}
-          <span className="tabular-nums"><b className="text-slate-700">{filtered.length}</b> SKU</span>
+          {rows ? (
+            <span className="tabular-nums"><b className="text-slate-700">{filtered.length}</b> SKU</span>
+          ) : (
+            <span className="mb-shimmer inline-block h-3 w-14 rounded" />
+          )}
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      {refreshing && <ProgressBar />}
+      <div className={`overflow-x-auto rounded-xl border border-slate-200 bg-white transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
         <table className="w-full min-w-[820px] border-collapse text-[13px]">
           <thead className="text-[11px] font-semibold text-slate-400">
             <tr className="border-b border-slate-200">
@@ -2085,7 +2199,7 @@ function ManualBidSkuList({ rows, activeOnly, onToggleActive, actionQueue, selec
           </thead>
           <tbody>
             {!rows ? (
-              <tr><td colSpan={8} className="py-14 text-center text-slate-400">Đang tải danh sách SKU…</td></tr>
+              <tr><td colSpan={8} className="p-0"><LoadingBlock bare /></td></tr>
             ) : filtered.length === 0 ? (
               <tr><td colSpan={8} className="py-14 text-center text-slate-400">Không có SKU phù hợp.</td></tr>
             ) : filtered.slice(0, limit).map((g) => {
@@ -2095,6 +2209,11 @@ function ManualBidSkuList({ rows, activeOnly, onToggleActive, actionQueue, selec
                 <tr
                   key={g.sku}
                   onClick={() => onOpen(g.sku)}
+                  onMouseEnter={() => {
+                    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+                    hoverTimer.current = setTimeout(() => onHoverSku(g.sku), 150);
+                  }}
+                  onMouseLeave={() => { if (hoverTimer.current) clearTimeout(hoverTimer.current); }}
                   className="cursor-pointer border-b border-slate-100 hover:bg-indigo-50/50"
                 >
                   <td className="px-2 py-1.5 text-center">
@@ -2127,15 +2246,7 @@ function ManualBidSkuList({ rows, activeOnly, onToggleActive, actionQueue, selec
             })}
           </tbody>
         </table>
-        {filtered.length > limit && (
-          <button
-            type="button"
-            onClick={() => setLimit((l) => l + SKU_PAGE)}
-            className="w-full cursor-pointer border-t border-slate-100 py-2 text-[12px] font-bold text-indigo-600 hover:bg-slate-50"
-          >
-            Xem thêm {Math.min(SKU_PAGE, filtered.length - limit)} SKU (còn {filtered.length - limit})
-          </button>
-        )}
+        {filtered.length > limit && <div ref={loadMoreRef}><LoadingBlock bare rows={2} /></div>}
       </div>
     </div>
   );
