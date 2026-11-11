@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useMemo, useState, useDeferredValue, type ReactNode } from "react";
 import {
   ArrowClockwiseIcon,
+  ArrowDownRightIcon,
+  ArrowUpRightIcon,
   CaretLeftIcon,
   CaretRightIcon,
   CloudArrowDownIcon,
@@ -96,13 +98,6 @@ const fmtUsd = (v: number | null | undefined) => (v == null || !Number.isFinite(
 const fmtUsd0 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "" : usd0.format(Math.abs(v) < 0.5 ? 0 : v));
 const fmtInt = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "" : int.format(v));
 const fmtPct = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "" : `${(v * 100).toFixed(1)}%`);
-
-const SOURCE_LABEL: Record<Source, string> = {
-  closed: "đã chốt",
-  history: "file tổng kết",
-  live: "tạm tính",
-  none: "chưa có số",
-};
 
 const GROUP_LABEL = { dev: "SKU phát triển", test: "SKU test" } as const;
 
@@ -232,39 +227,152 @@ function Thumb({ url }: { url: string | null }) {
 }
 
 // ───────────────────────── Tổng quan tháng ─────────────────────────
-function Tile({ label, actual, target, prev, ly, kind, cost }: { label: string; actual: number | null; target: number | null; prev: number | null; ly: number | null; kind: "usd" | "int" | "pct"; cost?: boolean }) {
-  const ach = cost ? null : achievement(actual, target);
-  const fmt = (v: number | null) => (kind === "usd" ? fmtUsd0(v) : kind === "int" ? fmtInt(v) : fmtPct(v));
-  const gPrev = kind === "pct" ? (actual != null && prev != null ? actual - prev : null) : growth(actual, prev);
-  const gLy = kind === "pct" ? (actual != null && ly != null ? actual - ly : null) : growth(actual, ly);
-  const pp = (v: number | null) => (v == null ? "" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)} điểm`);
+/** Mũi tên tăng / giảm + màu tốt / xấu (chi phí như TACoS: giảm là tốt). Không dấu +/−: mũi tên đã thể hiện. */
+function Delta({ label, value, base, kind, cost, baseLabel }: { label: string; value: number | null; base: number | null; kind: "usd" | "int" | "pct"; cost?: boolean; baseLabel: string }) {
+  // pct (TACoS): chênh lệch theo điểm %; số tiền / số lượng: % tăng trưởng
+  const d = kind === "pct" ? (value != null && base != null ? value - base : null) : growth(value, base);
+  const fmtBase = kind === "usd" ? fmtUsd0(base) : kind === "int" ? fmtInt(base) : fmtPct(base);
+  const flat = d == null || Math.abs(d) < 0.0005;
   return (
-    <div className="flex min-w-0 flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-3">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-xl font-bold tabular-nums text-slate-900">{fmt(actual) || "—"}</span>
-        {target != null && <span className="text-xs text-slate-500">/ mục tiêu {fmt(target)}</span>}
-      </div>
-      {!cost && target != null ? (
-        <div className="flex items-center gap-2">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-            <div
-              className={`h-full rounded-full ${ach != null && ach >= 1 ? "bg-emerald-500" : ach != null && ach >= 0.7 ? "bg-amber-500" : "bg-rose-500"}`}
-              style={{ width: `${Math.max(0, Math.min(100, (ach ?? 0) * 100))}%` }}
-            />
-          </div>
-          <span className={`text-xs font-bold tabular-nums ${achieveTone(ach)}`}>{fmtPct(ach)}</span>
-        </div>
+    <span className="inline-flex items-center gap-1" title={base != null ? `${baseLabel}: ${fmtBase}` : `${baseLabel}: chưa có số`}>
+      <span className="text-slate-500">{label}</span>
+      {d == null ? (
+        <b className="text-slate-400">—</b>
       ) : (
-        <div className="h-[18px]" />
+        <b className={`inline-flex items-center gap-0.5 tabular-nums ${growthTone(d, cost)}`}>
+          {!flat && (d > 0 ? <ArrowUpRightIcon size={11} weight="bold" /> : <ArrowDownRightIcon size={11} weight="bold" />)}
+          {`${Math.abs(d * 100).toFixed(1)}%`}
+        </b>
       )}
-      <div className="flex flex-wrap gap-x-3 text-[11px] text-slate-500">
-        <span>
-          vs tháng trước <b className={growthTone(gPrev, cost)}>{kind === "pct" ? pp(gPrev) : signed(gPrev)}</b>
+    </span>
+  );
+}
+
+/**
+ * Ô KPI tháng. Mục tiêu càng cao càng tốt (Revenue, Profit, Quantity): thanh % đạt + còn thiếu / đã vượt;
+ * tháng đang chạy (pace) thì có vạch nhịp cần đạt tới hôm nay và số dự kiến cả tháng theo nhịp hiện tại.
+ * Chi phí (TACoS, cost): càng thấp càng tốt → Đạt / Vượt mục tiêu bao nhiêu điểm.
+ */
+function Tile({
+  label,
+  period,
+  live,
+  actual,
+  target,
+  prev,
+  ly,
+  prevLabel,
+  lyLabel,
+  kind,
+  cost,
+  pace,
+  extra,
+}: {
+  label: string;
+  period: string;
+  /** Số tạm tính (tháng chưa chốt) */
+  live?: boolean;
+  actual: number | null;
+  target: number | null;
+  prev: number | null;
+  ly: number | null;
+  prevLabel: string;
+  lyLabel: string;
+  kind: "usd" | "int" | "pct";
+  cost?: boolean;
+  /** Phần tháng đã qua (0–1) khi tháng chưa hết; null = tháng đã qua */
+  pace: number | null;
+  extra?: ReactNode;
+}) {
+  const fmt = (v: number | null) => (kind === "usd" ? fmtUsd0(v) : kind === "int" ? fmtInt(v) : fmtPct(v));
+  const ach = cost ? null : achievement(actual, target);
+  // Tháng đang chạy: so với nhịp (đạt ≥ nhịp là xanh), tháng đã qua: so với 100%
+  const goal = pace ?? 1;
+  const tone = ach == null ? "slate" : ach >= goal ? "emerald" : ach >= goal * 0.85 ? "amber" : "rose";
+  const BAR = { emerald: "bg-emerald-500", amber: "bg-amber-500", rose: "bg-rose-500", slate: "bg-slate-300" }[tone];
+  const TEXT = { emerald: "text-emerald-700", amber: "text-amber-700", rose: "text-rose-700", slate: "text-slate-400" }[tone];
+  const gap = actual != null && target != null ? actual - target : null;
+  const projected = pace && actual != null ? actual / pace : null;
+
+  return (
+    <div className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-3.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[12px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
+        <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold ${live ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`} title={live ? "Số tạm tính, tháng chưa chốt" : undefined}>
+          {period}
+          {live ? " · tạm tính" : ""}
         </span>
-        <span>
-          vs cùng kỳ <b className={growthTone(gLy, cost)}>{kind === "pct" ? pp(gLy) : signed(gLy)}</b>
-        </span>
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span className="text-[26px] font-bold leading-none tabular-nums text-slate-900">{fmt(actual) || "—"}</span>
+        {extra && <span className="text-xs font-medium text-slate-500">{extra}</span>}
+      </div>
+
+      <div className="mt-3 min-h-[44px]">
+        {target == null ? (
+          <div className="text-[11.5px] text-slate-400">Chưa có mục tiêu</div>
+        ) : cost ? (
+          (() => {
+            const ok = actual != null && actual <= target;
+            const diff = actual != null ? Math.abs(actual - target) * 100 : null;
+            return (
+              <>
+                <div className="flex items-center justify-between text-[11.5px]">
+                  <span className="text-slate-500">
+                    Mục tiêu ≤ <b className="text-slate-700">{fmtPct(target)}</b>
+                  </span>
+                  {actual != null && (
+                    <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold ${ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                      {ok ? "Đạt" : "Vượt mục tiêu"}
+                    </span>
+                  )}
+                </div>
+                {diff != null && (
+                  <div className={`mt-1.5 text-[11.5px] font-semibold ${ok ? "text-emerald-700" : "text-rose-700"}`}>
+                    {ok ? `Thấp hơn mục tiêu ${diff.toFixed(1)}%` : `Cao hơn mục tiêu ${diff.toFixed(1)}%`}
+                  </div>
+                )}
+              </>
+            );
+          })()
+        ) : (
+          <>
+            <div className="flex items-center justify-between text-[11.5px]">
+              <span className="text-slate-500">
+                Mục tiêu <b className="text-slate-700">{fmt(target)}</b>
+              </span>
+              <b className={`tabular-nums ${TEXT}`}>Đạt {fmtPct(ach) || "0%"}</b>
+            </div>
+            <div className="relative mt-1.5 h-2 rounded-full bg-slate-100">
+              <div className={`h-full rounded-full transition-[width] duration-500 ${BAR}`} style={{ width: `${Math.max(0, Math.min(100, (ach ?? 0) * 100))}%` }} />
+              {pace != null && (
+                <span
+                  className="absolute -top-1 h-4 w-0.5 rounded bg-slate-700"
+                  style={{ left: `${Math.min(100, pace * 100)}%` }}
+                  title={`Nhịp cần đạt tới hôm nay: ${fmtPct(pace)} mục tiêu`}
+                />
+              )}
+            </div>
+            <div className="mt-1.5 text-[11.5px] text-slate-500">
+              {gap != null && gap >= 0 ? (
+                <span className="font-semibold text-emerald-700">Vượt mục tiêu {fmt(gap)}</span>
+              ) : projected != null ? (
+                <span>
+                  Dự kiến cả tháng <b className={projected >= (target ?? 0) ? "text-emerald-700" : "text-rose-700"}>{fmt(projected)}</b>
+                </span>
+              ) : gap != null ? (
+                <span>
+                  Còn thiếu <b className="text-rose-700">{fmt(-gap)}</b>
+                </span>
+              ) : null}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2.5 text-[11.5px]">
+        <Delta label="Tháng trước" value={actual} base={prev} kind={kind} cost={cost} baseLabel={prevLabel} />
+        <Delta label="Cùng kỳ" value={actual} base={ly} kind={kind} cost={cost} baseLabel={lyLabel} />
       </div>
     </div>
   );
@@ -347,26 +455,44 @@ function OverviewPage({
     { key: "tNextTest", label: `[Target] SKU TEST ${periodLabel(periods.next)}`, bg: "bg-[#fff2cc]" },
   ];
 
+  // Tháng đang chạy: phần tháng đã qua (số liệu tới hết hôm qua) → vạch nhịp + dự kiến cả tháng
+  const pace = (() => {
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    if (periods.cur !== ym) return null;
+    const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const elapsed = now.getDate() - 1;
+    return elapsed > 0 ? elapsed / days : null;
+  })();
+  const tileCommon = {
+    period: periodLabel(periods.cur),
+    live: data.sources.cur === "live",
+    prevLabel: periodLabel(periods.prev),
+    lyLabel: periodLabel(periods.ly),
+    pace,
+  };
+
   return (
     <div className="flex flex-col gap-3 p-3">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <Tile label={`Revenue SKU phát triển ${periodLabel(periods.cur)}`} actual={a.cur.revenue} target={tCur?.revenue ?? null} prev={a.prev.revenue} ly={lyOk ? a.ly.revenue : null} kind="usd" />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Tile {...tileCommon} label="Revenue SKU phát triển" actual={a.cur.revenue} target={tCur?.revenue ?? null} prev={a.prev.revenue} ly={lyOk ? a.ly.revenue : null} kind="usd" />
         <Tile
+          {...tileCommon}
           label="Gross Profit"
           actual={report.gross.cur ?? null}
           target={report.gross.tCur ?? null}
           prev={report.gross.prev ?? null}
           ly={report.gross.ly ?? null}
           kind="usd"
+          extra={report.gross.cur != null && a.cur.revenue ? `Margin ${fmtPct(report.gross.cur / a.cur.revenue)}` : undefined}
         />
-        <Tile label="Quantity" actual={a.cur.quantity} target={tCur?.quantity ?? null} prev={a.prev.quantity} ly={lyOk ? a.ly.quantity : null} kind="int" />
-        <Tile label="TACoS" actual={tacosOf(a.cur)} target={tacosOf(tCur)} prev={tacosOf(a.prev)} ly={lyOk ? tacosOf(a.ly) : null} kind="pct" cost />
+        <Tile {...tileCommon} label="Quantity" actual={a.cur.quantity} target={tCur?.quantity ?? null} prev={a.prev.quantity} ly={lyOk ? a.ly.quantity : null} kind="int" />
+        <Tile {...tileCommon} label="TACoS" actual={tacosOf(a.cur)} target={tacosOf(tCur)} prev={tacosOf(a.prev)} ly={lyOk ? tacosOf(a.ly) : null} kind="pct" cost />
       </div>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
           <h3 className="text-sm font-bold text-slate-900">Báo cáo tổng team · {periodLabel(periods.cur)}</h3>
-          <span className="text-[11px] text-slate-500">Tổng team = SKU phát triển (FBA) · SKU test tính riêng ở dòng P/L SKU testing</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] border-separate border-spacing-0 border-l border-t border-black text-xs">
@@ -1411,29 +1537,6 @@ export function KpiView() {
     else body = <SkuTable data={data} skus={visibleSkus} canEdit={canEdit} onSaveTarget={saveTarget} onOpen={setOpenSku} />;
   }
 
-  const sourceNote = data && (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-slate-500">
-      <span>Nguồn số:</span>
-      {(
-        [
-          ["prev", data.periods.prev],
-          ["cur", data.periods.cur],
-          ["ly", data.periods.ly],
-          ["lyNext", data.periods.lyNext],
-        ] as const
-      ).map(([k, p]) => (
-        <span key={k}>
-          {periodLabel(p)} <b className={data.sources[k] === "none" ? "text-rose-600" : data.sources[k] === "live" ? "text-amber-700" : "text-slate-700"}>{SOURCE_LABEL[data.sources[k]]}</b>
-        </span>
-      ))}
-      {(data.sources.ly === "none" || data.sources.lyNext === "none") && canEdit && (
-        <button type="button" onClick={() => setShowImport(true)} className="cursor-pointer font-semibold text-blue-700 hover:underline">
-          Nạp số năm trước từ file tổng kết →
-        </button>
-      )}
-    </div>
-  );
-
   return (
     <div className="flex h-full w-full flex-col gap-2 overflow-auto p-2 font-sans">
       <div className="flex shrink-0 flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
@@ -1566,12 +1669,10 @@ export function KpiView() {
               <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} className="h-3.5 w-3.5 cursor-pointer accent-blue-600" />
               Chỉ SKU có bán / có mục tiêu
             </label>
-            <span className="ml-auto text-[11px] text-slate-500">Ô vàng ✎ là leader nhập · Nhấn mã SKU để xem chi tiết</span>
           </div>
         )}
       </div>
 
-      {sourceNote}
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>}
 

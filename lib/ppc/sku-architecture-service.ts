@@ -2410,7 +2410,9 @@ export async function exportBulkFromQueue(
 
   for (const act of actions) {
     const adType = (act.campaign_type || "SP").toUpperCase();
-    const isProduct = act.entity_type === "PRODUCT" || (act.target_keyword && (act.target_keyword.includes("asin=") || act.target_keyword.includes("category=")));
+    const isProduct = act.entity_type === "PRODUCT"
+      || (act.target_keyword && (act.target_keyword.includes("asin=") || act.target_keyword.includes("category=")))
+      || /^(close-match|loose-match|substitutes|complements)$/i.test((act.target_keyword || "").trim());
     const entity = adType === "SD"
       ? (act.action_type === "UPDATE_BUDGET" ? "Campaign" : "Contextual Targeting")
       : (isProduct ? "Product Targeting" : (act.action_type === "UPDATE_BUDGET" ? "Campaign" : "Keyword"));

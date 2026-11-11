@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo } from "react";
 import {
   X,
   MagnifyingGlass,
@@ -14,6 +14,18 @@ import {
   CalendarBlank,
   Megaphone,
 } from "@phosphor-icons/react";
+import type { TargetCurrentState } from "@/lib/ppc/target-current-state";
+import {
+  WINDOW_DAYS,
+  buildTargetHistories,
+  targetKeyOf,
+  verifiedAmazonBid,
+  type ActionKind,
+  type ChangeStep,
+  type TargetHistory,
+  type WindowResult,
+  type WindowState,
+} from "@/lib/ppc/auto-bid-history";
 
 export interface WindowDetail {
   outcome_id: string;
@@ -51,6 +63,8 @@ export interface BidOutcomeActionItem {
   campaign_id: string;
   campaign_name: string;
   campaign_type: string;
+  ad_group_id?: string | null;
+  ad_group_name?: string | null;
   target_id: string;
   target_keyword: string;
   match_type: string;
@@ -70,6 +84,8 @@ export interface BidOutcomeActionItem {
   d30: WindowDetail | null;
   eligible_for_learning: boolean;
   evaluated_at: string | null;
+  /** Trạng thái hiện tại của target từ báo cáo mới nhất (bid, ACOS 30 ngày, SV, rank). */
+  current?: TargetCurrentState | null;
 }
 
 interface OutcomeSummary {
@@ -114,6 +130,7 @@ function getOutcomeMetrics(item: BidOutcomeActionItem) {
   const acos = observed.acos == null ? (sales > 0 ? (spend / sales) * 100 : spend > 0 ? 999 : 0) : number("acos");
   const baselineAcos = baseline.acos == null ? (baselineSales > 0 ? (baselineSpend / baselineSales) * 100 : 0) : Number(baseline.acos || 0);
   return {
+    hasData: Boolean(window),
     spend,
     sales,
     orders: number("orders"),
@@ -138,7 +155,9 @@ function getAcosTone(acos: number, spend: number) {
   return "bg-rose-100 text-rose-700";
 }
 
-function aggregateOutcomeMetrics(items: BidOutcomeActionItem[]) {
+function aggregateOutcomeMetrics(allItems: BidOutcomeActionItem[]) {
+  // Lần chỉnh chưa có báo cáo sau ngày chỉnh không được tính như số 0.
+  const items = allItems.filter((item) => getOutcomeMetrics(item).hasData);
   const total = items.reduce((sum, item) => {
     const metrics = getOutcomeMetrics(item);
     sum.spend += metrics.spend;
@@ -155,6 +174,7 @@ function aggregateOutcomeMetrics(items: BidOutcomeActionItem[]) {
   const baselineAcos = total.baselineSales > 0 ? (total.baselineSpend / total.baselineSales) * 100 : 0;
   return {
     ...total,
+    measured: items.length,
     acos,
     baselineAcos,
     deltaAcos: acos >= 999 ? 999 : acos - baselineAcos,
@@ -437,6 +457,303 @@ export function getOverallStatus(item: BidOutcomeActionItem, daysElapsed: number
   }
 
   return { badge: "Chưa có", color: "text-slate-500 bg-slate-100 border-slate-200" };
+}
+
+const STATE_META: Record<WindowState, { label: string; className: string; dot: string }> = {
+  WIN: { label: "Win", className: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "#059669" },
+  LOSS: { label: "Loss", className: "border-rose-200 bg-rose-50 text-rose-700", dot: "#e11d48" },
+  NEUTRAL: { label: "Bình thường", className: "border-slate-200 bg-slate-100 text-slate-700", dot: "#64748b" },
+  LOW_DATA: { label: "Ít dữ liệu", className: "border-amber-200 bg-amber-50 text-amber-700", dot: "#d97706" },
+  WAITING: { label: "Đang chờ", className: "border-sky-200 bg-sky-50 text-sky-700", dot: "#38bdf8" },
+  OVERDUE: { label: "Thiếu báo cáo", className: "border-orange-200 bg-orange-50 text-orange-700", dot: "#ea580c" },
+  INTERRUPTED: { label: "Bị ngắt", className: "border-slate-200 bg-white text-slate-400", dot: "#cbd5e1" },
+};
+
+const ACTION_STYLE: Record<ActionKind, { card: string; pill: string }> = {
+  REVERT: { card: "border-rose-200 bg-rose-50/60", pill: "bg-rose-600 text-white" },
+  NOT_APPLIED: { card: "border-orange-200 bg-orange-50/60", pill: "bg-orange-600 text-white" },
+  WATCH: { card: "border-amber-200 bg-amber-50/60", pill: "bg-amber-500 text-white" },
+  MISSING_DATA: { card: "border-orange-200 bg-orange-50/60", pill: "bg-orange-500 text-white" },
+  SCALE: { card: "border-emerald-200 bg-emerald-50/60", pill: "bg-emerald-600 text-white" },
+  KEEP: { card: "border-slate-200 bg-slate-50", pill: "bg-slate-600 text-white" },
+  WAIT: { card: "border-sky-200 bg-sky-50/60", pill: "bg-sky-600 text-white" },
+};
+
+const shortDate = (iso: string) => {
+  const [, m, d] = iso.split("-");
+  return m && d ? `${d}/${m}` : iso;
+};
+
+function StateChip({ result, withDays = false }: { result: WindowResult; withDays?: boolean }) {
+  const meta = STATE_META[result.state];
+  const tip = result.state === "WAITING"
+    ? `Có kết quả ${result.days} ngày vào ${shortDate(result.dueDate)}`
+    : result.state === "OVERDUE"
+      ? `Đã quá ${shortDate(result.dueDate)} nhưng chưa có báo cáo`
+      : `${meta.label} sau ${result.days} ngày`;
+  return (
+    <span title={tip} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[10px] font-bold ${meta.className}`}>
+      {withDays && <span className="font-black">{result.days}D</span>}
+      {meta.label}
+    </span>
+  );
+}
+
+/**
+ * Bậc thang bid theo thời gian: chấm trắng là bid ban đầu, mỗi chấm màu là một lần chỉnh (màu = kết quả),
+ * chấm viền cam cuối cùng là bid Amazon đang chạy khi khác bid hệ thống đặt.
+ */
+function BidHistoryChart({
+  steps,
+  amazonBid = null,
+  height = 52,
+  detailed = false,
+}: {
+  steps: ChangeStep<BidOutcomeActionItem>[];
+  amazonBid?: number | null;
+  height?: number;
+  detailed?: boolean;
+}) {
+  if (steps.length === 0) return null;
+  const width = 260;
+  const padX = 22;
+  const padTop = 14;
+  const padBottom = detailed ? 16 : 5;
+  const values = [steps[0].oldBid, ...steps.map((s) => s.newBid)];
+  const last = steps[steps.length - 1];
+  const showAmazon = amazonBid != null && Math.abs(amazonBid - last.newBid) > 0.005;
+  const all = showAmazon ? [...values, amazonBid] : values;
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const range = Math.max(max - min, 0.01);
+  const count = all.length;
+  const xAt = (i: number) => padX + (count === 1 ? 0.5 : i / (count - 1)) * (width - padX * 2);
+  const yAt = (v: number) => padTop + (1 - (v - min) / range) * (height - padTop - padBottom);
+  let path = `M ${xAt(0)} ${yAt(values[0])}`;
+  for (let i = 1; i < values.length; i += 1) path += ` H ${xAt(i)} V ${yAt(values[i])}`;
+  const label = (v: number) => `$${v.toFixed(2)}`;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ height }} role="img" aria-label={`Lịch sử bid: ${values.map(label).join(" → ")}${showAmazon ? `, Amazon đang chạy ${label(amazonBid)}` : ""}`}>
+      <path d={path} fill="none" stroke="#94a3b8" strokeWidth="1.5" />
+      {showAmazon && (
+        <line x1={xAt(values.length - 1)} y1={yAt(last.newBid)} x2={xAt(values.length)} y2={yAt(amazonBid)} stroke="#ea580c" strokeWidth="1.5" strokeDasharray="3 3" />
+      )}
+      <circle cx={xAt(0)} cy={yAt(values[0])} r="3" fill="#fff" stroke="#94a3b8" strokeWidth="1.5">
+        <title>{`Bid ban đầu ${label(values[0])}`}</title>
+      </circle>
+      <text x={xAt(0)} y={yAt(values[0]) - 6} textAnchor="middle" fontSize="9" fill="#94a3b8">{label(values[0])}</text>
+      {steps.map((step, i) => {
+        const isLast = i === steps.length - 1;
+        return (
+          <g key={step.action.action_id}>
+            <circle cx={xAt(i + 1)} cy={yAt(step.newBid)} r="4.5" fill={STATE_META[step.summary.state].dot} stroke="#fff" strokeWidth="1.5">
+              <title>{`${shortDate(step.date)}: ${label(step.oldBid)} → ${label(step.newBid)} (${step.deltaPct >= 0 ? "+" : ""}${step.deltaPct.toFixed(1)}%) · ${STATE_META[step.summary.state].label}`}</title>
+            </circle>
+            {(detailed || isLast) && (
+              <text x={xAt(i + 1)} y={yAt(step.newBid) - 7} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="#1e293b">{label(step.newBid)}</text>
+            )}
+            {detailed && <text x={xAt(i + 1)} y={height - 3} textAnchor="middle" fontSize="9" fill="#94a3b8">{shortDate(step.date)}</text>}
+          </g>
+        );
+      })}
+      {showAmazon && (
+        <g>
+          <circle cx={xAt(values.length)} cy={yAt(amazonBid)} r="4" fill="#fff" stroke="#ea580c" strokeWidth="2">
+            <title>{`Amazon đang chạy ${label(amazonBid)}, khác bid hệ thống đặt ${label(last.newBid)}`}</title>
+          </circle>
+          <text x={xAt(values.length)} y={yAt(amazonBid) - 7} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="#ea580c">{label(amazonBid)}</text>
+        </g>
+      )}
+    </svg>
+  );
+}
+
+/** Chuỗi bid đọc bằng chữ: bid ban đầu → từng lần chỉnh (màu = kết quả lần đó) → bid Amazon nếu khác. */
+function BidTrail({ history }: { history: TargetHistory<BidOutcomeActionItem> }) {
+  const steps = history.steps;
+  const shown = steps.length > 4 ? steps.slice(-3) : steps;
+  const latest = history.latest;
+  const amazonBid = verifiedAmazonBid(latest);
+  const notApplied = amazonBid != null && Math.abs(amazonBid - latest.newBid) > 0.005;
+  return (
+    <span className="flex flex-col gap-1">
+      <span className="flex flex-wrap items-center gap-1 font-mono text-xs">
+        {steps.length > 4 && <span className="text-slate-400" title={`${steps.length - 3} lần chỉnh trước đó`}>…</span>}
+        <span className="text-slate-500">${shown[0].oldBid.toFixed(2)}</span>
+        {shown.map((step) => (
+          <Fragment key={step.action.action_id}>
+            <span className="text-slate-300">→</span>
+            <span
+              title={`${shortDate(step.date)} · ${formatPercent(step.deltaPct, true)} · ${STATE_META[step.summary.state].label}`}
+              className={`rounded border px-1 font-bold ${STATE_META[step.summary.state].className}`}
+            >
+              ${step.newBid.toFixed(2)}
+            </span>
+          </Fragment>
+        ))}
+        {notApplied && (
+          <span className="rounded bg-orange-100 px-1 text-[10px] font-bold text-orange-700" title={`Báo cáo Amazon đến ${shortDate(latest.action.current?.asOf || "")}`}>
+            Amazon ${amazonBid.toFixed(2)}
+          </span>
+        )}
+      </span>
+      <span className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+        <span>Chỉnh {shortDate(latest.date)}</span>
+        <span className={`font-black ${latest.deltaPct >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatPercent(latest.deltaPct, true)}</span>
+        <StateChip result={latest.summary} withDays />
+      </span>
+    </span>
+  );
+}
+
+type ApplyState = { status: "saving" | "done" | "error"; message?: string };
+
+/** Hành động ngay trên dòng: đề xuất + ô bid + Duyệt vào Action Queue. */
+function ActionControl({
+  history,
+  baseBid,
+  state,
+  onApply,
+}: {
+  history: TargetHistory<BidOutcomeActionItem>;
+  baseBid: number;
+  state: ApplyState | undefined;
+  onApply: (bid: number) => void;
+}) {
+  const suggested = history.action.targetBid ?? baseBid;
+  const [value, setValue] = useState(suggested.toFixed(2));
+  const bid = Number(value);
+  const valid = Number.isFinite(bid) && bid >= 0.02;
+  const changed = valid && Math.abs(bid - baseBid) > 0.005;
+  return (
+    <span className="flex flex-col gap-1" onClick={(event) => event.stopPropagation()}>
+      <span className={`w-fit rounded-md px-2 py-0.5 text-[11px] font-black ${ACTION_STYLE[history.action.kind].pill}`} title={history.action.reason}>
+        {history.action.title}
+      </span>
+      {state?.status === "done" ? (
+        <span className="text-[11px] font-bold text-emerald-700">✓ Đã vào Action Queue · ${bid.toFixed(2)}</span>
+      ) : (
+        <span className="flex items-center gap-1">
+          <span className="relative">
+            <span className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-400">$</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0.02"
+              aria-label={`Bid mới cho ${history.keyword}`}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              className="w-[68px] rounded-md border border-slate-300 py-0.5 pl-4 pr-1 font-mono text-xs text-slate-900 focus:border-indigo-500 focus:outline-none"
+            />
+          </span>
+          <button
+            type="button"
+            disabled={!changed || state?.status === "saving"}
+            onClick={() => onApply(bid)}
+            title={changed ? `Đưa bid $${bid.toFixed(2)} vào Action Queue (bid đang chạy $${baseBid.toFixed(2)})` : `Bid đang chạy đã là $${baseBid.toFixed(2)}`}
+            className="rounded-md bg-indigo-600 px-2 py-0.5 text-[11px] font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+          >
+            {state?.status === "saving" ? "Đang lưu…" : "Duyệt"}
+          </button>
+        </span>
+      )}
+      {state?.status === "error" && <span className="text-[10px] font-semibold text-rose-700">{state.message}</span>}
+    </span>
+  );
+}
+
+function VerdictLine({ step }: { step: ChangeStep<BidOutcomeActionItem> }) {
+  const s = step.summary;
+  if (s.state === "WAITING") return <span className="text-[11px] text-sky-700">Có kết quả {shortDate(s.dueDate)}</span>;
+  if (s.state === "OVERDUE" || s.state === "INTERRUPTED") return null;
+  const m = s.metrics;
+  if (!m) return null;
+  return (
+    <span className="font-mono text-[11px] text-slate-600">
+      {m.acosBefore != null && m.acosAfter != null ? `ACOS ${m.acosBefore.toFixed(0)}→${m.acosAfter.toFixed(0)}%` : m.acosAfter != null ? `ACOS ${m.acosAfter.toFixed(0)}%` : "Chưa ra đơn"}
+      {s.reward != null && <b className={s.reward >= 0 ? " text-emerald-700" : " text-rose-700"}> {formatCurrencyUsd(s.reward, true, 1)}</b>}
+    </span>
+  );
+}
+
+function TargetHistoryPanel({ history, onClose }: { history: TargetHistory<BidOutcomeActionItem>; onClose: () => void }) {
+  const [openStep, setOpenStep] = useState<string | null>(null);
+  const style = ACTION_STYLE[history.action.kind];
+  const stepsNewestFirst = [...history.steps].reverse();
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-white">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-base font-black text-slate-900">{history.keyword || "—"}</h3>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            <span className="mr-1.5 rounded bg-slate-100 px-1.5 py-0.5 font-bold uppercase text-slate-600">{history.matchType}</span>
+            {history.campaignName}
+          </p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Đóng chi tiết" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+          <X size={18} weight="bold" />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 thin-scrollbar">
+        <section className={`rounded-xl border p-3.5 ${style.card}`}>
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Hành động bây giờ</span>
+          <p className="mt-1 text-base font-black text-slate-900">{history.action.title}</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-700">{history.action.reason}</p>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+            <span>Bid hiện tại <b className="font-mono text-slate-900">${history.currentBid.toFixed(2)}</b></span>
+            {history.bestStep && (
+              <span>Bid tốt nhất từng đạt <b className="font-mono text-emerald-700">${history.bestStep.newBid.toFixed(2)}</b> ({shortDate(history.bestStep.date)})</span>
+            )}
+          </div>
+        </section>
+
+        <section>
+          <h4 className="mb-1 text-xs font-black text-slate-700">Lịch sử bid · {history.steps.length} lần chỉnh</h4>
+          <div className="rounded-xl border border-slate-200 px-2 py-1">
+            <BidHistoryChart steps={history.steps} amazonBid={verifiedAmazonBid(history.latest)} height={110} detailed />
+          </div>
+        </section>
+
+        <section className="space-y-2">
+          <h4 className="text-xs font-black text-slate-700">Từng lần chỉnh (mới nhất trước)</h4>
+          {stepsNewestFirst.map((step, index) => {
+            const isOpen = openStep === step.action.action_id;
+            return (
+              <div key={step.action.action_id} className="rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={() => setOpenStep(isOpen ? null : step.action.action_id)}
+                  className="flex w-full flex-col gap-2 px-3 py-2.5 text-left transition hover:bg-slate-50"
+                >
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500">{formatDisplayDate(step.date)}</span>
+                    {index === 0 && <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-black text-indigo-700">Gần nhất</span>}
+                    <span className="font-mono text-sm font-black text-slate-900">
+                      ${step.oldBid.toFixed(2)} <ArrowRight size={11} weight="bold" className="inline text-slate-400" /> ${step.newBid.toFixed(2)}
+                    </span>
+                    <span className={`text-xs font-black ${step.deltaPct >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatPercent(step.deltaPct, true)}</span>
+                    <CaretDown size={12} weight="bold" className={`ml-auto text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                  </span>
+                  <span className="flex flex-wrap gap-1">
+                    {WINDOW_DAYS.map((days) => <StateChip key={days} result={step.windows[days]} withDays />)}
+                  </span>
+                  <VerdictLine step={step} />
+                </button>
+                {isOpen && (
+                  <div className="border-t border-slate-200">
+                    <ActionDecisionSupportModal action={step.action} onClose={() => setOpenStep(null)} embedded />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      </div>
+    </div>
+  );
 }
 
 export function PpcAutoBidResultsModal({
@@ -783,17 +1100,61 @@ export function PpcAutoBidResultsModal({
     return map;
   }, [items]);
 
-  const targetHistoryMap = useMemo(() => {
-    const map = new Map<string, BidOutcomeActionItem[]>();
-    for (const item of items) {
-      const key = item.target_id || `${item.campaign_id}_${item.target_keyword}_${item.match_type}`;
-      const current = map.get(key) || [];
-      current.push(item);
-      map.set(key, current);
+  const [applyState, setApplyState] = useState<Record<string, ApplyState>>({});
+
+  // Duyệt bid ngay tại đây: cùng luồng với tab Recommendations (POST /api/ppc/actions → Action Queue).
+  const applyBid = useCallback(async (history: TargetHistory<BidOutcomeActionItem>, bid: number) => {
+    const item = history.latest.action;
+    const oldBid = verifiedAmazonBid(history.latest) ?? history.currentBid;
+    const match = (item.match_type || "").toLowerCase();
+    setApplyState((prev) => ({ ...prev, [history.key]: { status: "saving" } }));
+    try {
+      const res = await fetch("/api/ppc/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeId: item.store_id,
+          items: [{
+            recommendation: {
+              id: `auto-bid-history:${item.target_id}:${Date.now()}`,
+              storeId: item.store_id,
+              storeName: selectedStore || "",
+              adType: item.campaign_type || "SP",
+              recType: bid > oldBid ? "BID_INCREASE" : "BID_DECREASE",
+              targetType: match.includes("exact") ? "EXACT" : match.includes("phrase") ? "PHRASE" : /asin|product|category/.test(match) ? "PRODUCT" : "PHRASE",
+              matchType: item.match_type,
+              keyword: item.target_keyword,
+              campaignName: item.campaign_name,
+              adGroupName: item.ad_group_name || "",
+              sku: item.sku,
+              campaignId: item.campaign_id,
+              adGroupId: item.ad_group_id || "",
+              keywordId: item.target_id,
+              currentBid: oldBid,
+              recommendedBid: history.action.targetBid ?? bid,
+              reason: history.action.reason,
+              estimatedSavings: 0,
+              status: "PENDING",
+              ruleProfile: "auto-bid-history",
+              createdAt: new Date().toISOString(),
+            },
+            userFinalBid: bid,
+            decisionSource: history.action.targetBid != null && Math.abs(history.action.targetBid - bid) < 0.005 ? "RULE_ENGINE" : "USER_EDIT",
+          }],
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) throw new Error(json?.error || json?.message || "Không duyệt được bid.");
+      setApplyState((prev) => ({ ...prev, [history.key]: { status: "done" } }));
+    } catch (error) {
+      setApplyState((prev) => ({ ...prev, [history.key]: { status: "error", message: error instanceof Error ? error.message : "Không duyệt được bid." } }));
     }
-    for (const history of map.values()) {
-      history.sort((a, b) => new Date(a.action_timestamp || a.applied_on || 0).getTime() - new Date(b.action_timestamp || b.applied_on || 0).getTime());
-    }
+  }, [selectedStore]);
+
+  // Lịch sử chỉnh bid của từng target → hành động hiện tại.
+  const historyByTarget = useMemo(() => {
+    const map = new Map<string, TargetHistory<BidOutcomeActionItem>>();
+    for (const history of buildTargetHistories(items)) map.set(history.key, history);
     return map;
   }, [items]);
 
@@ -1096,8 +1457,8 @@ export function PpcAutoBidResultsModal({
             { label: "Cần xử lý", value: summary?.negative || 0, tone: "text-rose-700" },
             { label: "Đang thắng", value: summary?.positive || 0, tone: "text-emerald-700" },
             { label: "Đang theo dõi", value: summary?.observing || 0, tone: "text-sky-700" },
-            { label: "ACoS", value: overviewMetrics.acos >= 999 ? "—" : formatPercent(overviewMetrics.acos), tone: getAcosTone(overviewMetrics.acos, overviewMetrics.spend).split(" ")[1] },
-            { label: "Sales", value: formatCurrencyUsd(overviewMetrics.sales, false, 2), tone: "text-emerald-700" },
+            { label: "ACoS", value: overviewMetrics.measured === 0 || overviewMetrics.acos >= 999 ? "—" : formatPercent(overviewMetrics.acos), tone: getAcosTone(overviewMetrics.acos, overviewMetrics.spend).split(" ")[1] },
+            { label: "Sales", value: overviewMetrics.measured === 0 ? "—" : formatCurrencyUsd(overviewMetrics.sales, false, 2), tone: "text-emerald-700" },
           ].map((metric) => (
             <button
               type="button"
@@ -1221,34 +1582,107 @@ export function PpcAutoBidResultsModal({
                         </span>
                         <span className="text-sm font-bold text-slate-700">{formatDisplayDate(activeDateGroup.date)}</span>
                         <span className="text-sm font-black text-slate-800">{campaign.items.length}</span>
+                        {metrics.measured === 0 ? (
+                          <>
+                            {(() => {
+                              const cur = campaign.items.reduce((sum, item) => {
+                                const state = historyByTarget.get(targetKeyOf(item))?.latest.action.current;
+                                if (state) {
+                                  sum.spend += state.spend;
+                                  sum.sales += state.sales;
+                                  sum.orders += state.orders;
+                                }
+                                return sum;
+                              }, { spend: 0, sales: 0, orders: 0 });
+                              const acos = cur.sales > 0 ? (cur.spend / cur.sales) * 100 : cur.spend > 0 ? 999 : 0;
+                              return (
+                                <>
+                                  <span title="30 ngày gần nhất"><span className="block font-mono text-sm font-semibold text-slate-700">{formatCurrencyUsd(cur.spend, false, 2)}</span><span className="text-[10px] font-semibold text-slate-400">30 ngày</span></span>
+                                  <span title="30 ngày gần nhất"><span className="block font-mono text-sm font-semibold text-slate-700">{formatCurrencyUsd(cur.sales, false, 2)}</span><span className="text-[10px] font-semibold text-slate-400">30 ngày</span></span>
+                                  <span className="text-sm font-bold text-slate-700">{cur.orders}</span>
+                                  <span className={`w-fit rounded-md px-2 py-1 text-sm font-black ${getAcosTone(acos, cur.spend)}`}>{cur.spend === 0 ? "—" : acos >= 999 ? "∞" : formatPercent(acos)}</span>
+                                </>
+                              );
+                            })()}
+                            <span className="text-xs font-semibold text-sky-700">
+                              {(() => {
+                                const due = campaign.items
+                                  .map((item) => historyByTarget.get(targetKeyOf(item))?.latest.summary)
+                                  .find((result) => result?.state === "WAITING");
+                                return due ? `Chờ · ${shortDate(due.dueDate)}` : "Thiếu báo cáo";
+                              })()}
+                            </span>
+                          </>
+                        ) : (
+                          <>
                         <span><span className="block font-mono text-sm font-semibold text-slate-700">{formatCurrencyUsd(metrics.spend, false, 2)}</span><span className={`text-[10px] font-black ${(metrics.deltaSpendPct || 0) <= 0 ? "text-emerald-700" : "text-rose-700"}`}>{metrics.deltaSpendPct == null ? "—" : formatPercent(metrics.deltaSpendPct, true)}</span></span>
                         <span><span className="block font-mono text-sm font-semibold text-slate-700">{formatCurrencyUsd(metrics.sales, false, 2)}</span><span className={`text-[10px] font-black ${(metrics.deltaSalesPct || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{metrics.deltaSalesPct == null ? "—" : formatPercent(metrics.deltaSalesPct, true)}</span></span>
                         <span className="text-sm font-bold text-slate-700">{metrics.orders}</span>
                         <span className={`w-fit rounded-md px-2 py-1 text-sm font-black ${getAcosTone(metrics.acos, metrics.spend)}`}>{metrics.acos >= 999 ? "—" : formatPercent(metrics.acos)}</span>
                         <span className={`w-fit rounded-md px-2 py-1 text-sm font-black ${metrics.deltaAcos <= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{metrics.deltaAcos >= 999 ? "—" : `${metrics.deltaAcos > 0 ? "+" : ""}${metrics.deltaAcos.toFixed(1)} điểm`}</span>
+                          </>
+                        )}
                         <span className="rounded-lg bg-slate-50 px-2 py-1"><BidSparkline values={trend.map((point) => point.acos).filter((value) => value < 999)} height={38} tone={metrics.deltaAcos <= 0 ? "green" : "red"} /></span>
                       </button>
                       {campaignOpen && (
                         <div className="m-3 overflow-x-auto rounded-xl border border-slate-200">
-                          <table className="w-full min-w-[780px] border-collapse text-sm">
-                            <thead className="bg-slate-100 text-left text-sm font-black text-slate-800">
-                              <tr><th className="px-4 py-2.5">Target</th><th className="px-3 py-2.5">Spend</th><th className="px-3 py-2.5">Sales</th><th className="px-3 py-2.5">Orders</th><th className="px-3 py-2.5">ACoS</th><th className="px-3 py-2.5">Δ ACoS</th><th className="px-3 py-2.5">Trend</th></tr>
+                          <table className="w-full min-w-[1280px] border-collapse text-sm">
+                            <thead className="bg-slate-100 text-left text-xs font-black text-slate-700">
+                              <tr>
+                                <th className="px-4 py-2.5">Target</th>
+                                <th className="px-2 py-2.5 text-right" title="Search volume tháng">SV</th>
+                                <th className="px-2 py-2.5 text-right" title="Organic rank">Org</th>
+                                <th className="px-2 py-2.5 text-right" title="Sponsored rank">SP</th>
+                                <th className="px-2 py-2.5 text-right" title="30 ngày gần nhất">Impr</th>
+                                <th className="px-2 py-2.5 text-right" title="30 ngày gần nhất">Clicks</th>
+                                <th className="px-2 py-2.5 text-right" title="30 ngày gần nhất">Spend</th>
+                                <th className="px-2 py-2.5 text-right" title="30 ngày gần nhất">Sales</th>
+                                <th className="px-2 py-2.5 text-right" title="30 ngày gần nhất">Orders</th>
+                                <th className="px-2 py-2.5 text-right" title="30 ngày gần nhất">ACoS</th>
+                                <th className="px-3 py-2.5">Lịch sử bid</th>
+                                <th className="px-3 py-2.5">Hành động</th>
+                              </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                               {campaign.items.map((item) => {
-                                const metrics = getOutcomeMetrics(item);
-                                const rewardTone = getRewardTone(metrics.reward);
-                                const targetKey = item.target_id || `${item.campaign_id}_${item.target_keyword}_${item.match_type}`;
-                                const history = targetHistoryMap.get(targetKey) || [];
+                                const history = historyByTarget.get(targetKeyOf(item));
+                                if (!history) return null;
+                                const cur = history.latest.action.current;
+                                const isSelected = selectedAction != null && targetKeyOf(selectedAction) === history.key;
+                                const paused = cur?.state && cur.state.toLowerCase() !== "enabled";
                                 return (
-                                  <tr key={item.action_id} onClick={() => setSelectedAction(item)} className="cursor-pointer bg-white hover:bg-slate-50">
-                                    <td className="max-w-[280px] px-4 py-3.5 text-sm font-bold text-slate-900"><div className="flex items-center gap-2"><span className="truncate">{item.target_keyword || "—"}</span><span className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-black ${rewardTone.className}`}>{rewardTone.label}</span></div></td>
-                                    <td className="px-3 py-3"><span className="block font-mono">{formatCurrencyUsd(metrics.spend, false, 2)}</span><span className={`text-[10px] font-black ${(metrics.deltaSpendPct || 0) <= 0 ? "text-emerald-700" : "text-rose-700"}`}>{metrics.deltaSpendPct == null ? "—" : formatPercent(metrics.deltaSpendPct, true)}</span></td>
-                                    <td className="px-3 py-3"><span className="block font-mono">{formatCurrencyUsd(metrics.sales, false, 2)}</span><span className={`text-[10px] font-black ${(metrics.deltaSalesPct || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{metrics.deltaSalesPct == null ? "—" : formatPercent(metrics.deltaSalesPct, true)}</span></td>
-                                    <td className="px-3 py-3">{metrics.orders}</td>
-                                    <td className="px-3 py-3"><span className={`inline-block rounded-md px-2 py-1 font-black ${getAcosTone(metrics.acos, metrics.spend)}`}>{metrics.acos >= 999 ? "—" : formatPercent(metrics.acos)}</span></td>
-                                    <td className="px-3 py-3"><span className={`inline-block rounded-md px-2 py-1 font-black ${metrics.deltaAcos <= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{metrics.deltaAcos >= 999 ? "—" : `${metrics.deltaAcos > 0 ? "+" : ""}${metrics.deltaAcos.toFixed(1)} điểm`}</span></td>
-                                    <td className="min-w-[170px] px-3 py-2"><BidSparkline values={history.map((entry) => getOutcomeMetrics(entry).acos).filter((value) => value < 999)} height={30} tone={metrics.deltaAcos <= 0 ? "green" : "red"} /></td>
+                                  <tr key={item.action_id} onClick={() => setSelectedAction(isSelected ? null : item)} className={`cursor-pointer ${isSelected ? "bg-indigo-50/70" : "bg-white hover:bg-slate-50"}`}>
+                                    <td className="max-w-[240px] px-4 py-2.5">
+                                      <span className="block truncate text-sm font-bold text-slate-900" title={history.keyword}>{history.keyword || "—"}</span>
+                                      <span className="mt-0.5 flex items-center gap-1.5 text-[10px]">
+                                        <span className="rounded bg-slate-100 px-1.5 font-bold uppercase text-slate-600">{history.matchType}</span>
+                                        {paused && <span className="rounded bg-slate-200 px-1.5 font-bold text-slate-600">{cur?.state}</span>}
+                                      </span>
+                                    </td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur?.searchVolume != null ? cur.searchVolume.toLocaleString("en-US") : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur?.organicRank != null ? `#${cur.organicRank}` : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur?.sponsoredRank != null ? `#${cur.sponsoredRank}` : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur ? cur.impressions.toLocaleString("en-US") : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur ? cur.clicks.toLocaleString("en-US") : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur ? formatCurrencyUsd(cur.spend, false, 2) : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur ? formatCurrencyUsd(cur.sales, false, 2) : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{cur ? cur.orders : "—"}</td>
+                                    <td className="px-2 py-2.5 text-right">
+                                      {cur && cur.spend > 0 ? (
+                                        <span className={`inline-block rounded-md px-1.5 py-0.5 font-mono text-xs font-black ${getAcosTone(cur.acos ?? 999, cur.spend)}`}>{cur.acos != null ? `${cur.acos.toFixed(0)}%` : "∞"}</span>
+                                      ) : <span className="text-xs text-slate-400">—</span>}
+                                    </td>
+                                    <td className="w-[260px] px-3 py-2">
+                                      <BidTrail history={history} />
+                                    </td>
+                                    <td className="w-[230px] px-3 py-2">
+                                      <ActionControl
+                                        history={history}
+                                        baseBid={verifiedAmazonBid(history.latest) ?? history.currentBid}
+                                        state={applyState[history.key]}
+                                        onApply={(bid) => applyBid(history, bid)}
+                                      />
+                                    </td>
                                   </tr>
                                 );
                               })}
@@ -1266,11 +1700,14 @@ export function PpcAutoBidResultsModal({
 
         {selectedAction && (
           <aside className="min-h-0 border-t border-slate-200 bg-white lg:w-[42%] lg:border-l lg:border-t-0">
-            <ActionDecisionSupportModal
-              action={selectedAction}
-              onClose={() => setSelectedAction(null)}
-              embedded
-            />
+            {(() => {
+              const history = historyByTarget.get(targetKeyOf(selectedAction));
+              return history ? (
+                <TargetHistoryPanel key={history.key} history={history} onClose={() => setSelectedAction(null)} />
+              ) : (
+                <ActionDecisionSupportModal action={selectedAction} onClose={() => setSelectedAction(null)} embedded />
+              );
+            })()}
           </aside>
         )}
         </div>

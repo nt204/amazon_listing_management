@@ -798,8 +798,6 @@ const TH = `${TH_BASE} bg-slate-50 !text-slate-600`;
 const TD = "border border-slate-100 px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap";
 const TDL = "border border-slate-100 px-3 py-1.5 text-left whitespace-nowrap";
 const SEP = "kq-sep border-l-2 border-l-slate-200";
-// Ô không áp dụng: gạch ngang nhạt để khỏi lẫn với ô trống
-const TOTAL_ROW = "bg-slate-100 [&>td]:border-t-2 [&>td]:border-t-slate-300";
 
 // % hoàn vốn: chỉ số; âm = đỏ
 function PctBar({ v }: { v: number | null }) {
@@ -1054,10 +1052,13 @@ function KqkdPeople({
   skus,
   currentMonth,
   role,
+  onJump,
 }: {
   skus: KqkdSku[];
   currentMonth: string;
   role: PersonRole;
+  /** Bấm dòng phôi: sang tab SKU Testing, chỉ hiện SKU của người + phôi đó (đúng bộ lọc trạng thái đang chọn) */
+  onJump: (label: string, skus: string[]) => void;
 }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [q, setQ] = useState("");
@@ -1331,16 +1332,24 @@ function KqkdPeople({
                   {isOpen &&
                     (() => {
                       const rows = phoiOf(p);
+                      const personLabel = p.key === "(trống)" ? "(chưa ghi tên)" : p.name;
+                      const kindLabel = fKind === "win" ? " · WIN" : fKind === "test" ? " · Đang test" : fKind === "loss" ? " · Hủy" : "";
                       return rows.map((f, j) => (
                         <tr
                           key={f.key}
-                          className={`acc-rise bg-white hover:!bg-amber-50/50 [&_td]:!text-slate-600 ${j === rows.length - 1 ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""}`}
+                          onClick={() =>
+                            onJump(`${personLabel} · ${f.key === "(trống)" ? "(chưa ghi phôi)" : f.name}${kindLabel}`, f.skus.map((s) => s.sku))
+                          }
+                          title="Xem các SKU của phôi này ở tab SKU Testing"
+                          className={`acc-rise group/phoi cursor-pointer bg-white hover:!bg-amber-50/50 [&_td]:!text-slate-600 ${j === rows.length - 1 ? "[&_td]:border-b-2 [&_td]:border-b-blue-200" : ""}`}
                           style={{ animationDelay: `${Math.min(j * 30, 400)}ms` }}
                         >
                           <td className={`${TD} !text-center !text-slate-300`}>{j + 1}</td>
                           <td className={`${TDL} pl-8`}>
                             <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-slate-300 align-middle" />
-                            <span className={f.key === "(trống)" ? "italic !text-slate-400" : ""}>{f.key === "(trống)" ? "(chưa ghi phôi)" : f.name}</span>
+                            <span className={`group-hover/phoi:!text-blue-700 group-hover/phoi:underline ${f.key === "(trống)" ? "italic !text-slate-400" : ""}`}>
+                              {f.key === "(trống)" ? "(chưa ghi phôi)" : f.name}
+                            </span>
                           </td>
                           <td className={`${TD} ${SEP}`}>{f.n}</td>
                           <td className={`${TD} ${zc(f.due)}`}>{f.due}</td>
@@ -1711,6 +1720,7 @@ export function KqkdView() {
     handleMode("skus");
   };
 
+
   // Bảng tháng: mở một tháng ra chia theo Phôi (mặc định) hoặc theo người (PIC Idea / PIC MKT / Design).
   // Số tổng của tháng giữ nguyên; chỉ các dòng con đổi cách gom. Theo người: WIN = số SKU "Phát triển" (chỉ xem, không điền).
   const [breakdown, setBreakdown] = useState<"phoi" | PersonRole>("phoi");
@@ -1757,6 +1767,20 @@ export function KqkdView() {
       return { ...e, rows };
     });
   }, [evals, evalPool, breakdown]);
+
+  // SKU của 1 dòng con trong bảng tháng: theo Phôi, hoặc theo người khi đang chia theo PIC Idea / PIC MKT / Design
+  const groupSkus = (pool: KqkdEvalSku[], monthOf: (s: KqkdEvalSku) => string | null, month: string, name: string) => {
+    const names = breakdown === "phoi" ? null : personNames(pool, breakdown);
+    const groupOf = (s: KqkdEvalSku) =>
+      names && breakdown !== "phoi"
+        ? names.get(personKey(s[breakdown]) || "(trống)") || "(chưa ghi tên)"
+        : s.product_type || "(trống)";
+    return pool.filter((s) => monthOf(s) === month && groupOf(s) === name).map((s) => s.sku);
+  };
+  const jumpListingGroup = (month: string, name: string) =>
+    jumpToSkus(`${name} · listing T${monthNum(month)}`, groupSkus(baseSkus, (s) => s.listing_month, month, name));
+  const jumpEvalGroup = (month: string, name: string) =>
+    jumpToSkus(`${name} · đánh giá T${monthNum(month)}`, groupSkus(evalPool, (s) => s.eval_month, month, name));
 
   // Một bảng chung theo tháng: phần Listing (SKU listing tháng đó) + phần Đánh giá (SKU đến hạn đánh giá tháng đó).
   // Dòng phôi = hợp các phôi của hai phần; phần nào không có phôi đó thì để trống. Tháng trống liền nhau gộp một dòng.
@@ -1989,9 +2013,14 @@ export function KqkdView() {
                 {kpiPreset.outside ? ` + ${kpiPreset.outside} SKU năm trước` : ""})
                 <button
                   type="button"
-                  onClick={() => setKpiPreset(null)}
+                  onClick={() => {
+                    // Bỏ lọc và quay lại Tổng quan tháng
+                    setKpiPreset(null);
+                    handleMode("overview");
+                  }}
                   className="grid h-6 w-6 cursor-pointer place-items-center rounded-md hover:bg-blue-100"
-                  aria-label="Bỏ lọc từ Tổng quan"
+                  aria-label="Bỏ lọc, quay lại Tổng quan tháng"
+                  title="Bỏ lọc, quay lại Tổng quan tháng"
                 >
                   <XIcon size={10} weight="bold" />
                 </button>
@@ -2174,7 +2203,8 @@ export function KqkdView() {
                 </button>
               </div>
               {/* table-fixed + colgroup: độ rộng cột cố định, mở/đóng tháng không làm bảng co giãn */}
-              <table className="w-full min-w-[960px] table-fixed border-collapse text-[13px] [&_td]:py-2.5 [&_td]:!text-[13px]">
+              {/* Đường giữa tên cột và dòng Tổng: kẻ thường (bỏ nét đậm chung của lưới đen) */}
+              <table className="w-full min-w-[960px] table-fixed border-collapse text-[13px] [&_td]:py-2.5 [&_td]:!text-[13px] [&_thead_th]:![border-bottom-width:1px]">
                 <colgroup>
                   <col className="w-[6%]" />
                   <col className="w-[16%]" />
@@ -2251,7 +2281,13 @@ export function KqkdView() {
                     return (
                       <Fragment key={row.month}>
                         <tr
-                          className={`cursor-pointer transition-colors duration-150 hover:!bg-amber-50/60 ${open ? "bg-blue-50 [&>td]:!font-bold [&>td]:!text-slate-900" : stripe}`}
+                          // Tháng đóng: các dòng phôi ẩn (cao 0) nằm giữa viền dưới tháng này và viền trên tháng sau → 2 nét chồng
+                          // thành đường đậm. Bỏ viền dưới của tháng đóng để chỉ còn 1 nét mảnh; tháng mở thì kẻ đậm viền trên.
+                          className={`cursor-pointer transition-colors duration-150 hover:!bg-amber-50/60 ${
+                            open
+                              ? "bg-blue-50 [&>td]:!font-bold [&>td]:!text-slate-900 [&>td]:!border-t-2"
+                              : `${stripe} ${childN > 0 ? "[&>td:not([rowspan])]:!border-b-0" : ""}`
+                          }`}
                           onClick={() => toggleMonth(row.month)}
                         >
                           <td
@@ -2313,11 +2349,16 @@ export function KqkdView() {
                               <Slide open={open}>{"\u00a0"}</Slide>
                             </td>
                           );
-                          const name = (text: string) => (
-                            <td className={`${TDL} ${SEP} ${cell}`}>
+                          // Bấm dòng con (1 phôi / 1 người) → sang SKU Testing lọc đúng các SKU đó
+                          const goL = open && lr ? () => jumpListingGroup(row.month, lr.phoi) : undefined;
+                          const goR = open && er && e ? () => jumpEvalGroup(e.month, er.phoi) : undefined;
+                          const click = (go?: () => void) =>
+                            go ? { onClick: go, title: "Xem các SKU này ở SKU Testing", className: "cursor-pointer" } : { className: "" };
+                          const name = (text: string, go?: () => void) => (
+                            <td onClick={go} className={`${TDL} ${SEP} ${cell} ${go ? "cursor-pointer hover:!text-blue-700 hover:underline" : ""}`}>
                               <Slide open={open} className="truncate pl-5" >
                                 <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-slate-300 align-middle" />
-                                <span title={text}>{text}</span>
+                                <span title={go ? `${text} — bấm để xem các SKU ở SKU Testing` : text}>{text}</span>
                               </Slide>
                             </td>
                           );
@@ -2331,14 +2372,14 @@ export function KqkdView() {
                             >
                               {lr ? (
                                 <>
-                                  {name(lr.phoi)}
-                                  <td className={`${TD} ${cell}`}>
+                                  {name(lr.phoi, goL)}
+                                  <td onClick={goL} className={`${TD} ${cell} ${click(goL).className}`}>
                                     <Slide open={open}>{lr.n}</Slide>
                                   </td>
-                                  <td className={`${TD} ${cell}`}>
+                                  <td onClick={goL} className={`${TD} ${cell} ${click(goL).className}`}>
                                     <Slide open={open}>{fmtUsd(lr.von)}</Slide>
                                   </td>
-                                  <td className={`${TD} ${cell}`}>
+                                  <td onClick={goL} className={`${TD} ${cell} ${click(goL).className}`}>
                                     <Slide open={open}>
                                       <PctBar v={ratio(lr.hoanVon, lr.von)} />
                                     </Slide>
@@ -2349,11 +2390,11 @@ export function KqkdView() {
                               )}
                               {er && e ? (
                                 <>
-                                  {name(er.phoi)}
-                                  <td className={`${TD} ${cell}`}>
+                                  {name(er.phoi, goR)}
+                                  <td onClick={goR} className={`${TD} ${cell} ${click(goR).className}`}>
                                     <Slide open={open}>{er.n}</Slide>
                                   </td>
-                                  <td className={`${TD} ${cell}`}>
+                                  <td onClick={goR} className={`${TD} ${cell} ${click(goR).className}`}>
                                     <Slide open={open}>{fmtTarget(er.n * WIN_TARGET_RATE)}</Slide>
                                   </td>
                                   <td className={`${TD} ${cell}`}>
@@ -2373,7 +2414,7 @@ export function KqkdView() {
                                       )}
                                     </Slide>
                                   </td>
-                                  <td className={`${TD} text-center ${cell}`}>
+                                  <td onClick={goR} className={`${TD} text-center ${cell} ${click(goR).className}`}>
                                     <Slide open={open}>
                                       <RatePill v={er.win != null && (!byPerson || e.due) ? ratio(er.win, er.n) : null} />
                                     </Slide>
@@ -2397,6 +2438,7 @@ export function KqkdView() {
               skus={baseSkus}
               currentMonth={currentMonth}
               role={peopleRole}
+              onJump={jumpToSkus}
             />
           </AccountingViewTransition>
         )}
@@ -2457,7 +2499,8 @@ export function KqkdView() {
                     ))
                   )}
                 </tr>
-                <tr className={TOTAL_ROW}>
+                {/* Dòng Tổng ngay dưới tên cột: kẻ thường (không dùng viền trên đậm của TOTAL_ROW) */}
+                <tr className="bg-slate-100">
                   <td className={`${TDL} font-semibold sticky left-0 z-30 w-[40px] min-w-[40px] max-w-[40px] !px-1 text-center bg-slate-100`}>Tổng</td>
                   <td className={`${TDL} font-semibold sticky left-[40px] z-30 w-[180px] min-w-[180px] max-w-[180px] bg-slate-100`}>
                     {phoiCount.shown}

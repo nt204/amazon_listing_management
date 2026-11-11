@@ -113,6 +113,30 @@ body {
   border-bottom: 2px solid #000;
 }
 
+/* PPC (acc-grid-soft): đường kẻ thường nhạt hơn cho dễ nhìn (bảng PPC nhiều cột, nhiều dòng);
+   đường ngăn tiêu đề với giá trị vẫn đậm đen. */
+.acc-black-grid.acc-grid-soft table th,
+.acc-black-grid.acc-grid-soft table td,
+.acc-black-grid.acc-grid-soft table tr,
+.acc-black-grid.acc-grid-soft table thead,
+.acc-black-grid.acc-grid-soft table tbody,
+.acc-black-grid.acc-grid-soft table tfoot {
+  border-color: #c3cad5 !important;
+}
+.acc-black-grid.acc-grid-soft table th:not(:last-child),
+.acc-black-grid.acc-grid-soft table td:not(:last-child) {
+  border-right-color: #c3cad5;
+}
+.acc-black-grid.acc-grid-soft table .ppc-frozen-cell {
+  box-shadow: inset -1px 0 0 0 #c3cad5;
+}
+.acc-black-grid.acc-grid-soft table .ppc-frozen-boundary {
+  box-shadow: inset -1px 0 0 0 #c3cad5, 4px 0 6px -2px rgba(15, 23, 42, 0.08);
+}
+.acc-black-grid.acc-grid-soft table thead tr:last-child th {
+  border-bottom-color: #000 !important;
+}
+
 /* Ô chỉ có dấu gạch giữ chỗ ("—") → để trống (AccBlackGrid gắn data-acc-blank) */
 .acc-black-grid table td[data-acc-blank],
 .acc-black-grid table td[data-acc-blank] * {

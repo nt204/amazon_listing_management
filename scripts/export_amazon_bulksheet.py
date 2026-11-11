@@ -71,7 +71,9 @@ def export_bulksheet(recommendations, output_path=None):
         is_product_target = (
             target_type in ("PRODUCT", "PRODUCT TARGETING", "TARGETING") or
             "asin=" in keyword_text.lower() or
-            "category=" in keyword_text.lower()
+            "category=" in keyword_text.lower() or
+            # Target của camp Auto: Amazon ghi ở dòng Product Targeting (biểu thức close-match, substitutes...)
+            keyword_text.strip().lower() in ("close-match", "loose-match", "substitutes", "complements")
         )
 
         source_match_type = str(rec.get("matchType") or rec.get("match_type") or "").strip().lower()

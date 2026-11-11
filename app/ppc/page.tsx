@@ -25,7 +25,7 @@ export default async function PpcPage({
   const params = await searchParams;
 
   return (
-    <AccBlackGrid className="font-accounting-system min-h-screen bg-slate-50">
+    <AccBlackGrid className="acc-grid-soft font-accounting-system min-h-screen bg-slate-50">
       <PpcDashboard
         actor={actor}
         initialTab={params.tab as any}

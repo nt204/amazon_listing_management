@@ -3,6 +3,7 @@ import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { evaluatePendingActionOutcomes } from "@/lib/ppc/action-outcome-evaluator";
 import { resolveStoreId } from "@/lib/ppc/sku-architecture-service";
+import { currentStateKey, loadTargetCurrentStates } from "@/lib/ppc/target-current-state";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,7 @@ export async function GET(request: Request) {
              outcome.baseline, outcome.observed, outcome.comparison,
              outcome.evidence_quality, outcome.evaluated_at,
              action.store_id, action.campaign_id, action.campaign_name, action.campaign_type,
+             action.ad_group_id, action.ad_group_name,
              action.target_id, action.target_keyword, action.match_type, action.sku,
              action.old_value, action.system_suggested_value, action.final_value,
              action.status as action_status, action.approved_by,
@@ -72,6 +74,8 @@ export async function GET(request: Request) {
           campaign_id: r.campaign_id,
           campaign_name: r.campaign_name,
           campaign_type: r.campaign_type,
+          ad_group_id: r.ad_group_id,
+          ad_group_name: r.ad_group_name,
           target_id: r.target_id,
           target_keyword: r.target_keyword,
           match_type: r.match_type,
@@ -306,7 +310,19 @@ export async function GET(request: Request) {
     }
 
     // Apply pagination
-    const paginatedItems = filteredActions.slice(offset, offset + limit);
+    const pageItems = filteredActions.slice(offset, offset + limit);
+
+    // Trạng thái hiện tại của target (bid, ACOS 30 ngày, SV, rank) để đặt cạnh lịch sử chỉnh bid.
+    let paginatedItems = pageItems;
+    try {
+      const currentStates = await loadTargetCurrentStates(sql, pageItems);
+      paginatedItems = pageItems.map((item) => ({
+        ...item,
+        current: currentStates.get(currentStateKey(item.store_id, item.target_id)) ?? null,
+      }));
+    } catch (error) {
+      console.warn("[action-outcomes] load target current state failed", error);
+    }
 
     return compressedJson(request, {
       success: true,

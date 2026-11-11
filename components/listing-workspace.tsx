@@ -122,7 +122,7 @@ interface ListingWorkspaceProps {
 }
 
 type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
-type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "phoi" | "rules";
+type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "manual_bid" | "phoi" | "rules";
 type PpcDashboardTab = "overview" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
 type AccountingSection =
   | "overview"
@@ -553,6 +553,27 @@ function WorkspaceSidebar({
                       }`}
                     />
                     <span>Đề Xuất &amp; Auto Bid</span>
+                  </button>
+
+                  {/* Mục 5: Manual Bid */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("manual_bid");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
+                      ppcSection === "manual_bid"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
+                        ppcSection === "manual_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Manual Bid</span>
                   </button>
 
                   {/* Phân cách danh mục cấu hình */}
@@ -1183,7 +1204,7 @@ export function ListingWorkspace({
 
       const effectiveView = urlView || savedView;
       const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban"];
-      const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "phoi", "rules"];
+      const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "manual_bid", "phoi", "rules"];
       const validDashboardTabs: PpcDashboardTab[] = ["overview", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
       const validAccountingSections: AccountingSection[] = [
         "overview",
@@ -1446,6 +1467,8 @@ export function ListingWorkspace({
                             ? "Amazon PPC - Lên Campaign Sale KW"
                             : ppcSection === "auto_bid"
                               ? "Amazon PPC - Đề Xuất & Auto Bid"
+                              : ppcSection === "manual_bid"
+                                ? "Amazon PPC - Manual Bid"
                               : ppcDashboardTab === "campaigns"
                                 ? "Amazon PPC - Quản Lý Campaign"
                                 : ppcDashboardTab === "targets"
@@ -1565,7 +1588,7 @@ export function ListingWorkspace({
               />
             </div>
           ) : viewMode === "ppc" ? (
-            <AccBlackGrid className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
+            <AccBlackGrid className="acc-grid-soft font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
               {ppcSection === "phoi" ? (
                 <PpcCostMasterStandalone />
               ) : ppcSection === "rules" ? (
@@ -1583,7 +1606,9 @@ export function ListingWorkspace({
                         ? "sale_kw"
                         : ppcSection === "auto_bid"
                           ? "recommendations"
-                          : undefined
+                          : ppcSection === "manual_bid"
+                            ? "manual_bid"
+                            : undefined
                   }
                   initialTab={
                     ppcSection === "negative_keyword"
@@ -1592,7 +1617,9 @@ export function ListingWorkspace({
                         ? "sale_kw"
                         : ppcSection === "auto_bid"
                           ? "recommendations"
-                          : ppcDashboardTab
+                          : ppcSection === "manual_bid"
+                            ? "manual_bid"
+                            : ppcDashboardTab
                   }
                   activeTabProp={
                     ppcSection === "dashboard" ? ppcDashboardTab : undefined

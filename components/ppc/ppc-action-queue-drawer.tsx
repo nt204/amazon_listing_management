@@ -1366,15 +1366,7 @@ export function PpcActionQueueDrawer({
 
             {/* SKU Groups & Targets Table (Tự động gom theo SKU) */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between px-1 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-extrabold text-slate-800">
-                    ĐÃ GOM THEO SKU &amp; CHIẾN DỊCH ({skuGroups.length} SKU)
-                  </span>
-                  <span className="text-[11px] text-slate-500">
-                    (Click vào từng SKU và Chiến dịch để xem chi tiết các target)
-                  </span>
-                </div>
+              <div className="flex items-center justify-end px-1 text-xs">
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"

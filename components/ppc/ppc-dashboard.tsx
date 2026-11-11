@@ -50,6 +50,7 @@ import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
 import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcFloatingActionQueue } from "./ppc-floating-action-queue";
+import { PpcManualBidView } from "./ppc-manual-bid-view";
 import { PpcSettingsTab } from "./ppc-settings-tab";
 import { PpcFileManagerModal } from "./ppc-file-manager-modal";
 import { PpcNotificationPopover } from "./ppc-notification-popover";
@@ -95,13 +96,13 @@ import { usePpcFrozenColumns } from "./use-ppc-frozen-columns";
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
-  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings";
+  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
   initialStore?: string;
   actor?: RequestActor;
   navNonce?: number;
-  standaloneTab?: "st_campaigns" | "st_optimization" | "sale_kw" | "recommendations" | "outcomes";
-  activeTabProp?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings";
+  standaloneTab?: "st_campaigns" | "st_optimization" | "sale_kw" | "recommendations" | "manual_bid" | "outcomes";
+  activeTabProp?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings";
   onTabChange?: (tab: string) => void;
   onOpenMobileNav?: () => void;
   headerTitle?: string;
@@ -353,7 +354,7 @@ export function PpcDashboard({
 
   // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Campaigns -> ST Optimization -> Sale KW | SKU parallel view | Settings)
   const [activeTab, setActiveTabState] = useState<
-    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings"
+    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings"
   >(standaloneTab || activeTabProp || initialTab || "overview");
 
   const setActiveTab = useCallback((tab: any) => {
@@ -373,6 +374,7 @@ export function PpcDashboard({
       st_optimization: "Amazon PPC - Negative Keyword (ST Optimization)",
       sale_kw: "Amazon PPC - Lên Campaign Sale KW",
       recommendations: "Amazon PPC - Đề Xuất & Auto Bid",
+      manual_bid: "Amazon PPC - Manual Bid",
       outcomes: "Amazon PPC - Đánh Giá Bid",
       alerts: "Amazon PPC - Cảnh Báo",
       settings: "Amazon PPC - Cài Đặt",
@@ -396,7 +398,7 @@ export function PpcDashboard({
     if (standaloneTab || initialTab) return;
     try {
       const urlParam = new URLSearchParams(window.location.search).get("tab") as any;
-      const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns", "st_optimization", "sale_kw", "alerts", "recommendations", "outcomes", "settings"];
+      const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns", "st_optimization", "sale_kw", "alerts", "recommendations", "manual_bid", "outcomes", "settings"];
       if (urlParam && validTabs.includes(urlParam)) {
         setActiveTab(urlParam);
         return;
@@ -758,6 +760,7 @@ export function PpcDashboard({
     | "sale_kw"
     | "alerts"
     | "recommendations"
+    | "manual_bid"
     | "outcomes"
     | "settings"
     | null
@@ -794,6 +797,7 @@ export function PpcDashboard({
     | "sale_kw"
     | "alerts"
     | "recommendations"
+    | "manual_bid"
     | "outcomes"
     | "settings"
   ) => {
@@ -1366,7 +1370,7 @@ export function PpcDashboard({
   }, [selectedStore, selectedSku, selectedDays, includePausedRecs]);
 
   useEffect(() => {
-    if (activeTab === "recommendations") return;
+    if (activeTab === "recommendations" || activeTab === "manual_bid") return;
     groupedRecRequestRef.current?.controller.abort();
   }, [activeTab]);
 
@@ -1731,7 +1735,7 @@ export function PpcDashboard({
       if (activeTab === "skus") {
         void loadSkuEconomics();
       }
-    } else if (activeTab === "recommendations") {
+    } else if (activeTab === "recommendations" || activeTab === "manual_bid") {
       // Bảng SKU đầy đủ (overview chỉ trả top 10) để có dailyTrend cho cột Trend (7D)
       if (selectedStore !== "ALL" && (!loadedSectionsRef.current.has("skus") || (skuPerformance.length <= 10 && (detailCounts?.skus ?? 0) > 10))) {
         void loadSection("skus", { force: loadedSectionsRef.current.has("skus") }).catch(() => undefined);
@@ -5530,6 +5534,25 @@ export function PpcDashboard({
         </div>
       )}
 
+      {mountedTabs.has("manual_bid") && (
+        <div className={activeTab === "manual_bid" ? "" : "hidden"}>
+          <PpcManualBidView
+            key={selectedStore}
+            isActive={activeTab === "manual_bid"}
+            selectedStore={selectedStore}
+            selectedDays={selectedDays}
+            actionQueue={actionQueue}
+            skuGroups={skuRecGroups}
+            skuTrends={skuTrendBySku}
+            onOpenSkuTrend={setSelectedSkuTrendModal}
+            notify={notify}
+            onQueued={() => {
+              void loadActionQueue(selectedStore);
+              void loadActionQueueCount(selectedStore);
+            }}
+          />
+        </div>
+      )}
 
       {/* MODAL UPLOAD EXCEL FILE */}
       {showUploadModal && (
