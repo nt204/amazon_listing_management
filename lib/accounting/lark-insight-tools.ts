@@ -14,10 +14,15 @@ import {
   classifyStock,
   mondayOf,
   monthPace,
+  overstockSku,
+  paceWindowStart,
   planRestock,
+  salesPace,
+  sameDayLastYear,
   shiftDate,
   upcomingEvents,
   type MonthUnits,
+  type SeasonSource,
   skuTarget,
   summarizeKpi,
   vnDate,
@@ -254,8 +259,15 @@ export async function loadStockRows(storeId: string, th: StockThresholds) {
   const stopped = (status: string | null) => /^(off|hủy|huỷ|huy)$/i.test(String(status ?? "").trim());
   const all = [...rows.values()];
   const items = all.filter((r) => !stopped(r.status)).map((r) => ({ ...r, ...classifyStock(r, th) }));
-  return { items, snapshot, salesStart, salesEnd, stoppedCount: all.length - items.length };
+  // SKU OFF / Hủy vẫn còn tồn: dùng cho đánh giá dư thừa (không còn bán nhưng vẫn nằm kho)
+  const stoppedItems = all.filter((r) => stopped(r.status));
+  return { items, stoppedItems, snapshot, salesStart, salesEnd, stoppedCount: stoppedItems.length };
 }
+
+const INVENTORY_PACE_GUIDE =
+  "Viết NGẮN, dễ hiểu. Mở đầu 1–2 câu: tồn chốt ngày, tình hình bán cả store (tinh_hinh_ban_ca_store): " +
+  "kỳ so sánh bán N units, cùng kỳ năm ngoái M (±x%, ghi '(ước)' nếu nguồn là ước từ tổng tháng) → đánh giá; " +
+  "dự kiến cả tháng ~K (năm ngoái cả tháng L). Không có năm ngoái thì nói xu hướng 14 ngày gần nhất. ";
 
 export async function getInventoryStatus(params: {
   storeQuery?: string;
@@ -280,6 +292,7 @@ export async function getInventoryStatus(params: {
     };
   }
 
+  const demand = salesEnd ? await loadDemandContext(store.id, salesEnd) : null;
   const notes: string[] = [];
   if (salesEnd && salesEnd < shiftDate(latest, -2)) {
     notes.push(`Đơn FBA của ${store.name} mới có tới ${vnDate(salesEnd)} (dữ liệu chung tới ${vnDate(latest)}): tốc độ bán tính tới ngày đó.`);
@@ -301,6 +314,15 @@ export async function getInventoryStatus(params: {
     so_ngay_con_ban: x.daysOfCover,
     so_ngay_tinh_ca_hang_ve: x.daysWithInbound,
     goi_y_nhap_them: x.suggestUnits || undefined,
+    ...(() => {
+      if (!demand || x.unitsPerDay <= 0) return {};
+      const p = demand.paceOf(x.sku, x.sellable, x.nextArrival);
+      return {
+        du_kien_het_hang: x.sellable > 0 ? p.stockoutDate ?? undefined : undefined,
+        hang_ve_kip_truoc_khi_het: p.arrivesInTime ?? undefined,
+        nhip_ban: shapePace(p),
+      };
+    })(),
   });
 
   const window = { tu: salesStart, den: salesEnd, so_ngay: th.velocityDays };
@@ -315,6 +337,13 @@ export async function getInventoryStatus(params: {
       message: hit.length ? undefined : `Không thấy SKU "${params.sku}" trong tồn kho / đơn FBA của ${store.name}.`,
       skus: hit.slice(0, 10).map(shape),
       ghi_chu: notes,
+      instructions:
+        "Trả lời ngắn, dễ hiểu, tối đa ~6 dòng mỗi SKU: " +
+        "1) Tồn: sẵn bán N, đang về M (ngày về), còn bán ~X ngày, dự kiến hết DD/MM (kịp/không kịp hàng về). " +
+        "2) Bán tới hiện tại: kỳ so sánh bán N (x/ngày 14 ngày gần nhất). " +
+        "3) So năm ngoái: cùng kỳ M → ±x% → đánh giá (Bứt tốc / Ổn định / Chậm lại); số năm ngoái 'ước' thì ghi (ước). " +
+        "Không có năm ngoái thì so 14 ngày gần nhất với 14 ngày trước đó. " +
+        "4) Dự báo: cả tháng ~K units (năm ngoái cả tháng L); gợi ý nhập thêm nếu có. Không tự tính lại số.",
     };
   }
 
@@ -336,6 +365,7 @@ export async function getInventoryStatus(params: {
       can_nhap: `tính cả hàng đang chuyển kho + lô đang về vẫn < ${th.reorderDays} ngày`,
       goi_y_nhap_them: `đủ bán ${th.reorderDays} ngày theo tốc độ bán hiện tại`,
     },
+    tinh_hinh_ban_ca_store: demand ? shapePace(demand.storePace(items.reduce((t, x) => t + x.sellable, 0))) : undefined,
     tong_quan: {
       het_hang: count("het_hang"),
       sap_het: count("sap_het"),
@@ -348,8 +378,10 @@ export async function getInventoryStatus(params: {
     con_lai: Math.max(0, list.length - limit),
     ghi_chu: notes,
     instructions:
-      "Nêu ngày chốt tồn và khoảng ngày tính tốc độ bán. Liệt kê đánh số theo mức: Hết hàng → Sắp hết → Cần nhập thêm. " +
-      "Mỗi SKU 1-2 dòng: tồn sẵn bán, bán/ngày, còn bán bao nhiêu ngày, hàng đang về (ngày về), gợi ý nhập thêm. " +
+      INVENTORY_PACE_GUIDE +
+      "Rồi liệt kê đánh số theo mức: Hết hàng → Sắp hết → Cần nhập thêm. Mỗi SKU đúng 2 dòng: " +
+      "(1) tồn sẵn bán · còn bán ~X ngày · dự kiến hết DD/MM · hàng đang về N (ngày về, kịp/không kịp trước khi hết) · gợi ý nhập thêm; " +
+      "(2) nhịp bán: kỳ so sánh bán N vs năm ngoái M (±x%) → đánh giá; dự kiến cả tháng ~K (năm ngoái L). " +
       "Gợi ý nhập chỉ là ước tính theo tốc độ bán, ghi rõ như vậy. Không tự tính lại số.",
   };
 }
@@ -586,7 +618,137 @@ async function monthlyUnits(storeId: string, salesEnd: string) {
   };
   for (const r of orders) if (r.period >= firstFull) put(r.sku, r.period, Number(r.units));
   for (const r of history) if (r.period < firstFull) put(r.sku, r.period, Number(r.units));
-  return { bySku, coveredFrom: firstFull };
+  return { bySku, coveredFrom: firstFull, firstDate };
+}
+
+/**
+ * Dữ liệu bán dùng chung cho tồn kho / gợi ý nhập: units từng ngày 56 ngày gần nhất, units theo tháng (mùa vụ)
+ * theo SKU → nhóm sản phẩm → cả store, và units cùng kỳ năm ngoái của kỳ so sánh (nếu năm ngoái đã có đơn từng ngày).
+ */
+async function loadDemandContext(storeId: string, today: string) {
+  const sql = await getDatabaseClient();
+  const winStart = paceWindowStart(today);
+  const lyStart = sameDayLastYear(winStart);
+  const lyEnd = sameDayLastYear(today);
+  const [monthly, dailyRows, master, lyRows] = await Promise.all([
+    monthlyUnits(storeId, today),
+    sql<Array<{ sku: string; d: string; units: number }>>`
+      SELECT UPPER(TRIM(sku)) AS sku, date::text AS d, SUM(COALESCE(quantity, 1))::float AS units
+      FROM accounting_orders
+      WHERE store_id = ${storeId}
+        AND date > ${shiftDate(today, -HISTORY_DAYS)}::date AND date <= ${today}::date
+        AND fulfillment_channel = 'Amazon'
+        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+        AND COALESCE(TRIM(sku), '') <> ''
+      GROUP BY 1, 2
+    `,
+    sql<Array<{ sku: string; product_type: string | null }>>`
+      SELECT DISTINCT ON (UPPER(TRIM(sku))) UPPER(TRIM(sku)) AS sku, product_type
+      FROM accounting_sku_master
+      WHERE store_id = ${storeId} AND deleted_at IS NULL AND UPPER(COALESCE(loai, 'FBA')) = 'FBA'
+      ORDER BY UPPER(TRIM(sku)), updated_at DESC
+    `,
+    sql<Array<{ sku: string; units: number }>>`
+      SELECT UPPER(TRIM(sku)) AS sku, SUM(COALESCE(quantity, 1))::float AS units
+      FROM accounting_orders
+      WHERE store_id = ${storeId}
+        AND date BETWEEN ${lyStart}::date AND ${lyEnd}::date
+        AND fulfillment_channel = 'Amazon'
+        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+        AND COALESCE(TRIM(sku), '') <> ''
+      GROUP BY 1
+    `,
+  ]);
+
+  // Chuỗi bán từng ngày
+  const dayIndex = new Map<string, number>();
+  for (let i = 0; i < HISTORY_DAYS; i++) dayIndex.set(shiftDate(today, -(HISTORY_DAYS - 1) + i), i);
+  const daily = new Map<string, number[]>();
+  const storeDaily = new Array(HISTORY_DAYS).fill(0);
+  for (const r of dailyRows) {
+    const i = dayIndex.get(r.d);
+    if (i == null) continue;
+    let arr = daily.get(r.sku);
+    if (!arr) daily.set(r.sku, (arr = new Array(HISTORY_DAYS).fill(0)));
+    arr[i] += Number(r.units);
+    storeDaily[i] += Number(r.units);
+  }
+
+  // Mùa vụ theo nhóm sản phẩm và cả store
+  const typeOf = new Map(master.map((m) => [m.sku, m.product_type?.trim() || null]));
+  const byType = new Map<string, MonthUnits>();
+  const storeMonths: MonthUnits = {};
+  for (const [sku, months] of monthly.bySku) {
+    const t = typeOf.get(sku);
+    for (const [p, u] of Object.entries(months)) {
+      storeMonths[p] = (storeMonths[p] ?? 0) + u;
+      if (t) {
+        let m = byType.get(t);
+        if (!m) byType.set(t, (m = {}));
+        m[p] = (m[p] ?? 0) + u;
+      }
+    }
+  }
+  const seasonOf = (sku: string): SeasonSource => {
+    const t = typeOf.get(sku) ?? null;
+    return { sku: monthly.bySku.get(sku) ?? {}, productType: t ? byType.get(t) ?? null : null, store: storeMonths };
+  };
+
+  // Cùng kỳ năm ngoái theo đơn thật chỉ khi đơn đã có từ trước ngày đầu kỳ năm ngoái; không thì để salesPace ước từ tổng tháng
+  const lyCovered = monthly.firstDate <= lyStart;
+  const lyBySku = new Map(lyRows.map((r) => [r.sku, Number(r.units) || 0]));
+  const lyStore = lyRows.reduce((s, r) => s + (Number(r.units) || 0), 0);
+
+  const paceOf = (sku: string, sellable: number, nextArrival: string | null) =>
+    salesPace(
+      {
+        daily: daily.get(sku) ?? new Array(HISTORY_DAYS).fill(0),
+        lastYearWindow: lyCovered ? lyBySku.get(sku) ?? 0 : null,
+        season: seasonOf(sku),
+        sellable,
+        nextArrival,
+      },
+      today,
+    );
+  const storePace = (sellable: number) =>
+    salesPace(
+      {
+        daily: storeDaily,
+        lastYearWindow: lyCovered ? lyStore : null,
+        season: { sku: storeMonths, productType: null, store: storeMonths },
+        sellable,
+        nextArrival: null,
+      },
+      today,
+    );
+
+  return { monthly, daily, typeOf, seasonOf, paceOf, storePace };
+}
+
+const VERDICT_LABEL = {
+  but_toc: "Bứt tốc",
+  on_dinh: "Ổn định",
+  cham_lai: "Chậm lại",
+  it_don: "Ít đơn, chưa đủ để kết luận",
+} as const;
+
+/** Nhịp bán gọn cho bot: kỳ này vs cùng kỳ năm ngoái, xu hướng 14 ngày, dự kiến cả tháng / ngày hết hàng. */
+function shapePace(p: ReturnType<typeof salesPace>) {
+  return {
+    ky_so_sanh: `${vnDate(p.windowStart)}–${vnDate(p.windowEnd)}`,
+    da_ban: p.units,
+    nam_ngoai_cung_ky: p.lastYear,
+    nguon_nam_ngoai: p.lastYearSource === "uoc_tu_tong_thang" ? "ước từ tổng tháng năm ngoái (chưa có đơn từng ngày)" : p.lastYearSource === "don_hang" ? "đơn hàng năm ngoái" : "chưa có dữ liệu năm ngoái",
+    so_voi_nam_ngoai_pct: p.vsLastYearPct,
+    ban_moi_ngay_14_ngay: p.last14PerDay,
+    ban_moi_ngay_14_ngay_truoc: p.prev14PerDay,
+    xu_huong_14_ngay_pct: p.trend14Pct,
+    danh_gia: VERDICT_LABEL[p.verdict],
+    danh_gia_theo: p.verdict === "it_don" ? undefined : p.vsLastYearPct != null ? "so với cùng kỳ năm ngoái" : "14 ngày gần nhất so với 14 ngày trước đó",
+    thang_nay_da_ban: p.monthSoFar,
+    du_kien_ca_thang: p.monthForecast,
+    nam_ngoai_ca_thang: p.lastYearMonth,
+  };
 }
 
 export async function getRestockPlan(params: {
@@ -605,27 +767,8 @@ export async function getRestockPlan(params: {
     return { hasData: false, store: store.name, message: `Chưa có dữ liệu tồn kho (Inventory Ledger) hoặc đơn FBA của ${store.name} nên chưa gợi ý nhập được.` };
   }
   const today = stock.salesEnd;
-  const sql = await getDatabaseClient();
-  const [lead, monthly, dailyRows, master] = await Promise.all([
-    storeLeadTime(store.id),
-    monthlyUnits(store.id, today),
-    sql<Array<{ sku: string; d: string; units: number }>>`
-      SELECT UPPER(TRIM(sku)) AS sku, date::text AS d, SUM(COALESCE(quantity, 1))::float AS units
-      FROM accounting_orders
-      WHERE store_id = ${store.id}
-        AND date > ${shiftDate(today, -HISTORY_DAYS)}::date AND date <= ${today}::date
-        AND fulfillment_channel = 'Amazon'
-        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
-        AND COALESCE(TRIM(sku), '') <> ''
-      GROUP BY 1, 2
-    `,
-    sql<Array<{ sku: string; product_type: string | null }>>`
-      SELECT DISTINCT ON (UPPER(TRIM(sku))) UPPER(TRIM(sku)) AS sku, product_type
-      FROM accounting_sku_master
-      WHERE store_id = ${store.id} AND deleted_at IS NULL AND UPPER(COALESCE(loai, 'FBA')) = 'FBA'
-      ORDER BY UPPER(TRIM(sku)), updated_at DESC
-    `,
-  ]);
+  const [lead, demand] = await Promise.all([storeLeadTime(store.id), loadDemandContext(store.id, today)]);
+  const { monthly, daily, typeOf, seasonOf } = demand;
 
   const clampInt = (v: number | undefined, d: number, min: number, max: number) =>
     v != null && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : d;
@@ -634,34 +777,6 @@ export async function getRestockPlan(params: {
     coverDays: clampInt(params.coverDays, envNum("LARK_RESTOCK_COVER_DAYS", 30), 14, 120),
     z: 1.65,
   };
-
-  // Chuỗi bán từng ngày
-  const dayIndex = new Map<string, number>();
-  for (let i = 0; i < HISTORY_DAYS; i++) dayIndex.set(shiftDate(today, -(HISTORY_DAYS - 1) + i), i);
-  const daily = new Map<string, number[]>();
-  for (const r of dailyRows) {
-    const i = dayIndex.get(r.d);
-    if (i == null) continue;
-    let arr = daily.get(r.sku);
-    if (!arr) daily.set(r.sku, (arr = new Array(HISTORY_DAYS).fill(0)));
-    arr[i] += Number(r.units);
-  }
-
-  // Mùa vụ theo nhóm sản phẩm và cả store
-  const typeOf = new Map(master.map((m) => [m.sku, m.product_type?.trim() || null]));
-  const byType = new Map<string, MonthUnits>();
-  const storeMonths: MonthUnits = {};
-  for (const [sku, months] of monthly.bySku) {
-    const t = typeOf.get(sku);
-    for (const [p, u] of Object.entries(months)) {
-      storeMonths[p] = (storeMonths[p] ?? 0) + u;
-      if (t) {
-        let m = byType.get(t);
-        if (!m) byType.set(t, (m = {}));
-        m[p] = (m[p] ?? 0) + u;
-      }
-    }
-  }
 
   const wanted = params.sku?.trim().toUpperCase();
   const plans = stock.items
@@ -679,7 +794,7 @@ export async function getRestockPlan(params: {
           inTransit: x.inTransit,
           inboundPending: x.inboundPending,
           nextArrival: x.nextArrival,
-          season: { sku: monthly.bySku.get(x.sku) ?? {}, productType: t ? byType.get(t) ?? null : null, store: storeMonths },
+          season: seasonOf(x.sku),
         },
         today,
         settings,
@@ -721,6 +836,12 @@ export async function getRestockPlan(params: {
       trang_thai: p.status,
       nhom: p.productType,
       ban_nen_moi_ngay: p.baseUnitsPerDay,
+      so_voi_nam_ngoai: (() => {
+        const v = demand.paceOf(p.sku, p.sellable, p.nextArrival);
+        if (v.lastYear == null) return "chưa có cùng kỳ năm ngoái";
+        const pct = v.vsLastYearPct == null ? "" : ` (${v.vsLastYearPct >= 0 ? "+" : ""}${v.vsLastYearPct}%)`;
+        return `${vnDate(v.windowStart)}–${vnDate(v.windowEnd)} bán ${v.units} vs năm ngoái ${v.lastYear}${v.lastYearSource === "uoc_tu_tong_thang" ? " (ước)" : ""}${pct} → ${VERDICT_LABEL[v.verdict]}`;
+      })(),
       xu_huong_28_ngay_pct: p.trend28Pct,
       he_so_mua: p.seasonByMonth.map((m) => `${m.period}: x${m.factor} (${levelVi[m.level]}${m.clamped ? ", đã giới hạn — thực tế năm trước còn chênh hơn" : ""})`),
       ton_san_ban: p.sellable,
@@ -741,7 +862,149 @@ export async function getRestockPlan(params: {
     instructions:
       "Mở đầu: store, dữ liệu bán tới ngày, giả định (thời gian chờ hàng X ngày – nguồn, lô mới đủ bán Y ngày), sự kiện mua sắm sắp tới. " +
       "Rồi danh sách đánh số theo hạn đặt hàng: SKU · gợi ý nhập N units · đặt trước ngày DD/MM (hoặc 'đặt ngay') · dự kiến hết hàng DD/MM. " +
-      "Dòng 2 nêu LÝ DO ngắn: bán nền x/ngày, xu hướng, hệ số mùa các tháng (nguồn), tồn + hàng đang về, độ tin cậy. " +
+      "Dòng 2 nêu LÝ DO ngắn: bán nền x/ngày, so với năm ngoái (so_voi_nam_ngoai), xu hướng, hệ số mùa các tháng (nguồn), tồn + hàng đang về, độ tin cậy. " +
       "Đây là GỢI Ý dự báo, không khẳng định; độ tin cậy thấp thì nói rõ. Không tự tính lại số.",
+  };
+}
+
+// ───────────── Xếp hạng tồn kho & nguy cơ dư thừa giữa các store ─────────────
+
+/**
+ * Mọi store (trong phạm vi được xem): tổng tồn, giá trị tồn theo Base Cost, nhu cầu dự báo tới hết năm (mùa vụ),
+ * phần dư thừa ước tính và SKU dư nhiều nhất. Xếp hạng tính sẵn ở đây để bot hỏi lần nào cũng ra cùng một kết quả.
+ */
+export async function getOverstockRanking(params: { storeNames?: string[]; untilDate?: string; topSkus?: number }) {
+  const all = await listStores();
+  const wanted = params.storeNames?.length ? new Set(params.storeNames.map((n) => n.trim().toLowerCase())) : null;
+  const stores = all.filter((s) => !wanted || wanted.has(String(s.name).toLowerCase()));
+  const th = stockThresholds();
+  const topN = Math.min(10, Math.max(1, params.topSkus || 5));
+  const sql = await getDatabaseClient();
+  const isDate = (v?: string) => Boolean(v && /^\d{4}-\d{2}-\d{2}$/.test(v));
+
+  const rows = await Promise.all(
+    stores.map(async (store) => {
+      const stock = await loadStockRows(store.id, th);
+      if (!stock.snapshot || !stock.salesEnd) return { store: store.name, hasData: false as const };
+      const today = stock.salesEnd;
+      const yearEnd = `${today.slice(0, 4)}-12-31`;
+      // "Năm nay": tới 31/12; cuối năm còn < 30 ngày thì tính 30 ngày tới
+      const horizonEnd =
+        isDate(params.untilDate) && params.untilDate! > today
+          ? params.untilDate!
+          : yearEnd > shiftDate(today, 30)
+            ? yearEnd
+            : shiftDate(today, 30);
+      const [demand, costRows] = await Promise.all([
+        loadDemandContext(store.id, today),
+        sql<Array<{ sku: string; cost: number }>>`
+          SELECT DISTINCT ON (UPPER(TRIM(sku))) UPPER(TRIM(sku)) AS sku, basecost_thang::float AS cost
+          FROM accounting_monthly_base_cost
+          WHERE store_id = ${store.id} AND deleted_at IS NULL AND basecost_thang > 0
+          ORDER BY UPPER(TRIM(sku)), period DESC
+        `,
+      ]);
+      const cost = new Map(costRows.map((r) => [r.sku, Number(r.cost) || 0]));
+      const stoppedSet = new Set(stock.stoppedItems.map((x) => x.sku));
+      const skus = [...stock.items, ...stock.stoppedItems]
+        .filter((x) => x.hasBalance !== false)
+        .map((x) => {
+          const o = overstockSku(
+            {
+              daily: demand.daily.get(x.sku) ?? new Array(HISTORY_DAYS).fill(0),
+              season: demand.seasonOf(x.sku),
+              sellable: x.sellable,
+              coming: x.inTransit + x.inboundPending,
+            },
+            today,
+            horizonEnd,
+          );
+          return { sku: x.sku, status: x.status, stopped: stoppedSet.has(x.sku), unit: cost.get(x.sku) ?? null, ...o };
+        })
+        .filter((x) => x.stock > 0);
+
+      const sum = (f: (x: (typeof skus)[number]) => number) => skus.reduce((t, x) => t + f(x), 0);
+      const val = (units: number, unit: number | null) => (unit == null ? 0 : units * unit);
+      const stockUnits = sum((x) => x.stock);
+      const excessUnits = sum((x) => x.excess);
+      const top = skus
+        .filter((x) => x.excess > 0)
+        .sort((a, b) => val(b.excess, b.unit) - val(a.excess, a.unit) || b.excess - a.excess)
+        .slice(0, topN);
+      return {
+        store: store.name,
+        hasData: true as const,
+        snapshot: stock.snapshot,
+        salesEnd: today,
+        horizonEnd,
+        stockUnits,
+        stockValue: sum((x) => val(x.stock, x.unit)),
+        demandUnits: sum((x) => Math.min(x.demand, x.stock)),
+        excessUnits,
+        excessValue: sum((x) => val(x.excess, x.unit)),
+        excessPct: stockUnits > 0 ? excessUnits / stockUnits : 0,
+        deadSkus: skus.filter((x) => x.noSales).length,
+        stoppedWithStock: skus.filter((x) => x.stopped).length,
+        missingCost: skus.filter((x) => x.unit == null).length,
+        top,
+      };
+    }),
+  );
+
+  type Ok = Extract<(typeof rows)[number], { hasData: true }>;
+  const ok = rows.filter((r): r is Ok => r.hasData);
+  if (!ok.length) return { hasData: false, message: "Chưa có dữ liệu tồn kho (Inventory Ledger) của store nào." };
+  const byExcess = [...ok].sort((a, b) => b.excessValue - a.excessValue || b.excessUnits - a.excessUnits);
+  const byStock = [...ok].sort((a, b) => b.stockValue - a.stockValue || b.stockUnits - a.stockUnits);
+  const usd = (v: number) => Math.round(v);
+  const fmt = (v: number) => Math.round(v).toLocaleString("en-US");
+  const notes: string[] = [];
+  const noCost = ok.filter((r) => r.missingCost > 0);
+  if (noCost.length) {
+    notes.push(`Một số SKU chưa có Base Cost nên chưa quy ra $ (${noCost.map((r) => `${r.store}: ${r.missingCost} SKU`).join(", ")}); số units vẫn đủ.`);
+  }
+  const stale = ok.filter((r) => r.snapshot < shiftDate(r.salesEnd, -3));
+  if (stale.length) notes.push(`Tồn kho chốt cũ hơn dữ liệu đơn: ${stale.map((r) => `${r.store} (${vnDate(r.snapshot)})`).join(", ")}.`);
+  const missing = rows.filter((r) => !r.hasData).map((r) => r.store);
+  if (missing.length) notes.push(`Chưa có dữ liệu tồn kho: ${missing.join(", ")}.`);
+
+  return {
+    hasData: true,
+    cach_tinh: {
+      ton: "tồn sẵn bán + đang chuyển kho + lô đang về (gồm cả SKU OFF / Hủy còn tồn)",
+      nhu_cau: "bán dự báo từ ngày có đơn mới nhất tới hết năm: tốc độ nền (40% TB 14 + 40% TB 28 + 20% TB 56 ngày) × hệ số mùa năm trước",
+      du_thua: "tồn − nhu cầu dự báo = phần dự kiến còn nằm kho sau cuối kỳ, quy $ theo Base Cost tháng gần nhất",
+    },
+    xep_hang_ton_nhieu_nhat: byStock.map((r, i) => `${i + 1}. ${r.store}: ${fmt(r.stockUnits)} units ≈ $${fmt(r.stockValue)}`),
+    xep_hang_du_thua: byExcess.map((r, i) => ({
+      hang: i + 1,
+      store: r.store,
+      du_thua_units: r.excessUnits,
+      du_thua_usd: usd(r.excessValue),
+      ty_le_du_thua_pct: Math.round(r.excessPct * 100),
+      ton_units: r.stockUnits,
+      ton_usd: usd(r.stockValue),
+      du_kien_ban_toi: `${vnDate(r.horizonEnd)}: ${fmt(r.demandUnits)} units`,
+      sku_co_ton_khong_ban_56_ngay: r.deadSkus,
+      sku_off_huy_con_ton: r.stoppedWithStock || undefined,
+      ton_chot_ngay: r.snapshot,
+      sku_du_nhieu_nhat: r.top.map((x) => ({
+        sku: x.sku,
+        trang_thai: x.status,
+        ton: x.stock,
+        ban_moi_ngay: x.basePerDay,
+        du_kien_ban_toi_cuoi_ky: x.demand,
+        du_thua: x.excess,
+        du_thua_usd: x.unit == null ? null : usd(x.excess * x.unit),
+        so_ngay_ban_het: x.coverDays ?? (x.noSales ? "không bán" : "> 2 năm"),
+      })),
+    })),
+    ghi_chu: notes,
+    instructions:
+      "Trả lời NGẮN theo đúng thứ hạng đã tính sẵn, KHÔNG tự xếp lại hay suy luận từ vài SKU. " +
+      "1) Tồn nhiều nhất: đọc xep_hang_ton_nhieu_nhat (units + $). " +
+      "2) Nguy cơ dư thừa tới cuối năm theo xep_hang_du_thua, mỗi store 1 dòng: dư ~N units (~$X, Y% tồn), dự kiến bán tới cuối kỳ. " +
+      "3) Store đứng đầu: 3–5 SKU dư nhiều nhất (tồn, bán/ngày, dư, số ngày bán hết). " +
+      "Nói rõ đây là ước tính theo tốc độ bán + mùa vụ năm trước. Nêu ghi_chu nếu có.",
   };
 }

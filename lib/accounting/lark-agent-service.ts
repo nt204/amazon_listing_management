@@ -49,6 +49,7 @@ import {
   getInventoryStatus,
   getKpiProgress,
   getListingJobsStatus,
+  getOverstockRanking,
   getRestockPlan,
   getSkuProfit,
   toAccountingStoreName,
@@ -129,7 +130,7 @@ export function resolveContextualReconciliationLinks(
     add("🎯 Mở KPI kinh doanh", "https://ncehub.net/?view=accounting&section=kpi");
     return buttons;
   }
-  if (toolsUsed.includes("getInventoryStatus") || toolsUsed.includes("getRestockPlan")) {
+  if (toolsUsed.includes("getInventoryStatus") || toolsUsed.includes("getRestockPlan") || toolsUsed.includes("getOverstockRanking")) {
     add("📦 Đối soát Tồn kho", "https://ncehub.net/?view=accounting&section=inventory");
     return buttons;
   }
@@ -639,7 +640,7 @@ const TOOLS_SCHEMA = [
     type: "function",
     function: {
       name: "getInventoryStatus",
-      description: "Tồn kho FBA của MỘT store: tồn sẵn bán, hàng đang chuyển kho, lô đang về, tốc độ bán/ngày, số ngày còn bán, SKU hết hàng / sắp hết / cần nhập thêm và gợi ý số lượng nhập. Dùng cho: 'SKU nào sắp hết hàng', 'cần nhập thêm SKU nào', 'tồn kho SKU X còn bao nhiêu ngày'. BẮT BUỘC có storeQuery.",
+      description: "Tồn kho FBA của MỘT store: tồn sẵn bán, hàng đang chuyển kho, lô đang về, tốc độ bán/ngày, số ngày còn bán, SKU hết hàng / sắp hết / cần nhập thêm và gợi ý số lượng nhập; kèm NHỊP BÁN: bán từ đầu tháng tới nay so với CÙNG KỲ NĂM NGOÁI (bứt tốc / ổn định / chậm lại), xu hướng 14 ngày, dự kiến bán cả tháng và ngày dự kiến hết hàng (có tính mùa vụ). Dùng cho: 'SKU nào sắp hết hàng', 'cần nhập thêm SKU nào', 'tồn kho SKU X còn bao nhiêu ngày', 'SKU X bán thế nào so với năm ngoái', 'store có bứt tốc không'. BẮT BUỘC có storeQuery.",
       parameters: {
         type: "object",
         properties: {
@@ -651,6 +652,20 @@ const TOOLS_SCHEMA = [
           limit: { type: "number", description: "Số SKU trả về (mặc định 15)." },
         },
         required: ["storeQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getOverstockRanking",
+      description: "SO SÁNH TỒN KHO GIỮA CÁC STORE: store nào tồn nhiều nhất (units + $ theo Base Cost) và store nào có NGUY CƠ DƯ THỪA lớn nhất tới cuối năm (tồn + hàng đang về − bán dự báo theo tốc độ bán và mùa vụ năm trước), kèm SKU dư nhiều nhất của từng store. Thứ hạng đã tính sẵn trên TOÀN BỘ SKU. Dùng cho: 'store nào tồn nhiều nhất', 'store nào dư hàng / tồn đọng nhiều nhất', 'nguy cơ dư thừa năm nay'. KHÔNG cần storeQuery (tự lấy các store người hỏi được xem).",
+      parameters: {
+        type: "object",
+        properties: {
+          untilDate: { type: "string", description: "YYYY-MM-DD cuối kỳ dự báo. Bỏ trống = 31/12 năm nay." },
+          topSkus: { type: "number", description: "Số SKU dư nhiều nhất mỗi store (mặc định 5)." },
+        },
       },
     },
   },
@@ -752,6 +767,17 @@ async function executeTool(
       return JSON.stringify(await getListingJobsStatus(actor, args));
     }
     // Rà soát tổng hợp: không cần chọn store, tự giới hạn theo các store người hỏi được xem
+    // So sánh tồn kho / dư thừa giữa các store: không cần chọn store, giới hạn theo store được xem
+    if (name === "getOverstockRanking") {
+      if (allowedStores && allowedStores.length === 0) {
+        return JSON.stringify({ error: "Bạn chưa được admin cấp quyền hỏi đáp cho store nào." });
+      }
+      return JSON.stringify(await getOverstockRanking({
+        untilDate: typeof args.untilDate === "string" ? args.untilDate : undefined,
+        topSkus: typeof args.topSkus === "number" ? args.topSkus : undefined,
+        storeNames: allowedStores?.map((store) => toAccountingStoreName(store.name)),
+      }));
+    }
     if (name === "getBusinessReview") {
       return JSON.stringify(await getDailyBusinessReview({
         targetDate: typeof args.date === "string" ? args.date : undefined,
@@ -1642,6 +1668,7 @@ QUY TẮC BẮT BUỘC:
 11. KPI, TỒN KHO, LÃI SKU, TRELLO / MOCKUP:
    - "đạt bao nhiêu % KPI", "có kịp KPI / kế hoạch không", "SKU nào chậm KPI" -> gọi "getKpiProgress" (BẮT BUỘC có store theo Rule 0). Nêu rõ % đạt là so với mục tiêu cả tháng; tháng đang chạy thì nói thêm mục tiêu tới nay và dự kiến cả tháng.
    - "sắp hết hàng", "hết hàng", "cần nhập thêm", "tồn kho còn bao nhiêu ngày" -> gọi "getInventoryStatus" (BẮT BUỘC có store). Hỏi lô hàng đang về cụ thể thì vẫn dùng getInboundShipments như cũ.
+   - So sánh tồn kho GIỮA CÁC STORE ("store nào tồn nhiều nhất", "store nào dư hàng / nguy cơ dư thừa nhiều nhất") -> gọi DUY NHẤT "getOverstockRanking" (không cần store), đọc đúng thứ hạng tool trả về. KHÔNG gọi getInventoryStatus từng store rồi tự so, vì danh sách đó chỉ là vài SKU nên kết luận sẽ sai và mỗi lần một khác.
    - "SKU nào lỗ tuần này / tháng này", "top SKU lãi", "Basecost / lãi của SKU X trong khoảng ngày" -> gọi "getSkuProfit" (BẮT BUỘC có store; truyền startDate/endDate theo khoảng người hỏi, 'tuần này' thì bỏ trống). Câu chung "nên chú ý SKU nào / SKU tiềm năng" vẫn dùng getSkuWatchlist.
    - "batch Trello xong chưa", "listing hôm nay", "mockup có lỗi không" -> gọi "getListingJobsStatus" (không cần store; chỉ thấy job của chính người hỏi).
    - Chỉ dùng số tool trả về; có "ghi_chu" thì nêu trước các con số.

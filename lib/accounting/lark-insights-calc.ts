@@ -551,3 +551,168 @@ export function planRestock(input: RestockInput, today: string, s: RestockSettin
     salesDays56: salesDays,
   };
 }
+
+// ───────────── Nhịp bán: kỳ này so với cùng kỳ năm ngoái + dự báo ─────────────
+
+/** Cùng ngày năm trước (29/02 → 28/02). */
+export function sameDayLastYear(date: string): string {
+  const y = Number(date.slice(0, 4)) - 1;
+  const period = `${y}${date.slice(4, 7)}`;
+  const day = Math.min(Number(date.slice(8, 10)), daysInMonth(period));
+  return `${period}-${String(day).padStart(2, "0")}`;
+}
+
+/** Kỳ so sánh: từ đầu tháng tới `today`; đầu tháng (< 7 ngày) thì lấy 14 ngày gần nhất cho đỡ nhiễu. */
+export function paceWindowStart(today: string): string {
+  const day = Number(today.slice(8, 10));
+  return day >= 7 ? `${today.slice(0, 7)}-01` : shiftDate(today, -13);
+}
+
+export interface SalesPaceInput {
+  /** Units từng ngày, ngày cũ trước, phần tử cuối = today (≥ 31 ngày) */
+  daily: number[];
+  /** Units cùng kỳ năm ngoái lấy từ đơn hàng thật; null = năm ngoái chưa có đơn từng ngày */
+  lastYearWindow: number | null;
+  /** Units theo tháng (có năm ngoái) + nguồn mùa vụ để dự báo ngày hết hàng */
+  season: SeasonSource;
+  sellable: number;
+  nextArrival: string | null;
+}
+
+export type PaceVerdict = "but_toc" | "on_dinh" | "cham_lai" | "it_don";
+
+/**
+ * Tình hình bán tới hiện tại và dự báo của 1 SKU (hoặc cả store):
+ *  - kỳ này (đầu tháng → today) so với cùng kỳ năm ngoái (đơn thật, thiếu thì ước từ tổng tháng năm ngoái theo số ngày)
+ *  - xu hướng 14 ngày gần nhất so với 14 ngày trước đó
+ *  - dự kiến bán cả tháng (đã bán + tốc độ 14 ngày × số ngày còn lại)
+ *  - dự kiến hết hàng sẵn bán: tốc độ 14 ngày × hệ số mùa từng tháng (theo năm ngoái)
+ */
+export function salesPace(input: SalesPaceInput, today: string) {
+  const d = input.daily;
+  const start = paceWindowStart(today);
+  const windowDays = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000) + 1;
+  const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+  const units = sum(d.slice(-windowDays));
+  const r14 = avg(d.slice(-14));
+  const prev14 = avg(d.slice(-28, -14));
+  const trend = prev14 > 0 ? r14 / prev14 - 1 : null;
+
+  // Cùng kỳ năm ngoái
+  const months = input.season.sku;
+  let lastYear: number | null = input.lastYearWindow;
+  let lastYearSource: "don_hang" | "uoc_tu_tong_thang" | null = lastYear != null ? "don_hang" : null;
+  if (lastYear == null) {
+    let est = 0;
+    let ok = true;
+    for (let i = 0; i < windowDays && ok; i++) {
+      const p = sameDayLastYear(shiftDate(start, i)).slice(0, 7);
+      if (months[p] == null) ok = false;
+      else est += months[p] / daysInMonth(p);
+    }
+    if (ok) {
+      lastYear = est;
+      lastYearSource = "uoc_tu_tong_thang";
+    }
+  }
+  const vsLastYear = lastYear != null && lastYear > 0 ? units / lastYear - 1 : null;
+
+  // Đánh giá: ưu tiên so với năm ngoái, không có thì theo xu hướng 14 ngày
+  const signal = vsLastYear ?? trend;
+  const verdict: PaceVerdict =
+    units < 5 && (lastYear ?? 0) < 5 ? "it_don" : signal == null ? "on_dinh" : signal >= 0.2 ? "but_toc" : signal <= -0.2 ? "cham_lai" : "on_dinh";
+
+  // Dự kiến cả tháng
+  const period = today.slice(0, 7);
+  const dayOfMonth = Number(today.slice(8, 10));
+  const monthSoFar = sum(d.slice(-dayOfMonth));
+  const monthForecast = monthSoFar + r14 * (daysInMonth(period) - dayOfMonth);
+  const lyMonthKey = `${Number(period.slice(0, 4)) - 1}${period.slice(4)}`;
+  const lastYearMonth = months[lyMonthKey] ?? null;
+
+  // Dự kiến hết hàng sẵn bán (có tính mùa vụ)
+  let stockoutDate: string | null = null;
+  if (r14 > 0 && input.sellable > 0) {
+    const weights = baseWindowWeights(today, 14);
+    const factors = new Map<string, number>();
+    let left = input.sellable;
+    for (let i = 1; i <= 365; i++) {
+      const day = shiftDate(today, i);
+      const p = day.slice(0, 7);
+      if (!factors.has(p)) factors.set(p, seasonalFactor(input.season, weights, p).factor);
+      left -= r14 * factors.get(p)!;
+      if (left <= 0) {
+        stockoutDate = day;
+        break;
+      }
+    }
+  } else if (r14 > 0) stockoutDate = today;
+  const arrivesInTime = input.nextArrival && stockoutDate ? input.nextArrival <= stockoutDate : null;
+
+  const r = (v: number, k = 1) => Math.round(v * k) / k;
+  return {
+    windowStart: start,
+    windowEnd: today,
+    units: r(units),
+    lastYear: lastYear == null ? null : r(lastYear),
+    lastYearSource,
+    vsLastYearPct: vsLastYear == null ? null : r(vsLastYear * 100),
+    last14PerDay: r(r14, 100),
+    prev14PerDay: r(prev14, 100),
+    trend14Pct: trend == null ? null : r(trend * 100),
+    verdict,
+    monthSoFar: r(monthSoFar),
+    monthForecast: r(monthForecast),
+    lastYearMonth: lastYearMonth == null ? null : r(lastYearMonth),
+    stockoutDate,
+    arrivesInTime,
+  };
+}
+
+// ───────────── Nguy cơ dư thừa tồn kho ─────────────
+
+export interface OverstockInput {
+  /** Units từng ngày 56 ngày gần nhất, ngày cũ trước */
+  daily: number[];
+  season: SeasonSource;
+  sellable: number;
+  /** Hàng đang chuyển kho + lô đang về */
+  coming: number;
+}
+
+/**
+ * Dư thừa của 1 SKU tới `horizonEnd`: tồn (sẵn bán + đang về) − nhu cầu dự báo.
+ * Nhu cầu = tốc độ nền (40% TB 14 + 40% TB 28 + 20% TB 56 ngày) × hệ số mùa từng tháng (năm trước).
+ */
+export function overstockSku(input: OverstockInput, today: string, horizonEnd: string) {
+  const d = input.daily;
+  const base = 0.4 * avg(d.slice(-14)) + 0.4 * avg(d.slice(-28)) + 0.2 * avg(d.slice(-56));
+  const weights = baseWindowWeights(today);
+  const factors = new Map<string, number>();
+  const factor = (p: string) => {
+    if (!factors.has(p)) factors.set(p, seasonalFactor(input.season, weights, p).factor);
+    return factors.get(p)!;
+  };
+  const stock = Math.max(0, input.sellable) + Math.max(0, input.coming);
+  let demand = 0;
+  let left = stock;
+  let coverDays: number | null = null;
+  for (let i = 1; i <= 730; i++) {
+    const day = shiftDate(today, i);
+    const u = base * factor(day.slice(0, 7));
+    if (day <= horizonEnd) demand += u;
+    left -= u;
+    if (coverDays == null && left <= 0) coverDays = i;
+    if (day >= horizonEnd && (coverDays != null || base <= 0)) break;
+  }
+  const excess = Math.max(0, stock - demand);
+  return {
+    basePerDay: Math.round(base * 100) / 100,
+    stock,
+    demand: Math.round(demand),
+    excess: Math.round(excess),
+    /** Số ngày bán hết tồn + hàng về (có mùa vụ); null = không bán / > 2 năm */
+    coverDays: stock <= 0 ? 0 : coverDays,
+    noSales: base <= 0 && stock > 0,
+  };
+}

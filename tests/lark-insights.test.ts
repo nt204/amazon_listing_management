@@ -219,3 +219,59 @@ test("planRestock: hàng đang về và SKU ít bán", () => {
   assert.equal(thin.confidence, "thấp");
   assert.ok(thin.safetyStock > 0);
 });
+
+import { paceWindowStart, salesPace, sameDayLastYear } from "../lib/accounting/lark-insights-calc";
+
+test("salesPace: so cùng kỳ năm ngoái, dự kiến cả tháng, ngày hết hàng", () => {
+  assert.equal(sameDayLastYear("2028-02-29"), "2027-02-28");
+  assert.equal(paceWindowStart("2026-11-12"), "2026-11-01");
+  assert.equal(paceWindowStart("2026-11-03"), "2026-10-21"); // đầu tháng → 14 ngày gần nhất
+
+  const daily = [...new Array(28).fill(2), ...new Array(28).fill(3)]; // 2/ngày rồi lên 3/ngày
+  const season = { sku: { "2025-10": 62, "2025-11": 60, "2025-12": 62 }, productType: null, store: {} };
+  // Năm ngoái chưa có đơn từng ngày → ước: 12 ngày × 60/30 = 24; năm nay 12 × 3 = 36 → +50%
+  const p = salesPace({ daily, lastYearWindow: null, season, sellable: 90, nextArrival: "2026-12-20" }, "2026-11-12");
+  assert.equal(p.units, 36);
+  assert.equal(p.lastYear, 24);
+  assert.equal(p.lastYearSource, "uoc_tu_tong_thang");
+  assert.equal(p.vsLastYearPct, 50);
+  assert.equal(p.verdict, "but_toc");
+  assert.equal(p.trend14Pct, 0); // 14 ngày gần nhất = 14 ngày trước đó (đều 3/ngày)
+  assert.equal(p.monthForecast, 90); // 36 + 3 × 18
+  assert.equal(p.lastYearMonth, 60);
+  assert.equal(p.stockoutDate, "2026-12-12"); // 90 / 3 = 30 ngày (năm ngoái T12 ≈ T11 theo ngày → hệ số 1)
+  assert.equal(p.arrivesInTime, false);
+
+  // Có đơn thật năm ngoái thì dùng đơn thật; chậm lại
+  const slow = salesPace({ daily, lastYearWindow: 60, season, sellable: 0, nextArrival: null }, "2026-11-12");
+  assert.equal(slow.lastYearSource, "don_hang");
+  assert.equal(slow.verdict, "cham_lai");
+  assert.equal(slow.stockoutDate, "2026-11-12"); // đã hết
+
+  // Không có năm ngoái → theo xu hướng 14 ngày; mùa cao làm hết hàng sớm hơn
+  const rising = [...new Array(42).fill(1), ...new Array(14).fill(2)];
+  const r = salesPace({ daily: rising, lastYearWindow: null, season: { sku: {}, productType: null, store: {} }, sellable: 100, nextArrival: null }, "2026-11-12");
+  assert.equal(r.lastYear, null);
+  assert.equal(r.verdict, "but_toc");
+  const peak = salesPace({ daily: rising, lastYearWindow: null, season: { sku: { "2025-10": 62, "2025-11": 60, "2025-12": 186 }, productType: null, store: {} }, sellable: 100, nextArrival: null }, "2026-11-12");
+  assert.ok((peak.stockoutDate ?? "") < (r.stockoutDate ?? ""));
+});
+
+import { overstockSku } from "../lib/accounting/lark-insights-calc";
+
+test("overstockSku: dư = tồn + đang về − bán dự báo tới cuối năm (có mùa vụ)", () => {
+  const flat = { sku: {}, productType: null, store: {} };
+  // 2/ngày đều, 12/11 → 31/12 = 49 ngày → bán 98; tồn 300 + về 50 → dư 252
+  const a = overstockSku({ daily: new Array(56).fill(2), season: flat, sellable: 300, coming: 50 }, "2026-11-12", "2026-12-31");
+  assert.equal(a.demand, 98);
+  assert.equal(a.excess, 252);
+  assert.equal(a.coverDays, 175);
+  // Tháng 12 năm ngoái gấp 3 → bán nhiều hơn → dư ít hơn
+  const peak = overstockSku({ daily: new Array(56).fill(2), season: { sku: { "2025-10": 62, "2025-11": 60, "2025-12": 186 }, productType: null, store: {} }, sellable: 300, coming: 50 }, "2026-11-12", "2026-12-31");
+  assert.ok(peak.excess < a.excess);
+  // Không bán: toàn bộ tồn là dư
+  const dead = overstockSku({ daily: new Array(56).fill(0), season: flat, sellable: 40, coming: 0 }, "2026-11-12", "2026-12-31");
+  assert.equal(dead.excess, 40);
+  assert.equal(dead.noSales, true);
+  assert.equal(dead.coverDays, null);
+});
