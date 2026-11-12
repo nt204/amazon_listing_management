@@ -32,6 +32,7 @@ import {
   getMonthAndQuarter as getServiceFeeMonthAndQuarter,
   getIsoWeek as getServiceFeeIsoWeek,
   batchUpsertServiceFees,
+  serviceFeeRowHash,
   type ServiceFeeItem,
 } from "./service-fees-db";
 import {
@@ -720,12 +721,18 @@ export async function importUnifiedAccountingExcel(
             const tuan = getServiceFeeIsoWeek(effectiveDate);
             const quy = quarter;
 
-            const key = `${effectiveDate}::${txType}::${prodDetails}::${total.toFixed(2)}::${orderId}`;
-            const count = (serviceFeeOccurrenceTracker.get(key) || 0) + 1;
-            serviceFeeOccurrenceTracker.set(key, count);
-
-            const hashPayload = `${storeId}::${key}::occ_${count}`;
-            const rowHash = createHash("md5").update(hashPayload).digest("hex");
+            const rowHash = serviceFeeRowHash(
+              storeId,
+              {
+                date: effectiveDate,
+                transaction_type: txType || "Service Fees",
+                order_id: orderId || "---",
+                product_details: prodDetails,
+                total,
+                amazon_fees: amazonFees,
+              },
+              serviceFeeOccurrenceTracker,
+            );
 
             feeChunk.push({
               store_id: storeId,

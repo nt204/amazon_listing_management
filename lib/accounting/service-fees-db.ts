@@ -150,6 +150,23 @@ function parseCsvLine(line: string, delimiter: string): string[] {
   return values;
 }
 
+/**
+ * row_hash của 1 dòng Service Fees — MỌI đường nhập (file 04 của crawler, file Excel tổng hợp) phải dùng chung
+ * để nhập lại cùng dữ liệu thì upsert đè lên dòng cũ thay vì chèn thêm. Ngày 24/10/2026 file Excel tổng hợp
+ * dùng công thức khác nên mọi phí đã có bị chèn lần 2 (Service Fees các tháng bị nhân đôi).
+ * `occurrences` đếm số dòng giống hệt trong cùng 1 file (phí trùng hợp lệ vẫn giữ đủ).
+ */
+export function serviceFeeRowHash(
+  storeId: string,
+  item: { date: string; transaction_type: string; order_id: string; product_details: string; total: number; amazon_fees: number },
+  occurrences: Map<string, number>,
+): string {
+  const key = `${item.date}::${item.transaction_type}::${item.order_id}::${item.product_details.slice(0, 40)}::${item.total.toFixed(2)}::${item.amazon_fees.toFixed(2)}`;
+  const count = (occurrences.get(key) || 0) + 1;
+  occurrences.set(key, count);
+  return createHash("md5").update(`${storeId}::${key}::occ_${count}`).digest("hex");
+}
+
 export async function parseServiceFeeBuffer(
   buffer: Buffer,
   fileName: string,
@@ -382,12 +399,7 @@ export async function parseServiceFeeBuffer(
   const results: Omit<ServiceFeeItem, "id" | "created_at" | "updated_at">[] = [];
 
   for (const item of rawItems) {
-    const key = `${item.date}::${item.transaction_type}::${item.order_id}::${item.product_details.slice(0, 40)}::${item.total.toFixed(2)}::${item.amazon_fees.toFixed(2)}`;
-    const count = (occurrenceTracker.get(key) || 0) + 1;
-    occurrenceTracker.set(key, count);
-
-    const hashPayload = `${storeId}::${key}::occ_${count}`;
-    const rowHash = createHash("md5").update(hashPayload).digest("hex");
+    const rowHash = serviceFeeRowHash(storeId, item, occurrenceTracker);
 
     results.push({
       store_id: storeId,
