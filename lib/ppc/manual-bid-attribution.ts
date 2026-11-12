@@ -26,6 +26,7 @@ export type TargetGroup = {
   sku_key: string | null;
   active: boolean;
   n: number;
+  impressions: string;
   clicks: string;
   spend: string;
   sales: string;
@@ -114,7 +115,7 @@ async function loadGroups(sql: Sql, storeId: string, snaps: ReportSnapshot[]) {
           AND lower(p.ad_group_state) NOT IN ('paused', 'archived', 'disabled'),
           false
         ) AS active,
-        p.clicks, p.spend, p.sales, p.orders
+        p.impressions, p.clicks, p.spend, p.sales, p.orders
       FROM ppc_performance_facts p
       WHERE ${targetFilter(sql, storeId, snaps)}
     ),
@@ -130,12 +131,12 @@ async function loadGroups(sql: Sql, storeId: string, snaps: ReportSnapshot[]) {
     ),
     g AS (
       SELECT campaign_id, ad_group_id, row_sku, campaign_name, active,
-        COUNT(*)::integer AS n, SUM(clicks) AS clicks, SUM(spend) AS spend, SUM(sales) AS sales, SUM(orders) AS orders
+        COUNT(*)::integer AS n, SUM(impressions) AS impressions, SUM(clicks) AS clicks, SUM(spend) AS spend, SUM(sales) AS sales, SUM(orders) AS orders
       FROM base
       GROUP BY campaign_id, ad_group_id, row_sku, campaign_name, active
     )
     SELECT g.campaign_id, g.ad_group_id, ag.sku AS ag_sku, cs.sku AS cs_sku, g.active, g.n,
-      g.clicks::bigint::text AS clicks, g.spend::numeric::text AS spend,
+      g.impressions::bigint::text AS impressions, g.clicks::bigint::text AS clicks, g.spend::numeric::text AS spend,
       g.sales::numeric::text AS sales, g.orders::bigint::text AS orders,
       COALESCE(ag.sku, cs.sku, NULLIF(g.row_sku, ''), upper(substring(g.campaign_name from ${SKU_CODE_RE}))) AS sku_key
     FROM g

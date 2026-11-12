@@ -53,7 +53,7 @@ interface ManualBidRow {
 
 type Row = ManualBidRow & { tier: ManualBidTier; acos: number | null };
 
-type SkuMetrics = { targets: number; clicks: number; spend: number; sales: number; orders: number };
+type SkuMetrics = { targets: number; impressions: number; clicks: number; spend: number; sales: number; orders: number };
 type SkuChannel = "FBA" | "FBM" | "";
 type SkuSummaryItem = { sku: string; channel?: SkuChannel; all: SkuMetrics; active: SkuMetrics };
 type ChannelPage = "FBA" | "FBM" | "OTHER";
@@ -557,6 +557,7 @@ export function PpcManualBidView({
       const g = meta.get(it.sku);
       return {
         ...m,
+        impressions: m.impressions ?? 0, // API cũ chưa có thì coi như 0
         sku: it.sku,
         channel: (it.channel || "") as SkuChannel,
         acos: m.sales > 0 ? (m.spend / m.sales) * 100 : 0,
@@ -1956,8 +1957,8 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
   );
 }
 
-type SkuSortKey = "sku" | "clicks" | "orders" | "spend" | "sales" | "acos";
-const SKU_SORT_KEYS: SkuSortKey[] = ["sku", "clicks", "orders", "spend", "sales", "acos"];
+type SkuSortKey = "sku" | "impressions" | "clicks" | "orders" | "spend" | "sales" | "acos";
+const SKU_SORT_KEYS: SkuSortKey[] = ["sku", "impressions", "clicks", "orders", "spend", "sales", "acos"];
 const SKU_FILTER_STORAGE = "nce_manual_bid_sku_filter";
 
 function readSaved(): { filter?: Partial<SkuListFilter>; sort?: { key: SkuSortKey; dir: 1 | -1 } } | null {
@@ -2313,6 +2314,7 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, search
             <tr className="border-b border-slate-200">
               <th className="w-12 px-2 py-2.5" />
               {head("sku", "SKU", "left")}
+              {head("impressions", "Impr")}
               {head("clicks", "Click")}
               {head("orders", "Order")}
               {head("spend", "Spend")}
@@ -2323,9 +2325,9 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, search
           </thead>
           <tbody>
             {!rows ? (
-              <tr><td colSpan={8} className="p-0"><LoadingBlock bare /></td></tr>
+              <tr><td colSpan={9} className="p-0"><LoadingBlock bare /></td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="py-14 text-center text-slate-400">Không có SKU phù hợp.</td></tr>
+              <tr><td colSpan={9} className="py-14 text-center text-slate-400">Không có SKU phù hợp.</td></tr>
             ) : filtered.slice(0, limit).map((g) => {
               const tier = manualBidTier(g);
               const queued = queuedBySku.get(g.sku.toUpperCase()) || 0;
@@ -2356,6 +2358,7 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, search
                       <span className="ml-2 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-bold text-indigo-600" title="Thay đổi đang chờ trong hàng đợi">{queued}</span>
                     )}
                   </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{int(g.impressions)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{int(g.clicks)}</td>
                   <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{g.orders}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{money(g.spend)}</td>

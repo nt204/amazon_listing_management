@@ -93,26 +93,28 @@ export async function GET(request: Request) {
     if (summary) {
       const agg = new Map<string, {
         sku: string;
-        targets: number; clicks: number; spend: number; sales: number; orders: number;
-        a_targets: number; a_clicks: number; a_spend: number; a_sales: number; a_orders: number;
+        targets: number; impressions: number; clicks: number; spend: number; sales: number; orders: number;
+        a_targets: number; a_impressions: number; a_clicks: number; a_spend: number; a_sales: number; a_orders: number;
       }>();
       for (const g of attribution.groups) {
         if (!g.sku_key) continue;
         let r = agg.get(g.sku_key);
         if (!r) {
-          r = { sku: g.sku_key, targets: 0, clicks: 0, spend: 0, sales: 0, orders: 0, a_targets: 0, a_clicks: 0, a_spend: 0, a_sales: 0, a_orders: 0 };
+          r = { sku: g.sku_key, targets: 0, impressions: 0, clicks: 0, spend: 0, sales: 0, orders: 0, a_targets: 0, a_impressions: 0, a_clicks: 0, a_spend: 0, a_sales: 0, a_orders: 0 };
           agg.set(g.sku_key, r);
         }
+        const impressions = Number(g.impressions || 0);
         const n = Number(g.n || 0), clicks = Number(g.clicks || 0), spend = Number(g.spend || 0), sales = Number(g.sales || 0), orders = Number(g.orders || 0);
-        r.targets += n; r.clicks += clicks; r.spend += spend; r.sales += sales; r.orders += orders;
+        r.targets += n; r.impressions += impressions; r.clicks += clicks; r.spend += spend; r.sales += sales; r.orders += orders;
         if (g.active) {
-          r.a_targets += n; r.a_clicks += clicks; r.a_spend += spend; r.a_sales += sales; r.a_orders += orders;
+          r.a_targets += n; r.a_impressions += impressions; r.a_clicks += clicks; r.a_spend += spend; r.a_sales += sales; r.a_orders += orders;
         }
       }
       const skuRows = Array.from(agg.values());
       const channelOf = await loadSkuChannels(store.id);
-      const metrics = (targets: number, clicks: number, spend: number, sales: number, orders: number) => ({
+      const metrics = (targets: number, impressions: number, clicks: number, spend: number, sales: number, orders: number) => ({
         targets: Number(targets || 0),
+        impressions: Number(impressions || 0),
         clicks: Number(clicks || 0),
         spend: Math.round(Number(spend || 0) * 100) / 100,
         sales: Math.round(Number(sales || 0) * 100) / 100,
@@ -141,8 +143,8 @@ export async function GET(request: Request) {
         items: pageRows.map((r) => ({
           sku: r.sku,
           channel: channelOf.get(r.sku),
-          all: metrics(r.targets, r.clicks, r.spend, r.sales, r.orders),
-          active: metrics(r.a_targets, r.a_clicks, r.a_spend, r.a_sales, r.a_orders),
+          all: metrics(r.targets, r.impressions, r.clicks, r.spend, r.sales, r.orders),
+          active: metrics(r.a_targets, r.a_impressions, r.a_clicks, r.a_spend, r.a_sales, r.a_orders),
         })),
       });
     }
