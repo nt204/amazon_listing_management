@@ -12,6 +12,7 @@ import {
   targetFilter as manualBidTargetFilter,
 } from "@/lib/ppc/manual-bid-attribution";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
+import { getAccountingStoreForPpcStore } from "@/lib/ppc/sku-architecture-service";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,40 @@ const globalForSkuCache = globalThis as typeof globalThis & {
   manualBidSkuPayloadCache?: WeakMap<object, Map<string, Promise<unknown>>>;
 };
 const skuPayloadCache = (globalForSkuCache.manualBidSkuPayloadCache ??= new WeakMap<object, Map<string, Promise<unknown>>>());
+
+/**
+ * SKU thuộc trang FBA hay FBM theo Bảng mã Accounting của store:
+ * - FBM: có trong bảng mã FBM;
+ * - FBA: có trong bảng mã FBA mà KHÔNG có trong bảng mã FBM (bảng FBA của vài store từng bị nạp lẫn SKU FBM);
+ * - "": không có trong bảng mã nào.
+ * hasFbm = store có bảng mã FBM (không có thì không cần chia trang).
+ */
+async function loadSkuChannels(ppcStoreId: string): Promise<{ get: (sku: string) => "FBA" | "FBM" | ""; hasFbm: boolean }> {
+  const acc = await getAccountingStoreForPpcStore(ppcStoreId).catch(() => null);
+  if (!acc) return { get: () => "", hasFbm: false };
+  const sql = await getDatabaseClient();
+  const [fba, fbm] = await Promise.all([
+    sql<{ sku: string }[]>`
+      SELECT DISTINCT upper(trim(sku)) AS sku FROM accounting_sku_master
+      WHERE store_id = ${acc.accountingStoreId} AND deleted_at IS NULL AND trim(sku) <> ''
+    `,
+    sql<{ sku: string }[]>`
+      SELECT DISTINCT upper(trim(sku)) AS sku FROM accounting_sku_master_fbm
+      WHERE store_id = ${acc.accountingStoreId} AND deleted_at IS NULL AND trim(sku) <> ''
+    `,
+  ]);
+  const fbaSet = new Set(fba.map((r) => r.sku));
+  const fbmSet = new Set(fbm.map((r) => r.sku));
+  return {
+    hasFbm: fbmSet.size > 0,
+    get: (sku: string) => {
+      const k = sku.trim().toUpperCase();
+      if (fbmSet.has(k)) return "FBM";
+      if (fbaSet.has(k)) return "FBA";
+      return "";
+    },
+  };
+}
 
 export async function GET(request: Request) {
   try {
@@ -75,6 +110,7 @@ export async function GET(request: Request) {
         }
       }
       const skuRows = Array.from(agg.values());
+      const channelOf = await loadSkuChannels(store.id);
       const metrics = (targets: number, clicks: number, spend: number, sales: number, orders: number) => ({
         targets: Number(targets || 0),
         clicks: Number(clicks || 0),
@@ -82,10 +118,29 @@ export async function GET(request: Request) {
         sales: Math.round(Number(sales || 0) * 100) / 100,
         orders: Number(orders || 0),
       });
+      // Trang FBA / FBM / Khác: chỉ trả SKU của trang được hỏi (channel=...), kèm số SKU mỗi trang cho nút chuyển trang.
+      // Store không có bảng mã FBM thì không chia trang, trả tất cả.
+      const pageOf = (sku: string) => {
+        const c = channelOf.get(sku);
+        return c === "FBA" ? "FBA" : c === "FBM" ? "FBM" : "OTHER";
+      };
+      const counts = { FBA: { all: 0, active: 0 }, FBM: { all: 0, active: 0 }, OTHER: { all: 0, active: 0 } };
+      for (const r of skuRows) {
+        const c = counts[pageOf(r.sku)];
+        if (r.targets > 0) c.all += 1;
+        if (r.a_targets > 0) c.active += 1;
+      }
+      const wanted = (searchParams.get("channel") || "").toUpperCase();
+      const pageRows = channelOf.hasFbm && (wanted === "FBA" || wanted === "FBM" || wanted === "OTHER")
+        ? skuRows.filter((r) => pageOf(r.sku) === wanted)
+        : skuRows;
       return Response.json({
         success: true,
-        items: skuRows.map((r) => ({
+        hasChannels: channelOf.hasFbm,
+        counts,
+        items: pageRows.map((r) => ({
           sku: r.sku,
+          channel: channelOf.get(r.sku),
           all: metrics(r.targets, r.clicks, r.spend, r.sales, r.orders),
           active: metrics(r.a_targets, r.a_clicks, r.a_spend, r.a_sales, r.a_orders),
         })),

@@ -2,11 +2,12 @@
 
 export type ManualBidTier = "A20" | "A40" | "A60" | "A60P" | "NO_ORDER" | "OTHER";
 
+/** Thứ tự hiển thị: ACOS cao → thấp (cần xử lý trước), rồi 0 order >7 click, cuối cùng Khác. */
 export const MANUAL_BID_TIERS: Array<{ key: ManualBidTier; label: string }> = [
-  { key: "A20", label: "0–20%" },
-  { key: "A40", label: "20–40%" },
-  { key: "A60", label: "40–60%" },
   { key: "A60P", label: ">60%" },
+  { key: "A60", label: "40–60%" },
+  { key: "A40", label: "20–40%" },
+  { key: "A20", label: "0–20%" },
   { key: "NO_ORDER", label: "0 order >7 click" },
   { key: "OTHER", label: "Khác" },
 ];

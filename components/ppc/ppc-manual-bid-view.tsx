@@ -54,11 +54,16 @@ interface ManualBidRow {
 type Row = ManualBidRow & { tier: ManualBidTier; acos: number | null };
 
 type SkuMetrics = { targets: number; clicks: number; spend: number; sales: number; orders: number };
-type SkuSummaryItem = { sku: string; all: SkuMetrics; active: SkuMetrics };
+type SkuChannel = "FBA" | "FBM" | "";
+type SkuSummaryItem = { sku: string; channel?: SkuChannel; all: SkuMetrics; active: SkuMetrics };
+type ChannelPage = "FBA" | "FBM" | "OTHER";
+type ChannelCounts = Record<ChannelPage, { all: number; active: number }>;
+type SkuSummary = { items: SkuSummaryItem[]; hasChannels: boolean; counts: ChannelCounts | null };
 
 /** Dòng bảng SKU: số liệu cộng từ target (khớp màn target), thông tin phôi/ảnh/BE lấy từ tab Auto Bid. */
 type SkuRow = SkuMetrics & {
   sku: string;
+  channel: SkuChannel;
   acos: number;
   asin: string;
   productType: string;
@@ -407,7 +412,8 @@ export function PpcManualBidView({
   const [tierSet, setTierSet] = useState<ManualBidTier[]>([]);
   const [editedOnly, setEditedOnly] = useState(false);
   const [keywordFilter, setKeywordFilter] = useState("");
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "spend", dir: -1 });
+  // Mặc định: trong mỗi nấc xếp ACOS cao → thấp (bằng nhau thì spend cao trước).
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "acos", dir: -1 });
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Map<string, Draft>>(new Map());
@@ -479,33 +485,64 @@ export function PpcManualBidView({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getTargets đọc store/kỳ/skuGroups mới nhất; chỉ chạy lại khi đổi yêu cầu
   }, [query, reqKey, isActive, selectedStore, selectedDays, result, needScope]);
 
-  // Số liệu từng SKU tính từ target (tổng và riêng target active).
-  const summaryKey = `${selectedStore}|${selectedDays}`;
-  const [summary, setSummary] = useState<{ key: string; items: SkuSummaryItem[] } | null>(null);
-  const summaryCacheRef = useRef(new Map<string, { at: number; p: Promise<SkuSummaryItem[]> }>());
+  // Trang FBA / FBM / Khác (store có bảng mã FBM). Mở tab vào trang đã chọn lần trước — lưu theo tài khoản;
+  // chỉ tải SKU của trang đang xem, trang khác bấm vào mới tải.
+  const [channel, setChannelState] = useState<ChannelPage | null>(null);
   useEffect(() => {
-    if (!isActive || !selectedStore || selectedStore === "ALL") return;
+    if (!isActive || channel) return;
+    let cancelled = false;
+    fetch("/api/settings/ui-preferences", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const c = d?.preferences?.manualBidChannel;
+        if (!cancelled) setChannelState(c === "FBM" || c === "OTHER" ? c : "FBA");
+      })
+      .catch(() => { if (!cancelled) setChannelState("FBA"); });
+    return () => { cancelled = true; };
+  }, [isActive, channel]);
+  const setChannel = (c: ChannelPage) => {
+    if (c === channel) return;
+    setChannelState(c);
+    fetch("/api/settings/ui-preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manualBidChannel: c }),
+    }).catch(() => undefined);
+  };
+
+  // Số liệu từng SKU tính từ target (tổng và riêng target active) của trang đang xem.
+  const summaryKey = `${selectedStore}|${selectedDays}|${channel ?? ""}`;
+  const [summary, setSummary] = useState<({ key: string; channel: ChannelPage } & SkuSummary) | null>(null);
+  const summaryCacheRef = useRef(new Map<string, { at: number; p: Promise<SkuSummary> }>());
+  useEffect(() => {
+    if (!isActive || !selectedStore || selectedStore === "ALL" || !channel) return;
     if (summary?.key === summaryKey) return;
     let cancelled = false;
     const hit = summaryCacheRef.current.get(summaryKey);
     let promise = hit && Date.now() - hit.at < CACHE_MS ? hit.p : null;
     if (!promise) {
       const key = summaryKey;
-      promise = fetch(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1`, { cache: "no-store" })
+      promise = fetch(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1&channel=${channel}`, { cache: "no-store" })
         .then((r) => r.json())
-        .then((d) => (Array.isArray(d?.items) ? d.items as SkuSummaryItem[] : []));
+        .then((d): SkuSummary => ({
+          items: Array.isArray(d?.items) ? d.items as SkuSummaryItem[] : [],
+          hasChannels: Boolean(d?.hasChannels),
+          counts: d?.counts ?? null,
+        }));
       promise.catch(() => summaryCacheRef.current.delete(key));
       summaryCacheRef.current.set(key, { at: Date.now(), p: promise });
     }
     promise
-      .then((items) => { if (!cancelled) setSummary({ key: summaryKey, items }); })
-      .catch(() => { if (!cancelled) setSummary({ key: summaryKey, items: [] }); });
+      .then((data) => { if (!cancelled) setSummary({ key: summaryKey, channel, ...data }); })
+      .catch(() => { if (!cancelled) setSummary({ key: summaryKey, channel, items: [], hasChannels: false, counts: null }); });
     return () => { cancelled = true; };
-  }, [isActive, selectedStore, selectedDays, summaryKey, summary]);
-  const skuRefreshing = Boolean(summary && summary.key !== summaryKey);
+  }, [isActive, selectedStore, selectedDays, summaryKey, summary, channel]);
+  // Cùng trang mà đổi kỳ: giữ bảng cũ (mờ); chuyển sang trang khác: hiện khung tải.
+  const samePage = Boolean(summary && summary.channel === channel);
+  const skuRefreshing = Boolean(summary && summary.key !== summaryKey && samePage);
 
   const skuRows: SkuRow[] | null = useMemo(() => {
-    if (!summary) return null;
+    if (!summary || !samePage) return null;
     const meta = new Map(skuGroups.map((g) => [g.sku.toUpperCase(), g]));
     return summary.items.map((it) => {
       const m = activeOnly ? it.active : it.all;
@@ -513,6 +550,7 @@ export function PpcManualBidView({
       return {
         ...m,
         sku: it.sku,
+        channel: (it.channel || "") as SkuChannel,
         acos: m.sales > 0 ? (m.spend / m.sales) * 100 : 0,
         asin: g?.asin || "",
         productType: g?.productType || "",
@@ -522,7 +560,15 @@ export function PpcManualBidView({
         breakEvenAcos: g?.breakEvenAcos || 0,
       };
     }).filter((r) => r.targets > 0);
-  }, [summary, skuGroups, activeOnly]);
+  }, [summary, samePage, skuGroups, activeOnly]);
+
+  // Số SKU trên nút mỗi trang (lấy từ lần tải gần nhất, kể cả khi đang tải trang khác).
+  const channelPages = useMemo(() => {
+    if (!summary?.hasChannels || !summary.counts) return null;
+    const k = activeOnly ? "active" : "all";
+    return { FBA: summary.counts.FBA[k], FBM: summary.counts.FBM[k], OTHER: summary.counts.OTHER[k] };
+  }, [summary, activeOnly]);
+  const pageRows = skuRows;
 
   const load = (code: string) => {
     const v = code.trim().toUpperCase();
@@ -811,7 +857,7 @@ export function PpcManualBidView({
       }
       const valA = sort.key === "acos" ? (a.acos ?? (a.spend > 0 ? 9999 : -1)) : a[sort.key];
       const valB = sort.key === "acos" ? (b.acos ?? (b.spend > 0 ? 9999 : -1)) : b[sort.key];
-      return (valA - valB) * sort.dir;
+      return (valA - valB) * sort.dir || b.spend - a.spend || b.clicks - a.clicks;
     });
   }, [byRunType, scoped, drafts, editedOnly, tierSet, colFilters, sort]);
 
@@ -1206,7 +1252,10 @@ export function PpcManualBidView({
   if (!query) {
     return (
       <ManualBidSkuList
-        rows={skuRows}
+        rows={pageRows}
+        channel={channel ?? "FBA"}
+        channelPages={channelPages}
+        onChannelChange={setChannel}
         refreshing={skuRefreshing}
         onHoverSku={prefetchTargets}
         activeOnly={activeOnly}
@@ -1378,7 +1427,7 @@ export function PpcManualBidView({
                 }
                 setEditedOnly(true);
                 setTierSet([]);
-                setSort({ key: "acos", dir: 1 });
+                setSort({ key: "acos", dir: -1 });
               }}
               title="Chỉ hiện target đã chỉnh bid của SKU này (mọi dạng chạy)"
               className={`h-7 cursor-pointer rounded border px-2.5 text-xs font-semibold transition disabled:cursor-default disabled:opacity-40 ${
@@ -1933,7 +1982,10 @@ function RangeRow({ label, unit, value, onChange }: {
 const SKU_PAGE = 100;
 
 // Màn đầu: tất cả SKU của store, cùng nguồn số liệu với tab Đề xuất & Auto Bid. Bấm 1 dòng để chỉnh bid.
-function ManualBidSkuList({ rows, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
+function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
+  channel: "FBA" | "FBM" | "OTHER";
+  channelPages: { FBA: number; FBM: number; OTHER: number } | null;
+  onChannelChange: (c: "FBA" | "FBM" | "OTHER") => void;
   refreshing: boolean;
   onHoverSku: (sku: string) => void;
   rows: SkuRow[] | null;
@@ -2056,10 +2108,19 @@ function ManualBidSkuList({ rows, refreshing, onHoverSku, activeOnly, onToggleAc
       if (sort.key === "acos") return g.sales > 0 ? g.acos : (g.spend > 0 ? 9999 : -1);
       return g[sort.key];
     };
+    // Xếp theo ACOS: SKU có sales theo ACOS; sau đó SKU có spend mà chưa có sales (tốn nhiều trước);
+    // cuối cùng SKU chưa tiêu tiền — dù xếp tăng hay giảm.
+    const acosGroup = (g: SkuRow) => (g.sales > 0 ? 0 : g.spend > 0 ? 1 : 2);
     return [...list].sort((a, b) => {
+      if (sort.key === "acos") {
+        const ga = acosGroup(a), gb = acosGroup(b);
+        if (ga !== gb) return ga - gb;
+        if (ga === 0) return (a.acos - b.acos) * sort.dir || b.spend - a.spend;
+        return b.spend - a.spend || b.clicks - a.clicks;
+      }
       const va = val(a), vb = val(b);
       if (typeof va === "string" || typeof vb === "string") return String(va).localeCompare(String(vb)) * sort.dir;
-      return (va - vb) * sort.dir;
+      return (va - vb) * sort.dir || b.spend - a.spend;
     });
   }, [baseFiltered, sort]);
 
@@ -2101,6 +2162,25 @@ function ManualBidSkuList({ rows, refreshing, onHoverSku, activeOnly, onToggleAc
             className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-semibold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
           />
         </form>
+
+        {channelPages && (
+          <div className="flex h-9 rounded-lg border border-slate-200 bg-white p-0.5">
+            {([["FBA", "FBA"], ["FBM", "FBM"], ["OTHER", "Khác"]] as const)
+              .filter(([k]) => k !== "OTHER" || channelPages.OTHER > 0 || channel === "OTHER")
+              .map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => onChannelChange(k)}
+                  className={`cursor-pointer rounded-md px-3.5 text-[13px] font-bold transition ${
+                    channel === k ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"
+                  }`}
+                >
+                  {label} <span className={channel === k ? "font-semibold text-slate-300" : "font-semibold text-slate-400"}>{channelPages[k]}</span>
+                </button>
+              ))}
+          </div>
+        )}
 
         <Segmented
           value={activeOnly ? "active" : "all"}
