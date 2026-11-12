@@ -1088,7 +1088,7 @@ async function readTargetFormula(
 
   const amzPct = pctIn(amz);
   const unitPart = /[A-Z]+\d+\*[A-Z]+\d+/.test(amz); // Unit × Amazon fee/unit
-  const formula: KpiTargetFormula = {
+  const formula: Partial<KpiTargetFormula> = {
     amazon_mode: unitPart ? "unit_plus_pct" : "revenue_pct",
     amazon_pct: amzPct[0] ?? (unitPart ? 0.15 : 0.33),
     ref_pct: 0.15,
@@ -1105,6 +1105,44 @@ async function readTargetFormula(
   const storageLetter = storageCol >= 0 ? colLetter(start + storageCol) : null;
   const storageSign: 1 | -1 = storageLetter && new RegExp(`\\+${storageLetter}\\d+`).test(profit) ? -1 : 1;
   return { formula: normalizeTargetFormula(formula), storageSign };
+}
+
+/**
+ * Đọc công thức của tab BÁO CÁO THÁNG N:
+ *  - cột "[Target] Tăng trưởng/tháng trước", dòng Revenue: "=J4/C4-1" (FASTPEACE) / "=J4/E4-1" / "=J4/E4" / "=J4/C4"
+ *    — C = cột [Target] tháng đang xem, E = cột [Result] tháng đang xem
+ *  - dòng "CP khác", cột [Result] tháng đang xem: "=-SUM(...)" như hệ thống, "=SUM(...)" đảo dấu
+ */
+async function readReportFormula(spreadsheetId: string, tab: string): Promise<Partial<KpiTargetFormula>> {
+  const grid = await readSpreadsheetRange(spreadsheetId, `'${tab.replace(/'/g, "''")}'!A1:P40`, "FORMULA");
+  const hr = grid.findIndex((row) => row.some((v) => /^\[result\]/i.test(str(v))));
+  if (hr < 0) return {};
+  const head = (grid[hr] ?? []).map((v) => str(v).toLowerCase().replace(/\s+/g, " "));
+  const out: Partial<KpiTargetFormula> = {};
+  const growthCol = head.findIndex((h) => /^\[target\]\s*tăng trưởng\/tháng trước/.test(h));
+  // [Target] tháng đang xem (cột C, "[Target] T10/2026") và [Result] cùng tháng (cột E, "[Result] T10/2026")
+  const targetCurCol = head.findIndex((h) => /^\[target\]\s*t\d{1,2}\/\d{4}$/.test(h));
+  const curLabel = targetCurCol >= 0 ? head[targetCurCol].replace(/^\[target\]\s*/, "") : "";
+  const curCol = curLabel ? head.findIndex((h) => h.replace(/^\[result\]\s*/, "") === curLabel && h.startsWith("[result]")) : -1;
+  const rowOf = (re: RegExp) => grid.findIndex((r, i) => i > hr && re.test(str(r[0]).toLowerCase()));
+  const revRow = rowOf(/^revenue$/);
+  if (growthCol >= 0 && revRow >= 0 && targetCurCol >= 0 && curCol >= 0) {
+    const f = str(grid[revRow][growthCol]).replace(/\s+/g, "").toUpperCase();
+    const m = f.match(/^=(?:IFERROR\()?([A-Z]+)\d+\/([A-Z]+)\d+(-1)?\)?$/);
+    if (m) {
+      const base = colIndex(m[2]);
+      if (base === curCol) out.growth_base = "actual";
+      else if (base === targetCurCol) out.growth_base = "target";
+      out.growth_minus_one = Boolean(m[3]);
+    }
+  }
+  const otherRow = rowOf(/^cp khác$/);
+  if (otherRow >= 0 && curCol >= 0) {
+    const f = str(grid[otherRow][curCol]).replace(/\s+/g, "");
+    if (f.startsWith("=-")) out.other_fee_sign = 1;
+    else if (f.startsWith("=")) out.other_fee_sign = -1;
+  }
+  return out;
 }
 
 /** Tên file có chứa tên store — chấp nhận gõ nhầm nhẹ ở từ đầu (vd "MALFISRT - KẾ HOẠCH…" của MALFIRST) */
@@ -1264,6 +1302,13 @@ export async function importKpiTargetsFromSheet(
     }
   }
   const teamRows = [...teamMap.values()];
+
+  // Cột tăng trưởng mục tiêu + dấu CP khác: theo tab BÁO CÁO THÁNG mới nhất
+  const latestReport = reportTabs[reportTabs.length - 1]?.t;
+  if (latestReport) {
+    const report = await readReportFormula(meta.spreadsheetId, latestReport);
+    targetFormula = normalizeTargetFormula({ ...(targetFormula ?? {}), ...report });
+  }
 
   if (!options.dryRun) {
     await sql.begin(async (tx) => {

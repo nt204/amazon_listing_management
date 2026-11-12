@@ -69,6 +69,9 @@ export async function PUT(request: Request) {
       const patch: Record<string, unknown> = {};
       if (f.amazon_mode === "unit_plus_pct" || f.amazon_mode === "revenue_pct") patch.amazon_mode = f.amazon_mode;
       if (f.return_mode === "rate" || f.return_mode === "actual") patch.return_mode = f.return_mode;
+      if (f.growth_base === "target" || f.growth_base === "actual") patch.growth_base = f.growth_base;
+      if (typeof f.growth_minus_one === "boolean") patch.growth_minus_one = f.growth_minus_one;
+      if (f.other_fee_sign === 1 || f.other_fee_sign === -1) patch.other_fee_sign = f.other_fee_sign;
       try {
         for (const k of ["amazon_pct", "ref_pct", "return_rate"] as const) {
           const v = numOrNull(f[k], 0, 1);

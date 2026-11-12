@@ -22,6 +22,7 @@ import {
   addMetrics,
   computeTarget,
   buildMonthReport,
+  DEFAULT_TARGET_FORMULA,
   emptyMetrics,
   grossProfit,
   REPORT_ROWS,
@@ -138,7 +139,7 @@ function TargetFormulaPanel({
   canEdit: boolean;
   onSave: (patch: Partial<KpiTargetFormula>) => Promise<void>;
 }) {
-  const f = formula ?? { amazon_mode: "unit_plus_pct" as const, amazon_pct: 0.15, ref_pct: 0.15, return_mode: "rate" as const, return_rate: 0.02 };
+  const f: KpiTargetFormula = formula ?? DEFAULT_TARGET_FORMULA;
   const [saving, setSaving] = useState(false);
   const save = async (patch: Partial<KpiTargetFormula>) => {
     setSaving(true);
@@ -206,6 +207,44 @@ function TargetFormulaPanel({
           <span className="font-semibold">Ref tax = 10% ×</span>
           {pctInput(f.ref_pct, (v) => void save({ ref_pct: v }), "% referral của Ref tax mục tiêu")}
           <span>REV</span>
+        </label>
+      </div>
+      <div className="mt-2 grid gap-2 border-t border-slate-100 pt-2 text-xs text-slate-700 sm:grid-cols-2">
+        <label className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold">[Target] Tăng trưởng/tháng trước = mục tiêu tháng sau ÷</span>
+          <select
+            aria-label="Mẫu số cột tăng trưởng mục tiêu"
+            className={sel}
+            disabled={!canEdit || saving}
+            value={f.growth_base}
+            onChange={(e) => void save({ growth_base: e.target.value as KpiTargetFormula["growth_base"] })}
+          >
+            <option value="target">mục tiêu tháng này</option>
+            <option value="actual">thực tế tháng này</option>
+          </select>
+          <select
+            aria-label="Có trừ 1 ở cột tăng trưởng mục tiêu"
+            className={sel}
+            disabled={!canEdit || saving}
+            value={f.growth_minus_one ? "1" : "0"}
+            onChange={(e) => void save({ growth_minus_one: e.target.value === "1" })}
+          >
+            <option value="1">− 1</option>
+            <option value="0">(không trừ 1)</option>
+          </select>
+        </label>
+        <label className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold">Dòng CP khác tháng này:</span>
+          <select
+            aria-label="Dấu dòng CP khác"
+            className={sel}
+            disabled={!canEdit || saving}
+            value={String(f.other_fee_sign)}
+            onChange={(e) => void save({ other_fee_sign: e.target.value === "-1" ? -1 : 1 })}
+          >
+            <option value="1">như hệ thống</option>
+            <option value="-1">đảo dấu</option>
+          </select>
         </label>
       </div>
       <p className="mt-2 text-[11px] text-slate-400">
@@ -525,8 +564,9 @@ function OverviewPage({
         dev: { prev: a.prev, cur: a.cur, ly: lyOk ? a.ly : null, lyNext: lyNextOk ? a.lyNext : null, tCur, tNext },
         test: { prev: t.prev, cur: t.cur, ly: lyOk ? t.ly : null, lyNext: lyNextOk ? t.lyNext : null, tNext: testTNext },
         storeFeeCur: fees.cur,
+        formula: data.targetFormula,
       }),
-    [a, t, lyOk, lyNextOk, tCur, tNext, testTNext, fees.cur],
+    [a, t, lyOk, lyNextOk, tCur, tNext, testTNext, fees.cur, data.targetFormula],
   );
 
   const [note, setNote] = useState(data.note?.note ?? "");

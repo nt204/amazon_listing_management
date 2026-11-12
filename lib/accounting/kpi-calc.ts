@@ -129,6 +129,14 @@ export interface KpiTargetFormula {
   /** "rate": return_rate × REV; "actual": Return thực tế tháng trước tháng mục tiêu */
   return_mode: "rate" | "actual";
   return_rate: number;
+  /**
+   * Cột "[Target] Tăng trưởng/tháng trước" của BÁO CÁO THÁNG: mục tiêu tháng sau ÷ (mục tiêu | thực tế) tháng đang xem,
+   * có / không trừ 1. FASTPEACE: J/C−1; LIMIMA: J/E−1; WARMSTOREY, MALFIRST: J/E; BOZSPACER: J/C.
+   */
+  growth_base: "target" | "actual";
+  growth_minus_one: boolean;
+  /** Dòng "CP khác" tháng đang xem: 1 = như hệ thống (FASTPEACE "=-SUM"), -1 = đảo dấu (sheet "=SUM") */
+  other_fee_sign: 1 | -1;
 }
 
 export const DEFAULT_TARGET_FORMULA: KpiTargetFormula = {
@@ -137,6 +145,9 @@ export const DEFAULT_TARGET_FORMULA: KpiTargetFormula = {
   ref_pct: 0.15,
   return_mode: "rate",
   return_rate: KPI_RETURN_RATE,
+  growth_base: "target",
+  growth_minus_one: true,
+  other_fee_sign: 1,
 };
 
 export function normalizeTargetFormula(v: unknown): KpiTargetFormula {
@@ -148,6 +159,9 @@ export function normalizeTargetFormula(v: unknown): KpiTargetFormula {
     ref_pct: pct(o.ref_pct, 0.15),
     return_mode: o.return_mode === "actual" ? "actual" : "rate",
     return_rate: pct(o.return_rate, KPI_RETURN_RATE),
+    growth_base: o.growth_base === "actual" ? "actual" : "target",
+    growth_minus_one: o.growth_minus_one === false || o.growth_minus_one === "false" ? false : true,
+    other_fee_sign: Number(o.other_fee_sign) === -1 ? -1 : 1,
   };
 }
 
@@ -283,6 +297,8 @@ export interface MonthReportInput {
   test: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null; tNext: KpiMetrics | null };
   /** Phí AWD/Subscription/Disposal cấp store của tháng đang báo cáo (chi phí dương) */
   storeFeeCur: number | null;
+  /** Công thức của store (cột tăng trưởng mục tiêu, dấu CP khác); bỏ trống = như FASTPEACE */
+  formula?: KpiTargetFormula | null;
 }
 
 const KPI_ROWS = new Set<ReportRowKey>(["revenue", "quantity", "ads_fee", "tacos", "gross"]);
@@ -347,6 +363,7 @@ function targetValue(m: KpiMetrics | null, key: ReportRowKey): number | null {
 
 export function buildMonthReport(input: MonthReportInput): MonthReport {
   const { dev, test } = input;
+  const f = input.formula ?? DEFAULT_TARGET_FORMULA;
   const out = {} as MonthReport;
   for (const { key } of REPORT_ROWS) {
     if (key === "pl_test") {
@@ -365,10 +382,12 @@ export function buildMonthReport(input: MonthReportInput): MonthReport {
     }
     const prev = pastValue(dev.prev, key);
     const ly = pastValue(dev.ly, key);
-    const cur = currentValue(dev.cur, key, input.storeFeeCur);
+    const curRaw = currentValue(dev.cur, key, input.storeFeeCur);
+    const cur = key === "other_fee" && curRaw != null ? curRaw * f.other_fee_sign : curRaw;
     const tCur = targetValue(dev.tCur, key);
     const tNextDev = targetValue(dev.tNext, key);
-    const g = (a: number | null, b: number | null) => (a == null || b == null || Math.abs(b) < 1e-9 ? null : a / b - 1);
+    const g = (a: number | null, b: number | null) =>
+      a == null || b == null || Math.abs(b) < 1e-9 ? null : a / b - (f.growth_minus_one ? 1 : 0);
     out[key] = {
       prev,
       tCur,
@@ -379,7 +398,7 @@ export function buildMonthReport(input: MonthReportInput): MonthReport {
       kpi: KPI_ROWS.has(key) ? ratioOf(cur, tCur) : null,
       lyNext: pastValue(dev.lyNext, key),
       tNextDev,
-      tNextGrowth: g(tNextDev, tCur),
+      tNextGrowth: g(tNextDev, f.growth_base === "actual" ? cur : tCur),
       tNextTest: targetValue(test.tNext, key),
     };
   }
