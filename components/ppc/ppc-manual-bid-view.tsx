@@ -1006,8 +1006,11 @@ export function PpcManualBidView({
   };
 
   const runOp = () => {
-    const v = parseFloat(opValue.replace(",", "."));
-    if (!Number.isFinite(v)) return;
+    const raw = opValue.replace(",", ".").trim();
+    const n = parseFloat(raw.replace("%", ""));
+    if (!Number.isFinite(n) || n <= 0) return;
+    // 0.95 = hệ số; 95 hoặc 95% = phần trăm → 0.95
+    const v = raw.endsWith("%") || n > 5 ? n / 100 : n;
     applyToSelected({ kind: "mul", value: v });
     // Áp xong thì bỏ chọn: cụm tiếp theo quét lại từ đầu, không nhân thêm lần nữa lên cụm vừa sửa.
     setSelected(new Set());
@@ -1480,40 +1483,46 @@ export function PpcManualBidView({
 
             <div className="ml-auto flex items-center gap-2">
               {nSel > 0 && (
-                <form
-                  className="flex h-7 items-center gap-1.5 rounded border border-indigo-200 bg-indigo-50 pl-2.5 pr-1 text-xs"
-                  onSubmit={(e) => { e.preventDefault(); runOp(); }}
-                >
-                  <span className="font-semibold tabular-nums text-indigo-900">{nSel} chọn</span>
-                  <span className="pl-1 font-bold text-slate-500">×</span>
-                  <input
-                    ref={opInputRef}
-                    value={opValue}
-                    onChange={(e) => setOpValue(e.target.value.replace(",", ".").replace(/[^0-9.]/g, ""))}
-                    inputMode="decimal"
-                    placeholder="0.95"
-                    title="Gõ hệ số rồi Enter"
-                    className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
-                  />
-                  <span className="pl-1 font-bold text-slate-500">±</span>
-                  <input
-                    value={addValue}
-                    onChange={(e) => setAddValue(e.target.value.replace(",", ".").replace(/[^0-9.+-]/g, ""))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") { e.preventDefault(); runAdd(); }
-                    }}
-                    inputMode="decimal"
-                    placeholder="+0.1"
-                    title="Gõ số cộng / trừ (vd +0.1 hoặc -0.25) rồi Enter"
-                    className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
-                  />
-                  <button type="button" onClick={pauseSelected} className="h-5 cursor-pointer rounded px-1.5 font-medium text-slate-700 hover:bg-indigo-100">
+                <div className="flex h-7 items-center gap-1.5 text-xs">
+                  <span className="pr-0.5 font-semibold tabular-nums text-indigo-900">{nSel} chọn</span>
+                  {/* Cụm 1: nhân % — 0.95 hoặc 95 / 95% đều là còn 95% */}
+                  <form
+                    className="flex h-7 items-center gap-1 rounded border border-indigo-200 bg-indigo-50 pl-2 pr-1"
+                    onSubmit={(e) => { e.preventDefault(); runOp(); }}
+                  >
+                    <span className="font-semibold text-indigo-900">Nhân</span>
+                    <input
+                      ref={opInputRef}
+                      value={opValue}
+                      onChange={(e) => setOpValue(e.target.value.replace(",", ".").replace(/[^0-9.%]/g, ""))}
+                      inputMode="decimal"
+                      placeholder="95%"
+                      title="0.95 hoặc 95% rồi Enter"
+                      className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
+                    />
+                  </form>
+                  {/* Cụm 2: cộng / trừ số cụ thể, tự gõ dấu */}
+                  <form
+                    className="flex h-7 items-center gap-1 rounded border border-indigo-200 bg-indigo-50 pl-2 pr-1"
+                    onSubmit={(e) => { e.preventDefault(); runAdd(); }}
+                  >
+                    <span className="font-semibold text-indigo-900">Cộng / trừ</span>
+                    <input
+                      value={addValue}
+                      onChange={(e) => setAddValue(e.target.value.replace(",", ".").replace(/[^0-9.+-]/g, ""))}
+                      inputMode="decimal"
+                      placeholder="+0.1"
+                      title="+0.1 hoặc -0.25 rồi Enter"
+                      className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
+                    />
+                  </form>
+                  <button type="button" onClick={pauseSelected} className="h-7 cursor-pointer rounded border border-slate-200 bg-white px-2 font-medium text-slate-700 hover:bg-slate-50">
                     Dừng
                   </button>
-                  <button type="button" onClick={() => setSelected(new Set())} title="Bỏ chọn" className="h-5 cursor-pointer rounded px-1.5 text-slate-400 hover:bg-indigo-100 hover:text-slate-700">
+                  <button type="button" onClick={() => setSelected(new Set())} title="Bỏ chọn" className="h-7 cursor-pointer rounded px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
                     ✕
                   </button>
-                </form>
+                </div>
               )}
               {draftCount > 0 && (
                 <button
