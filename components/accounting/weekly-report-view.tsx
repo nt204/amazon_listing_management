@@ -397,7 +397,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <OverviewCard
           title={`Tuần ${week.label}`}
-          subtitle={isRunning ? `Tới ${vnDate(data.dataThrough)} · ${ctx.elapsed}/${ctx.weekDays} ngày` : `Đủ ${ctx.weekDays} ngày`}
+          subtitle={isRunning ? `${ctx.elapsed}/${ctx.weekDays} ngày` : ""}
           fullLabel="Cả tuần"
           items={[
             { label: "Revenue", a: total.revenue?.week ?? null },
@@ -406,7 +406,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
         />
         <OverviewCard
           title={`Tháng ${month}`}
-          subtitle={`Tới ${vnDate(data.dataThrough)} · ${Number(data.dataThrough.slice(8, 10))}/${ctx.dim} ngày`}
+          subtitle={`${Number(data.dataThrough.slice(8, 10))}/${ctx.dim} ngày`}
           fullLabel="Cả tháng"
           items={[
             { label: "Revenue", a: total.revenue?.month ?? null },
@@ -671,7 +671,7 @@ function OverviewCard({
     <div className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[11.5px] font-bold uppercase tracking-wider text-slate-600">{title}</span>
-        <span className="text-[11px] text-slate-400">{subtitle}</span>
+        {subtitle && <span className="text-[11px] text-slate-400">{subtitle}</span>}
       </div>
       <div className="mt-3 flex flex-1 flex-col justify-around gap-5">
         {items.map(({ label, a }) =>
@@ -681,16 +681,11 @@ function OverviewCard({
             </div>
           ) : (
             <div key={label}>
-              <div className="flex items-center justify-between gap-2 text-xs">
-                <span className="font-semibold text-slate-500">{label}</span>
-                <span className="tabular-nums text-slate-400">
-                  {fullLabel}: {usd(a.full)}
-                </span>
-              </div>
-              <div className="mt-1 flex items-baseline gap-2 tabular-nums">
+              <div className="text-xs font-semibold text-slate-500">{label}</div>
+              <div className="mt-1 flex items-baseline gap-2 tabular-nums" title={`${fullLabel}: ${usd(a.full)}`}>
                 <span className="text-3xl font-bold tracking-tight text-slate-900">{pct(a.ratio, 0)}</span>
                 <span className="text-xs text-slate-500">
-                  <b className="font-semibold text-slate-800">{usd(a.actual)}</b> / {usd(a.due)} cần đạt
+                  <b className="font-semibold text-slate-800">{usd(a.actual)}</b> / {usd(a.due)}
                 </span>
               </div>
               <div className="mt-2">
@@ -769,14 +764,13 @@ function TeamCard({ team, s, days, prevDays }: { team: string; s: GroupSummary; 
 
       <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
         <span>Profit lũy kế tháng</span>
-        {m && <span className="tabular-nums text-slate-400">Cả tháng: {usd(m.full)}</span>}
       </div>
       <div className="flex items-baseline gap-2 tabular-nums">
         {m ? (
           <>
             <span className="text-xl font-bold text-slate-900">{pct(m.ratio, 0)}</span>
             <span className="text-xs text-slate-500">
-              <b className={`font-semibold ${m.actual < 0 ? "text-rose-600" : "text-slate-800"}`}>{usd(m.actual)}</b> / {usd(m.due)} cần đạt
+              <b className={`font-semibold ${m.actual < 0 ? "text-rose-600" : "text-slate-800"}`}>{usd(m.actual)}</b> / {usd(m.due)}
             </span>
           </>
         ) : (
@@ -873,7 +867,7 @@ function AchievePill({ a }: { a: Achieve | null }) {
   return (
     <span
       className={`inline-block min-w-[54px] rounded-full border px-2 py-0.5 text-center text-[11px] font-bold tabular-nums ${TONE_CLASS[tone].pill}`}
-      title={`${usd(a.actual)} / ${usd(a.due)} cần đạt`}
+      title={`${usd(a.actual)} / ${usd(a.due)}`}
     >
       {(a.ratio * 100).toFixed(0)}%
     </span>
