@@ -14,7 +14,10 @@ import {
   classifyStock,
   mondayOf,
   monthPace,
+  planRestock,
   shiftDate,
+  upcomingEvents,
+  type MonthUnits,
   skuTarget,
   summarizeKpi,
   vnDate,
@@ -522,5 +525,223 @@ export function kpiHeadline(report: ReturnType<typeof summarizeKpi>["report"]) {
     gross: money(report.gross.cur ?? null),
     grossTarget: money(report.gross.tCur ?? null),
     grossPct: pct1(report.gross.kpi ?? null),
+  };
+}
+
+// ───────────── Gợi ý nhập hàng theo mùa ─────────────
+
+const HISTORY_DAYS = 56;
+
+/** Thời gian đặt → hàng tới kho (trung vị lô 12 tháng gần nhất), thiếu dữ liệu thì dùng mặc định. */
+async function storeLeadTime(storeId: string) {
+  const sql = await getDatabaseClient();
+  const [row] = await sql<Array<{ n: number; med: number | null }>>`
+    SELECT COUNT(*)::int AS n,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY (LEFT(ngay_den, 10)::date - LEFT(ngay_request, 10)::date))::float AS med
+    FROM accounting_inbound_shipments
+    WHERE store_id = ${storeId} AND deleted_at IS NULL
+      AND ngay_den ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND ngay_request ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      AND LEFT(ngay_request, 10) >= ${shiftDate(vnToday(), -365)}
+      AND LEFT(ngay_den, 10) >= LEFT(ngay_request, 10)
+  `;
+  const fallback = envNum("LARK_RESTOCK_LEAD_DAYS", 45);
+  if (row && row.n >= 5 && row.med != null && row.med > 0 && row.med < 180) {
+    return { days: Math.round(row.med), source: `trung vị ${row.n} lô nhập 12 tháng qua (ngày request → ngày đến)` };
+  }
+  return { days: fallback, source: "mặc định (chưa đủ lịch sử lô nhập)" };
+}
+
+/** Units theo tháng: tháng có đủ đơn trong hệ thống lấy từ đơn hàng, tháng trước đó lấy từ số tổng kết 2025 (KPI). */
+async function monthlyUnits(storeId: string, salesEnd: string) {
+  const sql = await getDatabaseClient();
+  const from = `${Number(salesEnd.slice(0, 4)) - 2}-01-01`;
+  const [orders, history, first] = await Promise.all([
+    sql<Array<{ sku: string; period: string; units: number }>>`
+      SELECT UPPER(TRIM(sku)) AS sku, to_char(date, 'YYYY-MM') AS period, SUM(COALESCE(quantity, 1))::float AS units
+      FROM accounting_orders
+      WHERE store_id = ${storeId} AND date >= ${from}::date AND date <= ${salesEnd}::date
+        AND fulfillment_channel = 'Amazon'
+        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+        AND COALESCE(TRIM(sku), '') <> ''
+      GROUP BY 1, 2
+    `,
+    sql<Array<{ sku: string; period: string; units: number }>>`
+      SELECT UPPER(TRIM(sku)) AS sku, period, SUM(quantity)::float AS units
+      FROM accounting_kpi_sku_history
+      WHERE store_id = ${storeId} AND variant = 'monthly' AND quantity > 0
+      GROUP BY 1, 2
+    `,
+    sql<Array<{ d: string | null }>>`
+      SELECT MIN(date)::text AS d FROM accounting_orders WHERE store_id = ${storeId} AND fulfillment_channel = 'Amazon'
+    `,
+  ]);
+  // Tháng đủ dữ liệu đơn: bắt đầu từ ngày 01–02 và đã kết thúc (hoặc là tháng hiện tại)
+  const firstDate = first[0]?.d || salesEnd;
+  const firstFull = Number(firstDate.slice(8, 10)) <= 2 ? firstDate.slice(0, 7) : shiftDate(`${firstDate.slice(0, 7)}-28`, 5).slice(0, 7);
+  const bySku = new Map<string, MonthUnits>();
+  const put = (sku: string, period: string, units: number) => {
+    let m = bySku.get(sku);
+    if (!m) bySku.set(sku, (m = {}));
+    m[period] = (m[period] ?? 0) + units;
+  };
+  for (const r of orders) if (r.period >= firstFull) put(r.sku, r.period, Number(r.units));
+  for (const r of history) if (r.period < firstFull) put(r.sku, r.period, Number(r.units));
+  return { bySku, coveredFrom: firstFull };
+}
+
+export async function getRestockPlan(params: {
+  storeQuery?: string;
+  sku?: string;
+  coverDays?: number;
+  leadTimeDays?: number;
+  limit?: number;
+}) {
+  const store = await resolveAccountingStoreExact(params.storeQuery);
+  if (!store) return needStore(params.storeQuery);
+
+  const th = stockThresholds();
+  const stock = await loadStockRows(store.id, th);
+  if (!stock.snapshot || !stock.salesEnd) {
+    return { hasData: false, store: store.name, message: `Chưa có dữ liệu tồn kho (Inventory Ledger) hoặc đơn FBA của ${store.name} nên chưa gợi ý nhập được.` };
+  }
+  const today = stock.salesEnd;
+  const sql = await getDatabaseClient();
+  const [lead, monthly, dailyRows, master] = await Promise.all([
+    storeLeadTime(store.id),
+    monthlyUnits(store.id, today),
+    sql<Array<{ sku: string; d: string; units: number }>>`
+      SELECT UPPER(TRIM(sku)) AS sku, date::text AS d, SUM(COALESCE(quantity, 1))::float AS units
+      FROM accounting_orders
+      WHERE store_id = ${store.id}
+        AND date > ${shiftDate(today, -HISTORY_DAYS)}::date AND date <= ${today}::date
+        AND fulfillment_channel = 'Amazon'
+        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+        AND COALESCE(TRIM(sku), '') <> ''
+      GROUP BY 1, 2
+    `,
+    sql<Array<{ sku: string; product_type: string | null }>>`
+      SELECT DISTINCT ON (UPPER(TRIM(sku))) UPPER(TRIM(sku)) AS sku, product_type
+      FROM accounting_sku_master
+      WHERE store_id = ${store.id} AND deleted_at IS NULL AND UPPER(COALESCE(loai, 'FBA')) = 'FBA'
+      ORDER BY UPPER(TRIM(sku)), updated_at DESC
+    `,
+  ]);
+
+  const clampInt = (v: number | undefined, d: number, min: number, max: number) =>
+    v != null && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : d;
+  const settings = {
+    leadTimeDays: clampInt(params.leadTimeDays, lead.days, 7, 150),
+    coverDays: clampInt(params.coverDays, envNum("LARK_RESTOCK_COVER_DAYS", 30), 14, 120),
+    z: 1.65,
+  };
+
+  // Chuỗi bán từng ngày
+  const dayIndex = new Map<string, number>();
+  for (let i = 0; i < HISTORY_DAYS; i++) dayIndex.set(shiftDate(today, -(HISTORY_DAYS - 1) + i), i);
+  const daily = new Map<string, number[]>();
+  for (const r of dailyRows) {
+    const i = dayIndex.get(r.d);
+    if (i == null) continue;
+    let arr = daily.get(r.sku);
+    if (!arr) daily.set(r.sku, (arr = new Array(HISTORY_DAYS).fill(0)));
+    arr[i] += Number(r.units);
+  }
+
+  // Mùa vụ theo nhóm sản phẩm và cả store
+  const typeOf = new Map(master.map((m) => [m.sku, m.product_type?.trim() || null]));
+  const byType = new Map<string, MonthUnits>();
+  const storeMonths: MonthUnits = {};
+  for (const [sku, months] of monthly.bySku) {
+    const t = typeOf.get(sku);
+    for (const [p, u] of Object.entries(months)) {
+      storeMonths[p] = (storeMonths[p] ?? 0) + u;
+      if (t) {
+        let m = byType.get(t);
+        if (!m) byType.set(t, (m = {}));
+        m[p] = (m[p] ?? 0) + u;
+      }
+    }
+  }
+
+  const wanted = params.sku?.trim().toUpperCase();
+  const plans = stock.items
+    .filter((x) => x.hasBalance !== false)
+    .filter((x) => (wanted ? x.sku === wanted || x.sku.includes(wanted) : (daily.get(x.sku)?.some((u) => u > 0) ?? false)))
+    .map((x) => {
+      const t = typeOf.get(x.sku) ?? null;
+      return planRestock(
+        {
+          sku: x.sku,
+          status: x.status,
+          productType: t,
+          daily: daily.get(x.sku) ?? new Array(HISTORY_DAYS).fill(0),
+          sellable: x.sellable,
+          inTransit: x.inTransit,
+          inboundPending: x.inboundPending,
+          nextArrival: x.nextArrival,
+          season: { sku: monthly.bySku.get(x.sku) ?? {}, productType: t ? byType.get(t) ?? null : null, store: storeMonths },
+        },
+        today,
+        settings,
+      );
+    });
+
+  const soon = shiftDate(today, 30);
+  const ranked = (wanted ? plans : plans.filter((p) => p.suggestUnits > 0 && (p.orderNow || (p.orderByDate != null && p.orderByDate <= soon))))
+    .sort((a, b) => (a.orderByDate ?? "9999").localeCompare(b.orderByDate ?? "9999") || b.suggestUnits - a.suggestUnits);
+  const limit = Math.min(25, Math.max(1, params.limit || 12));
+
+  const horizonEnd = shiftDate(today, settings.leadTimeDays + settings.coverDays);
+  const levelVi = { sku: "lịch sử chính SKU", product_type: "nhóm sản phẩm", store: "cả store", none: "chưa có cùng kỳ năm trước" } as const;
+  const notes: string[] = [];
+  if (stock.snapshot < shiftDate(today, -3)) notes.push(`Tồn kho chốt ngày ${vnDate(stock.snapshot)}, cũ hơn dữ liệu đơn (${vnDate(today)}).`);
+  if (monthly.coveredFrom > shiftDate(today, -365).slice(0, 7)) {
+    notes.push(`Đơn hàng có đủ từ ${monthly.coveredFrom}; tháng trước đó dùng số tổng kết theo tháng (nếu có) để tính mùa vụ.`);
+  }
+  notes.push("Ngày hết hàng trong quá khứ làm tốc độ bán bị thấp hơn nhu cầu thật; SKU từng hết hàng gần đây nên cộng thêm.");
+
+  return {
+    hasData: ranked.length > 0,
+    store: store.name,
+    du_lieu_ban_toi: today,
+    ton_kho_chot_ngay: stock.snapshot,
+    gia_dinh: {
+      thoi_gian_cho_hang_ngay: settings.leadTimeDays,
+      nguon_thoi_gian_cho: params.leadTimeDays ? "người dùng nêu" : lead.source,
+      lo_moi_du_ban_ngay: settings.coverDays,
+      ton_an_toan: "Z 1.65 (≈95% không hết hàng) × độ dao động bán/ngày 56 ngày × √thời gian chờ",
+      toc_do_nen: "40% TB 14 ngày + 40% TB 28 ngày + 20% TB 56 ngày",
+      mua_vu: "hệ số = units tháng đó năm trước ÷ units tháng hiện tại năm trước (theo SKU → nhóm sản phẩm → cả store, giới hạn 0.3–5)",
+    },
+    su_kien_sap_toi: upcomingEvents(shiftDate(today, 1), horizonEnd),
+    tong_sku_dang_ban: plans.length,
+    can_dat_ngay: plans.filter((p) => p.orderNow && p.suggestUnits > 0).length,
+    skus: ranked.slice(0, limit).map((p) => ({
+      sku: p.sku,
+      trang_thai: p.status,
+      nhom: p.productType,
+      ban_nen_moi_ngay: p.baseUnitsPerDay,
+      xu_huong_28_ngay_pct: p.trend28Pct,
+      he_so_mua: p.seasonByMonth.map((m) => `${m.period}: x${m.factor} (${levelVi[m.level]}${m.clamped ? ", đã giới hạn — thực tế năm trước còn chênh hơn" : ""})`),
+      ton_san_ban: p.sellable,
+      hang_dang_ve: p.coming || undefined,
+      ngay_ve_gan_nhat: p.nextArrival || undefined,
+      du_kien_het_hang: p.stockoutDate,
+      dat_hang_truoc_ngay: p.orderByDate,
+      can_dat_ngay: p.orderNow,
+      nhu_cau_du_bao: p.demandTotal,
+      ton_an_toan: p.safetyStock,
+      goi_y_nhap: p.suggestUnits,
+      do_tin_cay: p.confidence,
+      luu_y: /^test$/i.test(String(p.status ?? "").trim()) ? "SKU Test: nên nhập lô nhỏ để thử" : undefined,
+    })),
+    con_lai: Math.max(0, ranked.length - limit),
+    message: ranked.length ? undefined : `Chưa có SKU nào của ${store.name} cần đặt hàng trong 30 ngày tới theo dự báo.`,
+    ghi_chu: notes,
+    instructions:
+      "Mở đầu: store, dữ liệu bán tới ngày, giả định (thời gian chờ hàng X ngày – nguồn, lô mới đủ bán Y ngày), sự kiện mua sắm sắp tới. " +
+      "Rồi danh sách đánh số theo hạn đặt hàng: SKU · gợi ý nhập N units · đặt trước ngày DD/MM (hoặc 'đặt ngay') · dự kiến hết hàng DD/MM. " +
+      "Dòng 2 nêu LÝ DO ngắn: bán nền x/ngày, xu hướng, hệ số mùa các tháng (nguồn), tồn + hàng đang về, độ tin cậy. " +
+      "Đây là GỢI Ý dự báo, không khẳng định; độ tin cậy thấp thì nói rõ. Không tự tính lại số.",
   };
 }

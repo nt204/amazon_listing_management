@@ -410,7 +410,7 @@ export function AccountingWorkspace({
   if (effectiveSection === "financials") {
     return (
       <AccountingSectionShell sectionKey="financials">
-        <FinancialsWorkspace />
+        <FinancialsWorkspace subTab={activeSubTab} />
       </AccountingSectionShell>
     );
   }

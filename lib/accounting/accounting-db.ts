@@ -23,6 +23,9 @@ export async function listStores(): Promise<Store[]> {
       s.status,
       s.created_at::text,
       s.updated_at::text,
+      s.service_rate::float AS service_rate,
+      -- Đọc qua to_jsonb để DB chưa chạy migration 148 vẫn liệt kê được store (cột chưa có → null)
+      (to_jsonb(s) ->> 'fbm_service_cost')::float AS fbm_service_cost,
       COALESCE(s.legal_entity, le.name) AS legal_entity_name
     FROM stores s
     LEFT JOIN legal_entities le ON s.legal_entity_id = le.id
@@ -45,6 +48,9 @@ export async function getStoreById(id: string): Promise<Store | null> {
       s.status,
       s.created_at::text,
       s.updated_at::text,
+      s.service_rate::float AS service_rate,
+      -- Đọc qua to_jsonb để DB chưa chạy migration 148 vẫn liệt kê được store (cột chưa có → null)
+      (to_jsonb(s) ->> 'fbm_service_cost')::float AS fbm_service_cost,
       COALESCE(s.legal_entity, le.name) AS legal_entity_name
     FROM stores s
     LEFT JOIN legal_entities le ON s.legal_entity_id = le.id
@@ -110,6 +116,8 @@ export async function updateStore(id: string, input: UpdateStoreInput): Promise<
       legal_entity_id = ${input.legal_entity_id !== undefined ? input.legal_entity_id : sql`legal_entity_id`},
       seller_id = ${input.seller_id !== undefined ? (input.seller_id ? input.seller_id.trim() : null) : sql`seller_id`},
       status = COALESCE(${input.status || null}, status),
+      service_rate = ${input.service_rate !== undefined ? input.service_rate : sql`service_rate`},
+      fbm_service_cost = ${input.fbm_service_cost !== undefined ? input.fbm_service_cost : sql`fbm_service_cost`},
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING
@@ -122,6 +130,8 @@ export async function updateStore(id: string, input: UpdateStoreInput): Promise<
       seller_id,
       status,
       created_at::text,
+      service_rate::float AS service_rate,
+      fbm_service_cost::float AS fbm_service_cost,
       updated_at::text
   `;
   if (!rows[0]) return null;

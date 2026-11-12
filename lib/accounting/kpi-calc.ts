@@ -182,7 +182,7 @@ export function computeTarget(
     return m;
   }
   const units = input.units;
-  const price = input.price ?? unit.price ?? 0;
+  const price = unit.price ?? input.price ?? 0;
   const revenue = units * price;
   const ads = (input.tacos ?? 0) * revenue;
   const basecost = units * (input.basecost_unit ?? unit.basecost_unit ?? 0);
@@ -289,12 +289,39 @@ export const REPORT_ROWS = [
   { key: "pl_test", label: "P/L SKU testing", kind: "usd" },
 ] as const;
 export type ReportRowKey = (typeof REPORT_ROWS)[number]["key"];
-export type ReportCol = "prev" | "tCur" | "ly" | "cur" | "rPrev" | "rLy" | "kpi" | "lyNext" | "tNextDev" | "tNextGrowth" | "tNextTest";
+/**
+ * cur = SKU WIN tháng đang xem (như sheet: tăng trưởng, % đạt KPI, [Target] Tăng trưởng tính trên cột này);
+ * curTotal = tổng team (SKU WIN + SKU TEST); curTest = SKU TEST.
+ */
+export type ReportCol =
+  | "prev"
+  | "tCur"
+  | "tCurTest"
+  | "ly"
+  | "cur"
+  | "curTotal"
+  | "curTest"
+  | "kpiTest"
+  | "rPrev"
+  | "rLy"
+  | "kpi"
+  | "lyNext"
+  | "tNextDev"
+  | "tNextGrowth"
+  | "tNextTest";
 export type MonthReport = Record<ReportRowKey, Partial<Record<ReportCol, number | null>>>;
 
 export interface MonthReportInput {
   dev: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null; tCur: KpiMetrics | null; tNext: KpiMetrics | null };
-  test: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null; tNext: KpiMetrics | null };
+  test: {
+    prev: KpiMetrics | null;
+    cur: KpiMetrics | null;
+    ly: KpiMetrics | null;
+    lyNext: KpiMetrics | null;
+    tNext: KpiMetrics | null;
+    /** Mục tiêu SKU TEST tháng đang xem (cột [Target] SKU TEST) */
+    tCur?: KpiMetrics | null;
+  };
   /** Phí AWD/Subscription/Disposal cấp store của tháng đang báo cáo (chi phí dương) */
   storeFeeCur: number | null;
   /** Công thức của store (cột tăng trưởng mục tiêu, dấu CP khác); bỏ trống = như FASTPEACE */
@@ -366,15 +393,21 @@ export function buildMonthReport(input: MonthReportInput): MonthReport {
   const f = input.formula ?? DEFAULT_TARGET_FORMULA;
   const out = {} as MonthReport;
   for (const { key } of REPORT_ROWS) {
+    const isKpi = KPI_ROWS.has(key);
     if (key === "pl_test") {
       const prev = test.prev?.profit ?? null;
       const cur = test.cur?.profit ?? null;
+      const tCurTestProfit = test.tCur?.profit ?? null;
       out[key] = {
         prev,
         ly: test.ly?.profit ?? null,
         cur,
-        rPrev: ratioOf(cur, prev),
-        rLy: ratioOf(cur, test.ly?.profit ?? null),
+        curTotal: cur,
+        curTest: cur,
+        tCurTest: tCurTestProfit,
+        kpiTest: isKpi ? ratioOf(cur, tCurTestProfit) : null,
+        rPrev: isKpi ? ratioOf(cur, prev) : null,
+        rLy: isKpi ? ratioOf(cur, test.ly?.profit ?? null) : null,
         lyNext: test.lyNext?.profit ?? null,
         tNextTest: test.tNext?.profit ?? null,
       };
@@ -382,9 +415,14 @@ export function buildMonthReport(input: MonthReportInput): MonthReport {
     }
     const prev = pastValue(dev.prev, key);
     const ly = pastValue(dev.ly, key);
-    const curRaw = currentValue(dev.cur, key, input.storeFeeCur);
-    const cur = key === "other_fee" && curRaw != null ? curRaw * f.other_fee_sign : curRaw;
+    const signed = (v: number | null) => (key === "other_fee" && v != null ? v * f.other_fee_sign : v);
+    const cur = signed(currentValue(dev.cur, key, input.storeFeeCur));
+    const curTest = signed(currentValue(test.cur, key, null));
+    // Tổng team = SKU WIN + SKU TEST (cộng số liệu rồi tính, để TAcos đúng); phí cấp store chỉ trừ một lần
+    const all = dev.cur || test.cur ? addMetrics(addMetrics(emptyMetrics(), dev.cur), test.cur) : null;
+    const curAll = signed(currentValue(all, key, input.storeFeeCur));
     const tCur = targetValue(dev.tCur, key);
+    const tCurTestVal = targetValue(test.tCur ?? null, key);
     const tNextDev = targetValue(dev.tNext, key);
     const g = (a: number | null, b: number | null) =>
       a == null || b == null || Math.abs(b) < 1e-9 ? null : a / b - (f.growth_minus_one ? 1 : 0);
@@ -393,12 +431,16 @@ export function buildMonthReport(input: MonthReportInput): MonthReport {
       tCur,
       ly,
       cur,
-      rPrev: ratioOf(cur, prev),
-      rLy: ratioOf(cur, ly),
-      kpi: KPI_ROWS.has(key) ? ratioOf(cur, tCur) : null,
+      curTotal: curAll,
+      curTest,
+      tCurTest: tCurTestVal,
+      kpiTest: isKpi ? ratioOf(curTest, tCurTestVal) : null,
+      rPrev: isKpi ? ratioOf(cur, prev) : null,
+      rLy: isKpi ? ratioOf(cur, ly) : null,
+      kpi: isKpi ? ratioOf(cur, tCur) : null,
       lyNext: pastValue(dev.lyNext, key),
       tNextDev,
-      tNextGrowth: g(tNextDev, f.growth_base === "actual" ? cur : tCur),
+      tNextGrowth: isKpi ? g(tNextDev, f.growth_base === "actual" ? cur : tCur) : null,
       tNextTest: targetValue(test.tNext, key),
     };
   }

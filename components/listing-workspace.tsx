@@ -24,10 +24,14 @@ import {
   ChatCircleDotsIcon,
   FolderSimpleIcon,
   ListIcon,
+  CalendarBlankIcon,
+  CalendarDotsIcon,
+  CalendarIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { AccBlackGrid } from "@/components/accounting/acc-black-grid";
+import { financialsGroupOf, type FinancialsGroup } from "@/components/accounting/financials-groups";
 import { AccountMenu } from "@/components/account-menu";
 import { GlobalListingBatchBar } from "@/components/global-listing-batch-bar";
 import type { RequestActor } from "@/lib/auth";
@@ -145,6 +149,12 @@ type AccountingSection =
   | "pnl"
   | "settlements";
 
+const FINANCIALS_SIDEBAR_ITEMS: { group: FinancialsGroup; label: string; Icon: typeof CalendarBlankIcon }[] = [
+  { group: "day", label: "Ngày", Icon: CalendarBlankIcon },
+  { group: "week", label: "Tuần", Icon: CalendarDotsIcon },
+  { group: "month", label: "Tháng", Icon: CalendarIcon },
+];
+
 interface WorkspaceSidebarProps {
   actor?: RequestActor;
   sidebarTab: string;
@@ -159,6 +169,8 @@ interface WorkspaceSidebarProps {
   ppcDashboardTab: PpcDashboardTab;
   selectAccountingSection: (s: AccountingSection, subTab?: string) => void;
   accountingSection: AccountingSection;
+  /** Mục con đang mở của section (Financials: day / week / month) */
+  accountingSubTab?: string;
   kanbanPendingCount: number;
   loadingGuides: boolean;
   handleOpenGuides: () => void;
@@ -182,6 +194,7 @@ function WorkspaceSidebar({
   ppcDashboardTab,
   selectAccountingSection,
   accountingSection,
+  accountingSubTab,
   kanbanPendingCount,
   loadingGuides,
   handleOpenGuides,
@@ -687,29 +700,6 @@ function WorkspaceSidebar({
                     </div>
                   </button>
 
-                  {/* 2. Stores */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selectAccountingSection("stores");
-                      onClose?.();
-                    }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "stores"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <StorefrontIcon
-                      size={17}
-                      weight={accountingSection === "stores" ? "fill" : "duotone"}
-                      className={`shrink-0 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"}`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">Stores</span>
-                    </div>
-                  </button>
-
                   {/* 3. Inventory */}
                   <button
                     type="button"
@@ -733,36 +723,11 @@ function WorkspaceSidebar({
                     </div>
                   </button>
 
-                  {/* 4. Import (formerly Orders) */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selectAccountingSection("orders");
-                      onClose?.();
-                    }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "orders" || accountingSection === "import"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <UploadSimpleIcon
-                      size={17}
-                      weight={accountingSection === "orders" || accountingSection === "import" ? "bold" : "regular"}
-                      className={`shrink-0 ${
-                        accountingSection === "orders" || accountingSection === "import" ? "text-indigo-600" : "text-slate-400"
-                      }`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">Import</span>
-                    </div>
-                  </button>
-
                   {/* 5. Financials */}
                   <button
                     type="button"
                     onClick={() => {
-                      selectAccountingSection("financials");
+                      selectAccountingSection("financials", "day");
                       onClose?.();
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
@@ -771,7 +736,7 @@ function WorkspaceSidebar({
                       accountingSection === "costs" ||
                       accountingSection === "amazon_fees" ||
                       accountingSection === "ads"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        ? "text-indigo-950 font-bold hover:bg-slate-50"
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                     }`}
                   >
@@ -800,6 +765,39 @@ function WorkspaceSidebar({
                       <span className="text-[13px]">Financials</span>
                     </div>
                   </button>
+
+                  {/* 5.1–5.3 Financials theo kỳ: Ngày / Tuần / Tháng */}
+                  {FINANCIALS_SIDEBAR_ITEMS.map(({ group, label, Icon }) => {
+                    const active =
+                      (accountingSection === "financials" ||
+                        accountingSection === "revenue" ||
+                        accountingSection === "costs" ||
+                        accountingSection === "amazon_fees" ||
+                        accountingSection === "ads") &&
+                      financialsGroupOf(accountingSubTab) === group;
+                    return (
+                      <button
+                        key={group}
+                        type="button"
+                        onClick={() => {
+                          selectAccountingSection("financials", group);
+                          onClose?.();
+                        }}
+                        className={`flex w-full items-center gap-2.5 rounded-xl py-1.5 pl-7 pr-2.5 text-left transition-all cursor-pointer acc-interactive-btn ${
+                          active
+                            ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                            : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                      >
+                        <Icon
+                          size={16}
+                          weight={active ? "fill" : "duotone"}
+                          className={`shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`}
+                        />
+                        <span className="text-[13px]">{label}</span>
+                      </button>
+                    );
+                  })}
 
                   {/* 6. KQKD SKU — báo cáo kết quả kinh doanh SKU Testing (mục riêng) */}
                   <button
@@ -912,7 +910,55 @@ function WorkspaceSidebar({
                     </div>
                   </button>
 
-                  {/* 7.1 Phân quyền kế toán (Admin / Kế toán) */}
+                  {/* 7.1 Stores (trong System Admin) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("stores");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-xl py-2 pl-7 pr-2.5 text-left transition-all cursor-pointer acc-interactive-btn ${
+                      accountingSection === "stores"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <StorefrontIcon
+                      size={16}
+                      weight={accountingSection === "stores" ? "fill" : "duotone"}
+                      className={`shrink-0 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"}`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-[13px]">Stores</span>
+                    </div>
+                  </button>
+
+                  {/* 7.2 Import (trong System Admin) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("orders");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-xl py-2 pl-7 pr-2.5 text-left transition-all cursor-pointer acc-interactive-btn ${
+                      accountingSection === "orders" || accountingSection === "import"
+                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <UploadSimpleIcon
+                      size={16}
+                      weight={accountingSection === "orders" || accountingSection === "import" ? "bold" : "regular"}
+                      className={`shrink-0 ${
+                        accountingSection === "orders" || accountingSection === "import" ? "text-indigo-600" : "text-slate-400"
+                      }`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-[13px]">Import</span>
+                    </div>
+                  </button>
+
+                  {/* 7.2 Phân quyền kế toán (Admin / Kế toán) */}
                   {(actor?.role === "admin" || actor?.role === "accountant") && (
                     <button
                       type="button"
@@ -1257,7 +1303,10 @@ export function ListingWorkspace({
               effectiveAccSection === "financials"
             ) {
               setAccountingSection("financials");
-              setAccountingSubTab(effectiveAccSection === "pnl" ? "fba" : effectiveAccSection);
+              // Financials chia theo kỳ (day / week / month, hoặc key tab cũ) — xem financials-groups.ts
+              setAccountingSubTab(
+                effectiveAccSection === "pnl" ? "fba" : effectiveAccSection === "financials" ? urlSubTab || savedAccSubTab : effectiveAccSection,
+              );
             } else if (effectiveAccSection === "settlements") {
               setAccountingSection("reports");
               setAccountingSubTab(effectiveAccSection);
@@ -1389,6 +1438,7 @@ export function ListingWorkspace({
           ppcDashboardTab={ppcDashboardTab}
           selectAccountingSection={selectAccountingSection}
           accountingSection={accountingSection}
+          accountingSubTab={accountingSubTab}
           kanbanPendingCount={kanbanPendingCount}
           loadingGuides={loadingGuides}
           handleOpenGuides={handleOpenGuides}
@@ -1424,6 +1474,7 @@ export function ListingWorkspace({
               ppcDashboardTab={ppcDashboardTab}
               selectAccountingSection={selectAccountingSection}
               accountingSection={accountingSection}
+              accountingSubTab={accountingSubTab}
               kanbanPendingCount={kanbanPendingCount}
               loadingGuides={loadingGuides}
               handleOpenGuides={handleOpenGuides}

@@ -314,7 +314,11 @@ export function buildHelpSections(storeNames: string[]): Array<{ title: string; 
     },
     {
       title: "📦 Tồn kho & hàng đang về",
-      lines: [`${s} SKU nào sắp hết hàng?`, `${s} cần nhập thêm SKU nào?`, `Lô hàng đang về của ${s}`],
+      lines: [
+        `${s} SKU nào sắp hết hàng?`,
+        `Gợi ý nhập hàng ${s} cho Black Friday / Giáng sinh`,
+        `Lô hàng đang về của ${s}`,
+      ],
     },
     {
       title: "📢 PPC",
@@ -348,5 +352,202 @@ export function buildHelpCard(storeNames: string[]): Record<string, unknown> {
     config: { width_mode: "fill" },
     header: { template: "blue", title: { tag: "plain_text", content: "🤖 AI Agent làm được gì?" } },
     body: { elements: [{ tag: "markdown", content: buildHelpText(storeNames) }] },
+  };
+}
+
+// ───────────── Gợi ý nhập hàng (dự báo theo mùa) ─────────────
+// Khung chuẩn (SS/ROP): điểm đặt hàng = nhu cầu trong thời gian chờ hàng + tồn an toàn,
+// tồn an toàn = Z × σ(bán/ngày) × √(thời gian chờ). Mùa vụ = chỉ số cùng kỳ năm trước,
+// SKU thiếu lịch sử thì mượn chỉ số của nhóm sản phẩm, rồi của cả store.
+
+export interface RestockSettings {
+  /** Thời gian từ lúc đặt hàng tới lúc hàng nhập kho Amazon (ngày) */
+  leadTimeDays: number;
+  /** Lô mới cần đủ bán thêm N ngày sau khi về */
+  coverDays: number;
+  /** Hệ số mức phục vụ (1.65 ≈ 95% không hết hàng) */
+  z: number;
+}
+
+export interface MonthUnits {
+  /** "YYYY-MM" → units cả tháng */
+  [period: string]: number;
+}
+
+export interface SeasonSource {
+  sku: MonthUnits;
+  productType: MonthUnits | null;
+  store: MonthUnits;
+}
+
+/** Mốc mua sắm lớn ở Mỹ (Amazon US) theo năm. */
+export function retailEvents(year: number): Array<{ date: string; name: string }> {
+  const nthWeekday = (month: number, weekday: number, n: number) => {
+    const first = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+    const day = 1 + ((weekday - first + 7) % 7) + (n - 1) * 7;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  };
+  const thanksgiving = nthWeekday(11, 4, 4);
+  return [
+    { date: `${year}-02-14`, name: "Valentine" },
+    { date: nthWeekday(5, 0, 2), name: "Mother's Day" },
+    { date: nthWeekday(6, 0, 3), name: "Father's Day" },
+    { date: `${year}-07-15`, name: "Prime Day (khoảng giữa tháng 7)" },
+    { date: `${year}-10-08`, name: "Prime Big Deal Days (khoảng đầu tháng 10)" },
+    { date: `${year}-10-31`, name: "Halloween" },
+    { date: shiftDate(thanksgiving, 1), name: "Black Friday" },
+    { date: shiftDate(thanksgiving, 4), name: "Cyber Monday" },
+    { date: `${year}-12-25`, name: "Giáng sinh (khách đặt trước ~15/12)" },
+  ];
+}
+
+export function upcomingEvents(from: string, to: string) {
+  const years = new Set([Number(from.slice(0, 4)), Number(to.slice(0, 4))]);
+  return [...years].flatMap(retailEvents).filter((e) => e.date >= from && e.date <= to).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+const prevYear = (period: string) => `${Number(period.slice(0, 4)) - 1}${period.slice(4)}`;
+
+/** Tỉ trọng từng tháng trong 28 ngày tính tốc độ nền (VD 11/10 → 2026-09: 0.39, 2026-10: 0.61). */
+export function baseWindowWeights(today: string, days = 28): Record<string, number> {
+  const w: Record<string, number> = {};
+  for (let i = 0; i < days; i++) {
+    const p = shiftDate(today, -i).slice(0, 7);
+    w[p] = (w[p] ?? 0) + 1 / days;
+  }
+  return w;
+}
+
+/**
+ * Hệ số mùa của tháng `target` so với "bây giờ", đo bằng năm trước, theo units TRUNG BÌNH MỖI NGÀY:
+ *   units/ngày(target năm trước) ÷ units/ngày(các tháng của 28 ngày gần nhất, năm trước, theo tỉ trọng).
+ * Lấy theo SKU nếu đủ mẫu, không thì nhóm sản phẩm, không thì cả store. Kẹp trong [0.3, 5].
+ */
+export function seasonalFactor(source: SeasonSource, baseWeights: Record<string, number>, target: string) {
+  const perDay = (m: MonthUnits, period: string) => {
+    const ly = prevYear(period);
+    return m[ly] == null ? null : m[ly] / daysInMonth(ly);
+  };
+  const tryLevel = (m: MonthUnits | null, minMonthly: number) => {
+    if (!m) return null;
+    let base = 0;
+    for (const [p, w] of Object.entries(baseWeights)) {
+      const v = perDay(m, p);
+      if (v == null) return null;
+      base += w * v;
+    }
+    const t = perDay(m, target);
+    if (t == null || base * 30 < minMonthly) return null;
+    return t / base;
+  };
+  // Kẹp 0.3–5: mùa quà tặng có thể gấp 4–5 lần tháng thường; ngoài khoảng này thường là nhiễu mẫu nhỏ
+  const clamp = (raw: number) => ({ factor: Math.min(SEASON_MAX, Math.max(SEASON_MIN, raw)), clamped: raw > SEASON_MAX || raw < SEASON_MIN });
+  const sku = tryLevel(source.sku, 20);
+  if (sku != null) return { ...clamp(sku), level: "sku" as const };
+  const pt = tryLevel(source.productType, 50);
+  if (pt != null) return { ...clamp(pt), level: "product_type" as const };
+  const st = tryLevel(source.store, 100);
+  if (st != null) return { ...clamp(st), level: "store" as const };
+  return { factor: 1, clamped: false, level: "none" as const };
+}
+
+const SEASON_MIN = 0.3;
+const SEASON_MAX = 5;
+
+export interface RestockInput {
+  sku: string;
+  status: string | null;
+  productType: string | null;
+  /** Units bán từng ngày, 56 ngày gần nhất, ngày cũ trước (thiếu ngày = 0) */
+  daily: number[];
+  sellable: number;
+  inTransit: number;
+  inboundPending: number;
+  nextArrival: string | null;
+  season: SeasonSource;
+}
+
+const avg = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
+const std = (xs: number[]) => {
+  const m = avg(xs);
+  return xs.length > 1 ? Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1)) : 0;
+};
+
+/**
+ * Kế hoạch nhập 1 SKU. `today` = ngày có dữ liệu bán mới nhất.
+ * Tốc độ nền = 40% TB 14 ngày + 40% TB 28 ngày + 20% TB 56 ngày (bớt nhiễu, vẫn nhạy xu hướng).
+ */
+export function planRestock(input: RestockInput, today: string, s: RestockSettings) {
+  const d = input.daily;
+  const r14 = avg(d.slice(-14));
+  const r28 = avg(d.slice(-28));
+  const r56 = avg(d.slice(-56));
+  const base = 0.4 * r14 + 0.4 * r28 + 0.2 * r56;
+  const prev28 = avg(d.slice(-56, -28));
+  const trend = prev28 > 0 ? r28 / prev28 - 1 : null;
+  const sigma = std(d.slice(-56));
+  const salesDays = d.filter((x) => x > 0).length;
+
+  // Dự báo từng ngày tới hết (thời gian chờ + số ngày cần đủ bán), nhân hệ số mùa của tháng
+  const horizon = s.leadTimeDays + s.coverDays;
+  const baseWeights = baseWindowWeights(today);
+  const factors = new Map<string, ReturnType<typeof seasonalFactor>>();
+  const daily: number[] = [];
+  for (let i = 1; i <= horizon; i++) {
+    const p = shiftDate(today, i).slice(0, 7);
+    if (!factors.has(p)) factors.set(p, seasonalFactor(input.season, baseWeights, p));
+    daily.push(base * factors.get(p)!.factor);
+  }
+  const sum = (from: number, to: number) => daily.slice(from, to).reduce((a, x) => a + x, 0);
+  const demandLead = sum(0, s.leadTimeDays);
+  const demandTotal = sum(0, horizon);
+  const leadFactor = s.leadTimeDays ? demandLead / (base * s.leadTimeDays || 1) : 1;
+  const safety = s.z * sigma * Math.sqrt(s.leadTimeDays) * (base > 0 ? leadFactor : 1);
+  const onHand = input.sellable;
+  const coming = input.inTransit + input.inboundPending;
+  const suggest = Math.max(0, Math.ceil(demandTotal + safety - onHand - coming));
+
+  // Ngày hết hàng sẵn bán (chưa tính hàng đang về) và hạn chót đặt hàng để lô mới về kịp
+  let stockoutDay: number | null = null;
+  let left = onHand;
+  for (let i = 0; i < daily.length; i++) {
+    left -= daily[i];
+    if (left <= 0) { stockoutDay = i + 1; break; }
+  }
+  // Hết cả hàng sẵn + hàng đang về (giả định hàng đang về kịp nhập kho)
+  let coverAllDay: number | null = null;
+  let all = onHand + coming;
+  for (let i = 0; i < daily.length; i++) {
+    all -= daily[i];
+    if (all <= safety) { coverAllDay = i + 1; break; }
+  }
+  const orderBy = coverAllDay == null ? null : shiftDate(today, coverAllDay - s.leadTimeDays);
+
+  const levels = [...factors.values()].map((f) => f.level);
+  const seasonLevel = levels.includes("none") ? "none" : levels.includes("store") ? "store" : levels.includes("product_type") ? "product_type" : "sku";
+  const confidence =
+    salesDays < 10 ? "thấp" : seasonLevel === "sku" && salesDays >= 28 ? "cao" : seasonLevel === "none" ? "thấp" : "trung bình";
+
+  return {
+    sku: input.sku,
+    status: input.status,
+    productType: input.productType,
+    baseUnitsPerDay: Math.round(base * 100) / 100,
+    last14PerDay: Math.round(r14 * 100) / 100,
+    last56PerDay: Math.round(r56 * 100) / 100,
+    trend28Pct: trend == null ? null : Math.round(trend * 1000) / 10,
+    seasonByMonth: [...factors.entries()].map(([period, f]) => ({ period, factor: Math.round(f.factor * 100) / 100, level: f.level, clamped: f.clamped })),
+    demandLeadTime: Math.round(demandLead),
+    demandTotal: Math.round(demandTotal),
+    safetyStock: Math.round(safety),
+    sellable: onHand,
+    coming,
+    nextArrival: input.nextArrival,
+    stockoutDate: stockoutDay == null ? null : shiftDate(today, stockoutDay),
+    orderByDate: orderBy,
+    orderNow: orderBy != null && orderBy <= today,
+    suggestUnits: suggest,
+    confidence,
+    salesDays56: salesDays,
   };
 }

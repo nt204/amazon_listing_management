@@ -49,6 +49,7 @@ import {
   getInventoryStatus,
   getKpiProgress,
   getListingJobsStatus,
+  getRestockPlan,
   getSkuProfit,
   toAccountingStoreName,
 } from "@/lib/accounting/lark-insight-tools";
@@ -128,7 +129,7 @@ export function resolveContextualReconciliationLinks(
     add("🎯 Mở KPI kinh doanh", "https://ncehub.net/?view=accounting&section=kpi");
     return buttons;
   }
-  if (toolsUsed.includes("getInventoryStatus")) {
+  if (toolsUsed.includes("getInventoryStatus") || toolsUsed.includes("getRestockPlan")) {
     add("📦 Đối soát Tồn kho", "https://ncehub.net/?view=accounting&section=inventory");
     return buttons;
   }
@@ -675,6 +676,24 @@ const TOOLS_SCHEMA = [
   {
     type: "function",
     function: {
+      name: "getRestockPlan",
+      description: "GỢI Ý NHẬP HÀNG cho MỘT store (hoặc 1 SKU): dự báo nhu cầu theo tốc độ bán gần đây, xu hướng, hệ số MÙA VỤ cùng kỳ năm trước (SKU → nhóm sản phẩm → cả store), sự kiện mua sắm sắp tới (Black Friday, Giáng sinh, Prime Day...), thời gian chờ hàng thật từ lịch sử lô nhập và tồn an toàn. Trả về: nên nhập bao nhiêu, đặt trước ngày nào, dự kiến hết hàng ngày nào, lý do và độ tin cậy. Dùng khi người dùng xin GỢI Ý / kế hoạch nhập hàng / chuẩn bị hàng cho mùa. BẮT BUỘC có storeQuery.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "BẮT BUỘC: Tên store." },
+          sku: { type: "string", description: "Mã SKU nếu chỉ hỏi 1 SKU." },
+          coverDays: { type: "number", description: "Lô mới cần đủ bán bao nhiêu ngày sau khi về (mặc định 30). Chỉ truyền khi người dùng nêu." },
+          leadTimeDays: { type: "number", description: "Thời gian chờ hàng (ngày). Chỉ truyền khi người dùng nêu; bỏ trống = lấy từ lịch sử lô nhập." },
+          limit: { type: "number", description: "Số SKU (mặc định 12)." },
+        },
+        required: ["storeQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "getListingJobsStatus",
       description: "Tiến độ batch Trello tạo listing và job mockup DO CHÍNH NGƯỜI HỎI tạo trong ngày (mặc định hôm nay) + các job đang chạy: xong bao nhiêu card, card nào lỗi và lý do. Dùng cho: 'batch Trello hôm nay xong chưa', 'mockup có job nào lỗi'. Không cần store.",
       parameters: {
@@ -710,6 +729,7 @@ const ACCOUNTING_DATA_TOOLS = new Set([
   "getKpiProgress",
   "getInventoryStatus",
   "getSkuProfit",
+  "getRestockPlan",
 ]);
 
 /** Trạng thái trong một lượt hỏi: chỉ SKU đầu tiên được đánh số đề xuất bid để "duyệt số N" không nhầm SKU. */
@@ -811,6 +831,8 @@ async function executeTool(
         return JSON.stringify(await getInventoryStatus(args));
       case "getSkuProfit":
         return JSON.stringify(await getSkuProfit(args));
+      case "getRestockPlan":
+        return JSON.stringify(await getRestockPlan(args));
       default:
         return JSON.stringify({ error: `Không tìm thấy công cụ: ${name}` });
     }
@@ -1622,7 +1644,15 @@ QUY TẮC BẮT BUỘC:
    - "sắp hết hàng", "hết hàng", "cần nhập thêm", "tồn kho còn bao nhiêu ngày" -> gọi "getInventoryStatus" (BẮT BUỘC có store). Hỏi lô hàng đang về cụ thể thì vẫn dùng getInboundShipments như cũ.
    - "SKU nào lỗ tuần này / tháng này", "top SKU lãi", "Basecost / lãi của SKU X trong khoảng ngày" -> gọi "getSkuProfit" (BẮT BUỘC có store; truyền startDate/endDate theo khoảng người hỏi, 'tuần này' thì bỏ trống). Câu chung "nên chú ý SKU nào / SKU tiềm năng" vẫn dùng getSkuWatchlist.
    - "batch Trello xong chưa", "listing hôm nay", "mockup có lỗi không" -> gọi "getListingJobsStatus" (không cần store; chỉ thấy job của chính người hỏi).
-   - Chỉ dùng số tool trả về; có "ghi_chu" thì nêu trước các con số.`;
+   - Chỉ dùng số tool trả về; có "ghi_chu" thì nêu trước các con số.
+
+12. GỢI Ý NHẬP HÀNG (kỹ năng phân tích tồn kho):
+   - Người dùng xin "gợi ý nhập hàng", "nên nhập bao nhiêu", "kế hoạch nhập", "chuẩn bị hàng cho Black Friday / Giáng sinh / mùa", "SKU nào cần đặt thêm" -> gọi "getRestockPlan" (BẮT BUỘC có store). Chỉ hỏi tình trạng tồn hiện tại thì vẫn dùng getInventoryStatus.
+   - Cách phân tích (tool đã tính, AI chỉ diễn giải): nhu cầu = tốc độ bán nền × hệ số mùa từng tháng; gợi ý nhập = nhu cầu (thời gian chờ + số ngày cần đủ bán) + tồn an toàn − tồn sẵn bán − hàng đang về.
+   - Mỗi SKU nêu lý do bằng số: bán nền/ngày, xu hướng 28 ngày, hệ số mùa (VD "tháng 12 năm ngoái bán gấp 2.1 lần tháng 11") và nguồn hệ số (SKU / nhóm / store), sự kiện mua sắm trong khoảng dự báo.
+   - Độ tin cậy "thấp" (SKU mới, ít ngày bán, không có cùng kỳ) thì khuyên nhập lô nhỏ và theo dõi. SKU Test thì nhắc nhập lô nhỏ.
+   - Người dùng nêu thời gian chờ hàng hoặc số ngày muốn đủ bán thì truyền leadTimeDays / coverDays.
+   - Luôn nói đây là gợi ý dự báo; không hứa chắc doanh số.`;
 
   // Tải lịch sử hội thoại gần đây (nếu có sessionId)
   const conversationHistory = options.sessionId

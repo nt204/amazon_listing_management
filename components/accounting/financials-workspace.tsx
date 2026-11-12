@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   CalendarBlankIcon,
+  CalendarDotsIcon,
   FlaskIcon,
   ListChecksIcon,
   PackageIcon,
@@ -11,6 +12,14 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 import { storeCanView, storeHasTeam } from "@/lib/accounting/store-teams";
+import {
+  FINANCIALS_GROUPS,
+  GROUP_TABS,
+  financialsGroupOf,
+  isSubTab,
+  type FinancialsGroup,
+  type FinancialsSubTab,
+} from "./financials-groups";
 import type { StoreAccessInfo } from "@/lib/accounting/types";
 import { channelTabBadgeActiveClass } from "./channel-tab-colors";
 import {
@@ -38,27 +47,24 @@ const FbaDailyView = dynamic(
   { loading: TabLoading }
 );
 
+const WeeklyReportView = dynamic(
+  () => import("./weekly-report-view").then((m) => m.WeeklyReportView),
+  { loading: TabLoading }
+);
+
 const SkuMonthlyView = dynamic(
   () => import("./sku-monthly-view").then((m) => m.SkuMonthlyView),
   { loading: TabLoading }
 );
 
-export type FinancialsSubTab =
-  | "sku_win"
-  | "sku_test"
-  | "sku_monthly"
-  | "fba"
-  | "fbm"
-  | "sku_monthly_fbm"
-  | "fbm_fixed";
-
-const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "sku_monthly", "fba", "fbm", "sku_monthly_fbm", "fbm_fixed"];
 const FBM_TABS: FinancialsSubTab[] = ["fbm", "sku_monthly_fbm", "fbm_fixed"];
 
 type TabItem = { key: FinancialsSubTab; label: string; badge?: string; icon: Icon };
 
 const FBA_TAB_ITEMS: TabItem[] = [
   { key: "fba", label: "FBA", badge: "Theo Ngày", icon: CalendarBlankIcon },
+  // Báo cáo tuần tổng hợp mọi store — file "BÁO CÁO TUẦN TỔNG HỢP"
+  { key: "weekly", label: "Báo Cáo Tuần", badge: "Tổng hợp", icon: CalendarDotsIcon },
   { key: "sku_monthly", label: "Báo Cáo Tháng", badge: "SKU Monthly", icon: CalendarBlankIcon },
   { key: "sku_win", label: "Lọc SKU Win", icon: PackageIcon },
   { key: "sku_test", label: "Lọc SKU Test", icon: FlaskIcon },
@@ -73,20 +79,25 @@ const FBM_TAB_ITEMS: TabItem[] = [
   { key: "fbm_fixed", label: "FBM Cố định", icon: ListChecksIcon },
 ];
 
-function isSubTab(value: string | null): value is FinancialsSubTab {
-  return SUB_TABS.includes(value as FinancialsSubTab);
-}
+export type { FinancialsGroup, FinancialsSubTab };
 
-export function FinancialsWorkspace() {
-  const [activeTab, setActiveTab] = useState<FinancialsSubTab>(() => {
+const tabStorageKey = (group: FinancialsGroup) => `accounting_financials_tab_${group}`;
+
+export function FinancialsWorkspace({ subTab }: { subTab?: string }) {
+  const group = financialsGroupOf(subTab);
+  // Tab đang mở của từng kỳ (nhớ trong phiên); link cũ ?subtab=<tab> mở đúng tab đó
+  const [tabByGroup, setTabByGroup] = useState<Partial<Record<FinancialsGroup, FinancialsSubTab>>>(() => {
+    const out: Partial<Record<FinancialsGroup, FinancialsSubTab>> = {};
     if (typeof window !== "undefined") {
-      const urlSubTab = new URLSearchParams(window.location.search).get("subtab");
-      if (isSubTab(urlSubTab)) return urlSubTab;
-      const saved = window.sessionStorage.getItem("accounting_financials_sub_tab");
-      if (isSubTab(saved)) return saved;
+      for (const g of FINANCIALS_GROUPS) {
+        const saved = window.sessionStorage.getItem(tabStorageKey(g));
+        if (isSubTab(saved) && GROUP_TABS[g].includes(saved)) out[g] = saved;
+      }
     }
-    return "fba";
+    if (isSubTab(subTab)) out[financialsGroupOf(subTab)] = subTab;
+    return out;
   });
+  const activeTab: FinancialsSubTab = tabByGroup[group] ?? GROUP_TABS[group][0];
 
   // Tab FBM / FBM cố định chỉ dành cho store có team FBM: theo dõi store đang chọn (dùng chung giữa các tab)
   const [storeInfo, setStoreInfo] = useState<Map<string, { id: string; team?: string; access?: StoreAccessInfo }> | null>(null);
@@ -115,20 +126,33 @@ export function FinancialsWorkspace() {
   const showFbmTabs = storeInfo != null && storeHasTeam(selectedStore?.team, "FBM") && storeCanView(selectedStore, "FBM");
   // Phân quyền kế toán: người chỉ được xem FBM (team FBM) không thấy nhóm tab FBA
   const canViewFba = storeInfo == null || [...storeInfo.values()].some((s) => storeCanView(s, "FBA"));
-  // Store không có FBM (hoặc đổi sang store khác) thì quay về tab FBA; không xem được FBA thì sang FBM
+  // Store không có FBM (hoặc đổi sang store khác) thì quay về tab FBA cùng kỳ; không xem được FBA thì sang FBM cùng kỳ
+  const groupTabs = GROUP_TABS[group];
+  const firstFba = groupTabs.find((t) => !FBM_TABS.includes(t));
+  const firstFbm = groupTabs.find((t) => FBM_TABS.includes(t));
   const visibleTab: FinancialsSubTab =
-    storeInfo != null && !showFbmTabs && FBM_TABS.includes(activeTab)
-      ? "fba"
-      : !canViewFba && !FBM_TABS.includes(activeTab)
-      ? "fbm"
+    storeInfo != null && !showFbmTabs && FBM_TABS.includes(activeTab) && firstFba
+      ? firstFba
+      : !canViewFba && !FBM_TABS.includes(activeTab) && activeTab !== "weekly" && firstFbm
+      ? firstFbm
       : activeTab;
 
-  const handleTabChange = useCallback((tab: FinancialsSubTab) => {
-    setActiveTab(tab);
-    if (typeof window !== "undefined") {
-      window.sessionStorage.setItem("accounting_financials_sub_tab", tab);
-    }
-  }, []);
+  const handleTabChange = useCallback(
+    (tab: FinancialsSubTab) => {
+      setTabByGroup((prev) => ({ ...prev, [group]: tab }));
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(tabStorageKey(group), tab);
+      }
+    },
+    [group],
+  );
+
+  const fbaItems = FBA_TAB_ITEMS.filter((t) => groupTabs.includes(t.key));
+  const fbmItems = FBM_TAB_ITEMS.filter((t) => groupTabs.includes(t.key));
+  const shownFba = canViewFba ? fbaItems : fbaItems.filter((t) => t.key === "weekly");
+  const shownFbm = showFbmTabs || !canViewFba ? fbmItems : [];
+  // Kỳ chỉ còn 1 tab (vd Tuần) thì không cần thanh tab
+  const showTabBar = shownFba.length + shownFbm.length > 1;
 
   const renderTab = (tab: TabItem) => {
     const isActive = visibleTab === tab.key;
@@ -179,24 +203,27 @@ export function FinancialsWorkspace() {
   return (
     <div className="flex h-full w-full flex-col bg-slate-50 overflow-hidden font-accounting-system">
       {/* SUB-TABS BAR (Đồng bộ phong cách với tab Import) */}
-      <div className="bg-slate-200/80 px-3 pt-2 pb-1.5 border-b border-slate-300 shrink-0">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-          {canViewFba && FBA_TAB_ITEMS.map(renderTab)}
+      {showTabBar && (
+        <div className="bg-slate-200/80 px-3 pt-2 pb-1.5 border-b border-slate-300 shrink-0">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {shownFba.map(renderTab)}
 
-          {/* Vạch ngăn nhóm tab FBA với nhóm tab FBM cho đỡ lẫn */}
-          {(showFbmTabs || !canViewFba) && (
-            <>
-              {canViewFba && <span className="mx-1 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />}
-              {FBM_TAB_ITEMS.map(renderTab)}
-            </>
-          )}
+            {/* Vạch ngăn nhóm tab FBA với nhóm tab FBM cho đỡ lẫn */}
+            {shownFbm.length > 0 && (
+              <>
+                {shownFba.length > 0 && <span className="mx-1 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />}
+                {shownFbm.map(renderTab)}
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* CONTENT PANELS: Mount ONLY active tab to isolate performance and eliminate background lag */}
       <div className="flex-1 overflow-hidden relative">
         <AccountingViewTransition transitionKey={visibleTab} className="h-full w-full">
           {visibleTab === "fba" && <FbaDailyView key="fba" />}
+          {visibleTab === "weekly" && <WeeklyReportView key="weekly" />}
           {visibleTab === "sku_monthly" && <SkuMonthlyView key="sku_monthly" />}
           {visibleTab === "sku_win" && <SkuWinView key="sku_win" />}
           {visibleTab === "sku_test" && <SkuTestView />}

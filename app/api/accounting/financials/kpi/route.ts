@@ -1,6 +1,6 @@
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
-import { getKpi, setKpiNote, setKpiTarget, setKpiTargetFormula, type KpiTargetPatch } from "@/lib/accounting/kpi-db";
+import { getKpi, setKpiNote, setKpiSkuPrice, setKpiTarget, setKpiTargetFormula, type KpiTargetPatch } from "@/lib/accounting/kpi-db";
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -82,6 +82,20 @@ export async function PUT(request: Request) {
       }
       const saved = await setKpiTargetFormula(storeId, patch, who);
       return Response.json({ success: true, targetFormula: saved });
+    }
+
+    // Sửa giá bán thủ công của SKU ({ store_id, period, sku, sku_price })
+    if ("sku_price" in body) {
+      const sku = String(body.sku || "").trim();
+      if (!sku || sku.length > 200) return Response.json({ error: "Thiếu SKU." }, { status: 400 });
+      let price: number | null = null;
+      try {
+        price = numOrNull(body.sku_price, 0, 100_000) ?? null;
+      } catch {
+        return Response.json({ error: "Giá không hợp lệ." }, { status: 400 });
+      }
+      await setKpiSkuPrice(storeId, sku, price, who);
+      return Response.json({ success: true, sku, price });
     }
 
     const sku = String(body.sku || "").trim();

@@ -137,6 +137,37 @@ body {
   border-bottom-color: #000 !important;
 }
 
+/* acc-grid-off: bảng dạng báo cáo (BÁO CÁO TUẦN) — chỉ kẻ ngang nhạt, không vạch dọc, tiêu đề nền trắng,
+   màu chữ theo dòng (để làm mờ dòng không có số). */
+.acc-black-grid .acc-grid-off table th,
+.acc-black-grid .acc-grid-off table td,
+.acc-black-grid .acc-grid-off table tr,
+.acc-black-grid .acc-grid-off table thead,
+.acc-black-grid .acc-grid-off table tbody,
+.acc-black-grid .acc-grid-off table tfoot {
+  border-color: #e2e8f0 !important;
+}
+.acc-black-grid .acc-grid-off table th:not(:last-child),
+.acc-black-grid .acc-grid-off table td:not(:last-child) {
+  border-right-width: 0;
+}
+.acc-black-grid .acc-grid-off table thead tr:last-child th {
+  border-bottom: 1px solid #cbd5e1 !important;
+}
+.acc-black-grid .acc-grid-off table tfoot tr {
+  border-top: 2px solid #cbd5e1 !important;
+}
+.font-accounting-system .acc-grid-off table td:not([class*="text-slate"]):not([class*="text-rose"]):not([class*="text-emerald"]) {
+  color: inherit;
+}
+.font-accounting-system .acc-grid-off table td[class*="text-slate-300"] { color: #cbd5e1; }
+.font-accounting-system .acc-grid-off table td[class*="text-slate-500"] { color: #64748b; }
+.font-accounting-system .acc-grid-off table th,
+.font-accounting-system .acc-grid-off table th * {
+  color: inherit;
+  font-size: 11px !important;
+}
+
 /* Ô chỉ có dấu gạch giữ chỗ ("—") → để trống (AccBlackGrid gắn data-acc-blank) */
 .acc-black-grid table td[data-acc-blank],
 .acc-black-grid table td[data-acc-blank] * {
@@ -175,6 +206,16 @@ body {
   color: #020617;
 }
 
+/* Tiêu đề bảng Báo cáo tổng team & Bảng theo tháng KPI: in đậm rõ nét theo chuẩn Excel */
+.font-accounting-system table.acc-kpi-report-table thead th,
+.font-accounting-system table.acc-kpi-report-table thead th *,
+.font-accounting-system table.acc-kpi-report-table thead span,
+.font-accounting-system table.acc-kpi-subtable thead th,
+.font-accounting-system table.acc-kpi-subtable thead th * {
+  font-weight: 800 !important;
+  color: #000000 !important;
+}
+
 /* Bảng Financials (FBA/FBM theo ngày, SKU Win/Test, FBM cố định): tên cột to hơn cho dễ đọc.
    Chỉ hàng tiêu đề đầu tiên, không đụng hàng TOTAL. */
 .font-accounting-system table.acc-financial-table thead tr:first-child th,
@@ -205,9 +246,18 @@ body {
 .font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center):not(.acc-normal-weight) *,
 .font-accounting-system table tbody tr > td:first-child:has(input[type="checkbox"]) + td,
 .font-accounting-system table tbody tr > td:first-child:has(input[type="checkbox"]) + td *,
-.font-accounting-system table tbody tr > td.text-center:first-child + td,
-.font-accounting-system table tbody tr > td.text-center:first-child + td * {
+.font-accounting-system table tbody tr > td.text-center:first-child + td:not(.acc-normal-weight),
+.font-accounting-system table tbody tr > td.text-center:first-child + td:not(.acc-normal-weight) * {
   font-weight: 700 !important;
+}
+
+/* Các ô có class acc-normal-weight hoặc col-normal-weight: độ đậm bình thường (font-weight: 400) */
+.font-accounting-system table tbody td.acc-normal-weight,
+.font-accounting-system table tbody td.acc-normal-weight *,
+.font-accounting-system table tbody td.col-normal-weight,
+.font-accounting-system table tbody td.col-normal-weight *,
+.font-accounting-system table tbody td span.font-normal {
+  font-weight: 400 !important;
 }
 
 

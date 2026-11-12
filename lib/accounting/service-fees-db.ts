@@ -636,3 +636,52 @@ export async function deleteServiceFeeBatch(storeId: string, ids: string[]): Pro
   `;
   return res.count || ids.length;
 }
+
+/** Chi phí khác Amazon của 1 tháng — như khối "CHI PHÍ KHÁC AMAZON" bên phải tab FBA của file kế toán */
+export interface MonthlyServiceFees {
+  /** "YYYY-MM" */
+  month: string;
+  /** Tổng mọi dòng Service Fees của tháng */
+  total: number;
+  storage: number;
+  longTermStorage: number;
+  inboundPlacement: number;
+  advertising: number;
+  /** Còn lại = total − storage − long-term − inbound − advertising */
+  other: number;
+  /** FEE = total − Cost of Advertising (Ads đã có ở cột Ads Fee) → dòng "Service Fees" trừ vào Profit của tháng */
+  fee: number;
+}
+
+/** Service Fees theo tháng (theo ngày phát sinh, số âm = chi phí) của các tháng "YYYY-MM" */
+export async function getMonthlyServiceFees(storeId: string, months: string[]): Promise<MonthlyServiceFees[]> {
+  const list = [...new Set(months.filter((m) => /^\d{4}-\d{2}$/.test(m)))];
+  if (!list.length) return [];
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ month: string; kind: string; total: number }[]>`
+    SELECT to_char(date, 'YYYY-MM') AS month,
+      CASE TRIM(product_details)
+        WHEN 'FBA Inventory Storage Fee' THEN 'storage'
+        WHEN 'FBA Long-Term Storage Fee' THEN 'longTermStorage'
+        WHEN 'FBA Inbound Placement Service Fee' THEN 'inboundPlacement'
+        WHEN 'Cost of Advertising' THEN 'advertising'
+        ELSE 'other'
+      END AS kind,
+      COALESCE(SUM(total), 0)::float AS total
+    FROM accounting_service_fees
+    WHERE store_id = ${storeId} AND to_char(date, 'YYYY-MM') IN ${sql(list)}
+    GROUP BY 1, 2
+  `;
+  const byMonth = new Map<string, MonthlyServiceFees>();
+  for (const r of rows) {
+    const m =
+      byMonth.get(r.month) ??
+      { month: r.month, total: 0, storage: 0, longTermStorage: 0, inboundPlacement: 0, advertising: 0, other: 0, fee: 0 };
+    const v = Number(r.total) || 0;
+    m[r.kind as "storage" | "longTermStorage" | "inboundPlacement" | "advertising" | "other"] += v;
+    m.total += v;
+    byMonth.set(r.month, m);
+  }
+  for (const m of byMonth.values()) m.fee = m.total - m.advertising;
+  return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
+}

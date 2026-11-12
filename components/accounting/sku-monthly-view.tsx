@@ -3,6 +3,12 @@
 import { profitColClass } from "./profit-column";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+
+// Màu như sheet kế toán và tab FBA / FBM theo ngày: Profit nền xanh khi ≥ 0, đỏ khi < 0 (định dạng có điều kiện)
+const SHEET_GREEN = "#83C75D";
+const SHEET_RED = "#FF0000";
+const resultBg = (v: number | null | undefined) =>
+  v == null || Number.isNaN(v) ? undefined : v < 0 ? SHEET_RED : SHEET_GREEN;
 import {
   ArrowClockwiseIcon,
   CalendarBlankIcon,
@@ -822,14 +828,19 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                 <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
-                    const bgStyle = f.isFrozen ? { backgroundColor: "#fffbeb" } : {};
                     const isProfitCol = col.id === "profit";
+                    const resultColor = isProfitCol ? resultBg(summary.net_profit) : undefined;
+                    const cellBg = resultColor
+                      ? { backgroundColor: resultColor }
+                      : f.isFrozen
+                      ? { backgroundColor: "#fffbeb" }
+                      : {};
 
                     return (
                       <td
                         key={`total-${col.id}`}
-                        style={{ ...f.style, ...bgStyle }}
-                        className={`${profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-semibold ${
+                        style={{ ...f.style, ...cellBg }}
+                        className={`${resultColor ? "" : profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-semibold ${
                           f.isBoundary
                             ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                             : "border-r border-amber-200/80"
@@ -847,33 +858,33 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                           </span>
                         )}
                         {col.id === "product_type" && (
-                          <span className="text-slate-700 font-bold">{summary.active_sku_count} active</span>
+                          <span className="text-black font-bold">{summary.active_sku_count} active</span>
                         )}
                         {col.id === "mockup" && <span className="text-slate-400">—</span>}
-                        {col.id === "sku" && <span className="font-bold text-slate-950">{displayItems.length} SKUs</span>}
+                        {col.id === "sku" && <span className="font-bold text-black">{displayItems.length} SKUs</span>}
                         {col.id === "asin" && <span className="text-slate-400">—</span>}
                         {col.id === "revenue" && (
-                          <span className="font-bold text-slate-950 tabular-nums">
+                          <span className="font-bold text-black tabular-nums">
                             {formatCurrency(summary.total_revenue)}
                           </span>
                         )}
                         {col.id === "quantity" && (
-                          <span className="font-bold text-slate-950 tabular-nums">
+                          <span className="font-bold text-black tabular-nums">
                             {formatInteger(summary.total_quantity)}
                           </span>
                         )}
                         {col.id === "ads_fee" && (
-                          <span className="font-bold text-slate-950 tabular-nums">
+                          <span className="font-bold text-black tabular-nums">
                             {formatCurrency(summary.total_ads_fee)}
                           </span>
                         )}
                         {col.id === "basecost" && (
-                          <span className="font-bold text-slate-950 tabular-nums">
+                          <span className="font-bold text-black tabular-nums">
                             {formatCurrency(summary.total_basecost)}
                           </span>
                         )}
                         {col.id === "amazon_fee_unrecognized" && (
-                          <span className="font-bold text-slate-950 tabular-nums">
+                          <span className="font-bold text-black tabular-nums">
                             {formatCurrency(summary.total_amazon_fee_unrecognized)}
                           </span>
                         )}
@@ -940,7 +951,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                         {isProfitCol && (
                           <span
                             className={`font-bold tabular-nums ${
-                              summary.net_profit >= 0 ? "text-emerald-700" : "text-rose-600"
+                              summary.net_profit < 0 ? "text-white" : "text-black"
                             }`}
                           >
                             {formatCurrency(summary.net_profit)}
@@ -949,7 +960,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                         {col.id === "margin" && (
                           <span
                             className={`font-bold tabular-nums ${
-                              (summary.margin || 0) >= 0 ? "text-emerald-700" : "text-rose-600"
+                              (summary.margin || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
                             }`}
                           >
                             {formatPercent(summary.margin)}
@@ -1071,15 +1082,19 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                     >
                       {visibleColumns.map((col) => {
                         const f = getCellFreezeProps(col.id, false);
-                        const bgStyle = f.isFrozen
+                        const resultCol = col.id === "profit";
+                        const resultColor = resultCol ? resultBg(item.profit) : undefined;
+                        const cellBg = resultColor
+                          ? { backgroundColor: resultColor }
+                          : f.isFrozen
                           ? { backgroundColor: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }
                           : {};
 
                         return (
                           <td
                             key={col.id}
-                            style={{ ...f.style, ...bgStyle }}
-                            className={`${profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs border-r border-b border-slate-200 whitespace-nowrap ${
+                            style={{ ...f.style, ...cellBg }}
+                            className={`${resultColor ? "" : profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs border-r border-b border-slate-200 whitespace-nowrap ${
                               f.isBoundary
                                 ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                                 : ""
@@ -1089,16 +1104,16 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                                 : col.align === "right"
                                 ? "text-right font-mono"
                                 : "text-left"
-                            }`}
+                            } ${col.id === "product_type" || col.id === "revenue" ? "acc-normal-weight col-normal-weight font-normal" : ""}`}
                           >
                             {/* STT */}
                             {col.id === "stt" && (
-                              <span className="text-slate-500 font-semibold">{idx + 1}</span>
+                              <span className="text-black font-semibold font-mono">{idx + 1}</span>
                             )}
 
                             {/* Product Type */}
                             {col.id === "product_type" && (
-                              <span className="font-semibold text-slate-800">
+                              <span className="font-normal text-black">
                                 {item.product_type || "Chưa phân loại"}
                               </span>
                             )}
@@ -1126,7 +1141,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             {/* SKU */}
                             {col.id === "sku" && (
                               <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-slate-900 group-hover:text-amber-700 transition">
+                                <span className="font-bold text-black group-hover:text-amber-700 transition">
                                   {item.sku}
                                 </span>
                                 <button
@@ -1135,7 +1150,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                                     e.stopPropagation();
                                     copyToClipboard(item.sku);
                                   }}
-                                  className="text-slate-400 hover:text-slate-700 transition"
+                                  className="text-slate-400 hover:text-black transition"
                                   title="Copy SKU"
                                 >
                                   <CopyIcon size={12} />
@@ -1145,133 +1160,133 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* ASIN */}
                             {col.id === "asin" && (
-                              <span className="font-mono text-slate-600">{item.asin || "—"}</span>
+                              <span className="font-mono text-black">{item.asin || "—"}</span>
                             )}
 
                             {/* Revenue */}
                             {col.id === "revenue" && (
-                              <span className="font-bold text-slate-900 tabular-nums">
+                              <span className="font-normal text-black tabular-nums">
                                 {formatCurrency(item.revenue)}
                               </span>
                             )}
 
                             {/* Quantity */}
                             {col.id === "quantity" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatInteger(item.quantity)}
                               </span>
                             )}
 
                             {/* Ads Fee */}
                             {col.id === "ads_fee" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.ads_fee)}
                               </span>
                             )}
 
                             {/* Base Cost */}
                             {col.id === "basecost" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.basecost)}
                               </span>
                             )}
 
                             {/* Amazon Fee (chưa ghi nhận) */}
                             {col.id === "amazon_fee_unrecognized" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.amazon_fee_unrecognized)}
                               </span>
                             )}
 
                             {/* Amazon fee (transperance report) */}
                             {col.id === "amazon_fee_trans" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.amazon_fee_trans)}
                               </span>
                             )}
 
                             {/* AMZ Fee */}
                             {col.id === "amazon_fee" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.amazon_fee_total)}
                               </span>
                             )}
 
                             {/* Thuế */}
                             {col.id === "thue" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.thue)}
                               </span>
                             )}
 
                             {/* Refund */}
                             {col.id === "return_amount" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.return_amount)}
                               </span>
                             )}
 
                             {/* Adjustment */}
                             {col.id === "adjustment" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.adjustment)}
                               </span>
                             )}
 
                             {/* Storage fee */}
                             {col.id === "storage_fee" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.storage_fee)}
                               </span>
                             )}
 
                             {/* Placement fee */}
                             {col.id === "placement_fee" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.placement_fee)}
                               </span>
                             )}
 
                             {/* Long term fee */}
                             {col.id === "long_term_fee" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.long_term_fee)}
                               </span>
                             )}
 
                             {/* FBA Return Fee */}
                             {col.id === "fba_customer_return_fee" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.fba_customer_return_fee)}
                               </span>
                             )}
 
                             {/* Liquidations */}
                             {col.id === "liquidations" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.liquidations)}
                               </span>
                             )}
 
                             {/* Basecost Return/Adj */}
                             {col.id === "basecost_return_adjustment" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.basecost_return_adjustment)}
                               </span>
                             )}
 
                             {/* Removal */}
                             {col.id === "removal" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.removal)}
                               </span>
                             )}
 
-                            {/* Profit: Xanh lục nếu dương, đỏ nếu âm */}
+                            {/* Profit: Nền xanh/đỏ giống tab financials ngày */}
                             {col.id === "profit" && (
                               <span
                                 className={`font-bold tabular-nums ${
-                                  isProfit ? "text-emerald-700" : "text-rose-600"
+                                  (item.profit || 0) < 0 ? "text-white" : "text-black"
                                 }`}
                               >
                                 {formatCurrency(item.profit)}
@@ -1282,7 +1297,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             {col.id === "margin" && (
                               <span
                                 className={`font-semibold tabular-nums ${
-                                  (item.margin || 0) >= 0 ? "text-emerald-700" : "text-rose-600"
+                                  (item.margin || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
                                 }`}
                               >
                                 {formatPercent(item.margin)}
@@ -1291,21 +1306,21 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* TACOS */}
                             {col.id === "tacos" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatPercent(item.tacos)}
                               </span>
                             )}
 
                             {/* ACOS */}
                             {col.id === "acos" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatPercent(item.acos)}
                               </span>
                             )}
 
                             {/* ROI */}
                             {col.id === "roi" && (
-                              <span className="font-semibold tabular-nums text-slate-700">
+                              <span className="font-semibold tabular-nums text-black">
                                 {formatPercent(item.roi)}
                               </span>
                             )}
@@ -1315,7 +1330,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                               <span
                                 className={`tabular-nums font-medium ${
                                   item.profit_per_item != null && item.profit_per_item >= 0
-                                    ? "text-emerald-700"
+                                    ? "text-emerald-600"
                                     : "text-rose-600"
                                 }`}
                               >
@@ -1325,47 +1340,47 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* Basecost/Item */}
                             {col.id === "basecost_per_item" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.basecost_per_item)}
                               </span>
                             )}
 
                             {/* VAT/Tax Adjustment */}
                             {col.id === "vat_tax_adjustment" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.vat_tax_adjustment)}
                               </span>
                             )}
 
                             {/* SL đã removal 2024 */}
                             {col.id === "removal_qty_2024" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatInteger(item.removal_qty_2024)}
                               </span>
                             )}
 
                             {/* AWD/Subscription/Amazon Fees/Disposal Fee */}
                             {col.id === "awd_subscription_fees" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.awd_subscription_fees)}
                               </span>
                             )}
 
                             {/* Basecost Adjustment */}
                             {col.id === "basecost_adjustment" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.basecost_adjustment)}
                               </span>
                             )}
 
                             {/* A-to-z / Chargeback (SKU FBM-monthly) */}
                             {col.id === "a_to_z_claim" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.a_to_z_claim ?? 0)}
                               </span>
                             )}
                             {col.id === "chargeback_refund" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.chargeback_refund ?? 0)}
                               </span>
                             )}
@@ -1374,7 +1389,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* Revenue ads */}
                             {col.id === "revenue_ads" && (
-                              <span className="tabular-nums text-slate-700">
+                              <span className="tabular-nums text-black">
                                 {formatCurrency(item.revenue_ads)}
                               </span>
                             )}
@@ -1388,14 +1403,14 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* Tháng listing */}
                             {col.id === "listing_month" && (
-                              <span className="text-slate-600 text-xs">
+                              <span className="text-black text-xs">
                                 {item.listing_month || "—"}
                               </span>
                             )}
 
                             {/* Tháng đánh giá */}
                             {col.id === "review_month" && (
-                              <span className="text-slate-600 text-xs">
+                              <span className="text-black text-xs">
                                 {item.review_month || "—"}
                               </span>
                             )}
@@ -1455,7 +1470,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
             {displayItems.length !== items.length && <> / {items.length}</>} SKU
             {summary && (
               <>
-                {" "}— trong đó <strong className="text-emerald-700">{summary.active_sku_count}</strong> SKU phát sinh giao dịch
+                {" "}— trong đó <strong className="text-emerald-600">{summary.active_sku_count}</strong> SKU phát sinh giao dịch
               </>
             )}
           </span>
@@ -1659,7 +1674,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                 </span>
                 <div
                   className={`text-base font-black mt-1 ${
-                    selectedSkuDetail.profit >= 0 ? "text-emerald-700" : "text-rose-600"
+                    selectedSkuDetail.profit >= 0 ? "text-emerald-600" : "text-rose-600"
                   }`}
                 >
                   {formatCurrency(selectedSkuDetail.profit)}

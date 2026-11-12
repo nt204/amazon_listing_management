@@ -36,6 +36,9 @@ export function StoreManagementView() {
     seller_id: "",
     legal_entity: "",
     status: "active" as "active" | "inactive",
+    // Phí dịch vụ cho Net Profit tab FBA / FBM theo ngày (để trống = mặc định)
+    service_rate_pct: "",
+    fbm_service_cost: "",
   });
   const [savingStore, setSavingStore] = useState(false);
   const [storeFormError, setStoreFormError] = useState<string | null>(null);
@@ -96,6 +99,8 @@ export function StoreManagementView() {
       seller_id: "",
       legal_entity: "",
       status: "active",
+      service_rate_pct: "",
+      fbm_service_cost: "",
     });
     setStoreFormError(null);
     setIsStoreModalOpen(true);
@@ -110,6 +115,8 @@ export function StoreManagementView() {
       seller_id: store.seller_id || "",
       legal_entity: store.legal_entity || store.legal_entity_name || "",
       status: store.status,
+      service_rate_pct: store.service_rate != null ? String(Math.round(store.service_rate * 10000) / 100) : "",
+      fbm_service_cost: store.fbm_service_cost != null ? String(store.fbm_service_cost) : "",
     });
     setStoreFormError(null);
     setIsStoreModalOpen(true);
@@ -136,6 +143,16 @@ export function StoreManagementView() {
         seller_id: storeFormData.seller_id.trim() || null,
         legal_entity: storeFormData.legal_entity.trim() || null,
         status: storeFormData.status,
+        ...(editingStore
+          ? {
+              service_rate: storeFormData.service_rate_pct.trim()
+                ? Number(storeFormData.service_rate_pct.replace(",", ".")) / 100
+                : null,
+              fbm_service_cost: storeFormData.fbm_service_cost.trim()
+                ? Number(storeFormData.fbm_service_cost.replace(/,/g, ""))
+                : null,
+            }
+          : {}),
       };
 
       const url = editingStore
@@ -442,6 +459,36 @@ export function StoreManagementView() {
                   className="w-full h-11 bg-white border border-slate-300 rounded-xl px-4 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-4 focus:ring-indigo-100 shadow-2xs"
                 />
               </div>
+
+              {/* 5b. Phí dịch vụ → Net Profit tab FBA / FBM theo ngày (như file kế toán) */}
+              {editingStore && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-800 mb-1.5">Phí dịch vụ FBA (%)</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={storeFormData.service_rate_pct}
+                      onChange={(e) => setStoreFormData((prev) => ({ ...prev, service_rate_pct: e.target.value }))}
+                      placeholder="VD: 27.08"
+                      className="w-full h-11 bg-white border border-slate-300 rounded-xl px-4 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-4 focus:ring-indigo-100 shadow-2xs"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">Net Profit FBA = Profit − 20000 × % ÷ 184 ngày</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-800 mb-1.5">Phí dịch vụ FBM ($ / 6 tháng)</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={storeFormData.fbm_service_cost}
+                      onChange={(e) => setStoreFormData((prev) => ({ ...prev, fbm_service_cost: e.target.value }))}
+                      placeholder="VD: 35000"
+                      className="w-full h-11 bg-white border border-slate-300 rounded-xl px-4 text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-4 focus:ring-indigo-100 shadow-2xs"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">Net Profit FBM = Profit − số này ÷ 184 ngày</p>
+                  </div>
+                </div>
+              )}
 
               {/* 6. Status (Segmented Pill Buttons) */}
               <div>

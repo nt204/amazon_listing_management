@@ -17,6 +17,10 @@ export interface Store {
   legal_entity?: string | null;
   seller_id: string | null;
   status: "active" | "inactive";
+  /** FBA: Net Profit = Profit − 20000 × service_rate ÷ 184 ngày (null = mặc định) */
+  service_rate?: number | null;
+  /** FBM: Net Profit = Profit − fbm_service_cost ÷ 184 ngày (null = không trừ) */
+  fbm_service_cost?: number | null;
   created_at: string;
   updated_at: string;
   /** Phân quyền kế toán của người đang xem (GET /api/accounting/stores; xem lib/accounting/access.ts). */
@@ -46,6 +50,8 @@ export interface UpdateStoreInput {
   legal_entity?: string | null;
   seller_id?: string | null;
   status?: "active" | "inactive";
+  service_rate?: number | null;
+  fbm_service_cost?: number | null;
 }
 
 export interface CreateLegalEntityInput {

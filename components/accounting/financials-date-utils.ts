@@ -34,56 +34,38 @@ export function getThisMonthDateRange(maxDateStr?: string): DateRange {
 }
 
 /**
- * Retrieves the saved date range for a specific account (store) in a financials tab.
- * Falls back to "This Month" if no custom range has been saved yet for that account.
+ * Trả về khoảng ngày mặc định cho view tài chính: luôn là "This Month".
+ * Khi người dùng chuyển tab hoặc ấn ra ấn về, luôn reset về This Month theo yêu cầu.
  */
 export function getSavedStoreDateRange(
-  viewKey: "sku_win" | "sku_test" | "fba_daily" | "fbm_daily" | "fbm_sku",
-  storeId: string,
-  maxDateStr?: string
+  ...args: [viewKey?: "sku_win" | "sku_test" | "fba_daily" | "fbm_daily" | "fbm_sku", storeId?: string, maxDateStr?: string]
 ): DateRange {
-  if (typeof window !== "undefined" && storeId) {
-    // 1. Tab-specific store range
-    const tabSaved = localStorage.getItem(`acc_range_${viewKey}_${storeId}`);
-    if (tabSaved) {
-      try {
-        const parsed = JSON.parse(tabSaved);
-        if (parsed?.startDate && parsed?.endDate) {
-          return parsed;
+  const maxDateStr = args[2];
+  // Dọn dẹp các key acc_range_* cũ trong localStorage (nếu có) để tránh tồn đọng khoảng ngày cũ
+  if (typeof window !== "undefined") {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("acc_range_")) {
+          keysToRemove.push(k);
         }
-      } catch {
-        // ignore JSON parse error
       }
-    }
-
-    // 2. Shared store range
-    const storeSaved = localStorage.getItem(`acc_range_store_${storeId}`);
-    if (storeSaved) {
-      try {
-        const parsed = JSON.parse(storeSaved);
-        if (parsed?.startDate && parsed?.endDate) {
-          return parsed;
-        }
-      } catch {
-        // ignore JSON parse error
-      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch {
+      // ignore
     }
   }
 
-  // 3. Default fallback: This Month
   return getThisMonthDateRange(maxDateStr);
 }
 
 /**
- * Saves the selected date range for a specific account (store).
+ * Không lưu khoảng ngày vào localStorage để đảm bảo khi ấn ra ấn về luôn trở về "This Month".
  */
 export function saveStoreDateRange(
-  viewKey: "sku_win" | "sku_test" | "fba_daily" | "fbm_daily" | "fbm_sku",
-  storeId: string,
-  range: DateRange
+  ...args: [viewKey?: "sku_win" | "sku_test" | "fba_daily" | "fbm_daily" | "fbm_sku", storeId?: string, range?: DateRange]
 ): void {
-  if (typeof window !== "undefined" && storeId) {
-    localStorage.setItem(`acc_range_${viewKey}_${storeId}`, JSON.stringify(range));
-    localStorage.setItem(`acc_range_store_${storeId}`, JSON.stringify(range));
-  }
+  void args;
+  // No-op: Không lưu trữ khoảng ngày qua các phiên điều hướng
 }

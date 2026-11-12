@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwiseIcon,
   CaretDownIcon,
+  CaretRightIcon,
   CaretUpIcon,
   DownloadSimpleIcon,
   EyeSlashIcon,
@@ -16,6 +17,7 @@ import {
   PlusIcon,
   SlidersHorizontalIcon,
   StorefrontIcon,
+  SidebarSimpleIcon,
 } from "@phosphor-icons/react";
 import type { FbaDailyItem, FbaDailyStats } from "@/lib/accounting/fba-daily-db";
 import type { FbmDailyItem, FbmDailyStats } from "@/lib/accounting/fbm-financials-db";
@@ -39,6 +41,15 @@ import {
   AccountingTableSkeletonRows,
   AccountingTopProgressBar,
 } from "./accounting-skeleton";
+import {
+  buildMonthRows,
+  monthAggregates,
+  monthLabel,
+  type DailyRow,
+  type MonthAgg,
+  type MonthFee,
+} from "./daily-month-groups";
+import { DailySummaryPanel } from "./daily-summary-panel";
 
 const FBA_DAILY_COLUMNS_STORAGE_KEY = "acc_fba_daily_columns_global";
 const FBA_DAILY_FROZEN_STORAGE_KEY = "acc_fba_daily_frozen_global";
@@ -60,6 +71,16 @@ function formatPercent(val: number | null | undefined): string {
   if (val == null || isNaN(val)) return "—";
   return `${(val * 100).toFixed(1)}%`;
 }
+
+// Màu như sheet kế toán (tab FBA / FBM): Profit, Net Profit nền xanh khi ≥ 0, đỏ khi < 0 (định dạng có điều kiện);
+// dòng THÁNG / tổng tháng / TB/Quantity nền vàng, vạch xanh navy ngăn các tháng, Refund chữ đỏ.
+const SHEET_GREEN = "#83C75D"; // cùng màu xanh ô Trạng thái "Phát triển" của SKU Testing (KQKD)
+const SHEET_RED = "#FF0000"; // cùng màu đỏ ô "Hủy" của SKU Testing
+// Sheet dùng vàng #f1c232 cho dòng tháng — đổi sang tông cam cùng màu tiêu đề bảng cho dễ nhìn
+const MONTH_HEADER_BG = "#fde3c3";
+const MONTH_TOTAL_BG = "#fff4e6";
+const SHEET_NAVY = "#e9b98a";
+const resultBg = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? undefined : v < 0 ? SHEET_RED : SHEET_GREEN);
 
 type DailyItem = FbaDailyItem & Partial<Pick<FbmDailyItem, "organic_sales" | "aov" | "basecost_per_item" | "ads_per_item">>;
 type DailyStats = FbaDailyStats & Partial<Pick<FbmDailyStats, "totalQuantityAds" | "avgMarginPreAds">>;
@@ -100,6 +121,27 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   const [loading, setLoading] = useState(false);
   // FBM: SKU có đơn nhưng thiếu trong Bảng mã FBM
   const [missingSkus, setMissingSkus] = useState<string[]>([]);
+  // FBA: Service Fees từng tháng (dòng "Service Fees" + khối Chi phí khác Amazon)
+  const [serviceFees, setServiceFees] = useState<MonthFee[]>([]);
+  // Khung tổng hợp bên phải (Tổng theo tuần / tháng / Chi phí khác Amazon) — như các khối bên phải sheet
+  const [showSummary, setShowSummary] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return localStorage.getItem("acc_daily_summary_panel") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleSummary = () => {
+    setShowSummary((prev) => {
+      try {
+        localStorage.setItem("acc_daily_summary_panel", prev ? "0" : "1");
+      } catch {
+        // bỏ qua
+      }
+      return !prev;
+    });
+  };
 
   // Table zoom
   const [zoomLevel, setZoomLevel] = useState<number>(() => {
@@ -137,11 +179,15 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                 width: col.width || def?.width,
               };
             });
-            const restoredIds = new Set(restored.map((col: ColumnConfig) => col.id));
-            return [
-              ...restored,
-              ...defaultColumns.filter((col) => !restoredIds.has(col.id)),
-            ];
+            // Cột mới thêm vào mặc định (vd Net Profit của FBM) chèn ngay sau cột đứng trước nó trong mặc định
+            const out: ColumnConfig[] = [...restored];
+            defaultColumns.forEach((col, i) => {
+              if (out.some((c) => c.id === col.id)) return;
+              const prevId = defaultColumns[i - 1]?.id;
+              const at = prevId ? out.findIndex((c) => c.id === prevId) : -1;
+              out.splice(at >= 0 ? at + 1 : out.length, 0, col);
+            });
+            return out;
           }
         } catch {
           // fallback
@@ -449,6 +495,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
         setTotal(data.total || 0);
         setStats(data.stats || null);
         setMissingSkus(data.missingSkus || []);
+        setServiceFees(data.serviceFees || []);
       }
     } catch {
       // error
@@ -468,6 +515,159 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       setSortField(field);
       setSortDirection("desc");
     }
+  };
+
+  // Chia theo tháng như sheet khi đang xếp theo ngày và không lọc (lọc thì tổng tháng không còn đúng nghĩa)
+  const grouped = sortField === "date" && !debouncedSearch;
+  const monthAggs = useMemo(() => monthAggregates(items, fbm ? [] : serviceFees, !fbm), [items, serviceFees, fbm]);
+  // Như nhóm hàng của sheet: tháng đã qua thu gọn (chỉ tiêu đề + tổng + TB/Quantity), tháng hiện tại mở; bấm tiêu đề để đổi
+  const currentMonth = financialMaxDate.slice(0, 7);
+  const [monthOpen, setMonthOpen] = useState<Record<string, boolean>>({});
+  const isCollapsed = useCallback((m: string) => !(monthOpen[m] ?? m >= currentMonth), [monthOpen, currentMonth]);
+  const monthRows = useMemo(() => buildMonthRows(items, monthAggs, isCollapsed), [items, monthAggs, isCollapsed]);
+  const setAllMonths = (open: boolean) => setMonthOpen(Object.fromEntries(monthAggs.map((a) => [a.month, open])));
+  const allOpen = monthAggs.length > 0 && monthAggs.every((a) => !isCollapsed(a.month));
+  // Tổng các dòng phí (Service Fees + Phí chủ store) → TOTAL cũng trừ như tổng từng tháng
+  const totalMonthFees = useMemo(
+    () => monthAggs.reduce((sum, a) => sum + (a.fee ?? 0) + (a.ownerFee ?? 0), 0),
+    [monthAggs],
+  );
+
+  const aggValue = (colId: string, a: MonthAgg, avg: boolean): string | null => {
+    const q = a.quantity;
+    const per = (v: number) => (q > 0 ? v / q : 0);
+    const money: Record<string, number | null> = {
+      revenue: a.revenue,
+      ads_fee: a.ads_fee,
+      basecost: a.basecost,
+      amazon_fee: a.amazon_fee,
+      thue: a.thue,
+      promotion: a.promotion,
+      return_cost: a.return_cost,
+      profit: a.profit,
+      net_profit: a.net_profit,
+      balance: a.balance,
+    };
+    if (colId in money) {
+      const v = money[colId];
+      if (v == null) return null;
+      return formatCurrency(avg ? per(v) : v);
+    }
+    if (avg) return null;
+    const ratio = (n: number, d: number) => (d ? n / d : 0);
+    switch (colId) {
+      case "quantity":
+        return formatInteger(a.quantity);
+      case "roi":
+        return formatPercent(ratio(a.profit, a.basecost));
+      case "tacos":
+        return formatPercent(ratio(a.ads_fee, a.revenue));
+      case "acos":
+        return formatPercent(ratio(a.ads_fee, a.revenue_ads));
+      case "margin":
+        return formatPercent(ratio(a.profit, a.revenue));
+      case "margin_pre_ads":
+        return formatPercent(ratio(a.revenue - a.basecost - a.amazon_fee, a.revenue));
+      case "profit_per_item":
+        return formatCurrency(per(a.profit));
+      case "revenue_ads":
+        return formatCurrency(a.revenue_ads);
+      case "quantity_ads":
+        return formatInteger(a.quantity_ads);
+      case "clicks":
+        return formatInteger(a.clicks);
+      case "organic_sales":
+        return formatInteger(a.quantity - a.quantity_ads);
+      case "aov":
+        return formatCurrency(per(a.revenue));
+      case "basecost_per_item":
+        return formatCurrency(per(a.basecost));
+      case "ads_per_item":
+        return formatCurrency(per(a.ads_fee));
+      default:
+        return null;
+    }
+  };
+
+  /** Dòng tiêu đề THÁNG / Service Fees / Phí chủ store / tổng tháng / TB/Quantity */
+  const renderGroupRow = (row: Exclude<DailyRow<DailyItem>, { kind: "day" }>) => {
+    if (row.kind === "month") {
+      const collapsed = isCollapsed(row.month);
+      const agg = monthAggs.find((a) => a.month === row.month);
+      return (
+        <tr
+          key={row.key}
+          className="cursor-pointer select-none"
+          onClick={() => setMonthOpen((prev) => ({ ...prev, [row.month]: collapsed }))}
+          title={collapsed ? "Bấm để xem từng ngày" : "Bấm để thu gọn tháng"}
+        >
+          <td
+            colSpan={visibleColumns.length}
+            className="px-0 py-2 border-b border-slate-400"
+            style={{ backgroundColor: MONTH_HEADER_BG }}
+          >
+            <span
+              className="sticky left-0 inline-flex items-center gap-1.5 px-3 text-[12.5px] font-black tracking-wider"
+              style={{ color: "#000000" }}
+            >
+              {collapsed ? <CaretRightIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
+              {monthLabel(row.month)}
+              {collapsed && agg && (
+                <span className="text-[10.5px] font-semibold tracking-normal">· {agg.days} ngày</span>
+              )}
+            </span>
+          </td>
+        </tr>
+      );
+    }
+    const isTotal = row.kind === "total";
+    const isAvg = row.kind === "avg";
+    // Dòng phí nền trắng, dòng tổng tháng nền xanh nhạt; đều chữ đậm
+    const bg = row.kind === "fee" ? "#ffffff" : MONTH_TOTAL_BG;
+    const label = row.kind === "fee" ? row.label : isTotal ? `Tổng T${Number(row.agg.month.slice(5, 7))}` : "TB/Quantity";
+    const totalHint =
+      isTotal && (row.agg.fee || row.agg.ownerFee)
+        ? `Profit các ngày ${formatCurrency(row.agg.dayProfit)}` +
+          (row.agg.fee ? ` + Service Fees ${formatCurrency(row.agg.fee)}` : "") +
+          (row.agg.ownerFee ? ` + Phí chủ store ${formatCurrency(row.agg.ownerFee)}` : "")
+        : undefined;
+    const tr = (
+      <tr key={row.key} className="font-bold" style={{ backgroundColor: bg }}>
+        {visibleColumns.map((col) => {
+          const f = getCellFreezeProps(col.id);
+          const isMoneyResult = col.id === "profit" || col.id === "net_profit";
+          let content: string | null = null;
+          if (col.id === "date") content = label;
+          else if (row.kind === "fee") content = isMoneyResult ? formatCurrency(row.amount) : null;
+          else content = aggValue(col.id, row.agg, isAvg);
+          const val =
+            row.kind === "fee" ? row.amount : row.kind === "total" ? (col.id === "net_profit" ? row.agg.net_profit : row.agg.profit) : null;
+          // Định dạng có điều kiện của sheet chỉ áp cho ô Profit / Net Profit của ngày, dòng phí và dòng tổng (không áp TB/Quantity)
+          const cellBg = isMoneyResult && !isAvg && content != null ? resultBg(val) ?? bg : bg;
+          return (
+            <td
+              key={col.id}
+              style={{ ...f.style, backgroundColor: cellBg }}
+              title={row.kind === "fee" && isMoneyResult ? row.hint : isTotal && isMoneyResult ? totalHint : undefined}
+              className={`py-1.5 px-2.5 text-xs font-bold whitespace-nowrap border-b border-slate-300 ${
+                f.isBoundary ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]" : "border-r border-slate-200"
+              } ${col.id === "date" ? "text-center" : col.align === "right" ? "text-right font-mono tabular-nums" : "text-center"} text-black`}
+            >
+              {content ?? ""}
+            </td>
+          );
+        })}
+      </tr>
+    );
+    // Vạch xanh navy ngăn tháng như sheet (sau dòng TB/Quantity)
+    // Vạch ngăn tháng nằm ngay sau dòng tổng tháng
+    if (!isTotal) return tr;
+    return [
+      tr,
+      <tr key={`${row.key}-sep`} aria-hidden="true">
+        <td colSpan={visibleColumns.length} className="p-0" style={{ backgroundColor: SHEET_NAVY, height: 4 }} />
+      </tr>,
+    ];
   };
 
   const getExportUrl = () => {
@@ -586,6 +786,34 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
             <span>Làm mới</span>
           </button>
 
+          {/* Mở / thu gọn mọi tháng (tháng đã qua mặc định thu gọn như sheet) */}
+          {grouped && monthAggs.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setAllMonths(!allOpen)}
+              title={allOpen ? "Thu gọn mọi tháng, chỉ xem dòng tổng" : "Mở mọi tháng để xem từng ngày"}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+            >
+              {allOpen ? <CaretUpIcon size={13} weight="bold" /> : <CaretDownIcon size={13} weight="bold" />}
+              <span>{allOpen ? "Thu gọn tháng" : "Mở hết tháng"}</span>
+            </button>
+          )}
+
+          {/* Khung tổng hợp tuần / tháng */}
+          <button
+            type="button"
+            onClick={toggleSummary}
+            title="Tổng theo tuần, tháng và chi phí khác Amazon"
+            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors shadow-2xs cursor-pointer ${
+              showSummary
+                ? "border-amber-400 bg-amber-50 text-amber-900"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            <SidebarSimpleIcon size={14} className="-scale-x-100" />
+            <span>Tổng hợp</span>
+          </button>
+
           {/* Column Manager */}
           <button
             type="button"
@@ -619,6 +847,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
         </div>
       )}
 
+      <div className="flex min-h-0 flex-1">
       {/* TABLE CONTAINER */}
       <div className="flex-1 overflow-auto bg-white relative">
         <AccountingTopProgressBar loading={loading} variant={fbm ? "indigo" : "amber"} />
@@ -729,7 +958,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       <td
                         key={`total-${col.id}`}
                         style={{ ...f.style, ...bgStyle }}
-                        className={`${profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-semibold ${
+                        className={`${profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-bold ${
                           f.isBoundary
                             ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                             : "border-r border-amber-200/80"
@@ -798,19 +1027,19 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                         {isProfitCol && (
                           <span
                             className={`font-bold tabular-nums ${
-                              stats.totalProfit > 0
+                              stats.totalProfit + totalMonthFees > 0
                                 ? "text-emerald-600"
-                                : stats.totalProfit < 0
+                                : stats.totalProfit + totalMonthFees < 0
                                 ? "text-red-600"
                                 : "text-slate-950"
                             }`}
                           >
-                            {formatCurrency(stats.totalProfit)}
+                            {formatCurrency(stats.totalProfit + totalMonthFees)}
                           </span>
                         )}
                         {col.id === "net_profit" && (
-                          <span className={`font-bold tabular-nums ${stats.totalNetProfit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                            {formatCurrency(stats.totalNetProfit)}
+                          <span className={`font-bold tabular-nums ${(stats.totalNetProfit ?? 0) + totalMonthFees >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                            {stats.totalNetProfit == null ? "—" : formatCurrency(stats.totalNetProfit + totalMonthFees)}
                           </span>
                         )}
                         {col.id === "balance" && (
@@ -819,27 +1048,27 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                           </span>
                         )}
                         {col.id === "roi" && (
-                          <span className="font-semibold text-slate-800 tabular-nums">
+                          <span className="font-bold text-slate-950 tabular-nums">
                             {formatPercent(stats.avgRoi)}
                           </span>
                         )}
                         {col.id === "tacos" && (
-                          <span className="font-semibold text-slate-800 tabular-nums">
+                          <span className="font-bold text-slate-950 tabular-nums">
                             {formatPercent(stats.avgTacos)}
                           </span>
                         )}
                         {col.id === "acos" && (
-                          <span className="font-semibold text-slate-800 tabular-nums">
+                          <span className="font-bold text-slate-950 tabular-nums">
                             {formatPercent(stats.avgAcos)}
                           </span>
                         )}
                         {col.id === "margin" && (
-                          <span className="font-semibold text-slate-800 tabular-nums">
+                          <span className="font-bold text-slate-950 tabular-nums">
                             {formatPercent(stats.avgMargin)}
                           </span>
                         )}
                         {col.id === "margin_pre_ads" && (
-                          <span className="font-semibold text-slate-800 tabular-nums">
+                          <span className="font-bold text-slate-950 tabular-nums">
                             {formatPercent(
                               stats.avgMarginPreAds ??
                                 (stats.totalRevenue > 0
@@ -849,7 +1078,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                           </span>
                         )}
                         {col.id === "profit_per_item" && (() => {
-                          const ppi = stats.totalQuantity > 0 ? stats.totalProfit / stats.totalQuantity : 0;
+                          const ppi = stats.totalQuantity > 0 ? (stats.totalProfit + totalMonthFees) / stats.totalQuantity : 0;
                           return (
                             <span
                               className={`font-bold tabular-nums ${
@@ -919,9 +1148,13 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                   </td>
                 </tr>
               ) : (
-                items.map((item, index) => {
-                  const isEven = index % 2 === 0;
-                  const rowBg = isEven ? "bg-white" : "bg-slate-50/60";
+                (grouped
+                  ? monthRows
+                  : items.map((item, index): DailyRow<DailyItem> => ({ kind: "day", key: item.id, item, index }))
+                ).map((row) => {
+                  if (row.kind !== "day") return renderGroupRow(row);
+                  const { item, index } = row;
+                  const rowBg = "bg-white";
 
                   return (
                     <tr
@@ -930,15 +1163,19 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                     >
                       {visibleColumns.map((col) => {
                         const f = getCellFreezeProps(col.id);
-                        const cellBg = f.isFrozen
-                          ? { backgroundColor: isEven ? "#ffffff" : "#f8fafc" }
+                        const resultCol = col.id === "profit" || col.id === "net_profit";
+                        const resultColor = resultCol ? resultBg(col.id === "profit" ? item.profit : item.net_profit) : undefined;
+                        const cellBg = resultColor
+                          ? { backgroundColor: resultColor }
+                          : f.isFrozen
+                          ? { backgroundColor: "#ffffff" }
                           : {};
 
                         return (
                           <td
                             key={col.id}
                             style={{ ...f.style, ...cellBg }}
-                            className={`${profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs border-b border-slate-200 whitespace-nowrap ${
+                            className={`${resultColor ? "" : profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs border-b border-slate-200 whitespace-nowrap ${
                               f.isBoundary
                                 ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                                 : "border-r border-slate-200"
@@ -1022,28 +1259,20 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
 
                             {/* Refund */}
                             {col.id === "return_cost" && (
-                              <span className="font-normal text-slate-900 tabular-nums">
+                              <span className="font-normal tabular-nums" style={{ color: SHEET_RED }}>
                                 {formatCurrency(item.return_cost)}
                               </span>
                             )}
 
                             {/* Profit: font-semibold và xanh/đỏ như yêu cầu */}
                             {col.id === "profit" && (
-                              <span
-                                className={`font-semibold tabular-nums ${
-                                  item.profit > 0
-                                    ? "text-emerald-600"
-                                    : item.profit < 0
-                                    ? "text-red-600"
-                                    : "text-slate-600"
-                                }`}
-                              >
+                              <span className="font-bold tabular-nums text-black">
                                 {formatCurrency(item.profit)}
                               </span>
                             )}
 
                             {col.id === "net_profit" && (
-                              <span className={`font-semibold tabular-nums ${item.net_profit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                              <span className={`tabular-nums ${item.net_profit == null ? "text-slate-300" : "text-black"}`}>
                                 {formatCurrency(item.net_profit)}
                               </span>
                             )}
@@ -1165,6 +1394,15 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
             </tbody>
           </table>
         </div>
+      </div>
+      {showSummary && (
+        <DailySummaryPanel
+          items={items}
+          aggs={monthAggs}
+          fees={fbm ? null : serviceFees}
+          onClose={toggleSummary}
+        />
+      )}
       </div>
 
       {/* COLUMN CONTEXT MENU */}

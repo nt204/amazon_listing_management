@@ -50,6 +50,7 @@ export interface KpiSku {
   product_type: string | null;
   mockup_url: string | null;
   pic_mkt: string | null;
+  pic_idea?: string | null;
   ton_kho: number | null;
   /** Thông tin tính mục tiêu */
   price: number | null;
@@ -313,7 +314,7 @@ export async function getKpi(storeId: string, period: string, options: { refresh
   const [master, targetRows, teamTargetRows, noteRows, historyYearRows, formulaRows] = await Promise.all([
     sql<Record<string, string | number | null>[]>`
       SELECT DISTINCT ON (sku)
-        sku, status, brand, asin, product_type, mockup_url, pic_mkt, ton_kho, thang_danh_gia,
+        sku, status, brand, asin, product_type, mockup_url, pic_mkt, pic_idea, ton_kho, thang_danh_gia,
         amazon_fee, referral_fee_pct, basecost_tb,
         NULLIF(custom_fields->>'price', '') AS custom_price
       FROM accounting_sku_master
@@ -402,6 +403,7 @@ export async function getKpi(storeId: string, period: string, options: { refresh
       product_type: (r.product_type as string) || null,
       mockup_url: (r.mockup_url as string) || null,
       pic_mkt: (r.pic_mkt as string) || null,
+      pic_idea: (r.pic_idea as string) || null,
       ton_kho: nullableNum(r.ton_kho),
       price:
         nullableNum(r.custom_price) ??
@@ -515,6 +517,55 @@ export async function setKpiTarget(storeId: string, period: string, sku: string,
       AND cause IS NULL AND solution IS NULL AND action IS NULL AND review IS NULL AND target_action IS NULL
   `;
   return row && TARGET_FIELDS.some((f) => row[f] != null) ? row : null;
+}
+
+/**
+ * Sửa giá bán thủ công của SKU (lưu vào accounting_sku_master.custom_fields.price) —
+ * chỉ tác động vào tính toán mục tiêu, không làm thay đổi giá thực tế từ order.
+ */
+export async function setKpiSkuPrice(storeId: string, sku: string, price: number | null, actor?: string) {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ id: string; custom_fields: unknown }[]>`
+    SELECT id, custom_fields FROM accounting_sku_master
+    WHERE store_id = ${storeId} AND sku = ${sku} AND deleted_at IS NULL
+  `;
+  for (const r of rows) {
+    let cf: Record<string, unknown> = {};
+    if (r.custom_fields) {
+      if (typeof r.custom_fields === "object" && !Array.isArray(r.custom_fields)) {
+        cf = { ...(r.custom_fields as Record<string, unknown>) };
+      } else if (typeof r.custom_fields === "string") {
+        try {
+          const parsed = JSON.parse(r.custom_fields);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            cf = parsed;
+          }
+        } catch {}
+      }
+    }
+    for (const k of Object.keys(cf)) {
+      if (/^\d+$/.test(k)) delete cf[k];
+    }
+    if (price == null || price <= 0) {
+      delete cf.price;
+      delete cf.price_updated_by;
+    } else {
+      cf.price = price;
+      if (actor) cf.price_updated_by = actor;
+    }
+    await sql`
+      UPDATE accounting_sku_master
+      SET custom_fields = ${sql.json(cf as any)}, updated_at = NOW()
+      WHERE id = ${r.id}
+    `;
+  }
+  // Đồng thời cập nhật giá và xoá sheet_metrics trong mọi bản ghi accounting_kpi_targets của SKU (tháng này & tháng sau như T11)
+  // để mục tiêu tự động tính lại toàn bộ theo giá mới
+  await sql`
+    UPDATE accounting_kpi_targets
+    SET price = ${price}, sheet_metrics = NULL, updated_at = NOW()
+    WHERE store_id = ${storeId} AND sku = ${sku}
+  `;
 }
 
 export async function setKpiNote(storeId: string, period: string, note: string, actor: string) {

@@ -17,6 +17,7 @@ import {
   ArrowClockwiseIcon,
   ArrowDownRightIcon,
   ArrowUpRightIcon,
+  BankIcon,
   CaretDownIcon,
   ChartPieSliceIcon,
   CoinsIcon,
@@ -359,6 +360,7 @@ const ACCENTS = {
   sky: "bg-sky-50 text-sky-600 ring-sky-100",
   amber: "bg-amber-50 text-amber-600 ring-amber-100",
   cyan: "bg-cyan-50 text-cyan-600 ring-cyan-100",
+  teal: "bg-teal-50 text-teal-600 ring-teal-100",
 };
 type KpiAccent = keyof typeof ACCENTS;
 
@@ -374,34 +376,47 @@ function KpiCard({
   compareLabel: string;
 }) {
   const KpiIcon = kpi.icon;
+  const formatted = kpi.format(kpi.value);
+  // Tự động thu nhỏ cỡ chữ linh hoạt khi số dài (hàng triệu, trăm nghìn) để không bị che số / cắt '...'
+  const isLargeNumber = formatted.length >= 10;
+  const isMediumNumber = formatted.length >= 8;
+  const sizeClasses = isLargeNumber
+    ? "text-[16px] @min-[160px]:text-[18px] @min-[200px]:text-[21px]"
+    : isMediumNumber
+    ? "text-[18px] @min-[160px]:text-[20px] @min-[200px]:text-[23px]"
+    : "text-[21px] @min-[160px]:text-[23px] @min-[190px]:text-[25px]";
+
   return (
     <Card
       delay={delay}
-      className="@container group p-3.5 transition-[box-shadow,border-color] duration-300 hover:border-slate-300/80 hover:shadow-md @min-[190px]:p-4"
+      className="@container group p-3 transition-[box-shadow,border-color] duration-300 hover:border-slate-300/80 hover:shadow-md @min-[190px]:p-3.5"
     >
-      {/* Thẻ hẹp (lưới 7 cột hoặc mobile nhỏ): số nhỏ lại để không bị cắt */}
       <div className="min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[11.5px] font-semibold uppercase tracking-[0.06em] text-slate-500">
+        <div className="flex items-center justify-between gap-1.5">
+          <span
+            title={kpi.label}
+            className="truncate text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-500 @min-[180px]:text-[11.5px]"
+          >
             {kpi.label}
           </span>
           <span
-            className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset @min-[150px]:flex ${ACCENTS[kpi.accent]}`}
+            className={`hidden h-6 w-6 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset @min-[140px]:flex @min-[180px]:h-7 @min-[180px]:w-7 ${ACCENTS[kpi.accent]}`}
           >
-            <KpiIcon size={15} weight="bold" />
+            <KpiIcon size={14} weight="bold" />
           </span>
         </div>
         <div
-          className={`mt-2 truncate text-[22px] font-semibold leading-none tracking-tight tabular-nums @min-[190px]:text-[25px] ${
+          title={formatted}
+          className={`mt-1.5 truncate font-bold leading-tight tracking-tight tabular-nums ${sizeClasses} ${
             kpi.negativeRed && kpi.value < 0 ? "text-rose-600" : "text-slate-900"
           }`}
         >
           <AnimatedNumber value={kpi.value} format={kpi.format} />
         </div>
         {showDelta && (
-          <div className="mt-2.5 flex min-w-0 items-center gap-1.5">
+          <div className="mt-2 flex min-w-0 items-center gap-1.5">
             <DeltaPill ratio={kpi.ratio} />
-            {compareLabel && <span className="truncate text-[11.5px] text-slate-400">{compareLabel}</span>}
+            {compareLabel && <span className="truncate text-[11px] text-slate-400">{compareLabel}</span>}
           </div>
         )}
       </div>
@@ -889,7 +904,7 @@ function TrendChart({
 
 // ---------- store table ----------
 
-type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units" | "stock";
+type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units" | "stockUnits" | "stock";
 
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
@@ -899,6 +914,7 @@ const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "acos", label: "ACOS" },
   { key: "units", label: "Units" },
   { key: "profit", label: "Profit" },
+  { key: "stockUnits", label: "Tồn" },
   { key: "stock", label: "Giá trị tồn" },
 ];
 
@@ -926,6 +942,8 @@ function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | str
       return c.revenueAds > 0 ? c.acos : null;
     case "units":
       return c.quantity;
+    case "stockUnits":
+      return row.stockUnits ?? null;
     case "stock":
       return row.stockValue ?? null;
   }
@@ -955,13 +973,16 @@ function StoreMetricCells({
   sub = false,
   hideRatios = false,
   stockValue,
+  stockUnits,
 }: {
   t: DashboardTotals;
   sub?: boolean;
   /** Bỏ 3 cột Margin / TACOS / ACOS (bảng Team Performance). */
   hideRatios?: boolean;
-  /** Có thì thêm cột Giá trị tồn sau Profit (null = kênh FBM không có tồn → "—"). */
+  /** Có thì thêm cột Tồn + Giá trị tồn sau Profit (null = kênh FBM không có tồn → "—"). */
   stockValue?: number | null;
+  /** Tồn (FBA + AWD) tại ngày cuối kỳ */
+  stockUnits?: number | null;
 }) {
   const cell = `border-b border-slate-100 px-3 text-right tabular-nums ${sub ? "py-1.5 text-[13px] text-slate-600" : "py-2.5"}`;
   return (
@@ -981,7 +1002,10 @@ function StoreMetricCells({
         <span className={`${sub ? "font-semibold" : "font-bold"} ${profitTone(t.profit)}`}>{money(t.profit)}</span>
       </td>
       {stockValue !== undefined && (
-        <td className={`${cell} pr-4`}>{stockValue == null ? <span className="text-slate-400">—</span> : money(stockValue)}</td>
+        <>
+          <td className={cell}>{stockUnits == null ? <span className="text-slate-400">—</span> : int.format(stockUnits)}</td>
+          <td className={`${cell} pr-4`}>{stockValue == null ? <span className="text-slate-400">—</span> : money(stockValue)}</td>
+        </>
       )}
     </>
   );
@@ -1069,6 +1093,8 @@ function StoresPerformance({
             current: c.current,
             previous: c.previous,
             stockValue: c.stockValue ?? null,
+            stockUnits: c.stockUnits ?? null,
+            stockDate: c.stockDate ?? r.stockDate ?? null,
             channels: [c.channel],
             byChannel: undefined,
           }))
@@ -1097,6 +1123,12 @@ function StoresPerformance({
   const total = group === "all" ? data.current : groupData.data?.current ?? data.current;
 
   const totalStock = rows.some((r) => r.stockValue != null) ? rows.reduce((sum, r) => sum + (r.stockValue ?? 0), 0) : null;
+  const totalStockUnits = rows.some((r) => r.stockUnits != null) ? rows.reduce((sum, r) => sum + (r.stockUnits ?? 0), 0) : null;
+  // Tồn lấy theo ảnh chụp Inventory Ledger mới nhất không quá ngày cuối khoảng (crawler chạy theo tuần)
+  const stockDates = Array.from(new Set(rows.map((r) => r.stockDate).filter((d): d is string => Boolean(d)))).sort();
+  const stockTitle = stockDates.length
+    ? `Tồn FBA + AWD theo ảnh chụp kho Amazon ngày ${stockDates.map((d) => `${Number(d.slice(8))}/${Number(d.slice(5, 7))}`).join(", ")} (mới nhất không quá ngày cuối khoảng đang xem)`
+    : "Chưa có ảnh chụp tồn kho tới ngày cuối khoảng đang xem";
 
   // Bấm "Store": về All store (bỏ lọc store / team) và xếp mặc định gom theo team FBA 1 → FBA 2 → … → FBM.
   const toggleSort = (key: StoreSortKey) => {
@@ -1164,7 +1196,8 @@ function StoresPerformance({
                     <span>TACOS {ratioOrDash(c.tacos, c.revenue)}</span>
                     <span>ACOS {ratioOrDash(c.acos, c.revenueAds)}</span>
                     <span>{int.format(c.quantity)} units</span>
-                    {row.stockValue != null && <span>Tồn {money(row.stockValue)}</span>}
+                    {row.stockUnits != null && <span>Tồn {int.format(row.stockUnits)}</span>}
+                    {row.stockValue != null && <span>Giá trị tồn {money(row.stockValue)}</span>}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
@@ -1212,7 +1245,7 @@ function StoresPerformance({
                     <button
                       type="button"
                       onClick={() => toggleSort(col.key)}
-                      title={col.key === "store" ? "Xem tất cả store (All)" : undefined}
+                      title={col.key === "store" ? "Xem tất cả store (All)" : col.key === "stockUnits" || col.key === "stock" ? stockTitle : undefined}
                       className={`inline-flex cursor-pointer items-center gap-1 !text-[13px] !tracking-normal transition-colors hover:!text-slate-900 ${
                         active ? "!font-bold !text-slate-900" : "!font-bold !text-slate-700"
                       }`}
@@ -1256,7 +1289,7 @@ function StoresPerformance({
                       )}
                     </div>
                   </td>
-                  <StoreMetricCells t={c} stockValue={row.stockValue ?? null} />
+                  <StoreMetricCells t={c} stockValue={row.stockValue ?? null} stockUnits={row.stockUnits ?? null} />
                 </tr>
               </tbody>
             );
@@ -1276,6 +1309,7 @@ function StoresPerformance({
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
                 <td className="px-3 py-2.5 text-right">{int.format(total.quantity)}</td>
                 <td className="px-3 py-2.5 pr-4 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                <td className="px-3 py-2.5 text-right">{totalStockUnits == null ? "—" : int.format(totalStockUnits)}</td>
                 <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right">{totalStock == null ? "—" : money(totalStock)}</td>
               </tr>
             </tfoot>
@@ -1692,7 +1726,7 @@ export function AccountingDashboardView() {
     const p = data.previous;
     const ppDelta = (cur: number, prev: number | undefined, base: number | undefined) =>
       prev != null && base != null && base > 0 ? cur - prev : null;
-    return [
+    const cards: KpiDef[] = [
       {
         id: "revenue",
         label: "Revenue",
@@ -1708,7 +1742,7 @@ export function AccountingDashboardView() {
         accent: "indigo",
         icon: ShoppingBagIcon,
         value: c.orders,
-        format: (v) => int.format(Math.round(v)),
+        format: (v: number) => int.format(Math.round(v)),
         ratio: changeRatio(c.orders, p?.orders),
       },
       {
@@ -1727,7 +1761,7 @@ export function AccountingDashboardView() {
         accent: "rose",
         icon: PercentIcon,
         value: c.margin,
-        format: (v) => pct(v),
+        format: (v: number) => pct(v),
         ratio: ppDelta(c.margin, p?.margin, p?.revenue),
         negativeRed: true,
       },
@@ -1746,7 +1780,7 @@ export function AccountingDashboardView() {
         accent: "amber",
         icon: ChartPieSliceIcon,
         value: c.tacos,
-        format: (v) => pct(v),
+        format: (v: number) => pct(v),
         ratio: ppDelta(c.tacos, p?.tacos, p?.revenue),
       },
       {
@@ -1755,10 +1789,24 @@ export function AccountingDashboardView() {
         accent: "cyan",
         icon: TargetIcon,
         value: c.acos,
-        format: (v) => pct(v),
+        format: (v: number) => pct(v),
         ratio: ppDelta(c.acos, p?.acos, p?.revenueAds),
       },
     ];
+
+    if (data.payout) {
+      cards.push({
+        id: "payout",
+        label: "Payout",
+        accent: "teal",
+        icon: BankIcon,
+        value: data.payout.current,
+        format: money,
+        ratio: changeRatio(data.payout.current, data.payout.previous ?? undefined),
+      });
+    }
+
+    return cards;
   }, [data]);
 
   const allSelected = validSelectedIds.length === 0;
@@ -2143,7 +2191,11 @@ export function AccountingDashboardView() {
           <DashboardSkeleton />
         ) : data ? (
           <div className={`space-y-4 transition-opacity duration-300 ${loading ? "opacity-70" : "opacity-100"}`}>
-            <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-4 @min-[1100px]:grid-cols-7">
+            <div
+              className={`grid grid-cols-2 gap-2.5 sm:gap-3 @min-[560px]:grid-cols-4 ${
+                kpis.length >= 8 ? "@min-[1240px]:grid-cols-8" : "@min-[1100px]:grid-cols-7"
+              }`}
+            >
               {kpis.map((kpi, i) => (
                 <KpiCard
                   key={kpi.id}

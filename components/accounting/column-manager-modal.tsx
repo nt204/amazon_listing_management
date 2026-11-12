@@ -363,9 +363,9 @@ export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
   { id: "clicks", label: "Click", defaultLabel: "Click", visible: false, align: "right", width: 90 },
 ];
 
-/** Tab FBM theo ngày: đúng thứ tự cột sheet "FBM" (không có Net Profit vì sheet để trống). */
+/** Tab FBM theo ngày: đúng thứ tự cột sheet "FBM" (Net Profit = Profit − phí dịch vụ FBM ÷ 184 ngày). */
 export const DEFAULT_FBM_DAILY_COLUMNS: ColumnConfig[] = [
-  ...DEFAULT_FBA_DAILY_COLUMNS.filter((col) => col.id !== "net_profit").map((col) => ({
+  ...DEFAULT_FBA_DAILY_COLUMNS.map((col) => ({
     ...col,
     visible: col.id === "margin_pre_ads" || col.id === "revenue_ads" || col.id === "quantity_ads" || col.id === "clicks" ? true : col.visible,
   })),

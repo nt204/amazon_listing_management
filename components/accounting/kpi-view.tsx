@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useDeferredValue, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useDeferredValue, type ReactNode } from "react";
 import {
   ArrowClockwiseIcon,
   ArrowDownRightIcon,
@@ -67,6 +67,7 @@ interface KpiSku {
   product_type: string | null;
   mockup_url: string | null;
   pic_mkt: string | null;
+  pic_idea?: string | null;
   ton_kho: number | null;
   price: number | null;
   basecost_unit: number | null;
@@ -141,6 +142,7 @@ function TargetFormulaPanel({
 }) {
   const f: KpiTargetFormula = formula ?? DEFAULT_TARGET_FORMULA;
   const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
   const save = async (patch: Partial<KpiTargetFormula>) => {
     setSaving(true);
     try {
@@ -163,93 +165,111 @@ function TargetFormulaPanel({
   );
   const sel = "h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-800 disabled:bg-slate-50";
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold text-slate-900">Công thức mục tiêu của store</h3>
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between p-3 text-left transition hover:bg-slate-50/80 cursor-pointer"
+      >
+        <div className="flex items-center gap-2">
+          <CaretRightIcon
+            size={14}
+            weight="bold"
+            className={`text-slate-500 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
+          />
+          <h3 className="text-sm font-bold text-slate-900">Công thức mục tiêu của store</h3>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+            {open ? "Đang mở" : "Nhấn để xem / chỉnh sửa"}
+          </span>
+        </div>
         <span className="text-[11px] text-slate-400">
           {formula?.source ? `Nguồn: ${formula.source}` : "Mặc định"}
           {formula?.updated_by ? ` · ${formula.updated_by}` : ""}
         </span>
-      </div>
-      <div className="grid gap-2 text-xs text-slate-700 sm:grid-cols-3">
-        <label className="flex flex-wrap items-center gap-1.5">
-          <span className="font-semibold">AMZ Fee =</span>
-          <select
-            aria-label="Cách tính Amazon fee mục tiêu"
-            className={sel}
-            disabled={!canEdit || saving}
-            value={f.amazon_mode}
-            onChange={(e) => {
-              const mode = e.target.value as KpiTargetFormula["amazon_mode"];
-              void save({ amazon_mode: mode, amazon_pct: mode === "revenue_pct" ? 0.33 : 0.15 });
-            }}
-          >
-            <option value="unit_plus_pct">Unit × Amazon fee + % REV</option>
-            <option value="revenue_pct">% REV</option>
-          </select>
-          {pctInput(f.amazon_pct, (v) => void save({ amazon_pct: v }), "% REV của Amazon fee mục tiêu")}
-        </label>
-        <label className="flex flex-wrap items-center gap-1.5">
-          <span className="font-semibold">Return =</span>
-          <select
-            aria-label="Cách tính Return mục tiêu"
-            className={sel}
-            disabled={!canEdit || saving}
-            value={f.return_mode}
-            onChange={(e) => void save({ return_mode: e.target.value as KpiTargetFormula["return_mode"] })}
-          >
-            <option value="rate">% REV</option>
-            <option value="actual">Return thực tế tháng trước</option>
-          </select>
-          {f.return_mode === "rate" && pctInput(f.return_rate, (v) => void save({ return_rate: v }), "% Return mục tiêu")}
-        </label>
-        <label className="flex flex-wrap items-center gap-1.5">
-          <span className="font-semibold">Ref tax = 10% ×</span>
-          {pctInput(f.ref_pct, (v) => void save({ ref_pct: v }), "% referral của Ref tax mục tiêu")}
-          <span>REV</span>
-        </label>
-      </div>
-      <div className="mt-2 grid gap-2 border-t border-slate-100 pt-2 text-xs text-slate-700 sm:grid-cols-2">
-        <label className="flex flex-wrap items-center gap-1.5">
-          <span className="font-semibold">[Target] Tăng trưởng/tháng trước = mục tiêu tháng sau ÷</span>
-          <select
-            aria-label="Mẫu số cột tăng trưởng mục tiêu"
-            className={sel}
-            disabled={!canEdit || saving}
-            value={f.growth_base}
-            onChange={(e) => void save({ growth_base: e.target.value as KpiTargetFormula["growth_base"] })}
-          >
-            <option value="target">mục tiêu tháng này</option>
-            <option value="actual">thực tế tháng này</option>
-          </select>
-          <select
-            aria-label="Có trừ 1 ở cột tăng trưởng mục tiêu"
-            className={sel}
-            disabled={!canEdit || saving}
-            value={f.growth_minus_one ? "1" : "0"}
-            onChange={(e) => void save({ growth_minus_one: e.target.value === "1" })}
-          >
-            <option value="1">− 1</option>
-            <option value="0">(không trừ 1)</option>
-          </select>
-        </label>
-        <label className="flex flex-wrap items-center gap-1.5">
-          <span className="font-semibold">Dòng CP khác tháng này:</span>
-          <select
-            aria-label="Dấu dòng CP khác"
-            className={sel}
-            disabled={!canEdit || saving}
-            value={String(f.other_fee_sign)}
-            onChange={(e) => void save({ other_fee_sign: e.target.value === "-1" ? -1 : 1 })}
-          >
-            <option value="1">như hệ thống</option>
-            <option value="-1">đảo dấu</option>
-          </select>
-        </label>
-      </div>
-      <p className="mt-2 text-[11px] text-slate-400">
-        Tự lấy theo công thức sheet KẾ HOẠCH KINH DOANH khi nạp mục tiêu. Ads tax = 10% Ads, TNCN = 1% REV, Lưu kho = số leader nhập.
-      </p>
+      </button>
+      {open && (
+        <div className="border-t border-slate-100 p-3 pt-3">
+          <div className="grid gap-2 text-xs text-slate-700 sm:grid-cols-3">
+            <label className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold">AMZ Fee =</span>
+              <select
+                aria-label="Cách tính Amazon fee mục tiêu"
+                className={sel}
+                disabled={!canEdit || saving}
+                value={f.amazon_mode}
+                onChange={(e) => {
+                  const mode = e.target.value as KpiTargetFormula["amazon_mode"];
+                  void save({ amazon_mode: mode, amazon_pct: mode === "revenue_pct" ? 0.33 : 0.15 });
+                }}
+              >
+                <option value="unit_plus_pct">Unit × Amazon fee + % REV</option>
+                <option value="revenue_pct">% REV</option>
+              </select>
+              {pctInput(f.amazon_pct, (v) => void save({ amazon_pct: v }), "% REV của Amazon fee mục tiêu")}
+            </label>
+            <label className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold">Return =</span>
+              <select
+                aria-label="Cách tính Return mục tiêu"
+                className={sel}
+                disabled={!canEdit || saving}
+                value={f.return_mode}
+                onChange={(e) => void save({ return_mode: e.target.value as KpiTargetFormula["return_mode"] })}
+              >
+                <option value="rate">% REV</option>
+                <option value="actual">Return thực tế tháng trước</option>
+              </select>
+              {f.return_mode === "rate" && pctInput(f.return_rate, (v) => void save({ return_rate: v }), "% Return mục tiêu")}
+            </label>
+            <label className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold">Ref tax = 10% ×</span>
+              {pctInput(f.ref_pct, (v) => void save({ ref_pct: v }), "% referral của Ref tax mục tiêu")}
+              <span>REV</span>
+            </label>
+          </div>
+          <div className="mt-2 grid gap-2 border-t border-slate-100 pt-2 text-xs text-slate-700 sm:grid-cols-2">
+            <label className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold">[Target] Tăng trưởng/tháng trước = mục tiêu tháng sau ÷</span>
+              <select
+                aria-label="Mẫu số cột tăng trưởng mục tiêu"
+                className={sel}
+                disabled={!canEdit || saving}
+                value={f.growth_base}
+                onChange={(e) => void save({ growth_base: e.target.value as KpiTargetFormula["growth_base"] })}
+              >
+                <option value="target">mục tiêu tháng này</option>
+                <option value="actual">thực tế tháng này</option>
+              </select>
+              <select
+                aria-label="Có trừ 1 ở cột tăng trưởng mục tiêu"
+                className={sel}
+                disabled={!canEdit || saving}
+                value={f.growth_minus_one ? "1" : "0"}
+                onChange={(e) => void save({ growth_minus_one: e.target.value === "1" })}
+              >
+                <option value="1">− 1</option>
+                <option value="0">(không trừ 1)</option>
+              </select>
+            </label>
+            <label className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold">Dòng CP khác tháng này:</span>
+              <select
+                aria-label="Dấu dòng CP khác"
+                className={sel}
+                disabled={!canEdit || saving}
+                value={String(f.other_fee_sign)}
+                onChange={(e) => void save({ other_fee_sign: e.target.value === "-1" ? -1 : 1 })}
+              >
+                <option value="1">như hệ thống</option>
+                <option value="-1">đảo dấu</option>
+              </select>
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-400">
+            Tự lấy theo công thức sheet KẾ HOẠCH KINH DOANH khi nạp mục tiêu. Ads tax = 10% Ads, TNCN = 1% REV, Lưu kho = số leader nhập.
+          </p>
+        </div>
+      )}
     </section>
   );
 }
@@ -308,6 +328,7 @@ function NumInput({
   percent,
   width = "w-16",
   ariaLabel,
+  decimals = 2,
 }: {
   value: number | null;
   onCommit: (v: number | null) => void;
@@ -316,8 +337,11 @@ function NumInput({
   percent?: boolean;
   width?: string;
   ariaLabel: string;
+  /** Số chữ số lẻ khi hiển thị (giá trị lưu giữ nguyên) — Unit hiện số nguyên như sheet (114.4 → 114) */
+  decimals?: number;
 }) {
-  const shown = value == null ? "" : percent ? String(Math.round(value * 1000) / 10) : String(value);
+  // Làm tròn khi hiển thị để không hiện đuôi số thực (29.700000000000003)
+  const shown = value == null ? "" : percent ? String(Math.round(value * 1000) / 10) : String(Number(value.toFixed(decimals)));
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
     if (draft == null) return;
@@ -354,10 +378,107 @@ function NumInput({
   );
 }
 
-function Thumb({ url }: { url: string | null }) {
+/** Ô Price nhấn đúp để sửa tay — chỉ tác động vào tính toán mục tiêu, không làm đổi giá thực tế từ order */
+function EditablePriceCell({
+  value,
+  canEdit,
+  onCommit,
+}: {
+  value: number | null;
+  canEdit: boolean;
+  onCommit: (v: number | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const startEdit = (e: React.MouseEvent) => {
+    if (!canEdit) return;
+    e.stopPropagation();
+    setDraft(value != null ? String(value) : "");
+    setEditing(true);
+  };
+
+  const commit = () => {
+    setEditing(false);
+    const t = draft.trim().replace(",", ".").replace("$", "");
+    if (t === (value != null ? String(value) : "")) return;
+    if (t === "") {
+      onCommit(null);
+      return;
+    }
+    const x = Number(t);
+    if (!Number.isFinite(x) || x < 0) return;
+    onCommit(Math.round(x * 100) / 100);
+  };
+
+  if (editing && canEdit) {
+    return (
+      <div className="relative inline-flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
+        <span className="pointer-events-none absolute left-1 text-[11px] text-slate-400">$</span>
+        <input
+          autoFocus
+          type="text"
+          inputMode="decimal"
+          value={draft}
+          placeholder={value != null ? String(value) : "0.00"}
+          onChange={(e) => setDraft(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          className="h-6 w-16 rounded border border-blue-500 bg-white pl-3.5 pr-1 text-right text-xs font-semibold tabular-nums text-slate-900 shadow-xs outline-hidden"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <span
+      onDoubleClick={startEdit}
+      title={canEdit ? "Nhấn đúp (ấn 2 cái) để sửa giá mục tiêu" : undefined}
+      className={`inline-block w-full select-none text-right tabular-nums ${
+        canEdit ? "cursor-pointer hover:font-bold hover:text-blue-700 hover:underline" : ""
+      }`}
+    >
+      {fmtUsd(value)}
+    </span>
+  );
+}
+
+function Thumb({ url, size = "md" }: { url: string | null; size?: "sm" | "md" }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const src = getOptimizedThumbnailUrl(url, 64);
-  if (!src) return <div className="h-9 w-9 shrink-0 rounded-md bg-slate-100" />;
-  return <img src={src} alt="" loading="lazy" className="h-9 w-9 shrink-0 rounded-md border border-slate-200 object-cover" />;
+  const dim = size === "sm" ? "h-7 w-7" : "h-9 w-9";
+  if (!src) return <div className={`${dim} shrink-0 rounded-md bg-slate-100`} />;
+  return (
+    <>
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        onMouseEnter={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setPos({ x: r.right + 10, y: r.top });
+        }}
+        onMouseLeave={() => setPos(null)}
+        className={`${dim} shrink-0 rounded-md border border-slate-200 object-cover cursor-pointer transition-transform hover:scale-105`}
+      />
+      {pos && url && typeof document !== "undefined" && createPortal(
+        <div
+          className="pointer-events-none fixed z-[99999] rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100"
+          style={{
+            left: `${pos.x}px`,
+            top: `${Math.max(10, Math.min(window.innerHeight - 210, pos.y - 70))}px`,
+          }}
+        >
+          <img src={url} alt="" className="h-48 w-48 rounded-lg object-contain bg-slate-50" />
+        </div>,
+        document.body,
+      )}
+    </>
+  );
 }
 
 // ───────────────────────── Tổng quan tháng ─────────────────────────
@@ -512,16 +633,542 @@ function Tile({
   );
 }
 
+// ===== BẢNG THEO THÁNG PHÔI & PIC (KQKD) TRONG TỔNG QUAN THÁNG KPI =====
+const WIN_TARGET_RATE = 0.4;
+const WIN_STATUS = "phát triển";
+const LOSS_STATUS = "hủy";
+
+function statusKind(status: string | null | undefined): "win" | "test" | "loss" {
+  const s = (status || "").trim().toLowerCase();
+  return s === WIN_STATUS ? "win" : s === LOSS_STATUS ? "loss" : "test";
+}
+
+function ratio(num: number | null | undefined, den: number | null | undefined): number | null {
+  if (num == null || den == null || !Number.isFinite(num) || !Number.isFinite(den) || Math.abs(den) < 0.000001) return null;
+  return num / den;
+}
+
+function fmtTarget(v: number) {
+  return (Math.round(v * 10) / 10).toFixed(1);
+}
+
+function RatePill({ v }: { v: number | null }) {
+  if (v == null) return <span className="text-slate-300">—</span>;
+  const good = v >= WIN_TARGET_RATE;
+  return (
+    <span
+      className={`inline-block rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
+        good ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+      }`}
+    >
+      {fmtPct(v)}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: string | null | undefined }) {
+  const k = statusKind(status);
+  const bg = k === "win" ? "bg-emerald-100 text-emerald-800" : k === "test" ? "bg-amber-100 text-amber-800" : "bg-slate-200 text-slate-700";
+  return (
+    <span className={`inline-block rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${bg}`}>
+      {status || "—"}
+    </span>
+  );
+}
+
+function ExpandedSkuList({
+  skus,
+  title,
+  period,
+  onOpenSku,
+}: {
+  skus: Array<Record<string, unknown>>;
+  title: string;
+  period: string;
+  onOpenSku?: (sku: string) => void;
+}) {
+  return (
+    <div className="border-l-4 border-l-blue-600 bg-slate-50/90 p-2.5 sm:p-3">
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <span className="font-bold text-slate-800">
+          Danh sách {skus.length} SKU ({title}):
+        </span>
+        <span className="text-[11px] text-slate-400">
+          Rê chuột vào ảnh để phóng to · Bấm SKU để xem chi tiết
+        </span>
+      </div>
+
+      <div className="max-h-[380px] overflow-auto rounded-lg border border-slate-200 bg-white shadow-xs">
+        <table className="w-full border-collapse text-[11.5px]">
+          <thead>
+            <tr className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 text-slate-700">
+              <th className="w-8 px-2 py-1.5 text-center font-medium">#</th>
+              <th className="w-10 px-1 py-1.5 text-center font-medium">Ảnh</th>
+              <th className="px-2.5 py-1.5 text-left font-semibold">SKU / Phôi</th>
+              <th className="px-2 py-1.5 text-center font-medium">Trạng thái</th>
+              <th className="px-2 py-1.5 text-left font-medium">PIC Idea</th>
+              <th className="px-2 py-1.5 text-right font-medium">Đơn</th>
+              <th className="px-2.5 py-1.5 text-right font-semibold">Revenue</th>
+              <th className="px-2.5 py-1.5 text-right font-semibold">Profit</th>
+              <th className="px-2.5 py-1.5 text-right font-medium">TACoS</th>
+              <th className="px-2 py-1.5 text-right font-medium">Tồn</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {skus.length === 0 ? (
+              <tr>
+                <td colSpan={10} className="py-4 text-center text-slate-400">
+                  Không có SKU nào
+                </td>
+              </tr>
+            ) : (
+              skus.map((sItem, idx) => {
+                const s = sItem as {
+                  sku?: string;
+                  mockup_url?: string;
+                  product_type?: string;
+                  status?: string;
+                  pic_idea?: string;
+                  actual?: { cur?: KpiMetrics };
+                  months?: Record<string, { revenue?: number; profit?: number; ads_fee?: number; quantity?: number }>;
+                  revenue?: number;
+                  profit?: number;
+                  ads_fee?: number;
+                  quantity?: number;
+                  ton_kho?: number;
+                };
+                const isKpiSku = Boolean(s.actual);
+                const mCell = !isKpiSku ? (s.months?.[period] || s) : null;
+                const rev = isKpiSku ? s.actual?.cur?.revenue : (mCell?.revenue ?? s.revenue);
+                const prof = isKpiSku ? s.actual?.cur?.profit : (mCell?.profit ?? s.profit);
+                const ads = isKpiSku ? s.actual?.cur?.ads_fee : (mCell?.ads_fee ?? s.ads_fee);
+                const units = isKpiSku ? s.actual?.cur?.quantity : (mCell?.quantity ?? s.quantity);
+                const tacos = isKpiSku ? tacosOf(s.actual?.cur) : ratio(-(ads || 0), rev || 0);
+                const ton = s.ton_kho;
+
+                return (
+                  <tr key={s.sku || idx} className="hover:bg-blue-50/40 transition-colors">
+                    <td className="px-2 py-1.5 text-center text-slate-400 font-mono text-[10px]">
+                      {idx + 1}
+                    </td>
+                    <td className="px-1 py-1 text-center">
+                      <Thumb url={s.mockup_url ?? null} size="sm" />
+                    </td>
+                    <td className="px-2.5 py-1.5">
+                      <div
+                        onClick={() => s.sku && onOpenSku?.(s.sku)}
+                        className={`font-semibold font-mono text-slate-800 ${
+                          onOpenSku ? "cursor-pointer hover:text-blue-700 hover:underline" : ""
+                        }`}
+                        title={onOpenSku ? "Nhấn để xem chi tiết SKU" : undefined}
+                      >
+                        {s.sku}
+                      </div>
+                      {s.product_type && (
+                        <div className="text-[10.5px] text-slate-400 truncate max-w-[200px]" title={s.product_type}>
+                          {s.product_type}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-center whitespace-nowrap">
+                      <StatusBadge status={s.status} />
+                    </td>
+                    <td className="px-2 py-1.5 text-left text-slate-600 truncate max-w-[120px]" title={s.pic_idea || ""}>
+                      {s.pic_idea || "—"}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-600 font-mono">
+                      {units != null && units > 0 ? fmtInt(units) : "—"}
+                    </td>
+                    <td className="px-2.5 py-1.5 text-right tabular-nums font-semibold text-slate-900 font-mono">
+                      {fmtUsd(rev)}
+                    </td>
+                    <td className={`px-2.5 py-1.5 text-right tabular-nums font-semibold font-mono ${
+                      prof != null && prof < 0 ? "text-rose-600" : "text-slate-900"
+                    }`}>
+                      {fmtUsd(prof)}
+                    </td>
+                    <td className="px-2.5 py-1.5 text-right tabular-nums text-slate-700 font-mono">
+                      {fmtPct(tacos)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 font-mono">
+                      {ton != null ? fmtInt(ton) : "—"}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function KpiPhoiPicTable({
+  storeId,
+  period,
+  skus,
+  targetFormula,
+  onOpenSku,
+}: {
+  storeId?: string;
+  period: string;
+  skus: KpiSku[];
+  targetFormula?: KpiTargetFormula;
+  onOpenSku?: (sku: string) => void;
+}) {
+  const year = useMemo(() => Number(period.slice(0, 4)) || new Date().getFullYear(), [period]);
+  const [kqkdData, setKqkdData] = useState<Record<string, unknown> | null>(null);
+  const [breakdown, setBreakdown] = useState<"phoi" | "pic_idea">("phoi");
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!storeId) return;
+    let active = true;
+    fetch(`/api/accounting/financials/kqkd?store_id=${storeId}&year=${year}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (active && res) setKqkdData(res);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [storeId, year]);
+
+  const toggleExpanded = (key: string) => {
+    setExpandedKey((prev) => (prev === key ? null : key));
+  };
+
+  const nameLabel = breakdown === "phoi" ? "Tên Phôi" : "PIC Idea";
+
+  // --- KQKD DATA ---
+  const winMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const winList = (kqkdData?.winResults || []) as Array<Record<string, unknown>>;
+    for (const w of winList) {
+      map.set(`${w.eval_month}|${w.product_type}`, Number(w.win_count) || 0);
+    }
+    return map;
+  }, [kqkdData]);
+
+  const curListingSkus = useMemo(() => {
+    const list = (kqkdData?.skus || []) as Array<Record<string, unknown>>;
+    return list.filter((s) => s.listing_month === period);
+  }, [kqkdData, period]);
+
+  const curEvalSkus = useMemo(() => {
+    const list1 = (kqkdData?.skus || []) as Array<Record<string, unknown>>;
+    const list2 = (kqkdData?.evalSkus || []) as Array<Record<string, unknown>>;
+    const pool = [...list1, ...list2];
+    return pool.filter((s) => s.eval_month === period);
+  }, [kqkdData, period]);
+
+  const lRows = useMemo(() => {
+    const m = new Map<string, { name: string; n: number; von: number; hoanVon: number; skus: Array<Record<string, unknown>> }>();
+    for (const s of curListingSkus) {
+      const rawName = String((breakdown === "phoi" ? s.product_type : s.pic_idea) || "(trống)");
+      const cur = m.get(rawName) || { name: rawName, n: 0, von: 0, hoanVon: 0, skus: [] };
+      cur.n += 1;
+      cur.von += Number(s.von_hang || 0);
+      const basecost = s.unit_cost != null ? Number(s.unit_cost) * Number(s.quantity || 0) : 0;
+      const hoanVon = basecost + Number(s.profit || 0);
+      cur.hoanVon += hoanVon;
+      cur.skus.push(s);
+      m.set(rawName, cur);
+    }
+    return Array.from(m.values()).sort((a, b) => b.von - a.von);
+  }, [curListingSkus, breakdown]);
+
+  const eRows = useMemo(() => {
+    const m = new Map<string, { name: string; n: number; suggest: number; win: number | null; skus: Array<Record<string, unknown>> }>();
+    for (const s of curEvalSkus) {
+      const rawName = String((breakdown === "phoi" ? s.product_type : s.pic_idea) || "(trống)");
+      const cur = m.get(rawName) || { name: rawName, n: 0, suggest: 0, win: null, skus: [] };
+      cur.n += 1;
+      const isWin = statusKind(s.status as string) === "win";
+      if (isWin) cur.suggest += 1;
+      cur.skus.push(s);
+      m.set(rawName, cur);
+    }
+    return Array.from(m.values())
+      .map((r) => {
+        const manualWin = winMap.get(`${period}|${r.name}`);
+        const win = manualWin != null ? manualWin : r.suggest;
+        return { ...r, win };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [curEvalSkus, breakdown, winMap, period]);
+
+  const lTotal = useMemo(() => {
+    const n = lRows.reduce((a, r) => a + r.n, 0);
+    const von = lRows.reduce((a, r) => a + r.von, 0);
+    const hoanVon = lRows.reduce((a, r) => a + r.hoanVon, 0);
+    return { n, von, hoanVon, rate: ratio(hoanVon, von) };
+  }, [lRows]);
+
+  const eTotal = useMemo(() => {
+    const n = eRows.reduce((a, r) => a + r.n, 0);
+    const win = eRows.reduce((a, r) => a + (r.win || 0), 0);
+    return { n, win, rate: ratio(win, n) };
+  }, [eRows]);
+
+  const childN = Math.max(lRows.length, eRows.length);
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50/50 px-3 py-2.5 sm:px-4">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h3 className="text-sm font-bold text-slate-900">
+            Theo {breakdown === "phoi" ? "Phôi" : "PIC"} · {periodLabel(period)}
+          </h3>
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => {
+                setBreakdown("phoi");
+                setExpandedKey(null);
+              }}
+              className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-all ${
+                breakdown === "phoi" ? "bg-blue-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Phôi
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setBreakdown("pic_idea");
+                setExpandedKey(null);
+              }}
+              className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-all ${
+                breakdown === "pic_idea" ? "bg-blue-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              PIC Idea
+            </button>
+          </div>
+        </div>
+
+                <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-400">
+            Ấn vào dòng để xổ danh sách SKU
+          </span>
+        </div>
+      </div>
+
+      
+        <div className="overflow-x-auto">
+          <table className="w-full acc-kpi-subtable min-w-[880px] table-fixed border-collapse text-xs [&_td]:py-2 [&_td]:px-2.5">
+            <colgroup>
+              <col className="w-[18%]" />
+              <col className="w-[8%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
+              <col className="w-[18%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[9%]" />
+              <col className="w-[9%]" />
+            </colgroup>
+            <thead>
+              <tr className="border-b border-slate-300">
+                <th colSpan={4} className="border-r border-slate-300 bg-blue-200 py-2 text-center font-bold text-blue-950 text-xs">
+                  R&amp;D Testing ({periodLabel(period)})
+                </th>
+                <th colSpan={5} className="bg-emerald-200 py-2 text-center font-bold text-emerald-950 text-xs">
+                  Đánh giá SKU WIN ({periodLabel(period)})
+                </th>
+              </tr>
+              <tr className="border-b border-slate-300 text-[11.5px]">
+                <th className="bg-blue-100 py-2 text-left font-bold text-blue-950">{nameLabel}</th>
+                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950">Số SKU</th>
+                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950">Vốn test</th>
+                <th className="border-r border-slate-300 bg-blue-100 py-2 text-right font-bold text-blue-950">% Hoàn vốn</th>
+                <th className="bg-emerald-100 py-2 text-left font-bold text-emerald-950">{nameLabel}</th>
+                <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">Số SKU</th>
+                <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">Mục tiêu</th>
+                <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">WIN thực tế</th>
+                <th className="bg-emerald-100 py-2 text-center font-bold text-emerald-950">Tỉ lệ WIN</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-slate-200 bg-slate-100 font-bold text-slate-900">
+                <td className="text-left font-bold">Tổng</td>
+                <td className="text-right font-mono">{lTotal.n || "—"}</td>
+                <td className="text-right font-mono">{lTotal.von ? fmtUsd(lTotal.von) : "—"}</td>
+                <td className="border-r border-slate-200 text-right font-mono">
+                  {lTotal.rate != null ? fmtPct(lTotal.rate) : "—"}
+                </td>
+                <td className="text-left font-bold">Tổng</td>
+                <td className="text-right font-mono">{eTotal.n || "—"}</td>
+                <td className="text-right font-mono">{eTotal.n ? fmtTarget(eTotal.n * 0.4) : "—"}</td>
+                <td className="text-right font-mono">{eTotal.win != null ? eTotal.win : "—"}</td>
+                <td className="text-center font-mono">
+                  {eTotal.rate != null ? <RatePill v={eTotal.rate} /> : "—"}
+                </td>
+              </tr>
+
+              {childN === 0 ? (
+                <tr>
+                  <td colSpan={4} className="border-r border-slate-200 py-6 text-center text-slate-400">
+                    Không có SKU listing mới trong tháng {periodLabel(period)}
+                  </td>
+                  <td colSpan={5} className="py-6 text-center text-slate-400">
+                    Không có SKU đến hạn đánh giá trong tháng {periodLabel(period)}
+                  </td>
+                </tr>
+              ) : (
+                Array.from({ length: childN }).map((_, pi) => {
+                  const lr = lRows[pi];
+                  const er = eRows[pi];
+                  const lKey = lr ? `l:${lr.name}` : null;
+                  const eKey = er ? `e:${er.name}` : null;
+                  const isExpL = lKey && expandedKey === lKey;
+                  const isExpE = eKey && expandedKey === eKey;
+
+                  return (
+                    <Fragment key={pi}>
+                      <tr className="border-b border-slate-100 transition-colors hover:bg-amber-50/50">
+                        {lr ? (
+                          <>
+                            <td
+                              onClick={() => lKey && toggleExpanded(lKey)}
+                              className="cursor-pointer font-medium text-slate-800 hover:text-blue-700"
+                            >
+                              <span className="inline-flex items-center gap-1.5">
+                                <CaretRightIcon
+                                  size={11}
+                                  className={`text-slate-400 transition-transform ${isExpL ? "rotate-90 text-blue-600" : ""}`}
+                                />
+                                <span className="truncate max-w-[160px]" title={lr.name}>
+                                  {lr.name}
+                                </span>
+                              </span>
+                            </td>
+                            <td
+                              onClick={() => lKey && toggleExpanded(lKey)}
+                              className="cursor-pointer text-right font-mono"
+                            >
+                              {lr.n}
+                            </td>
+                            <td
+                              onClick={() => lKey && toggleExpanded(lKey)}
+                              className="cursor-pointer text-right font-mono"
+                            >
+                              {fmtUsd(lr.von)}
+                            </td>
+                            <td
+                              onClick={() => lKey && toggleExpanded(lKey)}
+                              className="cursor-pointer border-r border-slate-200 text-right font-mono"
+                            >
+                              {fmtPct(ratio(lr.hoanVon, lr.von))}
+                            </td>
+                          </>
+                        ) : (
+                          <td colSpan={4} className="border-r border-slate-200 text-center text-slate-300">
+                            —
+                          </td>
+                        )}
+
+                        {er ? (
+                          <>
+                            <td
+                              onClick={() => eKey && toggleExpanded(eKey)}
+                              className="cursor-pointer font-medium text-slate-800 hover:text-blue-700"
+                            >
+                              <span className="inline-flex items-center gap-1.5">
+                                <CaretRightIcon
+                                  size={11}
+                                  className={`text-slate-400 transition-transform ${isExpE ? "rotate-90 text-blue-600" : ""}`}
+                                />
+                                <span className="truncate max-w-[160px]" title={er.name}>
+                                  {er.name}
+                                </span>
+                              </span>
+                            </td>
+                            <td
+                              onClick={() => eKey && toggleExpanded(eKey)}
+                              className="cursor-pointer text-right font-mono"
+                            >
+                              {er.n}
+                            </td>
+                            <td
+                              onClick={() => eKey && toggleExpanded(eKey)}
+                              className="cursor-pointer text-right font-mono"
+                            >
+                              {fmtTarget(er.n * 0.4)}
+                            </td>
+                            <td
+                              onClick={() => eKey && toggleExpanded(eKey)}
+                              className="cursor-pointer text-right font-mono font-semibold"
+                            >
+                              {er.win ?? "—"}
+                            </td>
+                            <td
+                              onClick={() => eKey && toggleExpanded(eKey)}
+                              className="cursor-pointer text-center font-mono"
+                            >
+                              <RatePill v={ratio(er.win, er.n)} />
+                            </td>
+                          </>
+                        ) : (
+                          <td colSpan={5} className="text-center text-slate-300">
+                            —
+                          </td>
+                        )}
+                      </tr>
+
+                      {isExpL && lr && (
+                        <tr className="border-b border-slate-200 bg-slate-50/70 animate-in fade-in duration-150">
+                          <td colSpan={9} className="p-0">
+                            <ExpandedSkuList
+                              skus={lr.skus}
+                              title={`R&D Listing: ${lr.name}`}
+                              period={period}
+                              onOpenSku={onOpenSku}
+                            />
+                          </td>
+                        </tr>
+                      )}
+
+                      {isExpE && er && (
+                        <tr className="border-b border-slate-200 bg-slate-50/70 animate-in fade-in duration-150">
+                          <td colSpan={9} className="p-0">
+                            <ExpandedSkuList
+                              skus={er.skus}
+                              title={`Đánh giá WIN: ${er.name}`}
+                              period={period}
+                              onOpenSku={onOpenSku}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+    </section>
+  );
+}
+
 function OverviewPage({
   data,
   canEdit,
+  storeId,
   onSaveNote,
   onSaveFormula,
+  onOpenSku,
 }: {
   data: KpiData;
   canEdit: boolean;
+  storeId?: string;
   onSaveNote: (note: string) => Promise<void>;
   onSaveFormula: (patch: Partial<KpiTargetFormula>) => Promise<void>;
+  onOpenSku?: (sku: string) => void;
 }) {
   const { periods } = data;
   const sum = useMemo(() => {
@@ -557,46 +1204,167 @@ function OverviewPage({
   const tCur = a.hasTCur ? a.tCur : null;
   const tNext = a.hasTNext ? a.tNext : null;
   const testTNext = t.hasTNext ? t.tNext : null;
+  const testTCur = t.hasTCur ? t.tCur : null;
   const fees = data.storeFees ?? { prev: null, cur: null, ly: null, lyNext: null };
   const report = useMemo(
     () =>
       buildMonthReport({
         dev: { prev: a.prev, cur: a.cur, ly: lyOk ? a.ly : null, lyNext: lyNextOk ? a.lyNext : null, tCur, tNext },
-        test: { prev: t.prev, cur: t.cur, ly: lyOk ? t.ly : null, lyNext: lyNextOk ? t.lyNext : null, tNext: testTNext },
+        test: { prev: t.prev, cur: t.cur, ly: lyOk ? t.ly : null, lyNext: lyNextOk ? t.lyNext : null, tNext: testTNext, tCur: testTCur },
         storeFeeCur: fees.cur,
         formula: data.targetFormula,
       }),
-    [a, t, lyOk, lyNextOk, tCur, tNext, testTNext, fees.cur, data.targetFormula],
+    [a, t, lyOk, lyNextOk, tCur, tNext, testTNext, testTCur, fees.cur, data.targetFormula],
   );
+
+  // Tổng cả WIN + TEST cho 4 card tổng quan
+  const total = useMemo(() => {
+    const cur = addMetrics(a.cur, t.cur);
+    const prev = addMetrics(a.prev, t.prev);
+    const ly = addMetrics(a.ly, t.ly);
+    const hasTCur = a.hasTCur || t.hasTCur;
+    const tCurCombined = hasTCur
+      ? addMetrics(a.hasTCur ? a.tCur : emptyMetrics(), t.hasTCur ? t.tCur : emptyMetrics())
+      : null;
+    return { cur, prev, ly, tCur: tCurCombined };
+  }, [a, t]);
+  const grossCur = report.gross.curTotal ?? null;
+  const grossTarget = total.tCur?.profit ?? null;
+  const grossPrev = total.prev.profit;
+  const grossLy = lyOk ? total.ly.profit : null;
 
   const [note, setNote] = useState(data.note?.note ?? "");
   const [savingNote, setSavingNote] = useState(false);
   const dirty = note !== (data.note?.note ?? "");
 
-  const th = "px-3 py-2 text-right text-[11px] font-semibold text-slate-600 whitespace-nowrap";
-  const td = "px-3 py-1.5 text-right tabular-nums whitespace-nowrap";
   // Bảng BÁO CÁO THÁNG: lưới đen, tên cột như sheet
-  const hd = "border-r border-b border-black px-2 py-1 text-[11px] font-bold text-black whitespace-nowrap";
+  const hd = "border-r border-b border-black px-2 py-1 text-[11px] font-extrabold text-black whitespace-nowrap";
   const cell = "border-r border-b border-black px-2 py-1 whitespace-nowrap";
-  // Tên cột 2 dòng ngắn gọn (dòng trên [Result]/[Target], dòng dưới tháng / chỉ số) để bảng không bị kéo ngang.
-  // Màu tiêu đề đúng như sheet BÁO CÁO THÁNG: [Result] vàng #ffe599, [Target] + tỷ lệ cam #ff9900, SKU WIN xanh #b6d7a8.
-  const RESULT_BG = "bg-[#ffe599]";
-  const TARGET_BG = "bg-[#ff9900]";
-  const WIN_BG = "bg-[#b6d7a8]";
-  // Nền ô số: cùng tông với tiêu đề cột nhưng nhạt hơn để dễ dò theo cột
-  const BODY_BG: Record<string, string> = { [RESULT_BG]: "bg-[#fff8dc]", [TARGET_BG]: "bg-[#ffe8c2]", [WIN_BG]: "bg-[#e6f2df]" };
-  const REPORT_COLS: { key: ReportCol; label: string[]; title: string; ratio?: boolean; bg: string }[] = [
-    { key: "prev", label: ["[Result]", periodLabel(periods.prev)], title: `[Result] ${periodLabel(periods.prev)}`, bg: RESULT_BG },
-    { key: "ly", label: ["[Result]", periodLabel(periods.ly)], title: `[Result] ${periodLabel(periods.ly)}`, bg: RESULT_BG },
-    { key: "tCur", label: ["[Target]", periodLabel(periods.cur)], title: `[Target] ${periodLabel(periods.cur)}`, bg: TARGET_BG },
-    { key: "cur", label: ["[Result]", periodLabel(periods.cur)], title: `[Result] ${periodLabel(periods.cur)}`, bg: RESULT_BG },
-    { key: "rPrev", label: ["[Result]", "Tăng trưởng", "/tháng trước"], title: "[Result] Tăng trưởng/tháng trước", ratio: true, bg: TARGET_BG },
-    { key: "rLy", label: ["[Result]", "Tăng trưởng", "/cùng kỳ"], title: "[Result] Tăng trưởng/cùng kỳ", ratio: true, bg: TARGET_BG },
-    { key: "kpi", label: ["Tỷ lệ", "đạt KPI"], title: "Tỷ lệ đạt KPI", ratio: true, bg: TARGET_BG },
-    { key: "lyNext", label: ["[Result]", periodLabel(periods.lyNext)], title: `[Result] ${periodLabel(periods.lyNext)}`, bg: RESULT_BG },
-    { key: "tNextDev", label: ["[Target]", "SKU WIN", periodLabel(periods.next)], title: `[Target] SKU WIN ${periodLabel(periods.next)}`, bg: WIN_BG },
-    { key: "tNextGrowth", label: ["[Target]", "Tăng trưởng", "/tháng trước"], title: "[Target] Tăng trưởng/tháng trước", ratio: true, bg: WIN_BG },
-    { key: "tNextTest", label: ["[Target]", "SKU TEST", periodLabel(periods.next)], title: `[Target] SKU TEST ${periodLabel(periods.next)}`, bg: RESULT_BG },
+
+  // Phân nhóm màu sắc trực quan theo yêu cầu:
+  // - Cột Chỉ số: màu cam #ff9900 chuẩn theo ảnh chụp
+  // - Tham chiếu quá khứ: màu vàng đậm hơn chút (bg-[#fef08a] / bg-white)
+  // - Cụm WIN & TEST: đồng nhất cùng màu vàng cam ấm (bg-[#fdba74] / bg-[#ffedd5])
+  // - Cột KPI (WIN & TEST): giữ màu xanh lá (bg-[#a3cf95] / bg-[#d9ead3])
+  const REPORT_COLS: {
+    key: ReportCol;
+    label: string[];
+    title: string;
+    ratio?: boolean;
+    headCls: string;
+    cellCls: string;
+    divider?: boolean;
+  }[] = [
+    // 1. Tham chiếu quá khứ (2 cột) — Ô giá trị màu trắng
+    {
+      key: "prev",
+      label: ["[Result]", periodLabel(periods.prev)],
+      title: `[Result] ${periodLabel(periods.prev)} (tháng trước)`,
+      headCls: "bg-[#fef08a] text-black font-extrabold",
+      cellCls: "bg-white",
+    },
+    {
+      key: "ly",
+      label: ["[Result]", periodLabel(periods.ly)],
+      title: `[Result] ${periodLabel(periods.ly)} (cùng kỳ năm ngoái)`,
+      headCls: "bg-[#fef08a] text-black font-extrabold",
+      cellCls: "bg-white",
+      divider: true,
+    },
+    // 2. Đánh giá tháng này - Cụm WIN 1 màu (Cam/Peach) + KPI xanh lá
+    {
+      key: "tCur",
+      label: ["[Target]", "SKU WIN", periodLabel(periods.cur)],
+      title: `[Target] SKU WIN ${periodLabel(periods.cur)} (Mục tiêu)`,
+      headCls: "bg-[#fdba74] text-black font-extrabold",
+      cellCls: "bg-[#ffedd5]",
+    },
+    {
+      key: "cur",
+      label: ["[Result]", "SKU WIN", periodLabel(periods.cur)],
+      title: `[Result] SKU WIN ${periodLabel(periods.cur)} (Thực tế)`,
+      headCls: "bg-[#fdba74] text-black font-extrabold",
+      cellCls: "bg-[#ffedd5]",
+    },
+    {
+      key: "kpi",
+      label: ["Tỷ lệ", "đạt KPI WIN"],
+      title: "Tỷ lệ đạt KPI WIN (Thực tế / Mục tiêu)",
+      ratio: true,
+      headCls: "bg-[#a3cf95] text-black font-black",
+      cellCls: "bg-[#d9ead3] font-bold text-emerald-950",
+    },
+    {
+      key: "rPrev",
+      label: ["[Result]", "Tăng trưởng", "/tháng trước"],
+      title: "[Result] Tăng trưởng so với tháng trước",
+      ratio: true,
+      headCls: "bg-[#fed7aa] text-black font-extrabold",
+      cellCls: "bg-white",
+    },
+    {
+      key: "rLy",
+      label: ["[Result]", "Tăng trưởng", "/cùng kỳ"],
+      title: "[Result] Tăng trưởng so với cùng kỳ năm ngoái",
+      ratio: true,
+      headCls: "bg-[#fed7aa] text-black font-extrabold",
+      cellCls: "bg-white",
+      divider: true,
+    },
+    // 3. Đánh giá tháng này - Cụm TEST cùng màu vàng/peach như SKU WIN + KPI xanh lá
+    {
+      key: "tCurTest",
+      label: ["[Target]", "SKU TEST", periodLabel(periods.cur)],
+      title: `[Target] SKU TEST ${periodLabel(periods.cur)} (Mục tiêu TEST)`,
+      headCls: "bg-[#fdba74] text-black font-extrabold",
+      cellCls: "bg-[#ffedd5]",
+    },
+    {
+      key: "curTest",
+      label: ["[Result]", "SKU TEST", periodLabel(periods.cur)],
+      title: `[Result] SKU TEST ${periodLabel(periods.cur)} (Thực tế TEST)`,
+      headCls: "bg-[#fdba74] text-black font-extrabold",
+      cellCls: "bg-[#ffedd5]",
+    },
+    {
+      key: "kpiTest",
+      label: ["Tỷ lệ", "đạt KPI TEST"],
+      title: "Tỷ lệ đạt KPI SKU TEST (Thực tế / Mục tiêu)",
+      ratio: true,
+      headCls: "bg-[#a3cf95] text-black font-black",
+      cellCls: "bg-[#d9ead3] font-bold text-emerald-950",
+      divider: true,
+    },
+    // 4. Kế hoạch tháng sau (4 cột) — đồng bộ màu theo cụm
+    {
+      key: "lyNext",
+      label: ["[Result]", periodLabel(periods.lyNext)],
+      title: `[Result] ${periodLabel(periods.lyNext)} (căn cứ cùng kỳ năm ngoái)`,
+      headCls: "bg-[#fef08a] text-black font-extrabold",
+      cellCls: "bg-white",
+    },
+    {
+      key: "tNextDev",
+      label: ["[Target]", "SKU WIN", periodLabel(periods.next)],
+      title: `[Target] SKU WIN ${periodLabel(periods.next)} (Mục tiêu WIN tháng sau)`,
+      headCls: "bg-[#fdba74] text-black font-extrabold",
+      cellCls: "bg-[#ffedd5]",
+    },
+    {
+      key: "tNextGrowth",
+      label: ["[Target]", "Tăng trưởng", "/tháng trước"],
+      title: "[Target] Tỷ lệ tăng trưởng mục tiêu tháng sau",
+      ratio: true,
+      headCls: "bg-[#a3cf95] text-black font-extrabold",
+      cellCls: "bg-white font-semibold text-slate-800",
+    },
+    {
+      key: "tNextTest",
+      label: ["[Target]", "SKU TEST", periodLabel(periods.next)],
+      title: `[Target] SKU TEST ${periodLabel(periods.next)} (Mục tiêu TEST tháng sau)`,
+      headCls: "bg-[#fdba74] text-black font-extrabold",
+      cellCls: "bg-[#ffedd5]",
+    },
   ];
 
   // Tháng đang chạy: phần tháng đã qua (số liệu tới hết hôm qua) → vạch nhịp + dự kiến cả tháng
@@ -619,39 +1387,78 @@ function OverviewPage({
   return (
     <div className="flex flex-col gap-3 p-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Tile {...tileCommon} label="Revenue SKU phát triển" actual={a.cur.revenue} target={tCur?.revenue ?? null} prev={a.prev.revenue} ly={lyOk ? a.ly.revenue : null} kind="usd" />
+        <Tile
+          {...tileCommon}
+          label="Revenue"
+          actual={total.cur.revenue}
+          target={total.tCur?.revenue ?? null}
+          prev={total.prev.revenue}
+          ly={lyOk ? total.ly.revenue : null}
+          kind="usd"
+        />
         <Tile
           {...tileCommon}
           label="Gross Profit"
-          actual={report.gross.cur ?? null}
-          target={report.gross.tCur ?? null}
-          prev={report.gross.prev ?? null}
-          ly={report.gross.ly ?? null}
+          actual={grossCur}
+          target={grossTarget}
+          prev={grossPrev}
+          ly={grossLy}
           kind="usd"
-          extra={report.gross.cur != null && a.cur.revenue ? `Margin ${fmtPct(report.gross.cur / a.cur.revenue)}` : undefined}
+          extra={grossCur != null && total.cur.revenue ? `Margin ${fmtPct(grossCur / total.cur.revenue)}` : undefined}
         />
-        <Tile {...tileCommon} label="Quantity" actual={a.cur.quantity} target={tCur?.quantity ?? null} prev={a.prev.quantity} ly={lyOk ? a.ly.quantity : null} kind="int" />
-        <Tile {...tileCommon} label="TACoS" actual={tacosOf(a.cur)} target={tacosOf(tCur)} prev={tacosOf(a.prev)} ly={lyOk ? tacosOf(a.ly) : null} kind="pct" cost />
+        <Tile
+          {...tileCommon}
+          label="Quantity"
+          actual={total.cur.quantity}
+          target={total.tCur?.quantity ?? null}
+          prev={total.prev.quantity}
+          ly={lyOk ? total.ly.quantity : null}
+          kind="int"
+        />
+        <Tile
+          {...tileCommon}
+          label="TACoS"
+          actual={tacosOf(total.cur)}
+          target={total.tCur ? tacosOf(total.tCur) : null}
+          prev={tacosOf(total.prev)}
+          ly={lyOk ? tacosOf(total.ly) : null}
+          kind="pct"
+          cost
+        />
       </div>
 
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+        <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 bg-slate-50/50">
           <h3 className="text-sm font-bold text-slate-900">Báo cáo tổng team · {periodLabel(periods.cur)}</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full border-separate border-spacing-0 border-l border-t border-black text-xs">
+          <table className="w-full acc-kpi-report-table border-separate border-spacing-0 border-l border-t border-black text-xs">
             <thead>
+              {/* Cấp 1: Các khối chức năng */}
               <tr>
-                <th className={`${hd} sticky left-0 z-10 bg-white text-left`} />
-                <th colSpan={7} className={`${hd} bg-[#fff2cc] text-center uppercase`}>Báo cáo tháng</th>
-                <th colSpan={4} className={`${hd} bg-[#fff2cc] text-center uppercase`}>Mục tiêu tháng</th>
+                <th className={`${hd} sticky left-0 z-10 bg-[#ff9900] text-left`} />
+                <th colSpan={2} className={`${hd} bg-[#fde047] border-r-2 border-r-black`} />
+                <th colSpan={5} className={`${hd} bg-[#fb923c] text-black text-center uppercase tracking-wide font-black border-r-2 border-r-black`}>
+                  Đánh giá tháng {periodLabel(periods.cur)} (SKU WIN)
+                </th>
+                <th colSpan={3} className={`${hd} bg-[#fb923c] text-black text-center uppercase tracking-wide font-black border-r-2 border-r-black`}>
+                  SKU TEST {periodLabel(periods.cur)}
+                </th>
+                <th colSpan={4} className={`${hd} bg-[#fb923c] text-black text-center uppercase tracking-wide font-black`}>
+                  Mục tiêu tháng {periodLabel(periods.next)}
+                </th>
               </tr>
+              {/* Cấp 2: Từng cột chỉ số */}
               <tr>
-                <th className={`${hd} sticky left-0 z-10 bg-white text-left`}>Chỉ số</th>
+                <th className={`${hd} sticky left-0 z-10 bg-[#ff9900] text-black text-left font-black text-xs`}>Chỉ số</th>
                 {REPORT_COLS.map((c) => (
-                  <th key={c.key} title={c.title} className={`${hd} text-right align-bottom leading-tight ${c.bg}`}>
+                  <th
+                    key={c.key}
+                    title={c.title}
+                    className={`${hd} text-right align-bottom leading-tight ${c.headCls} ${c.divider ? "border-r-2 border-r-black" : ""}`}
+                  >
                     {c.label.map((line, i) => (
-                      <span key={i} className={`block ${i === 0 ? "text-[10.5px] font-semibold text-black/60" : ""}`}>
+                      <span key={i} className={`block font-black text-black ${i === 0 ? "text-[11px]" : "text-[12px]"}`}>
                         {line}
                       </span>
                     ))}
@@ -660,19 +1467,24 @@ function OverviewPage({
               </tr>
             </thead>
             <tbody>
-              {REPORT_ROWS.map((r) => {
+              {REPORT_ROWS.filter((r) => r.key !== "pl_test").map((r) => {
                 const row = report[r.key];
                 // Như sheet: cột tên chỉ số và cả dòng Gross Profit tô cam #ff9900, chữ đậm
                 const profitRow = r.key === "gross";
                 return (
-                  <tr key={r.key} className={profitRow || r.key === "revenue" ? "font-bold" : ""}>
+                  <tr key={r.key} className={profitRow ? "font-bold" : ""}>
                     <td className={`${cell} sticky left-0 z-10 bg-[#ff9900] text-left font-bold`}>{r.label}</td>
                     {REPORT_COLS.map((c) => {
                       const v = row[c.key];
                       const isRatio = c.ratio;
                       const text = v == null ? "" : isRatio || r.kind === "pct" ? fmtPct(v) : r.kind === "int" ? fmtInt(v) : fmtUsd(v);
                       return (
-                        <td key={c.key} className={`${cell} text-right tabular-nums ${profitRow ? "bg-[#ff9900]" : BODY_BG[c.bg] ?? "bg-white"}`}>
+                        <td
+                          key={c.key}
+                          className={`${cell} text-right tabular-nums ${c.divider ? "border-r-2 border-r-black" : ""} ${
+                            profitRow ? "bg-[#ff9900] font-bold text-black" : c.cellCls
+                          }`}
+                        >
                           {text}
                         </td>
                       );
@@ -685,49 +1497,13 @@ function OverviewPage({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="border-b border-slate-100 px-3 py-2">
-          <h3 className="text-sm font-bold text-slate-900">Theo nhóm SKU · {periodLabel(periods.cur)}</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50">
-                <th className="px-3 py-2 text-left text-[11px] font-semibold text-slate-600">Nhóm</th>
-                <th className={th}>Số SKU</th>
-                <th className={th}>Revenue</th>
-                <th className={th}>Mục tiêu Rev</th>
-                <th className={th}>% đạt</th>
-                <th className={th}>Profit</th>
-                <th className={th}>Mục tiêu Profit</th>
-                <th className={th}>% đạt</th>
-                <th className={th}>TACoS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(["dev", "test"] as const).map((g) => {
-                const x = sum.by[g];
-                const t = x.hasTCur ? x.tCur : null;
-                const ar = achievement(x.cur.revenue, t?.revenue);
-                const ap = achievement(x.cur.profit, t?.profit);
-                return (
-                  <tr key={g} className="border-b border-slate-100">
-                    <td className="px-3 py-1.5 font-semibold text-slate-800">{GROUP_LABEL[g]}</td>
-                    <td className={td}>{data.skus.filter((s) => s.group === g).length}</td>
-                    <td className={`${td} font-semibold`}>{fmtUsd(x.cur.revenue)}</td>
-                    <td className={`${td} text-slate-600`}>{fmtUsd(t?.revenue)}</td>
-                    <td className={`${td} font-bold ${achieveTone(ar)}`}>{fmtPct(ar)}</td>
-                    <td className={`${td} font-semibold ${x.cur.profit < 0 ? "text-rose-700" : ""}`}>{fmtUsd(x.cur.profit)}</td>
-                    <td className={`${td} text-slate-600`}>{fmtUsd(t?.profit)}</td>
-                    <td className={`${td} font-bold ${achieveTone(ap)}`}>{fmtPct(ap)}</td>
-                    <td className={td}>{fmtPct(tacosOf(x.cur))}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <KpiPhoiPicTable
+        storeId={storeId}
+        period={periods.cur}
+        skus={data.skus}
+        targetFormula={data.targetFormula}
+        onOpenSku={onOpenSku}
+      />
 
       <TargetFormulaPanel formula={data.targetFormula} canEdit={canEdit} onSave={onSaveFormula} />
 
@@ -857,12 +1633,14 @@ function SkuTable({
   skus,
   canEdit,
   onSaveTarget,
+  onSavePrice,
   onOpen,
 }: {
   data: KpiData;
   skus: KpiSku[];
   canEdit: boolean;
   onSaveTarget: (sku: string, slot: TargetSlot, patch: Partial<TargetRow>) => void;
+  onSavePrice?: (sku: string, price: number | null) => void;
   onOpen: (sku: string) => void;
 }) {
   const { periods } = data;
@@ -908,7 +1686,7 @@ function SkuTable({
   const save = (sku: string, slot: TargetSlot, patch: Partial<TargetRow>) => onSaveTarget(sku, slot, patch);
   const unitInput = (slot: TargetSlot) => function UnitCell(c: RowCtx) {
     return (
-    <NumInput ariaLabel={`Unit ${slot === "cur" ? "mục tiêu" : "tháng sau"} ${c.s.sku}`} value={c.s.target[slot]?.units ?? null} disabled={!canEdit} onCommit={(v) => save(c.s.sku, slot, { units: v })} />
+    <NumInput ariaLabel={`Unit ${slot === "cur" ? "mục tiêu" : "tháng sau"} ${c.s.sku}`} value={c.s.target[slot]?.units ?? null} decimals={0} disabled={!canEdit} onCommit={(v) => save(c.s.sku, slot, { units: v })} />
     );
   };
   const tacosInput = (slot: TargetSlot) => function TacosCell(c: RowCtx) {
@@ -934,9 +1712,7 @@ function SkuTable({
       sub: "",
       tone: "text-slate-700",
       cols: [
-        { id: "asin", label: "ASIN", kind: "text", render: (c) => <span className="text-slate-600">{c.s.asin || ""}</span> },
         { id: "avail", label: "Available now", kind: "int", value: (c) => c.s.ton_kho },
-        { id: "price", label: "Price", value: (c) => c.s.price, total: () => "" },
         { id: "bcu", label: "Basecost", value: (c) => c.s.basecost_unit, total: () => "" },
       ],
     },
@@ -991,7 +1767,7 @@ function SkuTable({
       tone: "bg-indigo-50 text-indigo-900",
       cols: [
         { id: "tn-rev", label: "Revenue", value: tv(tn, (m) => m.revenue) },
-        { id: "tn-qty", label: "Quantity ✎", value: tv(tn, (m) => m.quantity), render: unitInput("next") },
+        { id: "tn-qty", label: "Quantity ✎", kind: "int", value: tv(tn, (m) => m.quantity), render: unitInput("next") },
         { id: "tn-ads", label: "Ads Fee", value: tv(tn, (m) => m.ads_fee) },
         { id: "tn-bc", label: "Basecost", value: tv(tn, (m) => m.basecost) },
         { id: "tn-amz", label: "Amazon fee", value: tv(tn, (m) => m.amazon_fee) },
@@ -1062,11 +1838,12 @@ function SkuTable({
     return any ? <span className={toneCls(col, sum)}>{fmtCell(col, sum)}</span> : "";
   };
 
-  // 3 cột đầu cố định (Product Type, Mockup, SKU)
+  // 4 cột đầu cố định (Product Type, Mockup, SKU, Price)
   const FIX = [
     { label: "Product Type", w: 120 },
     { label: "Mockup", w: 56 },
-    { label: "SKU", w: 150 },
+    { label: "SKU", w: 140 },
+    { label: "Price ✎", w: 84 },
   ];
   const leftOf = (i: number) => FIX.slice(0, i).reduce((a, f) => a + f.w, 0);
   // Lưới kẻ đen như bảng SKU Testing: mỗi ô kẻ phải + dưới, bảng kẻ trên + trái; đầu mỗi nhóm cột kẻ đậm
@@ -1106,7 +1883,7 @@ function SkuTable({
                 <th
                   key={f.label}
                   style={{ left: leftOf(i), minWidth: f.w, maxWidth: f.w }}
-                  className={`sticky z-30 ${GROUP_PALETTE.info.sub} px-2 py-1.5 text-left text-[11px] font-bold text-black ${grid}`}
+                  className={`sticky z-30 ${GROUP_PALETTE.info.sub} px-2 py-1.5 ${f.label.startsWith("Price") ? "text-right" : "text-left"} text-[11px] font-bold text-black ${grid}`}
                 >
                   {f.label}
                 </th>
@@ -1149,6 +1926,16 @@ function SkuTable({
                   title="Xem chi tiết"
                 >
                   {c.s.sku}
+                </td>
+                <td
+                  style={{ left: leftOf(3), minWidth: FIX[3].w, maxWidth: FIX[3].w }}
+                  className={`${fixCls} px-2 py-1 text-right`}
+                >
+                  <EditablePriceCell
+                    value={c.s.price}
+                    canEdit={canEdit}
+                    onCommit={(newPrice) => onSavePrice?.(c.s.sku, newPrice)}
+                  />
                 </td>
                 {shown.map((g) =>
                   g.cols.map((col) => {
@@ -1259,7 +2046,7 @@ function SkuDrawer({
                   <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
                     <label className="flex items-center justify-between gap-2">
                       Unit
-                      <NumInput ariaLabel="Unit" width="w-20" value={t?.units ?? null} disabled={!canEdit} onCommit={(v) => onSaveTarget(sku.sku, slot, { units: v })} />
+                      <NumInput ariaLabel="Unit" width="w-20" decimals={0} value={t?.units ?? null} disabled={!canEdit} onCommit={(v) => onSaveTarget(sku.sku, slot, { units: v })} />
                     </label>
                     <label className="flex items-center justify-between gap-2">
                       TACoS
@@ -1642,6 +2429,43 @@ export function KpiView() {
     [data, selectedStoreId, load],
   );
 
+  const savePrice = useCallback(
+    async (sku: string, price: number | null) => {
+      if (!data || !selectedStoreId) return;
+      // Cập nhật ngay trên giao diện: đổi giá bán, bỏ sheet_metrics của SKU để mục tiêu tự tính lại theo giá mới
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          skus: prev.skus.map((s) => {
+            if (s.sku !== sku) return s;
+            return {
+              ...s,
+              price,
+              target: {
+                cur: s.target.cur ? { ...s.target.cur, price, sheet_metrics: null } : null,
+                next: s.target.next ? { ...s.target.next, price, sheet_metrics: null } : null,
+              },
+            };
+          }),
+        };
+      });
+      try {
+        const res = await fetch("/api/accounting/financials/kpi", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ store_id: selectedStoreId, period: data.periods.cur, sku, sku_price: price }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "Không lưu được giá");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Không lưu được giá");
+        void load();
+      }
+    },
+    [data, selectedStoreId, load],
+  );
+
   const saveNote = useCallback(
     async (note: string) => {
       if (!data || !selectedStoreId) return;
@@ -1704,8 +2528,8 @@ export function KpiView() {
 
   let body: ReactNode = null;
   if (data) {
-    if (mode === "overview") body = <OverviewPage key={`${selectedStoreId}:${data.period}`} data={data} canEdit={canEdit} onSaveNote={saveNote} onSaveFormula={saveFormula} />;
-    else body = <SkuTable data={data} skus={visibleSkus} canEdit={canEdit} onSaveTarget={saveTarget} onOpen={setOpenSku} />;
+    if (mode === "overview") body = <OverviewPage key={`${selectedStoreId}:${data.period}`} data={data} canEdit={canEdit} storeId={selectedStoreId} onSaveNote={saveNote} onSaveFormula={saveFormula} onOpenSku={setOpenSku} />;
+    else body = <SkuTable data={data} skus={visibleSkus} canEdit={canEdit} onSaveTarget={saveTarget} onSavePrice={savePrice} onOpen={setOpenSku} />;
   }
 
   return (
@@ -1840,6 +2664,7 @@ export function KpiView() {
               <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} className="h-3.5 w-3.5 cursor-pointer accent-blue-600" />
               Chỉ SKU có bán / có mục tiêu
             </label>
+            <span className="ml-auto text-[11px] text-slate-500">Ô vàng ✎ là leader nhập · Nhấn đúp ô Price để sửa giá mục tiêu · Nhấn mã SKU để xem chi tiết</span>
           </div>
         )}
       </div>

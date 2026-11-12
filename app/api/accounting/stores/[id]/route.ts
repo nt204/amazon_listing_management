@@ -11,6 +11,9 @@ const updateStoreSchema = z.object({
   legal_entity: z.string().trim().max(100).optional().nullable(),
   seller_id: z.string().trim().max(100).optional().nullable(),
   status: z.enum(["active", "inactive"]).optional(),
+  // Phí dịch vụ cho Net Profit (tab FBA / FBM theo ngày)
+  service_rate: z.number().min(0).max(5).optional().nullable(),
+  fbm_service_cost: z.number().min(0).max(10_000_000).optional().nullable(),
 });
 
 type RouteContext = { params: Promise<{ id: string }> };

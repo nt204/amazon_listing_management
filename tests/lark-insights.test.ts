@@ -153,3 +153,69 @@ test("compareWeeks: so cùng số ngày tuần trước", () => {
   assert.equal(w.prev.end, "2026-11-06");
   assert.equal(w.revenueChange, 1);
 });
+
+import { baseWindowWeights, planRestock, retailEvents, seasonalFactor, upcomingEvents } from "../lib/accounting/lark-insights-calc";
+
+test("retailEvents: Black Friday / Cyber Monday đúng ngày", () => {
+  const ev = Object.fromEntries(retailEvents(2026).map((e) => [e.name, e.date]));
+  assert.equal(ev["Black Friday"], "2026-11-27"); // Thanksgiving 26/11/2026
+  assert.equal(ev["Cyber Monday"], "2026-11-30");
+  assert.equal(ev["Mother's Day"], "2026-05-10");
+  assert.deepEqual(upcomingEvents("2026-11-12", "2026-12-31").map((e) => e.name), ["Black Friday", "Cyber Monday", "Giáng sinh (khách đặt trước ~15/12)"]);
+});
+
+test("baseWindowWeights: 28 ngày vắt qua 2 tháng", () => {
+  const w = baseWindowWeights("2026-11-10");
+  assert.ok(Math.abs(w["2026-11"] - 10 / 28) < 1e-9);
+  assert.ok(Math.abs(w["2026-10"] - 18 / 28) < 1e-9);
+});
+
+test("seasonalFactor: theo units/ngày; SKU đủ mẫu → SKU; thiếu → nhóm, rồi store; kẹp 0.5–3", () => {
+  const nov = { "2026-11": 1 }; // 28 ngày gần nhất nằm trọn tháng 11
+  // Tháng 11 năm trước 30 ngày, tháng 12 có 31 ngày: 62/31 = 2/ngày so với 30/30 = 1/ngày → x2
+  assert.deepEqual(seasonalFactor({ sku: { "2025-11": 30, "2025-12": 62 }, productType: null, store: {} }, nov, "2026-12"), { factor: 2, clamped: false, level: "sku" });
+  // SKU mới → nhóm sản phẩm
+  assert.equal(seasonalFactor({ sku: {}, productType: { "2025-11": 300, "2025-12": 775 }, store: {} }, nov, "2026-12").level, "product_type");
+  // Không có nhóm → cả store
+  const st = seasonalFactor({ sku: {}, productType: null, store: { "2025-11": 3000, "2025-12": 4650 } }, nov, "2026-12");
+  assert.equal(st.level, "store");
+  assert.ok(Math.abs(st.factor - 1.5) < 1e-9);
+  // Giới hạn tối đa x5, có đánh dấu
+  const capped = seasonalFactor({ sku: { "2025-11": 30, "2025-12": 900 }, productType: null, store: {} }, nov, "2026-12");
+  assert.equal(capped.factor, 5);
+  assert.equal(capped.clamped, true);
+  // Thiếu một tháng của cửa sổ nền → không dùng mức đó
+  assert.deepEqual(seasonalFactor({ sku: { "2025-11": 30, "2025-12": 62 }, productType: null, store: {} }, { "2026-10": 0.5, "2026-11": 0.5 }, "2026-12"), { factor: 1, clamped: false, level: "none" });
+  // Không có dữ liệu năm trước → 1
+  assert.deepEqual(seasonalFactor({ sku: {}, productType: null, store: {} }, nov, "2026-12"), { factor: 1, clamped: false, level: "none" });
+});
+
+test("planRestock: mùa cao làm tăng gợi ý và kéo sớm hạn đặt hàng", () => {
+  const daily = new Array(56).fill(4); // 4 units/ngày đều
+  const base = { sku: "A", status: "Phát triển", productType: "Tumbler", daily, sellable: 200, inTransit: 0, inboundPending: 0, nextArrival: null };
+  const settings = { leadTimeDays: 40, coverDays: 30, z: 1.65 };
+  const flat = planRestock({ ...base, season: { sku: {}, productType: null, store: {} } }, "2026-11-10", settings);
+  const peak = planRestock({ ...base, season: { sku: { "2025-10": 103, "2025-11": 100, "2025-12": 207, "2026-01": 103 }, productType: null, store: {} } }, "2026-11-10", settings);
+  assert.equal(flat.baseUnitsPerDay, 4);
+  assert.equal(flat.safetyStock, 0); // bán đều, không dao động
+  assert.equal(flat.demandTotal, 280); // 70 ngày × 4
+  assert.equal(flat.suggestUnits, 80); // 280 − 200
+  assert.equal(flat.stockoutDate, "2026-12-30"); // 200 / 4 = 50 ngày
+  assert.ok(peak.demandTotal > flat.demandTotal, "tháng 12 gấp đôi → nhu cầu cao hơn");
+  assert.ok(peak.suggestUnits > flat.suggestUnits);
+  assert.ok((peak.stockoutDate ?? "") < (flat.stockoutDate ?? ""), "mùa cao hết hàng sớm hơn");
+  assert.equal(peak.orderNow, true); // phải đặt ngay mới kịp
+  assert.equal(peak.confidence, "cao");
+});
+
+test("planRestock: hàng đang về và SKU ít bán", () => {
+  const settings = { leadTimeDays: 40, coverDays: 30, z: 1.65 };
+  const season = { sku: {}, productType: null, store: {} };
+  const covered = planRestock({ sku: "B", status: null, productType: null, daily: new Array(56).fill(2), sellable: 50, inTransit: 0, inboundPending: 200, nextArrival: "2026-11-20", season }, "2026-11-10", settings);
+  assert.equal(covered.suggestUnits, 0); // 140 nhu cầu < 250 tồn + đang về
+  const sparse = new Array(56).fill(0);
+  sparse[50] = 3;
+  const thin = planRestock({ sku: "C", status: "Test", productType: null, daily: sparse, sellable: 0, inTransit: 0, inboundPending: 0, nextArrival: null, season }, "2026-11-10", settings);
+  assert.equal(thin.confidence, "thấp");
+  assert.ok(thin.safetyStock > 0);
+});

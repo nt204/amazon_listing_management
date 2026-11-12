@@ -31,8 +31,18 @@ export async function GET(request: Request) {
 
     const fresh = searchParams.get("fresh") === "1";
     const team = searchParams.get("team") || "";
+    const canViewPayout = actor.role === "admin" || actor.role === "accountant";
 
-    const data = await getAccountingDashboard({ startDate, endDate, storeIds, compare, fresh, team, allowedChannels });
+    const data = await getAccountingDashboard({
+      startDate,
+      endDate,
+      storeIds,
+      compare,
+      fresh,
+      team,
+      allowedChannels,
+      canViewPayout,
+    });
     return compressedJson(request, data);
   } catch (error) {
     return routeErrorResponse(error, "Không thể tải Dashboard kế toán.", 500);
