@@ -420,6 +420,7 @@ export function PpcManualBidView({
   const [drafts, setDrafts] = useState<Map<string, Draft>>(new Map());
   const [opValue, setOpValue] = useState("");
   const [addValue, setAddValue] = useState("");
+  const [setValue, setSetValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const lastClickedRef = useRef<string | null>(null);
 
@@ -981,6 +982,7 @@ export function PpcManualBidView({
       d.moved = true;
       setOpValue(""); // bắt đầu quét cụm mới → xoá hệ số / số cộng trừ cũ
       setAddValue("");
+      setSetValue("");
     }
     const next = new Set(d.base);
     if (idx !== d.anchor) {
@@ -1041,6 +1043,14 @@ export function PpcManualBidView({
     const v = parseFloat(addValue.replace(",", "."));
     if (!Number.isFinite(v) || v === 0) return;
     applyToSelected({ kind: "add", value: v });
+    setSelected(new Set());
+  };
+
+  // Set thẳng mức bid cụ thể cho cả cụm (0.75 → mọi target bid $0.75; dưới mức sàn thì lên sàn).
+  const runSet = () => {
+    const v = parseFloat(setValue.replace(",", "."));
+    if (!Number.isFinite(v) || v <= 0) return;
+    applyToSelected({ kind: "set", value: v });
     setSelected(new Set());
   };
 
@@ -1542,6 +1552,21 @@ export function PpcManualBidView({
                       className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
                     />
                   </form>
+                  {/* Cụm 3: set thẳng mức bid cụ thể */}
+                  <form
+                    className="flex h-7 items-center gap-1 rounded border border-indigo-200 bg-indigo-50 pl-2 pr-1"
+                    onSubmit={(e) => { e.preventDefault(); runSet(); }}
+                  >
+                    <span className="font-semibold text-indigo-900">Set $</span>
+                    <input
+                      value={setValue}
+                      onChange={(e) => setSetValue(e.target.value.replace(",", ".").replace(/[^0-9.]/g, ""))}
+                      inputMode="decimal"
+                      placeholder="0.75"
+                      title="Mức bid mới (VD 0.75) rồi Enter"
+                      className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
+                    />
+                  </form>
                   <button type="button" onClick={pauseSelected} className="h-7 cursor-pointer rounded border border-slate-200 bg-white px-2 font-medium text-slate-700 hover:bg-slate-50">
                     Dừng
                   </button>
@@ -1565,7 +1590,7 @@ export function PpcManualBidView({
                 disabled={draftCount === 0 || submitting}
                 className="h-7 cursor-pointer rounded bg-indigo-600 px-3 text-xs font-bold text-white hover:bg-indigo-700 disabled:cursor-default disabled:bg-slate-200 disabled:text-slate-400"
               >
-                {submitting ? "Đang gửi…" : `Đưa vào hàng đợi${draftCount > 0 ? ` (${draftCount})` : ""}`}
+                {submitting ? "Đang gửi…" : `Duyệt${draftCount > 0 ? ` (${draftCount})` : ""}`}
               </button>
             </div>
           </div>
