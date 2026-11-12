@@ -511,18 +511,22 @@ export function PpcManualBidView({
   };
 
   // Số liệu từng SKU tính từ target (tổng và riêng target active) của trang đang xem.
-  const summaryKey = `${selectedStore}|${selectedDays}|${channel ?? ""}`;
-  const [summary, setSummary] = useState<({ key: string; channel: ChannelPage } & SkuSummary) | null>(null);
+  // Đang gõ ô tìm SKU (store có trang FBA/FBM): tìm trong cả store, không chỉ trang đang xem.
+  const [searchingAll, setSearchingAll] = useState(false);
+  const [storeHasChannels, setStoreHasChannels] = useState(false);
+  const fetchChannel: ChannelPage | "ALL" | null = channel && searchingAll && storeHasChannels ? "ALL" : channel;
+  const summaryKey = `${selectedStore}|${selectedDays}|${fetchChannel ?? ""}`;
+  const [summary, setSummary] = useState<({ key: string; channel: ChannelPage | "ALL" } & SkuSummary) | null>(null);
   const summaryCacheRef = useRef(new Map<string, { at: number; p: Promise<SkuSummary> }>());
   useEffect(() => {
-    if (!isActive || !selectedStore || selectedStore === "ALL" || !channel) return;
+    if (!isActive || !selectedStore || selectedStore === "ALL" || !fetchChannel) return;
     if (summary?.key === summaryKey) return;
     let cancelled = false;
     const hit = summaryCacheRef.current.get(summaryKey);
     let promise = hit && Date.now() - hit.at < CACHE_MS ? hit.p : null;
     if (!promise) {
       const key = summaryKey;
-      promise = fetchWithTimeout(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1&channel=${channel}`)
+      promise = fetchWithTimeout(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1&channel=${fetchChannel}`)
         .then((r) => r.json())
         .then((d): SkuSummary => ({
           items: Array.isArray(d?.items) ? d.items as SkuSummaryItem[] : [],
@@ -533,12 +537,16 @@ export function PpcManualBidView({
       summaryCacheRef.current.set(key, { at: Date.now(), p: promise });
     }
     promise
-      .then((data) => { if (!cancelled) setSummary({ key: summaryKey, channel, ...data }); })
-      .catch(() => { if (!cancelled) setSummary({ key: summaryKey, channel, items: [], hasChannels: false, counts: null }); });
+      .then((data) => {
+        if (cancelled) return;
+        setSummary({ key: summaryKey, channel: fetchChannel, ...data });
+        setStoreHasChannels(data.hasChannels);
+      })
+      .catch(() => { if (!cancelled) setSummary({ key: summaryKey, channel: fetchChannel, items: [], hasChannels: false, counts: null }); });
     return () => { cancelled = true; };
-  }, [isActive, selectedStore, selectedDays, summaryKey, summary, channel]);
+  }, [isActive, selectedStore, selectedDays, summaryKey, summary, fetchChannel]);
   // Cùng trang mà đổi kỳ: giữ bảng cũ (mờ); chuyển sang trang khác: hiện khung tải.
-  const samePage = Boolean(summary && summary.channel === channel);
+  const samePage = Boolean(summary && summary.channel === fetchChannel);
   const skuRefreshing = Boolean(summary && summary.key !== summaryKey && samePage);
 
   const skuRows: SkuRow[] | null = useMemo(() => {
@@ -583,6 +591,7 @@ export function PpcManualBidView({
     setDrafts(new Map());
     setSelected(new Set());
     setQuery(null);
+    setSearchingAll(false); // ô tìm về trống → về trang FBA/FBM đang chọn
   };
 
   const currentGroup = useMemo(
@@ -1256,6 +1265,8 @@ export function PpcManualBidView({
         channel={channel ?? "FBA"}
         channelPages={channelPages}
         onChannelChange={setChannel}
+        searchAll={fetchChannel === "ALL"}
+        onSearchingChange={setSearchingAll}
         refreshing={skuRefreshing}
         onHoverSku={prefetchTargets}
         activeOnly={activeOnly}
@@ -2008,10 +2019,13 @@ function RangeRow({ label, unit, value, onChange }: {
 const SKU_PAGE = 100;
 
 // Màn đầu: tất cả SKU của store, cùng nguồn số liệu với tab Đề xuất & Auto Bid. Bấm 1 dòng để chỉnh bid.
-function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
+function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, searchAll, onSearchingChange, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
   channel: "FBA" | "FBM" | "OTHER";
   channelPages: { FBA: number; FBM: number; OTHER: number } | null;
   onChannelChange: (c: "FBA" | "FBM" | "OTHER") => void;
+  /** Đang tìm trong cả store (bỏ qua trang FBA/FBM). */
+  searchAll: boolean;
+  onSearchingChange: (searching: boolean) => void;
   refreshing: boolean;
   onHoverSku: (sku: string) => void;
   rows: SkuRow[] | null;
@@ -2059,6 +2073,7 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, refres
   };
   const setFilter = (patch: Partial<SkuListFilter>) => {
     const next = { ...filter, ...patch };
+    if ("search" in patch) onSearchingChange(next.search.trim() !== "");
     setFilterState(next);
     setLimit(SKU_PAGE);
     save(next, sort);
@@ -2197,12 +2212,15 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, refres
                 <button
                   key={k}
                   type="button"
-                  onClick={() => onChannelChange(k)}
+                  onClick={() => {
+                    if (search.trim()) setFilter({ search: "" });
+                    onChannelChange(k);
+                  }}
                   className={`cursor-pointer rounded-md px-3.5 text-[13px] font-bold transition ${
-                    channel === k ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"
+                    channel === k && !searchAll ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"
                   }`}
                 >
-                  {label} <span className={channel === k ? "font-semibold text-slate-300" : "font-semibold text-slate-400"}>{channelPages[k]}</span>
+                  {label} <span className={channel === k && !searchAll ? "font-semibold text-slate-300" : "font-semibold text-slate-400"}>{channelPages[k]}</span>
                 </button>
               ))}
           </div>
@@ -2327,6 +2345,13 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, refres
                   </td>
                   <td className="px-3 py-1.5 font-bold text-slate-900">
                     {g.sku}
+                    {searchAll && (
+                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                        g.channel === "FBA" ? "bg-sky-100 text-sky-800" : g.channel === "FBM" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"
+                      }`}>
+                        {g.channel || "Khác"}
+                      </span>
+                    )}
                     {queued > 0 && (
                       <span className="ml-2 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-bold text-indigo-600" title="Thay đổi đang chờ trong hàng đợi">{queued}</span>
                     )}
