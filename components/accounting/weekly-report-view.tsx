@@ -8,6 +8,11 @@ import {
   CaretLeftIcon,
   CaretRightIcon,
   CaretUpIcon,
+  CoinsIcon,
+  CurrencyDollarIcon,
+  MegaphoneIcon,
+  PercentIcon,
+  type Icon,
 } from "@phosphor-icons/react";
 import type { WeeklyMetrics, WeeklyReport, WeeklyBrandRow } from "@/lib/accounting/weekly-report";
 import {
@@ -41,6 +46,9 @@ const div = (a: number | null | undefined, b: number | null | undefined) =>
 
 const wow = (cur: number | null | undefined, prev: number | null | undefined) =>
   cur != null && prev != null && Math.abs(prev) > 1e-9 ? (cur - prev) / Math.abs(prev) : null;
+
+/** Chênh lệch điểm % giữa 2 tỷ lệ (Biên LN, TACoS) */
+const ptDiff = (a: number | null, b: number | null) => (a != null && b != null ? a - b : null);
 
 const vnDate = (iso: string) => {
   if (!iso || iso.length < 10) return iso;
@@ -241,12 +249,11 @@ export function WeeklyReportView() {
 }
 
 // ---------------------------------------------------------------------------
-// TIẾN ĐỘ SO VỚI KPI — như sheet "BÁO CÁO TUẦN TỔNG HỢP"
-//   Mục tiêu tuần      = KPI tháng × số ngày của kỳ tuần ÷ số ngày trong tháng
-//   % nhịp tuần        = thực tế tuần ÷ (KPI tháng × số ngày đã có số liệu ÷ số ngày tháng)
-//   % nhịp tháng (F/L) = lũy kế từ đầu tháng ÷ (KPI tháng × ngày cuối kỳ ÷ số ngày tháng)
-//   % MT tháng (N)     = lũy kế từ đầu tháng ÷ KPI tháng
-//   Đánh giá: ≥ 100% đạt nhịp, ≥ 85% sát nhịp, còn lại dưới nhịp.
+// % ĐẠT — 1 quy tắc cho mọi con số % trên trang (như cột F/L của sheet "BÁO CÁO TUẦN TỔNG HỢP"):
+//   % đạt = đã làm được ÷ mức CẦN ĐẠT tính tới ngày có số liệu
+//   Cần đạt (tuần)  = KPI tháng × số ngày đã có số liệu trong tuần ÷ số ngày tháng  (tuần đã chốt = cả tuần)
+//   Cần đạt (tháng) = KPI tháng × ngày cuối có số liệu ÷ số ngày tháng
+//   Màu: ≥ 100% xanh · ≥ 85% vàng · còn lại đỏ (team: THƯỞNG / ĐẠT / PHÊ BÌNH).
 // KPI = mục tiêu SKU WIN trên trang KPI kinh doanh (chỉ FBA). Số thực tế để tính % chỉ cộng các dòng có KPI,
 // để dòng chưa có KPI (FBM) không làm % bị thổi lên.
 // ---------------------------------------------------------------------------
@@ -262,19 +269,20 @@ interface PaceContext {
   monthPace: number;
 }
 
+interface Achieve {
+  /** Đã làm được */
+  actual: number;
+  /** Cần đạt tới ngày có số liệu */
+  due: number;
+  /** Mục tiêu cả kỳ (tuần / tháng) */
+  full: number;
+  /** actual ÷ due */
+  ratio: number | null;
+}
+
 interface MetricProgress {
-  actualWeek: number;
-  actualMtd: number;
-  monthTarget: number;
-  weekTarget: number;
-  /** Thực tế tuần ÷ mục tiêu cả tuần */
-  week: number | null;
-  /** Thực tế tuần ÷ mục tiêu theo số ngày đã qua — dùng để tô màu */
-  weekPace: number | null;
-  /** Lũy kế ÷ mục tiêu tới ngày cuối kỳ */
-  monthPace: number | null;
-  /** Lũy kế ÷ KPI cả tháng */
-  month: number | null;
+  week: Achieve;
+  month: Achieve;
 }
 
 interface GroupSummary {
@@ -287,17 +295,13 @@ interface GroupSummary {
   profit: MetricProgress | null;
 }
 
+const achieve = (actual: number, due: number, full: number): Achieve => ({ actual, due, full, ratio: kpiRatio(actual, due) });
+
 function progressOf(actualWeek: number, actualMtd: number, monthTarget: number, ctx: PaceContext): MetricProgress {
-  const weekTarget = (monthTarget * ctx.weekDays) / ctx.dim;
+  const perDay = monthTarget / ctx.dim;
   return {
-    actualWeek,
-    actualMtd,
-    monthTarget,
-    weekTarget,
-    week: kpiRatio(actualWeek, weekTarget),
-    weekPace: kpiRatio(actualWeek, (monthTarget * ctx.elapsed) / ctx.dim),
-    monthPace: kpiRatio(actualMtd, monthTarget * ctx.monthPace),
-    month: kpiRatio(actualMtd, monthTarget),
+    week: achieve(actualWeek, perDay * ctx.elapsed, perDay * ctx.weekDays),
+    month: achieve(actualMtd, monthTarget * ctx.monthPace, monthTarget),
   };
 }
 
@@ -329,13 +333,21 @@ function wowOf(cur: number, prev: number, days: number, prevDays: number): numbe
   return wow(cur, prev);
 }
 
+/** Màu nhận diện ô chỉ số phụ */
+const ACCENT = {
+  violet: { tile: "bg-violet-50 text-violet-600 ring-violet-100" },
+  sky: { tile: "bg-sky-50 text-sky-600 ring-sky-100" },
+  emerald: { tile: "bg-emerald-50 text-emerald-600 ring-emerald-100" },
+  amber: { tile: "bg-amber-50 text-amber-600 ring-amber-100" },
+} as const;
+type Accent = keyof typeof ACCENT;
+
 const TONE_CLASS = {
   good: { bar: "bg-emerald-500", pill: "bg-emerald-50 text-emerald-800 border-emerald-200", text: "text-emerald-700" },
   near: { bar: "bg-amber-500", pill: "bg-amber-50 text-amber-800 border-amber-200", text: "text-amber-700" },
   bad: { bar: "bg-rose-500", pill: "bg-rose-50 text-rose-700 border-rose-200", text: "text-rose-600" },
 } as const;
 
-const PACE_LABEL = { good: "Đạt nhịp", near: "Sát nhịp", bad: "Dưới nhịp" } as const;
 const TEAM_LABEL = { good: "THƯỞNG", near: "ĐẠT", bad: "PHÊ BÌNH" } as const;
 
 // ---------------------------------------------------------------------------
@@ -381,25 +393,25 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
 
   return (
     <div className="mx-auto flex max-w-[1440px] flex-col gap-4">
-      {/* 1. TỔNG QUAN: TUẦN vs MT TUẦN · LŨY KẾ THÁNG vs MT THÁNG */}
+      {/* 1. TỔNG QUAN */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <OverviewCard
           title={`Tuần ${week.label}`}
-          subtitle={isRunning ? `Đã qua ${ctx.elapsed}/${ctx.weekDays} ngày` : ""}
+          subtitle={isRunning ? `Tới ${vnDate(data.dataThrough)} · ${ctx.elapsed}/${ctx.weekDays} ngày` : `Đủ ${ctx.weekDays} ngày`}
+          fullLabel="Cả tuần"
           items={[
-            { label: "Revenue", p: total.revenue, mode: "week" },
-            { label: "Profit", p: total.profit, mode: "week" },
+            { label: "Revenue", a: total.revenue?.week ?? null },
+            { label: "Profit", a: total.profit?.week ?? null },
           ]}
-          marker={isRunning ? ctx.elapsed / ctx.weekDays : null}
         />
         <OverviewCard
           title={`Tháng ${month}`}
-          subtitle={`Lũy kế đến ${vnDate(data.dataThrough)}`}
+          subtitle={`Tới ${vnDate(data.dataThrough)} · ${Number(data.dataThrough.slice(8, 10))}/${ctx.dim} ngày`}
+          fullLabel="Cả tháng"
           items={[
-            { label: "Revenue", p: total.revenue, mode: "month" },
-            { label: "Profit", p: total.profit, mode: "month" },
+            { label: "Revenue", a: total.revenue?.month ?? null },
+            { label: "Profit", a: total.profit?.month ?? null },
           ]}
-          marker={ctx.monthPace}
         />
       </div>
 
@@ -407,27 +419,37 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Revenue tuần"
+          icon={CurrencyDollarIcon}
+          accent="sky"
           value={usd(total.cur.revenue)}
-          sub={`Tuần trước ${usd(total.prev.revenue)}`}
+          prevText={`Tuần trước ${usd(total.prev.revenue)}`}
           delta={wowOf(total.cur.revenue, total.prev.revenue, data.days, prevDays)}
         />
         <StatCard
           label="Profit tuần"
+          icon={CoinsIcon}
+          accent="emerald"
           value={usd(total.cur.profit)}
-          sub={`Tuần trước ${usd(total.prev.profit)}`}
+          prevText={`Tuần trước ${usd(total.prev.profit)}`}
           delta={wowOf(total.cur.profit, total.prev.profit, data.days, prevDays)}
         />
         <StatCard
           label="Biên LN"
+          icon={PercentIcon}
+          accent="violet"
           value={pct(div(total.cur.profit, total.cur.revenue))}
-          sub={`Tuần trước ${pct(div(total.prev.profit, total.prev.revenue))}`}
-          delta={wow(div(total.cur.profit, total.cur.revenue), div(total.prev.profit, total.prev.revenue))}
+          prevText={`Tuần trước ${pct(div(total.prev.profit, total.prev.revenue))}`}
+          delta={ptDiff(div(total.cur.profit, total.cur.revenue), div(total.prev.profit, total.prev.revenue))}
+          deltaKind="pt"
         />
         <StatCard
           label="TACoS"
+          icon={MegaphoneIcon}
+          accent="amber"
           value={pct(div(total.cur.adsFee, total.cur.revenue))}
-          sub={`Tuần trước ${pct(div(total.prev.adsFee, total.prev.revenue))}`}
-          delta={wow(div(total.cur.adsFee, total.cur.revenue), div(total.prev.adsFee, total.prev.revenue))}
+          prevText={`Tuần trước ${pct(div(total.prev.adsFee, total.prev.revenue))}`}
+          delta={ptDiff(div(total.cur.adsFee, total.cur.revenue), div(total.prev.adsFee, total.prev.revenue))}
+          deltaKind="pt"
           inverse
         />
       </div>
@@ -442,7 +464,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
           <h3 className="mb-2 text-[11.5px] font-bold uppercase tracking-wider text-slate-500">P/L theo người phụ trách</h3>
           <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${teams.length >= 4 ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
             {teams.map((t) => (
-              <TeamCard key={t.team} team={t.team} s={t} days={data.days} prevDays={prevDays} monthPace={ctx.monthPace} />
+              <TeamCard key={t.team} team={t.team} s={t} days={data.days} prevDays={prevDays} />
             ))}
           </div>
         </section>
@@ -455,7 +477,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
           <span className="text-xs text-slate-500">{visibleBrands.length} brand</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1040px] border-collapse text-[12.5px] tabular-nums">
+          <table className="w-full min-w-[1080px] border-collapse text-[12.5px] tabular-nums">
             <thead>
               <tr className="text-[10.5px] font-bold uppercase tracking-wider text-slate-500">
                 <th className="bg-transparent px-4 pb-1 pt-3 text-left" />
@@ -463,10 +485,13 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
                   <div className="border-b border-slate-200 pb-1">Tuần này</div>
                 </th>
                 <th colSpan={2} className="bg-transparent px-3 pb-1 pt-3 text-center">
-                  <div className="border-b border-slate-200 pb-1">Đạt MT tuần</div>
+                  <div className="border-b border-slate-200 pb-1">% đạt tuần</div>
                 </th>
-                <th colSpan={3} className="bg-transparent px-3 pb-1 pt-3 text-center">
+                <th colSpan={2} className="bg-transparent px-3 pb-1 pt-3 text-center">
                   <div className="border-b border-slate-200 pb-1">Lũy kế tháng</div>
+                </th>
+                <th colSpan={2} className="bg-transparent px-3 pb-1 pt-3 text-center">
+                  <div className="border-b border-slate-200 pb-1">% đạt tháng</div>
                 </th>
               </tr>
               <tr className="border-b border-slate-200 text-[11px] font-semibold text-slate-500">
@@ -479,26 +504,27 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
                 <th className="bg-transparent px-3 py-2 text-center">Profit</th>
                 <th className="bg-transparent px-3 py-2 text-right">Revenue</th>
                 <th className="bg-transparent px-3 py-2 text-right">Profit</th>
-                <th className="bg-transparent w-[200px] px-4 py-2 text-left">Profit so với MT tháng</th>
+                <th className="bg-transparent px-3 py-2 text-center">Revenue</th>
+                <th className="bg-transparent px-3 py-2 text-center">Profit</th>
               </tr>
             </thead>
             {teams.map((t) => (
               <tbody key={t.team}>
                 {teams.length > 1 && (
                   <tr className="bg-slate-50/80">
-                    <td colSpan={10} className="px-4 py-1.5 text-[10.5px] font-bold uppercase tracking-wider text-slate-500">
+                    <td colSpan={11} className="px-4 py-1.5 text-[10.5px] font-bold uppercase tracking-wider text-slate-500">
                       {t.team}
                     </td>
                   </tr>
                 )}
                 {t.brands.map((b) => (
-                  <BrandRow key={b.key} label={b.label} s={summarize([b], ctx)} days={data.days} prevDays={prevDays} monthPace={ctx.monthPace} />
+                  <BrandRow key={b.key} label={b.label} s={summarize([b], ctx)} days={data.days} prevDays={prevDays} />
                 ))}
               </tbody>
             ))}
             {visibleBrands.length > 1 && (
               <tfoot>
-                <BrandRow label="TỔNG" s={total} days={data.days} prevDays={prevDays} monthPace={ctx.monthPace} isTotal />
+                <BrandRow label="TỔNG" s={total} days={data.days} prevDays={prevDays} isTotal />
               </tfoot>
             )}
           </table>
@@ -616,138 +642,120 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
 // SUB-COMPONENTS
 // ---------------------------------------------------------------------------
 
-/** Thẻ tổng quan: mỗi chỉ số 1 thanh tiến độ, vạch xám = nhịp thời gian */
+/** Thanh % đạt: đầy = đủ mức cần đạt tới hôm nay */
+function AchieveBar({ ratio, height = "h-2" }: { ratio: number | null; height?: string }) {
+  const tone = kpiTone(ratio);
+  return (
+    <div className={`w-full overflow-hidden rounded-full bg-slate-100 ${height}`}>
+      <div
+        className={`h-full rounded-full transition-all duration-300 ${tone ? TONE_CLASS[tone].bar : "bg-slate-300"}`}
+        style={{ width: `${Math.min(100, Math.max(1.5, (ratio ?? 0) * 100))}%` }}
+      />
+    </div>
+  );
+}
+
+/** Thẻ tổng quan: số to = % đạt so với mức cần đạt tới hôm nay */
 function OverviewCard({
   title,
   subtitle,
+  fullLabel,
   items,
-  marker,
 }: {
   title: string;
   subtitle: string;
-  items: { label: string; p: MetricProgress | null; mode: "week" | "month" }[];
-  marker: number | null;
+  fullLabel: string;
+  items: { label: string; a: Achieve | null }[];
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-      <div className="text-[11.5px] font-bold uppercase tracking-wider text-slate-500">{title}</div>
-      {subtitle && <div className="mt-0.5 text-[11px] text-slate-400">{subtitle}</div>}
-      <div className="mt-3 flex flex-col gap-4">
-        {items.map(({ label, p, mode }) => {
-          if (!p) {
-            return (
-              <div key={label} className="text-xs text-slate-400">
-                {label}: chưa có KPI
-              </div>
-            );
-          }
-          const fill = mode === "week" ? p.week : p.month;
-          const toneRatio = mode === "week" ? p.weekPace : p.monthPace;
-          const tone = kpiTone(toneRatio);
-          const actual = mode === "week" ? p.actualWeek : p.actualMtd;
-          const target = mode === "week" ? p.weekTarget : p.monthTarget;
-          return (
-            <div key={label}>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xs font-bold text-slate-700">{label}</span>
-                {tone && (
-                  <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-bold ${TONE_CLASS[tone].pill}`}>
-                    {PACE_LABEL[tone]}
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className={`font-mono text-3xl font-bold tracking-tight ${tone ? TONE_CLASS[tone].text : "text-slate-900"}`}>
-                  {pct(fill)}
-                </span>
-                <span className="text-xs text-slate-500">
-                  <b className="font-mono text-slate-800">{usd(actual)}</b> / {usd(target)}
-                </span>
-              </div>
-              <div className="relative mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${tone ? TONE_CLASS[tone].bar : "bg-slate-400"}`}
-                  style={{ width: `${Math.min(100, Math.max(1.5, (fill ?? 0) * 100))}%` }}
-                />
-                {marker != null && (
-                  <div
-                    className="absolute bottom-0 top-0 w-0.5 bg-slate-500"
-                    style={{ left: `${Math.min(100, marker * 100)}%` }}
-                    title={`Nhịp thời gian ${Math.round(marker * 100)}%`}
-                  />
-                )}
-              </div>
-              {mode === "week" && marker != null && (
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Theo nhịp: <b>{pct(p.weekPace, 0)}</b>
-                </div>
-              )}
-              {mode === "month" && (
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Theo nhịp: <b>{pct(p.monthPace, 0)}</b> · còn thiếu {usd(Math.max(0, p.monthTarget - p.actualMtd))}
-                </div>
-              )}
+    <div className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11.5px] font-bold uppercase tracking-wider text-slate-600">{title}</span>
+        <span className="text-[11px] text-slate-400">{subtitle}</span>
+      </div>
+      <div className="mt-3 flex flex-1 flex-col justify-around gap-5">
+        {items.map(({ label, a }) =>
+          !a ? (
+            <div key={label} className="text-xs text-slate-400">
+              {label}: chưa có KPI
             </div>
-          );
-        })}
+          ) : (
+            <div key={label}>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-slate-500">{label}</span>
+                <span className="tabular-nums text-slate-400">
+                  {fullLabel}: {usd(a.full)}
+                </span>
+              </div>
+              <div className="mt-1 flex items-baseline gap-2 tabular-nums">
+                <span className="text-3xl font-bold tracking-tight text-slate-900">{pct(a.ratio, 0)}</span>
+                <span className="text-xs text-slate-500">
+                  <b className="font-semibold text-slate-800">{usd(a.actual)}</b> / {usd(a.due)} cần đạt
+                </span>
+              </div>
+              <div className="mt-2">
+                <AchieveBar ratio={a.ratio} />
+              </div>
+            </div>
+          ),
+        )}
       </div>
     </div>
   );
 }
 
+/** Ô chỉ số phụ. delta: "pct" = % thay đổi; "pt" = chênh lệch điểm % (cho Biên LN, TACoS) */
 function StatCard({
   label,
+  icon: StatIcon,
+  accent,
   value,
-  sub,
+  prevText,
   delta,
+  deltaKind = "pct",
   inverse = false,
 }: {
   label: string;
+  icon: Icon;
+  accent: Accent;
   value: string;
-  sub: string;
+  prevText: string;
   delta: number | null;
+  deltaKind?: "pct" | "pt";
   inverse?: boolean;
 }) {
+  const valid = delta != null && Number.isFinite(delta);
+  const good = valid && (inverse ? delta! < 0 : delta! > 0);
+  const flat = valid && Math.abs(delta!) < 0.0005;
+  const text = !valid
+    ? "—"
+    : `${delta! > 0 ? "▲" : delta! < 0 ? "▼" : ""} ${(Math.abs(delta!) * 100).toFixed(1)}${deltaKind === "pt" ? " điểm" : "%"}`;
   return (
-    <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{label}</span>
-        <WowBadge value={delta} inverse={inverse} />
+    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+      <div className="flex items-center gap-3">
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${ACCENT[accent].tile}`}>
+          <StatIcon size={20} weight="duotone" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+          <div className="text-xl font-bold tabular-nums text-slate-900">{value}</div>
+        </div>
       </div>
-      <div className="mt-1 font-mono text-xl font-bold text-slate-900">{value}</div>
-      <div className="mt-1 truncate text-[11px] text-slate-500" title={sub}>
-        {sub}
+      <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5 text-[11px] tabular-nums">
+        <span className="truncate text-slate-400" title={prevText}>
+          {prevText}
+        </span>
+        <span className={`shrink-0 font-semibold ${!valid || flat ? "text-slate-400" : good ? "text-emerald-700" : "text-rose-600"}`}>
+          {text}
+        </span>
       </div>
     </div>
   );
 }
 
-/** Thanh tiến độ nhỏ: phần tô = % MT, vạch = nhịp thời gian, màu theo % nhịp */
-function MiniBar({ fill, toneRatio, marker }: { fill: number | null; toneRatio: number | null; marker: number }) {
-  const tone = kpiTone(toneRatio) ?? "bad";
-  return (
-    <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-      <div className={`h-full rounded-full ${TONE_CLASS[tone].bar}`} style={{ width: `${Math.min(100, Math.max(2, (fill ?? 0) * 100))}%` }} />
-      <div className="absolute bottom-0 top-0 w-0.5 bg-slate-500" style={{ left: `${Math.min(100, marker * 100)}%` }} />
-    </div>
-  );
-}
-
-function TeamCard({
-  team,
-  s,
-  days,
-  prevDays,
-  monthPace,
-}: {
-  team: string;
-  s: GroupSummary;
-  days: number;
-  prevDays: number;
-  monthPace: number;
-}) {
-  const p = s.profit;
-  const tone = kpiTone(p?.monthPace ?? null);
+function TeamCard({ team, s, days, prevDays }: { team: string; s: GroupSummary; days: number; prevDays: number }) {
+  const m = s.profit?.month ?? null;
+  const tone = kpiTone(m?.ratio ?? null);
   return (
     <div className="flex flex-col rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
       <div className="flex items-center justify-between gap-2">
@@ -759,28 +767,25 @@ function TeamCard({
         )}
       </div>
 
-      <div className="mt-3 text-[11px] text-slate-500">Profit lũy kế tháng</div>
-      <div className="flex items-baseline gap-1.5 tabular-nums">
-        <span className={`text-xl font-bold ${s.mtd.profit < 0 ? "text-rose-600" : "text-slate-900"}`}>{usd(s.mtd.profit)}</span>
-        {p && <span className="text-xs text-slate-400">/ {usd(p.monthTarget)}</span>}
+      <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
+        <span>Profit lũy kế tháng</span>
+        {m && <span className="tabular-nums text-slate-400">Cả tháng: {usd(m.full)}</span>}
       </div>
-      {p ? (
-        <>
-          <div className="mt-2">
-            <MiniBar fill={p.month} toneRatio={p.monthPace} marker={monthPace} />
-          </div>
-          <div className="mt-1 flex justify-between text-[11px] tabular-nums text-slate-500">
-            <span>
-              Đạt <b className="text-slate-700">{pct(p.month, 0)}</b> MT tháng
+      <div className="flex items-baseline gap-2 tabular-nums">
+        {m ? (
+          <>
+            <span className="text-xl font-bold text-slate-900">{pct(m.ratio, 0)}</span>
+            <span className="text-xs text-slate-500">
+              <b className={`font-semibold ${m.actual < 0 ? "text-rose-600" : "text-slate-800"}`}>{usd(m.actual)}</b> / {usd(m.due)} cần đạt
             </span>
-            <span>
-              Theo nhịp <b className={tone ? TONE_CLASS[tone].text : ""}>{pct(p.monthPace, 0)}</b>
-            </span>
-          </div>
-        </>
-      ) : (
-        <div className="mt-2 h-1.5 rounded-full bg-slate-100" />
-      )}
+          </>
+        ) : (
+          <span className={`text-xl font-bold ${s.mtd.profit < 0 ? "text-rose-600" : "text-slate-900"}`}>{usd(s.mtd.profit)}</span>
+        )}
+      </div>
+      <div className="mt-2">
+        <AchieveBar ratio={m?.ratio ?? null} height="h-1.5" />
+      </div>
 
       <div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 pt-2.5 text-[11px] tabular-nums">
         <div>
@@ -794,9 +799,9 @@ function TeamCard({
           <WowBadge value={wowOf(s.cur.profit, s.prev.profit, days, prevDays)} />
         </div>
         <div>
-          <div className="text-slate-400">Đạt MT tuần</div>
+          <div className="text-slate-400">% đạt tuần</div>
           <div className="mt-0.5">
-            <ProgressPill ratio={p?.week} toneRatio={p?.weekPace} />
+            <AchievePill a={s.profit?.week ?? null} />
           </div>
         </div>
       </div>
@@ -809,14 +814,12 @@ function BrandRow({
   s,
   days,
   prevDays,
-  monthPace,
   isTotal = false,
 }: {
   label: string;
   s: GroupSummary;
   days: number;
   prevDays: number;
-  monthPace: number;
   isTotal?: boolean;
 }) {
   const idle = !isTotal && s.cur.revenue === 0 && s.mtd.revenue === 0 && s.cur.profit === 0;
@@ -826,11 +829,21 @@ function BrandRow({
   const money = (v: number, strong = false) => (
     <span className={`${v < 0 ? "text-rose-600" : ""} ${strong ? "font-semibold" : ""}`}>{usd(v)}</span>
   );
-  const pace = (p: MetricProgress | null) => {
-    const tone = kpiTone(p?.monthPace ?? null);
-    return p && tone ? <div className={`text-[10.5px] font-semibold ${TONE_CLASS[tone].text}`}>nhịp {pct(p.monthPace, 0)}</div> : null;
-  };
-  const p = s.profit;
+  const pills = (r: Achieve | null | undefined, p: Achieve | null | undefined) =>
+    r && p ? (
+      <>
+        <td className="px-3 py-2 text-center">
+          <AchievePill a={r} />
+        </td>
+        <td className="px-3 py-2 text-center">
+          <AchievePill a={p} />
+        </td>
+      </>
+    ) : (
+      <td colSpan={2} className="px-3 py-2 text-center text-[11px] font-normal text-slate-300">
+        Chưa có KPI
+      </td>
+    );
   return (
     <tr className={rowCls}>
       <td className={`px-4 py-2 text-left ${isTotal ? "" : "font-semibold"}`}>{label}</td>
@@ -845,50 +858,24 @@ function BrandRow({
       <td className="px-3 py-2 text-right">{money(s.cur.profit, true)}</td>
       <td className="px-3 py-2 text-right text-slate-500">{pct(div(s.cur.profit, s.cur.revenue))}</td>
       <td className="px-3 py-2 text-right text-slate-500">{pct(div(s.cur.adsFee, s.cur.revenue))}</td>
-      {s.revenue && p ? (
-        <>
-          <td className="px-3 py-2 text-center" title={`${usd(s.revenue.actualWeek)} / ${usd(s.revenue.weekTarget)}`}>
-            <ProgressPill ratio={s.revenue.week} toneRatio={s.revenue.weekPace} />
-          </td>
-          <td className="px-3 py-2 text-center" title={`${usd(p.actualWeek)} / ${usd(p.weekTarget)}`}>
-            <ProgressPill ratio={p.week} toneRatio={p.weekPace} />
-          </td>
-        </>
-      ) : (
-        <td colSpan={2} className="px-3 py-2 text-center text-[11px] font-normal text-slate-300">Chưa có KPI</td>
-      )}
-      <td className="px-3 py-2 text-right">
-        {money(s.mtd.revenue)}
-        {pace(s.revenue)}
-      </td>
-      <td className="px-3 py-2 text-right">
-        {money(s.mtd.profit)}
-        {pace(p)}
-      </td>
-      <td className="px-4 py-2">
-        {p ? (
-          <div title={`${usd(p.actualMtd)} / ${usd(p.monthTarget)}`}>
-            <div className="mb-1 flex justify-between text-[10.5px] font-normal text-slate-500">
-              <span>{usd(p.monthTarget)}</span>
-              <b className="text-slate-700">{pct(p.month, 0)}</b>
-            </div>
-            <MiniBar fill={p.month} toneRatio={p.monthPace} marker={monthPace} />
-          </div>
-        ) : (
-          <span className="text-[11px] font-normal text-slate-300">—</span>
-        )}
-      </td>
+      {pills(s.revenue?.week, s.profit?.week)}
+      <td className="px-3 py-2 text-right">{money(s.mtd.revenue)}</td>
+      <td className="px-3 py-2 text-right">{money(s.mtd.profit)}</td>
+      {pills(s.revenue?.month, s.profit?.month)}
     </tr>
   );
 }
 
-/** Pill %: số hiển thị = ratio, màu theo toneRatio (mặc định = ratio) */
-function ProgressPill({ ratio, toneRatio }: { ratio: number | null | undefined; toneRatio?: number | null }) {
-  if (ratio == null || !Number.isFinite(ratio)) return <span className="text-slate-300">—</span>;
-  const tone = kpiTone(toneRatio ?? ratio) ?? "bad";
+/** Pill % đạt (so với mức cần đạt tới hôm nay); rê chuột xem số tiền */
+function AchievePill({ a }: { a: Achieve | null }) {
+  if (!a || a.ratio == null || !Number.isFinite(a.ratio)) return <span className="text-slate-300">—</span>;
+  const tone = kpiTone(a.ratio) ?? "bad";
   return (
-    <span className={`inline-block min-w-[54px] rounded-full border px-2 py-0.5 text-center font-mono text-[11px] font-bold ${TONE_CLASS[tone].pill}`}>
-      {(ratio * 100).toFixed(0)}%
+    <span
+      className={`inline-block min-w-[54px] rounded-full border px-2 py-0.5 text-center text-[11px] font-bold tabular-nums ${TONE_CLASS[tone].pill}`}
+      title={`${usd(a.actual)} / ${usd(a.due)} cần đạt`}
+    >
+      {(a.ratio * 100).toFixed(0)}%
     </span>
   );
 }

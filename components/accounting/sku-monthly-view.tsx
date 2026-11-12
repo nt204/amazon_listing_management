@@ -951,7 +951,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                         {isProfitCol && (
                           <span
                             className={`font-bold tabular-nums ${
-                              summary.net_profit < 0 ? "text-white" : "text-black"
+                              "text-black"
                             }`}
                           >
                             {formatCurrency(summary.net_profit)}
@@ -1286,7 +1286,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             {col.id === "profit" && (
                               <span
                                 className={`font-bold tabular-nums ${
-                                  (item.profit || 0) < 0 ? "text-white" : "text-black"
+                                  "text-black"
                                 }`}
                               >
                                 {formatCurrency(item.profit)}
