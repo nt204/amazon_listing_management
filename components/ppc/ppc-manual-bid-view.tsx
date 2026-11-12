@@ -437,7 +437,7 @@ export function PpcManualBidView({
     // Gửi sẵn ASIN (đã có trong danh sách SKU) để API khỏi dò lại trong bảng facts.
     const knownAsin = skuGroups.find((g) => g.sku.toUpperCase() === code.toUpperCase())?.asin || "";
     const url = `/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&sku=${encodeURIComponent(code)}${knownAsin ? `&asin=${encodeURIComponent(knownAsin)}` : ""}${scope === "active" ? "&active=1" : ""}`;
-    const promise = fetch(url, { cache: "no-store" }).then(async (res) => {
+    const promise = fetchWithTimeout(url).then(async (res) => {
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.success) throw new Error(data?.error || "Không tải được target.");
       return { sku: String(data.sku), items: data.items || [], reportRange: data.reportRange || null, scope };
@@ -522,7 +522,7 @@ export function PpcManualBidView({
     let promise = hit && Date.now() - hit.at < CACHE_MS ? hit.p : null;
     if (!promise) {
       const key = summaryKey;
-      promise = fetch(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1&channel=${channel}`, { cache: "no-store" })
+      promise = fetchWithTimeout(`/api/ppc/manual-bid?storeName=${encodeURIComponent(selectedStore)}&days=${selectedDays}&summary=1&channel=${channel}`)
         .then((r) => r.json())
         .then((d): SkuSummary => ({
           items: Array.isArray(d?.items) ? d.items as SkuSummaryItem[] : [],
@@ -1362,7 +1362,18 @@ export function PpcManualBidView({
 
       {loading && !refreshing && <LoadingBlock />}
 
-      {error && <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>}
+      {error && (
+        <div className="flex items-center gap-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => query && load(query.sku)}
+            className="cursor-pointer rounded bg-white px-2.5 py-1 font-bold text-rose-700 ring-1 ring-rose-300 hover:bg-rose-100"
+          >
+            Thử lại
+          </button>
+        </div>
+      )}
 
       {sku && !loading && rows.length === 0 && !error && (
         <div className="rounded border border-slate-200 bg-white p-8 text-center text-xs text-slate-400">Không có target trong {selectedDays} ngày.</div>
@@ -1734,6 +1745,21 @@ function AcosPill({ tier, acos }: { tier: ManualBidTier; acos: number | null }) 
 }
 
 const CACHE_MS = 5 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 60_000;
+
+/** Gọi API có giới hạn thời gian: quá 60s thì báo lỗi (kèm nút Thử lại) thay vì xoay tải mãi. */
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { cache: "no-store", signal: ctrl.signal });
+  } catch (error) {
+    if (ctrl.signal.aborted) throw new Error("Server đang tính dữ liệu, chờ lâu quá — bấm Thử lại.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const LOADING_CSS = `
 @keyframes mb-shimmer { 0% { background-position: -480px 0 } 100% { background-position: 480px 0 } }
