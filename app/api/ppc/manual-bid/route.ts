@@ -16,7 +16,8 @@ import { getAccountingStoreForPpcStore } from "@/lib/ppc/sku-architecture-servic
 
 export const runtime = "nodejs";
 
-const MAX_ROWS = 3000;
+// Trả đủ mọi target của SKU (BTC1006D ~10,5 nghìn); trần chỉ để chặn dữ liệu bất thường.
+const MAX_ROWS = 50_000;
 const SKU_CACHE_MAX = 12;
 const globalForSkuCache = globalThis as typeof globalThis & {
   manualBidSkuPayloadCache?: WeakMap<object, Map<string, Promise<unknown>>>;

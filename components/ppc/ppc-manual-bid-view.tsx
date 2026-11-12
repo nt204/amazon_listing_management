@@ -886,6 +886,26 @@ export function PpcManualBidView({
   }, [visible]);
 
   const visibleKeys = useMemo(() => visible.map((r) => r.key), [visible]);
+
+  // Bảng vẽ dần: trước 200 dòng, cuộn gần cuối thì vẽ thêm (SKU lớn có hàng nghìn target).
+  // Số đếm, Tổng, chọn tất cả, sửa hàng loạt vẫn tính trên toàn bộ danh sách.
+  const [rendered, setRendered] = useState<{ list: Row[]; n: number }>({ list: [], n: ROW_PAGE });
+  const renderCount = rendered.list === visible ? rendered.n : ROW_PAGE;
+  const showMoreRows = (atLeast = 0) =>
+    setRendered((prev) => {
+      const base = prev.list === visible ? prev.n : ROW_PAGE;
+      return { list: visible, n: Math.max(base + ROW_PAGE, atLeast + ROW_PAGE) };
+    });
+  const moreRowsRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = moreRowsRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) showMoreRows();
+    }, { rootMargin: "600px" });
+    io.observe(el);
+    return () => io.disconnect();
+  });
   const selectedVisible = useMemo(() => visibleKeys.filter((k) => selected.has(k)), [visibleKeys, selected]);
 
   const toggleKeys = (keys: string[], on: boolean) => {
@@ -1099,8 +1119,14 @@ export function PpcManualBidView({
   // Enter / ↓ / ↑ / Tab trong ô bid: nhảy dòng như bảng tính Excel.
   const focusBidInput = (index: number) => {
     if (index < 0 || index >= visible.length) return;
-    const el = document.querySelector<HTMLInputElement>(`[data-mb-bid="${index}"]`);
-    if (el) { el.focus(); el.select(); }
+    const go = () => {
+      const el = document.querySelector<HTMLInputElement>(`[data-mb-bid="${index}"]`);
+      if (el) { el.focus(); el.select(); }
+    };
+    if (index >= renderCount) {
+      showMoreRows(index);
+      requestAnimationFrame(() => requestAnimationFrame(go));
+    } else go();
   };
 
   // Dán nhiều dòng từ Excel vào các ô Bid mới liên tiếp
@@ -1615,7 +1641,7 @@ export function PpcManualBidView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {visible.map((r, idx) => {
+                {visible.slice(0, renderCount).map((r, idx) => {
                   const draft = drafts.get(r.key);
                   const queued = queuedByTarget.get(`${r.campaignId}|${r.targetId}`);
                   const isSel = selected.has(r.key);
@@ -1768,6 +1794,11 @@ export function PpcManualBidView({
                 </tr>
               </tfoot>
             </table>
+            {renderCount < visible.length && (
+              <div ref={moreRowsRef} className="border-t border-slate-200 bg-white">
+                <LoadingBlock bare rows={3} />
+              </div>
+            )}
           </div>
         </>
       )}
@@ -1794,6 +1825,7 @@ function AcosPill({ tier, acos }: { tier: ManualBidTier; acos: number | null }) 
 }
 
 const CACHE_MS = 5 * 60 * 1000;
+const ROW_PAGE = 200;
 const REQUEST_TIMEOUT_MS = 60_000;
 
 /** Gọi API có giới hạn thời gian: quá 60s thì báo lỗi (kèm nút Thử lại) thay vì xoay tải mãi. */
