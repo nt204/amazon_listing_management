@@ -73,7 +73,8 @@ type SkuRow = SkuMetrics & {
   breakEvenAcos: number;
 };
 /** factor: hệ số đã gõ ở ô × (0.95 → hiện 95%); bid gõ tay thì không có. */
-type Draft = { kind: "bid"; bid: number; factor?: number } | { kind: "pause" };
+/** delta: số cộng / trừ đã gõ ở ô ± (+0.1, -0.25). */
+type Draft = { kind: "bid"; bid: number; factor?: number; delta?: number } | { kind: "pause" };
 type SortKey = "spend" | "clicks" | "orders" | "acos" | "bid" | "cpc" | "sales" | "keyword" | "matchType" | "campaignName"
   | "searchVolume" | "organicRank" | "sponsoredRank" | "impressions";
 
@@ -418,6 +419,7 @@ export function PpcManualBidView({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Map<string, Draft>>(new Map());
   const [opValue, setOpValue] = useState("");
+  const [addValue, setAddValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const lastClickedRef = useRef<string | null>(null);
 
@@ -957,7 +959,8 @@ export function PpcManualBidView({
     if (!d || (!d.moved && idx === d.anchor)) return;
     if (!d.moved) {
       d.moved = true;
-      setOpValue(""); // bắt đầu quét cụm mới → xoá hệ số cũ
+      setOpValue(""); // bắt đầu quét cụm mới → xoá hệ số / số cộng trừ cũ
+      setAddValue("");
     }
     const next = new Set(d.base);
     if (idx !== d.anchor) {
@@ -991,7 +994,12 @@ export function PpcManualBidView({
       const nb = applyBidOp(op, r);
       if (nb == null) { skipped += 1; continue; }
       if (Math.abs(nb - r.bid) < 0.005) next.delete(k);
-      else next.set(k, { kind: "bid", bid: nb, factor: op.kind === "mul" ? op.value : undefined });
+      else next.set(k, {
+        kind: "bid",
+        bid: nb,
+        factor: op.kind === "mul" ? op.value : undefined,
+        delta: op.kind === "add" ? op.value : undefined,
+      });
     }
     setDrafts(next);
     if (skipped > 0) notify(`${skipped} target chưa có click nên giữ nguyên bid.`, "error");
@@ -1002,6 +1010,14 @@ export function PpcManualBidView({
     if (!Number.isFinite(v)) return;
     applyToSelected({ kind: "mul", value: v });
     // Áp xong thì bỏ chọn: cụm tiếp theo quét lại từ đầu, không nhân thêm lần nữa lên cụm vừa sửa.
+    setSelected(new Set());
+  };
+
+  // Cộng / trừ số cụ thể: người dùng tự gõ dấu (+0.1, -0.25); không có dấu thì coi là cộng.
+  const runAdd = () => {
+    const v = parseFloat(addValue.replace(",", "."));
+    if (!Number.isFinite(v) || v === 0) return;
+    applyToSelected({ kind: "add", value: v });
     setSelected(new Set());
   };
 
@@ -1479,6 +1495,18 @@ export function PpcManualBidView({
                     title="Gõ hệ số rồi Enter"
                     className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
                   />
+                  <span className="pl-1 font-bold text-slate-500">±</span>
+                  <input
+                    value={addValue}
+                    onChange={(e) => setAddValue(e.target.value.replace(",", ".").replace(/[^0-9.+-]/g, ""))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); runAdd(); }
+                    }}
+                    inputMode="decimal"
+                    placeholder="+0.1"
+                    title="Gõ số cộng / trừ (vd +0.1 hoặc -0.25) rồi Enter"
+                    className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
+                  />
                   <button type="button" onClick={pauseSelected} className="h-5 cursor-pointer rounded px-1.5 font-medium text-slate-700 hover:bg-indigo-100">
                     Dừng
                   </button>
@@ -1880,7 +1908,11 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
   const isDraft = draft?.kind === "bid";
   // Đã sửa: tăng = nền xanh, giảm = nền đỏ. Sau số bid mới là hệ số đã gõ (× 0.95 → 95%).
   const up = isDraft && draft.bid > row.bid;
-  const factorPct = isDraft && draft.factor ? `${Math.round(draft.factor * 1000) / 10}%` : null;
+  const factorPct = isDraft && draft.factor
+    ? `${Math.round(draft.factor * 1000) / 10}%`
+    : isDraft && draft.delta
+      ? `${draft.delta > 0 ? "+" : "−"}${Math.abs(draft.delta).toFixed(2)}`
+      : null;
 
   return (
     <div className={`relative flex h-full w-full items-center ${isDraft ? (up ? "bg-emerald-100" : "bg-rose-100") : ""}`}>
