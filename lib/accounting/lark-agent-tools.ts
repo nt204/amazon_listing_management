@@ -20,6 +20,7 @@ import type { PpcRecommendation } from "@/lib/ppc/types";
 import { listStores, getLatestAvailableAccountingDate } from "./accounting-db";
 export { getLatestAvailableAccountingDate };
 import { listFbaDaily } from "./fba-daily-db";
+import { excludeSupersededDeferredReturns } from "./workbook-parity-sql";
 import {
   setPendingAction,
   setLastListedCandidates,
@@ -370,6 +371,7 @@ export async function getReturnBreakdown(params: {
       SUM(COALESCE(return_sau_basecost, 0)) as total_refund_amount
     FROM accounting_returns
     WHERE date >= ${effectiveStartDate}::date
+      ${excludeSupersededDeferredReturns(sql, "accounting_returns")}
       AND date <= ${effectiveEndDate}::date
       ${storeId ? sql`AND store_id = ${storeId}` : sql``}
       ${skuQuery ? sql`AND sku ILIKE ${"%" + skuQuery + "%"}` : sql``}
@@ -386,6 +388,7 @@ export async function getReturnBreakdown(params: {
       SUM(COALESCE(return_sau_basecost, 0)) as total_cost
     FROM accounting_returns
     WHERE date >= ${effectiveStartDate}::date
+      ${excludeSupersededDeferredReturns(sql, "accounting_returns")}
       AND date <= ${effectiveEndDate}::date
       ${storeId ? sql`AND store_id = ${storeId}` : sql``}
       ${skuQuery ? sql`AND sku ILIKE ${"%" + skuQuery + "%"}` : sql``}

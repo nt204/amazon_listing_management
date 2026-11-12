@@ -3,6 +3,7 @@ import "server-only";
 import { getDatabaseClient } from "@/lib/db";
 import { getExcelWeekNum, type FbaDailyItem, type FbaDailyStats } from "@/lib/accounting/fba-daily-db";
 import type { ListSkuWinOptions, SkuWinItem, SkuWinStats } from "@/lib/accounting/sku-win-db";
+import { excludeSupersededDeferredReturns } from "@/lib/accounting/workbook-parity-sql";
 
 // Tab FBM / FBM CỐ ĐỊNH của Financials: tái hiện workbook "FBM - <STORE> - KẾ TOÁN TỔNG HỢP".
 // Nguồn: Orders (fulfillment_channel = 'Merchant') = 'Orders -FBM', BẢNG MÃ FBM (accounting_sku_master_fbm),
@@ -113,6 +114,7 @@ function fbmBaseCtes(sql: Sql, storeId: string, range?: { startDate: string; end
       LEFT JOIN fbm_master me ON me.sku_key = fl.sku_key AND me.asin_key = fl.asin_key
       LEFT JOIN fbm_master_sku ms ON ms.sku_key = fl.sku_key
       WHERE r.store_id = ${storeId}
+        ${excludeSupersededDeferredReturns(sql, "r")}
     )
   `;
 }

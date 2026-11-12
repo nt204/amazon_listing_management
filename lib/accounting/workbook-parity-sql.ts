@@ -25,6 +25,28 @@ export function monthlyBasecostJoin(sql: Sql) {
 }
 
 /**
+ * Báo cáo giao dịch Amazon ghi refund 2 lần: dòng "Deferred" ở ngày refund và dòng "Released" khi tiền
+ * được trả. Sheet RETURN chỉ giữ dòng Released (xóa Deferred khi đã Released) nên Deferred nào đã có
+ * Released cùng đơn + cùng số tiền thì bỏ, tránh tính refund 2 lần. Deferred chưa Released vẫn tính.
+ * Dùng trong WHERE, `alias` là alias của accounting_returns.
+ */
+export function excludeSupersededDeferredReturns(sql: Sql, alias: string) {
+  const r = sql.unsafe(alias);
+  return sql`
+    AND NOT (
+      ${r}.transaction_status = 'Deferred'
+      AND EXISTS (
+        SELECT 1 FROM accounting_returns rel
+        WHERE rel.store_id = ${r}.store_id
+          AND rel.order_id = ${r}.order_id
+          AND rel.total = ${r}.total
+          AND rel.transaction_status = 'Released'
+      )
+    )
+  `;
+}
+
+/**
  * Sheet RETURN của workbook tính lại mỗi dòng refund từ dữ liệu order:
  *   SKU      = XLOOKUP(Order ID, 'Orders -FBA'!B, M)       -> SKU của dòng order đầu tiên
  *   Loại     = XLOOKUP(SKU, 'BẢNG MÃ'!D, J)
@@ -66,6 +88,7 @@ export function returnsEffectiveCte(sql: Sql, storeId: string, dateCondition: Re
         LIMIT 1
       ) rsm ON true
       WHERE r.store_id = ${storeId}
+        ${excludeSupersededDeferredReturns(sql, "r")}
         ${dateCondition}
     )
   `;
