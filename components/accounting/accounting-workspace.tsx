@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { AccountingModuleSkeleton, AccountingViewTransition } from "./accounting-skeleton";
 
 // Các mục giữ kiểu kẻ bảng mờ cũ (không lưới đen): Overview, Store Management.
-const PLAIN_GRID_SECTIONS = new Set(["overview", "stores"]);
+const PLAIN_GRID_SECTIONS = new Set(["overview", "stores", "reports"]);
 
 const ACCOUNTING_IMPORT_JOB_KEY = "accounting_import_active_job";
 
@@ -176,6 +176,10 @@ const AccountingAccessView = dynamic(
   () => import("./accounting-access-view").then((module) => module.AccountingAccessView),
   { loading: AccountingSectionLoading },
 );
+const PayoutView = dynamic(
+  () => import("./payout-view").then((module) => module.PayoutView),
+  { loading: AccountingSectionLoading },
+);
 const AccountingDashboardView = dynamic(
   () => import("./accounting-dashboard-view").then((module) => module.AccountingDashboardView),
   { loading: AccountingSectionLoading },
@@ -236,21 +240,6 @@ const FINANCIALS_TABS: { key: FinancialsTabKey; label: string; name: string; des
     label: "Advertising",
     name: "Advertising",
     description: "Chi phí quảng cáo Amazon Ads (Sponsored Products, Brands, Display) và phân bổ chi phí.",
-  },
-];
-
-const REPORTS_TABS: { key: ReportsTabKey; label: string; name: string; description: string }[] = [
-  {
-    key: "pnl",
-    label: "Profit & Loss",
-    name: "Profit & Loss",
-    description: "Báo cáo P&L lợi nhuận ròng, biên lợi nhuận theo Store, SKU, tháng và thị trường.",
-  },
-  {
-    key: "settlements",
-    label: "Settlements",
-    name: "Settlements",
-    description: "Bảng đối soát Settlement Amazon, đối chiếu payout chuyển về tài khoản ngân hàng.",
   },
 ];
 
@@ -323,13 +312,7 @@ export function AccountingWorkspace({
       ? "ads"
       : (activeSubTab as FinancialsTabKey) || "revenue";
 
-  const initialReportsTab: ReportsTabKey =
-    activeSection === "settlements"
-      ? "settlements"
-      : (activeSubTab as ReportsTabKey) || "pnl";
-
   const [financialsTab, setFinancialsTab] = useState<FinancialsTabKey>(initialFinancialsTab);
-  const [reportsTab, setReportsTab] = useState<ReportsTabKey>(initialReportsTab);
 
   useEffect(() => {
     if (
@@ -341,14 +324,6 @@ export function AccountingWorkspace({
       setFinancialsTab(activeSection);
     } else if (activeSubTab && ["revenue", "costs", "amazon_fees", "ads"].includes(activeSubTab)) {
       setFinancialsTab(activeSubTab as FinancialsTabKey);
-    }
-  }, [activeSection, activeSubTab]);
-
-  useEffect(() => {
-    if (activeSection === "pnl" || activeSection === "settlements") {
-      setReportsTab(activeSection);
-    } else if (activeSubTab && ["pnl", "settlements"].includes(activeSubTab)) {
-      setReportsTab(activeSubTab as ReportsTabKey);
     }
   }, [activeSection, activeSubTab]);
 
@@ -433,61 +408,12 @@ export function AccountingWorkspace({
     );
   }
 
-  // Section 6: Reports with Horizontal Tabs
+  // Section 6: Dòng tiền Payout (key "reports" giữ nguyên để URL / localStorage cũ vẫn chạy)
   if (effectiveSection === "reports") {
-    const activeTabDef =
-      REPORTS_TABS.find((t) => t.key === reportsTab) || REPORTS_TABS[0];
-
-    const handleReportsTabSelect = (tabKey: ReportsTabKey) => {
-      setReportsTab(tabKey);
-      onSectionChange?.("reports", tabKey);
-    };
-
     return (
-      <div className="w-full max-w-5xl mx-auto py-3 sm:py-6 space-y-4 sm:space-y-6">
-        <AccountingImportTracker />
-        <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-7 shadow-2xs space-y-4 sm:space-y-6">
-          <div className="space-y-3 sm:space-y-4">
-            <div className="flex items-center justify-between">
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Reports</h1>
-              <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
-                2 Báo Cáo
-              </span>
-            </div>
-
-            {/* Horizontal pill tabs as requested in mockup */}
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-4">
-              {REPORTS_TABS.map((tab) => {
-                const isActive = reportsTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => handleReportsTabSelect(tab.key)}
-                    className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
-                      isActive
-                        ? "bg-slate-900 text-white shadow-xs"
-                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Sub-tab view area */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:p-6 space-y-2">
-            <h2 className="text-base font-bold text-slate-900">
-              {activeTabDef.name}
-            </h2>
-            <p className="text-xs text-slate-500 max-w-xl leading-relaxed">
-              {activeTabDef.description}
-            </p>
-          </div>
-        </div>
-      </div>
+      <AccountingSectionShell sectionKey="reports">
+        <PayoutView />
+      </AccountingSectionShell>
     );
   }
 

@@ -20,7 +20,6 @@ import {
   ShoppingCartIcon,
   UploadSimpleIcon,
   WalletIcon,
-  TrendUpIcon,
   ChatCircleDotsIcon,
   FolderSimpleIcon,
   ListIcon,
@@ -845,42 +844,44 @@ function WorkspaceSidebar({
                     </div>
                   </button>
 
-                  {/* 6. Reports */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selectAccountingSection("reports");
-                      onClose?.();
-                    }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "reports" ||
-                      accountingSection === "pnl" ||
-                      accountingSection === "settlements"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <TrendUpIcon
-                      size={17}
-                      weight={
+                  {/* 6. Dòng tiền Payout — chỉ admin / kế toán (khớp quyền xem payout) */}
+                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectAccountingSection("reports");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
                         accountingSection === "reports" ||
                         accountingSection === "pnl" ||
                         accountingSection === "settlements"
-                          ? "fill"
-                          : "duotone"
-                      }
-                      className={`shrink-0 ${
-                        accountingSection === "reports" ||
-                        accountingSection === "pnl" ||
-                        accountingSection === "settlements"
-                          ? "text-indigo-600"
-                          : "text-slate-400"
+                          ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                       }`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">Reports</span>
-                    </div>
-                  </button>
+                    >
+                      <WalletIcon
+                        size={17}
+                        weight={
+                          accountingSection === "reports" ||
+                          accountingSection === "pnl" ||
+                          accountingSection === "settlements"
+                            ? "fill"
+                            : "duotone"
+                        }
+                        className={`shrink-0 ${
+                          accountingSection === "reports" ||
+                          accountingSection === "pnl" ||
+                          accountingSection === "settlements"
+                            ? "text-indigo-600"
+                            : "text-slate-400"
+                        }`}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-[13px]">Dòng tiền Payout</span>
+                      </div>
+                    </button>
+                  )}
 
                   {/* Subtle Divider before System Admin */}
                   <div className="my-1.5 border-t border-slate-100" />
@@ -1553,7 +1554,7 @@ export function ListingWorkspace({
                                 : accountingSection === "reports" ||
                                   accountingSection === "pnl" ||
                                   accountingSection === "settlements"
-                                  ? "Accounting - Báo Cáo & Đối Soát"
+                                  ? "Accounting - Dòng tiền Payout"
                                   : "Accounting - System Admin"
                       : sidebarTab === "mockups"
                         ? "Auto Mockup Generator"

@@ -2228,6 +2228,27 @@ function InventoryViewInner() {
   const fbaSkuCount = skuChannel === "fba" ? skuBadgeCount : otherSkuCountQuery.data ?? 0;
   const fbmSkuCount = skuChannel === "fbm" ? skuBadgeCount : otherSkuCountQuery.data ?? 0;
 
+  // Tìm SKU / ASIN: quét hết store + kênh đang mở trước; không có kết quả thì tìm tiếp ở các store / kênh khác.
+  const skuSearchTerm = debouncedSkuSearch.trim();
+  const crossStoreSkuQuery = useQuery({
+    queryKey: ["sku-search-all", skuSearchTerm.toLowerCase(), selectedStoreId, skuChannel],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({ search: skuSearchTerm, exclude_store: selectedStoreId!, exclude_channel: skuChannel });
+      const res = await fetch(`/api/accounting/inventory/sku-master/search-all?${params.toString()}`, { signal });
+      if (!res.ok) throw new Error("Không tìm được SKU ở các store khác");
+      return ((await res.json()) as {
+        matches: {
+          storeId: string;
+          storeName: string;
+          channel: SkuChannel;
+          count: number;
+          samples: { sku: string; asin: string | null }[];
+        }[];
+      }).matches;
+    },
+    enabled: activeTab === "sku" && !!selectedStoreId && skuSearchTerm.length >= 2 && skuQuery.data?.total === 0,
+  });
+
   // 2. TanStack Query for Inbound Shipments (Server-side Page Pagination, 100/trang)
   const shipmentQuery = useQuery({
     queryKey: ["inbound-shipments", selectedStoreId, shipmentPage, shipmentLimit, debouncedShipmentSearch, shipmentStatusFilter, dateSort.inbound.field, dateSort.inbound.direction],
@@ -5823,9 +5844,61 @@ function InventoryViewInner() {
                   <AccountingTableSkeletonRows rows={12} colSpan={skuVisibleCount + 1} />
                 ) : sortedSkus.length === 0 ? (
                   <tr>
-                    <td colSpan={skuVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
-                      <PackageIcon size={40} className="mx-auto mb-2 text-slate-400" />
-                      Chưa có SKU nào trong {skuSheetLabel} của Store {selectedStore?.name}. Nhấn <strong>Thêm Phôi</strong> hoặc <strong>Nhập {skuSheetLabel}</strong> để nhập dữ liệu.
+                    <td colSpan={skuVisibleCount + 1} className="py-16 text-center text-slate-500 text-sm">
+                      {skuSearchTerm ? (
+                        <div className="mx-auto max-w-xl px-4">
+                          <MagnifyingGlassIcon size={32} className="mx-auto mb-2 text-slate-400" />
+                          <p>
+                            Không có <strong className="text-slate-800">&ldquo;{skuSearchTerm}&rdquo;</strong> trong {skuSheetLabel} của Store {selectedStore?.name}.
+                          </p>
+                          {skuSearchTerm.length < 2 ? null : crossStoreSkuQuery.isFetching ? (
+                            <p className="mt-3 inline-flex items-center gap-2 text-indigo-600">
+                              <ArrowClockwiseIcon size={14} className="animate-spin" /> Đang tìm ở các store khác…
+                            </p>
+                          ) : crossStoreSkuQuery.isError ? (
+                            <p className="mt-3 text-rose-600">{(crossStoreSkuQuery.error as Error).message}</p>
+                          ) : crossStoreSkuQuery.data && crossStoreSkuQuery.data.length > 0 ? (
+                            <div className="mt-4 space-y-2 text-left">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Tìm thấy ở store khác</p>
+                              {crossStoreSkuQuery.data.map((m) => (
+                                <div
+                                  key={`${m.storeId}-${m.channel}`}
+                                  className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-slate-900">{m.storeName}</span>
+                                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-600">{m.channel}</span>
+                                      <span className="text-xs text-slate-500">{m.count} SKU</span>
+                                    </div>
+                                    <div className="mt-0.5 truncate text-xs text-slate-500">
+                                      {m.samples.map((x) => (x.asin ? `${x.sku} (${x.asin})` : x.sku)).join(", ")}
+                                      {m.count > m.samples.length ? ", …" : ""}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (m.storeId !== selectedStoreId) handleStoreSelect(m.storeId);
+                                      if (m.channel !== skuChannel) handleSkuSheetChange(m.channel);
+                                    }}
+                                    className="shrink-0 cursor-pointer rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700"
+                                  >
+                                    Mở
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : crossStoreSkuQuery.isSuccess ? (
+                            <p className="mt-2 text-slate-400">Cũng không có ở store nào khác.</p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <>
+                          <PackageIcon size={40} className="mx-auto mb-2 text-slate-400" />
+                          Chưa có SKU nào trong {skuSheetLabel} của Store {selectedStore?.name}. Nhấn <strong>Thêm Phôi</strong> hoặc <strong>Nhập {skuSheetLabel}</strong> để nhập dữ liệu.
+                        </>
+                      )}
                     </td>
                   </tr>
                 ) : (

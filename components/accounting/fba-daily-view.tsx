@@ -951,14 +951,24 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                 <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
-                    const bgStyle = f.isFrozen ? { backgroundColor: "#fffbeb" } : {};
                     const isProfitCol = col.id === "profit";
+                    // Ô Profit / Net Profit dòng TOTAL tô nền xanh/đỏ giống ô Profit từng ngày
+                    const totalResultColor = isProfitCol
+                      ? resultBg(stats.totalProfit + totalMonthFees)
+                      : col.id === "net_profit" && stats.totalNetProfit != null
+                      ? resultBg(stats.totalNetProfit + totalMonthFees)
+                      : undefined;
+                    const bgStyle = totalResultColor
+                      ? { backgroundColor: totalResultColor }
+                      : f.isFrozen
+                      ? { backgroundColor: "#fffbeb" }
+                      : {};
 
                     return (
                       <td
                         key={`total-${col.id}`}
                         style={{ ...f.style, ...bgStyle }}
-                        className={`${profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-bold ${
+                        className={`${totalResultColor ? "" : profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-bold ${
                           f.isBoundary
                             ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                             : "border-r border-amber-200/80"
@@ -1026,19 +1036,13 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                         {/* Profit: bold và màu xanh như yêu cầu */}
                         {isProfitCol && (
                           <span
-                            className={`font-bold tabular-nums ${
-                              stats.totalProfit + totalMonthFees > 0
-                                ? "text-emerald-600"
-                                : stats.totalProfit + totalMonthFees < 0
-                                ? "text-red-600"
-                                : "text-slate-950"
-                            }`}
+                            className="font-bold tabular-nums text-black"
                           >
                             {formatCurrency(stats.totalProfit + totalMonthFees)}
                           </span>
                         )}
                         {col.id === "net_profit" && (
-                          <span className={`font-bold tabular-nums ${(stats.totalNetProfit ?? 0) + totalMonthFees >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                          <span className={`font-bold tabular-nums ${stats.totalNetProfit == null ? "text-slate-300" : "text-black"}`}>
                             {stats.totalNetProfit == null ? "—" : formatCurrency(stats.totalNetProfit + totalMonthFees)}
                           </span>
                         )}

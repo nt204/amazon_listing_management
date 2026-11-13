@@ -2,6 +2,12 @@
 "use client";
 
 import { profitColClass } from "./profit-column";
+
+// Ô Profit nền xanh khi ≥ 0, đỏ khi < 0 — cùng màu ô Profit ở bảng FBA theo ngày
+const PROFIT_GREEN = "#83C75D";
+const PROFIT_RED = "#FF0000";
+const profitBg = (v: number | null | undefined) =>
+  v == null || Number.isNaN(v) ? undefined : v < 0 ? PROFIT_RED : PROFIT_GREEN;
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   ArrowClockwiseIcon,
@@ -1155,13 +1161,18 @@ export function SkuTestView() {
                       const f = getCellFreezeProps(col.id, true);
                       const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
                       const isProfitCol = col.id === "profit";
-                      const bgStyle = f.isFrozen ? { backgroundColor: "#fffbeb" } : {};
+                      const profitColor = isProfitCol ? profitBg(stats.totalProfit) : undefined;
+                      const bgStyle = profitColor
+                        ? { backgroundColor: profitColor }
+                        : f.isFrozen
+                        ? { backgroundColor: "#fffbeb" }
+                        : {};
 
                       return (
                         <td
                           key={`total-${col.id}`}
                           style={{ ...f.style, ...bgStyle }}
-                          className={`${profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap ${
+                          className={`${profitColor ? "" : profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap ${
                             f.isBoundary
                               ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                               : "border-r border-amber-200/80"
@@ -1234,13 +1245,7 @@ export function SkuTestView() {
                           )}
                           {isProfitCol && (
                             <span
-                              className={`font-bold tabular-nums ${
-                                stats.totalProfit > 0
-                                  ? "text-emerald-600"
-                                  : stats.totalProfit < 0
-                                  ? "text-red-600"
-                                  : "text-slate-950"
-                              }`}
+                              className="font-bold tabular-nums text-black"
                             >
                               {formatCurrency(stats.totalProfit)}
                             </span>
@@ -1357,13 +1362,18 @@ export function SkuTestView() {
                           const f = getCellFreezeProps(col.id, false);
                           const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
                           const isProfitCol = col.id === "profit";
-                          const bgStyle = f.isFrozen ? { backgroundColor: isEven ? "#ffffff" : "#f8fafc" } : {};
+                          const profitColor = isProfitCol ? profitBg(item.profit) : undefined;
+                          const bgStyle = profitColor
+                            ? { backgroundColor: profitColor }
+                            : f.isFrozen
+                            ? { backgroundColor: isEven ? "#ffffff" : "#f8fafc" }
+                            : {};
 
                           return (
                             <td
                               key={col.id}
                               style={{ ...f.style, ...bgStyle }}
-                              className={`${profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs text-slate-900 border-b border-slate-200 transition-colors ${
+                              className={`${profitColor ? "" : profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs text-slate-900 border-b border-slate-200 transition-colors ${
                                 f.isBoundary
                                   ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                                   : "border-r border-slate-200"
@@ -1530,13 +1540,7 @@ export function SkuTestView() {
                               {/* Profit - màu xanh khi dương, màu đỏ khi âm */}
                               {isProfitCol && (
                                 <span
-                                  className={`font-semibold tabular-nums ${
-                                    item.profit > 0
-                                      ? "text-emerald-600"
-                                      : item.profit < 0
-                                      ? "text-red-600"
-                                      : "text-slate-600"
-                                  }`}
+                                  className="font-semibold tabular-nums text-black"
                                 >
                                   {formatCurrency(item.profit)}
                                 </span>
