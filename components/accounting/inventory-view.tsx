@@ -5845,6 +5845,8 @@ function InventoryViewInner() {
                 ) : sortedSkus.length === 0 ? (
                   <tr>
                     <td colSpan={skuVisibleCount + 1} className="py-16 text-center text-slate-500 text-sm">
+                      {/* Bảng rất rộng (nhiều cột) → ghim nội dung vào phần đang nhìn thấy, không trôi ra giữa bảng */}
+                      <div className="sticky left-0 w-[calc(100vw-2rem)] lg:w-[calc(100vw-300px)]">
                       {skuSearchTerm ? (
                         <div className="mx-auto max-w-xl px-4">
                           <MagnifyingGlassIcon size={32} className="mx-auto mb-2 text-slate-400" />
@@ -5899,6 +5901,7 @@ function InventoryViewInner() {
                           Chưa có SKU nào trong {skuSheetLabel} của Store {selectedStore?.name}. Nhấn <strong>Thêm Phôi</strong> hoặc <strong>Nhập {skuSheetLabel}</strong> để nhập dữ liệu.
                         </>
                       )}
+                      </div>
                     </td>
                   </tr>
                 ) : (

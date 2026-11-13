@@ -34,6 +34,7 @@ import {
   DEFAULT_SKU_MONTHLY_COLUMNS,
   DEFAULT_SKU_MONTHLY_FBM_COLUMNS,
   ColumnHeaderCell,
+  TwoLineHeaderLabel,
   ColumnManagerModal,
   createTextWidthMeasurer,
 } from "./column-manager-modal";
@@ -776,7 +777,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                       onAutoFit={handleAutoFitColumn}
                     >
                       <div
-                        className={`group/title flex min-h-[38px] w-full items-center gap-1 ${
+                        className={`group/title relative flex min-h-[38px] w-full items-center gap-1 ${
                           col.align === "center"
                             ? "justify-center"
                             : col.align === "right"
@@ -787,10 +788,13 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                         <button
                           type="button"
                           onClick={() => handleSort(col.id)}
-                          className="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate transition-colors hover:text-amber-100"
+                          className="inline-flex min-w-0 cursor-pointer items-center gap-1 transition-colors hover:text-amber-100"
                           title={`Bấm để sắp xếp theo ${col.label}`}
                         >
-                          <span className="truncate">{col.label}</span>
+                          <TwoLineHeaderLabel
+                            text={col.label}
+                            className={col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}
+                          />
                           {isSorted && (
                             <span className="shrink-0 text-white">
                               {sortDirection === "asc" ? (
@@ -811,7 +815,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                               y: event.clientY,
                             });
                           }}
-                          className="ml-0.5 shrink-0 cursor-pointer rounded p-0.5 text-slate-900 opacity-0 transition hover:bg-amber-600/40 group-hover/title:opacity-100 focus-visible:opacity-100"
+                          className={`absolute top-0 ${col.align === "right" ? "left-0" : "right-0"} z-10 cursor-pointer rounded bg-[#ff9900] p-0.5 text-slate-900 opacity-0 transition hover:bg-amber-600 group-hover/title:opacity-100 focus-visible:opacity-100`}
                           title={`Tùy chọn & Setting cột "${col.label}"`}
                           aria-label={`Tùy chọn cột ${col.label}`}
                         >

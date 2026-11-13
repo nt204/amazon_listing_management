@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowCounterClockwiseIcon,
   CaretDownIcon,
@@ -302,35 +302,35 @@ export const DEFAULT_SKU_WIN_COLUMNS: ColumnConfig[] = [
   { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: 150 },
   { id: "mockup", label: "Image", defaultLabel: "Image", visible: true, isFrozen: true, align: "center", width: 72 },
   { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 180 },
-  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 135 },
-  { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 120 },
-  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 85 },
-  { id: "ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 115 },
-  { id: "basecost", label: "Basecost", defaultLabel: "Basecost", visible: true, align: "right", width: 115 },
-  { id: "amazon_fee", label: "Amazon Fee", defaultLabel: "Amazon Fee", visible: true, align: "right", width: 135 },
-  { id: "thue", label: "Thuế", defaultLabel: "Thuế", visible: true, align: "right", width: 105 },
-  { id: "promotion", label: "Promotion", defaultLabel: "Promotion", visible: true, align: "right", width: 110 },
-  { id: "return_cost", label: "Return", defaultLabel: "Return", visible: true, align: "right", width: 105 },
-  { id: "profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 125 },
-  { id: "profit_per_item", label: "Profit/item", defaultLabel: "Profit/item", visible: true, align: "right", width: 110 },
-  { id: "basecost_per_item", label: "Basecost/item", defaultLabel: "Basecost/item", visible: false, align: "right", width: 120 },
-  { id: "tacos", label: "TACOS (%)", defaultLabel: "TACOS (%)", visible: false, align: "right", width: 95 },
-  { id: "acos", label: "ACOS (%)", defaultLabel: "ACOS (%)", visible: false, align: "right", width: 95 },
-  { id: "margin", label: "MARGIN (%)", defaultLabel: "MARGIN (%)", visible: false, align: "right", width: 105 },
-  { id: "roi", label: "ROI (%)", defaultLabel: "ROI (%)", visible: false, align: "right", width: 95 },
-  { id: "revenue_ads", label: "Revenue Ads", defaultLabel: "Revenue Ads", visible: false, align: "right", width: 125 },
-  { id: "all_time_quantity", label: "Lượng bán tổng", defaultLabel: "Lượng bán tổng", visible: false, align: "right", width: 120 },
-  { id: "return_rate", label: "Tỷ lệ Return (%)", defaultLabel: "Tỷ lệ Return (%)", visible: false, align: "right", width: 115 },
-  { id: "shipped_qty", label: "Số hàng đã đi", defaultLabel: "Số hàng đã đi", visible: false, align: "right", width: 115 },
-  { id: "revenue_target", label: "Revenue mục tiêu", defaultLabel: "Revenue mục tiêu", visible: false, align: "right", width: 140 },
-  { id: "unit_target", label: "Unit mục tiêu", defaultLabel: "Unit mục tiêu", visible: false, align: "right", width: 115 },
-  { id: "spend_target", label: "Spend mục tiêu", defaultLabel: "Spend mục tiêu", visible: false, align: "right", width: 130 },
-  { id: "profit_target", label: "Profit mục tiêu", defaultLabel: "Profit mục tiêu", visible: false, align: "right", width: 130 },
+  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 115 },
+  { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 100 },
+  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 80 },
+  { id: "ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 90 },
+  { id: "basecost", label: "Basecost", defaultLabel: "Basecost", visible: true, align: "right", width: 90 },
+  { id: "amazon_fee", label: "Amazon Fee", defaultLabel: "Amazon Fee", visible: true, align: "right", width: 95 },
+  { id: "thue", label: "Thuế", defaultLabel: "Thuế", visible: true, align: "right", width: 80 },
+  { id: "promotion", label: "Promotion", defaultLabel: "Promotion", visible: true, align: "right", width: 90 },
+  { id: "return_cost", label: "Return", defaultLabel: "Return", visible: true, align: "right", width: 85 },
+  { id: "profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 95 },
+  { id: "profit_per_item", label: "Profit/item", defaultLabel: "Profit/item", visible: true, align: "right", width: 80 },
+  { id: "basecost_per_item", label: "Basecost/item", defaultLabel: "Basecost/item", visible: false, align: "right", width: 90 },
+  { id: "tacos", label: "TACOS (%)", defaultLabel: "TACOS (%)", visible: false, align: "right", width: 70 },
+  { id: "acos", label: "ACOS (%)", defaultLabel: "ACOS (%)", visible: false, align: "right", width: 70 },
+  { id: "margin", label: "MARGIN (%)", defaultLabel: "MARGIN (%)", visible: false, align: "right", width: 75 },
+  { id: "roi", label: "ROI (%)", defaultLabel: "ROI (%)", visible: false, align: "right", width: 70 },
+  { id: "revenue_ads", label: "Revenue Ads", defaultLabel: "Revenue Ads", visible: false, align: "right", width: 95 },
+  { id: "all_time_quantity", label: "Lượng bán tổng", defaultLabel: "Lượng bán tổng", visible: false, align: "right", width: 95 },
+  { id: "return_rate", label: "Tỷ lệ Return (%)", defaultLabel: "Tỷ lệ Return (%)", visible: false, align: "right", width: 90 },
+  { id: "shipped_qty", label: "Số hàng đã đi", defaultLabel: "Số hàng đã đi", visible: false, align: "right", width: 80 },
+  { id: "revenue_target", label: "Revenue mục tiêu", defaultLabel: "Revenue mục tiêu", visible: false, align: "right", width: 95 },
+  { id: "unit_target", label: "Unit mục tiêu", defaultLabel: "Unit mục tiêu", visible: false, align: "right", width: 80 },
+  { id: "spend_target", label: "Spend mục tiêu", defaultLabel: "Spend mục tiêu", visible: false, align: "right", width: 90 },
+  { id: "profit_target", label: "Profit mục tiêu", defaultLabel: "Profit mục tiêu", visible: false, align: "right", width: 90 },
   { id: "brand", label: "Brand", defaultLabel: "Brand", visible: false, width: 120 },
-  { id: "status", label: "Trạng thái", defaultLabel: "Trạng thái", visible: false, align: "center", width: 115 },
+  { id: "status", label: "Trạng thái", defaultLabel: "Trạng thái", visible: false, align: "center", width: 105 },
   { id: "niche", label: "Niche", defaultLabel: "Niche", visible: false, width: 120 },
   { id: "pic_mkt", label: "PIC MKT", defaultLabel: "PIC MKT", visible: false, width: 110 },
-  { id: "custom_price", label: "Giá bảng mã", defaultLabel: "Giá bảng mã", visible: false, align: "right", width: 120 },
+  { id: "custom_price", label: "Giá bảng mã", defaultLabel: "Giá bảng mã", visible: false, align: "right", width: 85 },
 ];
 
 export const DEFAULT_SKU_TEST_COLUMNS: ColumnConfig[] = [
@@ -593,6 +593,55 @@ export function ColumnHeaderCell({
 }
 
 /** Tạo hàm đo độ rộng thật của text trong trình duyệt để auto-fit không cắt dữ liệu. */
+/** Chỗ được phép xuống dòng trong tên cột: dấu cách và ngay sau "/" (vd "Profit/item"). */
+function headerBreakPoints(text: string): number[] {
+  const out: number[] = [];
+  for (let i = 1; i < text.length; i++) {
+    if (text[i] === " " || text[i - 1] === "/") out.push(i);
+  }
+  return out;
+}
+
+let headerMeasureCtx: CanvasRenderingContext2D | null = null;
+
+/**
+ * Tên cột gọn tối đa 2 dòng cho bảng tự co theo nội dung (không có độ rộng cố định):
+ * đo chữ thật (đúng font của ô) rồi chọn chỗ ngắt sao cho dòng dài nhất ngắn nhất,
+ * nhờ vậy tên cột dài không kéo cột rộng hơn giá trị bên dưới.
+ */
+export function TwoLineHeaderLabel({ text, className = "" }: { text: string; className?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState<number>();
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof document === "undefined") return;
+    headerMeasureCtx ??= document.createElement("canvas").getContext("2d");
+    const ctx = headerMeasureCtx;
+    if (!ctx) return;
+    const cs = getComputedStyle(el);
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    if ("letterSpacing" in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = cs.letterSpacing === "normal" ? "0px" : cs.letterSpacing;
+    const label = text.trim();
+    const measure = (value: string) => ctx.measureText(value.trim()).width;
+    let best = measure(label);
+    for (const i of headerBreakPoints(label)) {
+      best = Math.min(best, Math.max(measure(label.slice(0, i)), measure(label.slice(i))));
+    }
+    setWidth(Math.ceil(best) + 2);
+  }, [text]);
+
+  return (
+    <span
+      ref={ref}
+      className={`inline-block whitespace-normal break-words leading-tight ${className}`}
+      style={width ? { width } : undefined}
+    >
+      {text.trim().replace(/\//g, "/\u200B")}
+    </span>
+  );
+}
+
 export function createTextWidthMeasurer(font = "500 13px ui-sans-serif, system-ui, sans-serif") {
   if (typeof document === "undefined") return (value: string) => value.length * 8;
   const context = document.createElement("canvas").getContext("2d");

@@ -347,14 +347,22 @@ export function SkuTestView() {
         if (saved) {
           const parsed: ColumnConfig[] = JSON.parse(saved);
           const colMap = new Map(parsed.map((c) => [c.id, c]));
-          return DEFAULT_SKU_TEST_COLUMNS.map((def) => {
+          // 2026-11: cột thu gọn (tên cột xuống 2 dòng) → bỏ độ rộng cũ đã lưu một lần để lấy độ rộng mặc định mới
+          const widthsKey = `${SKU_TEST_COLUMNS_STORAGE_KEY}_widths_v2`;
+          const resetWidths = localStorage.getItem(widthsKey) !== "1";
+          const restored = DEFAULT_SKU_TEST_COLUMNS.map((def) => {
             const user = colMap.get(def.id);
             if (!user) return def;
             let userLabel = (user.label || def.label).replace(/\s*\(\$\)/g, "").trim();
             if (def.id === "revenue" && (userLabel.toLowerCase() === "revenue" || !userLabel)) userLabel = "Revenue";
             if (def.id === "quantity" && (userLabel.toLowerCase() === "quantity" || !userLabel)) userLabel = "Quantity";
-            return { ...def, label: userLabel, visible: user.visible, width: user.width || def.width };
+            return { ...def, label: userLabel, visible: user.visible, width: (resetWidths ? undefined : user.width) || def.width };
           });
+          if (resetWidths) {
+            localStorage.setItem(SKU_TEST_COLUMNS_STORAGE_KEY, JSON.stringify(restored));
+            localStorage.setItem(widthsKey, "1");
+          }
+          return restored;
         }
       } catch (err) {
         console.error("Failed to load sku test columns:", err);
@@ -1110,10 +1118,14 @@ export function SkuTestView() {
                           <button
                             type="button"
                             onClick={() => handleSort(col.id)}
-                            className="inline-flex items-center gap-1 hover:underline cursor-pointer truncate"
+                            className="inline-flex min-w-0 items-center gap-1 hover:underline cursor-pointer"
                             title={`Bấm để sắp xếp theo ${displayColLabel}`}
                           >
-                            <span className="truncate">{displayColLabel}</span>
+                            <span
+                              className={`line-clamp-2 whitespace-normal break-words leading-tight ${col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}`}
+                            >
+                              {displayColLabel.replace(/\//g, "/\u200B")}
+                            </span>
                             {isSorted ? (
                               sortDirection === "asc" ? (
                                 <CaretUpIcon size={12} weight="bold" className="shrink-0 text-slate-950" />
@@ -1140,9 +1152,9 @@ export function SkuTestView() {
                                 y: e.clientY,
                               });
                             }}
-                            className={`ml-1 p-0.5 rounded text-slate-900 transition cursor-pointer shrink-0 ${columnFilters[col.id]
-                                ? "opacity-100 bg-amber-600/30"
-                                : "opacity-0 group-hover/title:opacity-100 hover:bg-amber-600/40"
+                            className={`p-0.5 rounded text-slate-900 transition cursor-pointer shrink-0 ${columnFilters[col.id]
+                                ? "ml-1 opacity-100 bg-amber-600/30"
+                                : `absolute top-0 ${col.align === "right" ? "left-0" : "right-0"} z-10 bg-[#ff9900] opacity-0 group-hover/title:opacity-100 hover:bg-amber-600`
                               }`}
                             title={`Tùy chọn, Lọc & Setting cột "${col.label}"`}
                           >
