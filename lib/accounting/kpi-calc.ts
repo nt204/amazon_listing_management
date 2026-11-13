@@ -182,7 +182,9 @@ export function computeTarget(
     return m;
   }
   const units = input.units;
-  const price = unit.price ?? input.price ?? 0;
+  // Giá kế hoạch leader gõ (sheet / ô Giá trên app) — có thể khác giá đang bán (vd định tăng giá);
+  // bỏ trống mới tạm lấy giá hệ thống (giá sửa tay của SKU → giá đơn gần nhất)
+  const price = input.price ?? unit.price ?? 0;
   const revenue = units * price;
   const ads = (input.tacos ?? 0) * revenue;
   const basecost = units * (input.basecost_unit ?? unit.basecost_unit ?? 0);

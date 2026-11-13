@@ -381,10 +381,15 @@ function NumInput({
 /** Ô Price nhấn đúp để sửa tay — chỉ tác động vào tính toán mục tiêu, không làm đổi giá thực tế từ order */
 function EditablePriceCell({
   value,
+  planned = false,
+  systemPrice = null,
   canEdit,
   onCommit,
 }: {
   value: number | null;
+  /** true: giá kế hoạch leader gõ (sheet / app); false: tạm lấy giá hệ thống (đơn gần nhất) */
+  planned?: boolean;
+  systemPrice?: number | null;
   canEdit: boolean;
   onCommit: (v: number | null) => void;
 }) {
@@ -437,8 +442,15 @@ function EditablePriceCell({
   return (
     <span
       onDoubleClick={startEdit}
-      title={canEdit ? "Nhấn đúp (ấn 2 cái) để sửa giá mục tiêu" : undefined}
-      className={`inline-block w-full select-none text-right tabular-nums ${
+      title={[
+        planned
+          ? `Giá kế hoạch (leader gõ)${systemPrice != null ? ` — giá đơn gần nhất ${fmtUsd(systemPrice)}` : ""}`
+          : "Chưa gõ giá kế hoạch — tạm lấy giá đơn gần nhất",
+        canEdit ? "Nhấn đúp để sửa giá mục tiêu" : "",
+      ]
+        .filter(Boolean)
+        .join("\n")}
+      className={`inline-block w-full select-none text-right tabular-nums ${planned ? "" : "italic text-slate-400"} ${
         canEdit ? "cursor-pointer hover:font-bold hover:text-blue-700 hover:underline" : ""
       }`}
     >
@@ -1932,7 +1944,9 @@ function SkuTable({
                   className={`${fixCls} px-2 py-1 text-right`}
                 >
                   <EditablePriceCell
-                    value={c.s.price}
+                    value={c.s.target.cur?.price ?? c.s.target.next?.price ?? c.s.price}
+                    planned={(c.s.target.cur?.price ?? c.s.target.next?.price) != null}
+                    systemPrice={c.s.price}
                     canEdit={canEdit}
                     onCommit={(newPrice) => onSavePrice?.(c.s.sku, newPrice)}
                   />
