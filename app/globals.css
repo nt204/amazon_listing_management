@@ -524,6 +524,31 @@ table tbody tr {
   transform: scale(0.97);
 }
 
+/* Hiệu ứng click sáng lan tỏa & đàn hồi cho sidebar */
+.acc-sidebar-item {
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+.acc-sidebar-item::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at center, rgba(99, 102, 241, 0.22) 0%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.6);
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.acc-sidebar-item:active::after {
+  opacity: 1;
+  transform: scale(1.4);
+  transition: opacity 0.05s ease, transform 0.12s ease-out;
+}
+
 /* Sidebar tối với ảnh núi: định nghĩa lại bảng màu Tailwind trong phạm vi sidebar
    để các class sáng sẵn có (text-slate-*, bg-indigo-50…) tự chuyển sang tông tối. */
 .nce-sidebar {

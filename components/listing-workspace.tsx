@@ -29,6 +29,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import { motion } from "motion/react";
 import { AccBlackGrid } from "@/components/accounting/acc-black-grid";
 import { financialsGroupOf, type FinancialsGroup } from "@/components/accounting/financials-groups";
 import { AccountMenu } from "@/components/account-menu";
@@ -149,10 +150,71 @@ type AccountingSection =
   | "settlements";
 
 const FINANCIALS_SIDEBAR_ITEMS: { group: FinancialsGroup; label: string; Icon: typeof CalendarBlankIcon }[] = [
-  { group: "day", label: "Ngày", Icon: CalendarBlankIcon },
-  { group: "week", label: "Tuần", Icon: CalendarDotsIcon },
-  { group: "month", label: "Tháng", Icon: CalendarIcon },
+  { group: "day", label: "Day", Icon: CalendarBlankIcon },
+  { group: "week", label: "Week", Icon: CalendarDotsIcon },
+  { group: "month", label: "Month", Icon: CalendarIcon },
 ];
+
+interface SidebarSubItemProps {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<any>;
+  label: string;
+  indent?: boolean;
+}
+
+function SidebarSubItem({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  indent = false,
+}: SidebarSubItemProps) {
+  return (
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.96 }}
+      transition={{ type: "spring", stiffness: 500, damping: 25 }}
+      onClick={onClick}
+      className={`relative flex w-full items-center gap-2.5 rounded-xl text-left transition-colors cursor-pointer acc-sidebar-item ${
+        indent ? "py-1.5 pl-7 pr-2.5" : "px-2.5 py-2"
+      } ${
+        active
+          ? "text-indigo-950 font-bold"
+          : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
+      }`}
+    >
+      {active && (
+        <motion.div
+          layoutId="sidebar-accounting-active-pill"
+          className="absolute inset-0 rounded-xl bg-indigo-50/90 ring-1 ring-indigo-200/80 shadow-2xs z-0"
+          transition={{ type: "spring", stiffness: 450, damping: 35 }}
+        />
+      )}
+      {active && (
+        <motion.span
+          layoutId="sidebar-accounting-active-bar"
+          className={`absolute ${indent ? "left-2.5" : "left-1"} top-2 bottom-2 w-1 rounded-full bg-indigo-600 shadow-xs z-10`}
+          transition={{ type: "spring", stiffness: 450, damping: 35 }}
+        />
+      )}
+      <motion.div
+        className="relative z-10 shrink-0"
+        animate={active ? { scale: [1, 1.25, 0.95, 1], rotate: [0, -6, 3, 0] } : { scale: 1, rotate: 0 }}
+        transition={{ duration: 0.32, ease: "easeOut" }}
+      >
+        <Icon
+          size={indent ? 16 : 17}
+          weight={active ? "fill" : "duotone"}
+          className={`shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`}
+        />
+      </motion.div>
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col leading-tight">
+        <span className="text-[13px]">{label}</span>
+      </div>
+    </motion.button>
+  );
+}
 
 interface WorkspaceSidebarProps {
   actor?: RequestActor;
@@ -242,14 +304,16 @@ function WorkspaceSidebar({
         <nav className="space-y-1.5">
           {/* Listing Tab */}
           {(actor?.allowedFeatures?.includes("listing") ?? true) && (
-            <button
+            <motion.button
               type="button"
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: "spring", stiffness: 500, damping: 25 }}
               onClick={() => {
                 selectView("listing");
                 markBatchAsRead();
                 onClose?.();
               }}
-              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
                 sidebarTab === "trello" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -270,18 +334,20 @@ function WorkspaceSidebar({
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500 ring-2 ring-white"></span>
                 </span>
               )}
-            </button>
+            </motion.button>
           )}
 
           {/* Mockups Tab */}
           {(actor?.allowedFeatures?.includes("mockups") ?? true) && (
-            <button
+            <motion.button
               type="button"
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: "spring", stiffness: 500, damping: 25 }}
               onClick={() => {
                 selectView("mockups");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
                 sidebarTab === "mockups" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -293,18 +359,20 @@ function WorkspaceSidebar({
                 weight="duotone"
               />
               <span>Mockup design</span>
-            </button>
+            </motion.button>
           )}
 
           {/* SellerSprite Tab */}
           {(actor?.allowedFeatures?.includes("sellersprite") ?? true) && (
-            <button
+            <motion.button
               type="button"
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: "spring", stiffness: 500, damping: 25 }}
               onClick={() => {
                 selectView("sellersprite");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
                 viewMode === "sellersprite"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -316,19 +384,21 @@ function WorkspaceSidebar({
                 weight="duotone"
               />
               <span>Đào Keyword</span>
-            </button>
+            </motion.button>
           )}
 
           {/* Amazon PPC Analytics Group */}
           {(actor?.allowedFeatures?.includes("ppc") ?? true) && (
             <div className="space-y-1">
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.97 }}
+                transition={{ type: "spring", stiffness: 500, damping: 25 }}
                 onClick={() => {
                   selectPpcSection("dashboard");
                   onClose?.();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
                   viewMode === "ppc"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -360,7 +430,7 @@ function WorkspaceSidebar({
                     }`}
                   />
                 </div>
-              </button>
+              </motion.button>
 
               {/* Sub-items under PPC Analytics */}
               {viewMode === "ppc" && (
@@ -640,13 +710,15 @@ function WorkspaceSidebar({
           {/* Accounting Group (cùng cấp với PPC Analytics) */}
           {(actor?.allowedFeatures?.includes("accounting") ?? true) && (
             <div className="space-y-1">
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.97 }}
+                transition={{ type: "spring", stiffness: 500, damping: 25 }}
                 onClick={() => {
                   selectAccountingSection("overview");
                   onClose?.();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
                   viewMode === "accounting"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -667,69 +739,43 @@ function WorkspaceSidebar({
                     viewMode === "accounting" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
                   }`}
                 />
-              </button>
+              </motion.button>
 
               {/* Sub-items under Accounting: 6 main groups + System Admin */}
               {viewMode === "accounting" && (
                 <div className="space-y-0.5 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
                   {/* 1. Overview */}
-                  <button
-                    type="button"
+                  <SidebarSubItem
+                    active={accountingSection === "overview" || accountingSection === "dashboard"}
                     onClick={() => {
                       selectAccountingSection("overview");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "overview" || accountingSection === "dashboard"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <SquaresFourIcon
-                      size={17}
-                      weight={accountingSection === "overview" || accountingSection === "dashboard" ? "fill" : "duotone"}
-                      className={`shrink-0 ${
-                        accountingSection === "overview" || accountingSection === "dashboard"
-                          ? "text-indigo-600"
-                          : "text-slate-400"
-                      }`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">Overview</span>
-                    </div>
-                  </button>
+                    icon={SquaresFourIcon}
+                    label="Overview"
+                  />
 
                   {/* 3. Inventory */}
-                  <button
-                    type="button"
+                  <SidebarSubItem
+                    active={accountingSection === "inventory"}
                     onClick={() => {
                       selectAccountingSection("inventory");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "inventory"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <PackageIcon
-                      size={17}
-                      weight={accountingSection === "inventory" ? "fill" : "duotone"}
-                      className={`shrink-0 ${accountingSection === "inventory" ? "text-indigo-600" : "text-slate-400"}`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">Inventory</span>
-                    </div>
-                  </button>
+                    icon={PackageIcon}
+                    label="Inventory"
+                  />
 
                   {/* 5. Financials */}
-                  <button
+                  <motion.button
                     type="button"
+                    whileTap={{ scale: 0.96 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 25 }}
                     onClick={() => {
                       selectAccountingSection("financials", "day");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer acc-sidebar-item ${
                       accountingSection === "financials" ||
                       accountingSection === "revenue" ||
                       accountingSection === "costs" ||
@@ -763,9 +809,9 @@ function WorkspaceSidebar({
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-[13px]">Financials</span>
                     </div>
-                  </button>
+                  </motion.button>
 
-                  {/* 5.1–5.3 Financials theo kỳ: Ngày / Tuần / Tháng */}
+                  {/* 5.1–5.3 Financials theo kỳ: Day / Week / Month */}
                   {FINANCIALS_SIDEBAR_ITEMS.map(({ group, label, Icon }) => {
                     const active =
                       (accountingSection === "financials" ||
@@ -775,211 +821,110 @@ function WorkspaceSidebar({
                         accountingSection === "ads") &&
                       financialsGroupOf(accountingSubTab) === group;
                     return (
-                      <button
+                      <SidebarSubItem
                         key={group}
-                        type="button"
+                        active={active}
                         onClick={() => {
                           selectAccountingSection("financials", group);
                           onClose?.();
                         }}
-                        className={`flex w-full items-center gap-2.5 rounded-xl py-1.5 pl-7 pr-2.5 text-left transition-all cursor-pointer acc-interactive-btn ${
-                          active
-                            ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                            : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                      >
-                        <Icon
-                          size={16}
-                          weight={active ? "fill" : "duotone"}
-                          className={`shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`}
-                        />
-                        <span className="text-[13px]">{label}</span>
-                      </button>
+                        icon={Icon}
+                        label={label}
+                        indent
+                      />
                     );
                   })}
 
                   {/* 6. KQKD SKU — báo cáo kết quả kinh doanh SKU Testing (mục riêng) */}
-                  <button
-                    type="button"
+                  <SidebarSubItem
+                    active={accountingSection === "kqkd"}
                     onClick={() => {
                       selectAccountingSection("kqkd");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "kqkd"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <ChartLineUpIcon
-                      size={17}
-                      weight={accountingSection === "kqkd" ? "fill" : "duotone"}
-                      className={`shrink-0 ${accountingSection === "kqkd" ? "text-indigo-600" : "text-slate-400"}`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">KQKD SKU</span>
-                    </div>
-                  </button>
+                    icon={ChartLineUpIcon}
+                    label="KQKD SKU"
+                  />
 
                   {/* 7. KPI kinh doanh — KPI tháng của team (Tổng quan, SKU phát triển, SKU test) */}
-                  <button
-                    type="button"
+                  <SidebarSubItem
+                    active={accountingSection === "kpi"}
                     onClick={() => {
                       selectAccountingSection("kpi");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "kpi"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <TargetIcon
-                      size={17}
-                      weight={accountingSection === "kpi" ? "fill" : "duotone"}
-                      className={`shrink-0 ${accountingSection === "kpi" ? "text-indigo-600" : "text-slate-400"}`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">KPI kinh doanh</span>
-                    </div>
-                  </button>
-
-                  {/* 6. Dòng tiền Payout — chỉ admin / kế toán (khớp quyền xem payout) */}
-                  {(actor?.role === "admin" || actor?.role === "accountant") && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        selectAccountingSection("reports");
-                        onClose?.();
-                      }}
-                      className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                        accountingSection === "reports" ||
-                        accountingSection === "pnl" ||
-                        accountingSection === "settlements"
-                          ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                      }`}
-                    >
-                      <WalletIcon
-                        size={17}
-                        weight={
-                          accountingSection === "reports" ||
-                          accountingSection === "pnl" ||
-                          accountingSection === "settlements"
-                            ? "fill"
-                            : "duotone"
-                        }
-                        className={`shrink-0 ${
-                          accountingSection === "reports" ||
-                          accountingSection === "pnl" ||
-                          accountingSection === "settlements"
-                            ? "text-indigo-600"
-                            : "text-slate-400"
-                        }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-[13px]">Dòng tiền Payout</span>
-                      </div>
-                    </button>
-                  )}
+                    icon={TargetIcon}
+                    label="KPI kinh doanh"
+                  />
 
                   {/* Subtle Divider before System Admin */}
                   <div className="my-1.5 border-t border-slate-100" />
 
                   {/* 7. System Admin */}
-                  <button
-                    type="button"
+                  <SidebarSubItem
+                    active={accountingSection === "admin" || accountingSection === "files"}
                     onClick={() => {
                       selectAccountingSection("admin");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "admin" || accountingSection === "files"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <GearIcon
-                      size={17}
-                      weight={accountingSection === "admin" || accountingSection === "files" ? "fill" : "duotone"}
-                      className={`shrink-0 ${
-                        accountingSection === "admin" || accountingSection === "files" ? "text-indigo-600" : "text-slate-400"
-                      }`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">System Admin</span>
-                    </div>
-                  </button>
+                    icon={GearIcon}
+                    label="System Admin"
+                  />
 
                   {/* 7.1 Stores (trong System Admin) */}
-                  <button
-                    type="button"
+                  <SidebarSubItem
+                    active={accountingSection === "stores"}
                     onClick={() => {
                       selectAccountingSection("stores");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl py-2 pl-7 pr-2.5 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "stores"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <StorefrontIcon
-                      size={16}
-                      weight={accountingSection === "stores" ? "fill" : "duotone"}
-                      className={`shrink-0 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"}`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">Stores</span>
-                    </div>
-                  </button>
+                    icon={StorefrontIcon}
+                    label="Stores"
+                    indent
+                  />
 
                   {/* 7.2 Import (trong System Admin) */}
-                  <button
-                    type="button"
+                  <SidebarSubItem
+                    active={accountingSection === "orders" || accountingSection === "import"}
                     onClick={() => {
                       selectAccountingSection("orders");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl py-2 pl-7 pr-2.5 text-left transition-all cursor-pointer acc-interactive-btn ${
-                      accountingSection === "orders" || accountingSection === "import"
-                        ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <UploadSimpleIcon
-                      size={16}
-                      weight={accountingSection === "orders" || accountingSection === "import" ? "bold" : "regular"}
-                      className={`shrink-0 ${
-                        accountingSection === "orders" || accountingSection === "import" ? "text-indigo-600" : "text-slate-400"
-                      }`}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                      <span className="text-[13px]">Import</span>
-                    </div>
-                  </button>
+                    icon={UploadSimpleIcon}
+                    label="Import"
+                    indent
+                  />
 
-                  {/* 7.2 Phân quyền kế toán (Admin / Kế toán) */}
+                  {/* 7.3 Payout Amount (trong System Admin) — chỉ admin / kế toán */}
                   {(actor?.role === "admin" || actor?.role === "accountant") && (
-                    <button
-                      type="button"
+                    <SidebarSubItem
+                      active={
+                        accountingSection === "reports" ||
+                        accountingSection === "pnl" ||
+                        accountingSection === "settlements"
+                      }
+                      onClick={() => {
+                        selectAccountingSection("reports");
+                        onClose?.();
+                      }}
+                      icon={WalletIcon}
+                      label="Payout Amount"
+                      indent
+                    />
+                  )}
+
+                  {/* 7.4 Phân quyền kế toán (Admin / Kế toán) */}
+                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                    <SidebarSubItem
+                      active={accountingSection === "access"}
                       onClick={() => {
                         selectAccountingSection("access");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2.5 rounded-xl py-2 pl-7 pr-2.5 text-left transition-all cursor-pointer ${
-                        accountingSection === "access"
-                          ? "bg-indigo-50/80 text-indigo-950 font-bold shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                      }`}
-                    >
-                      <ShieldCheckIcon
-                        size={16}
-                        weight={accountingSection === "access" ? "fill" : "duotone"}
-                        className={`shrink-0 ${accountingSection === "access" ? "text-indigo-600" : "text-slate-400"}`}
-                      />
-                      <span className="text-[13px]">Phân quyền</span>
-                    </button>
+                      icon={ShieldCheckIcon}
+                      label="Phân quyền"
+                      indent
+                    />
                   )}
                 </div>
               )}
@@ -990,13 +935,15 @@ function WorkspaceSidebar({
           <div className="my-2 border-t border-slate-100" />
 
           {/* Kanban Feedback Tab */}
-          <button
+          <motion.button
             type="button"
+            whileTap={{ scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 500, damping: 25 }}
             onClick={() => {
               selectView("kanban");
               onClose?.();
             }}
-            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
+            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
               activeView === "kanban"
                 ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                 : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -1018,7 +965,7 @@ function WorkspaceSidebar({
                 {kanbanPendingCount > 99 ? "99+" : kanbanPendingCount}
               </span>
             )}
-          </button>
+          </motion.button>
         </nav>
       </div>
 
@@ -1235,6 +1182,16 @@ export function ListingWorkspace({
     },
     [allowedFeatureSet],
   );
+
+  // Các trang Accounting tự chuyển mục (vd bấm dòng phôi ở KPI → KQKD SKU)
+  useEffect(() => {
+    const go = (e: Event) => {
+      const detail = (e as CustomEvent<{ section?: AccountingSection; subTab?: string }>).detail;
+      if (detail?.section) selectAccountingSection(detail.section, detail.subTab);
+    };
+    window.addEventListener("acc_navigate_section", go);
+    return () => window.removeEventListener("acc_navigate_section", go);
+  }, [selectAccountingSection]);
 
   // Restore position on initial mount if not specified in SSR initialView
   useEffect(() => {
@@ -1554,7 +1511,7 @@ export function ListingWorkspace({
                                 : accountingSection === "reports" ||
                                   accountingSection === "pnl" ||
                                   accountingSection === "settlements"
-                                  ? "Accounting - Dòng tiền Payout"
+                                  ? "Accounting - Payout Amount"
                                   : "Accounting - System Admin"
                       : sidebarTab === "mockups"
                         ? "Auto Mockup Generator"
