@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   ArrowClockwiseIcon,
   CalendarBlankIcon,
@@ -17,6 +16,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import type { WeeklyMetrics, WeeklyReport, WeeklyBrandRow } from "@/lib/accounting/weekly-report";
+import { computeCashflow, type CashflowField, type CashflowValues, type WeeklyCashflow } from "@/lib/accounting/weekly-cashflow";
 import {
   daysInMonthOf,
   nextWeekSegment,
@@ -28,7 +28,7 @@ import { AccountingModuleSkeleton, AccountingTopProgressBar } from "./accounting
 
 // BÁO CÁO TUẦN — mỗi khối 1 nhiệm vụ:
 //   1 Tổng quan (kết quả thế nào?) → 2 Tiến độ tháng (đạt mục tiêu chưa?) → 3 Team (ai đóng góp / có vấn đề?)
-//   → 4 Brand (nguyên nhân ở đâu?) → 5 SKU Test → 6 Tồn kho & dòng tiền (việc vận hành cần xử lý).
+//   → 4 Brand (nguyên nhân ở đâu?, chọn All / Win / Test) → 6 Tồn kho & dòng tiền (việc vận hành cần xử lý).
 // Công thức như file "BÁO CÁO TUẦN TỔNG HỢP":
 //   % WoW = (này − trước) ÷ |trước| (cả Biên LN, TACoS)
 //   Kế hoạch tới nay = MT kỳ × ngày đã có số liệu ÷ số ngày kỳ; Nhịp = thực đạt ÷ kế hoạch tới nay
@@ -94,7 +94,6 @@ function teamColor(team: string): string {
   const n = Number(team.match(/(\d+)/)?.[1]);
   return Number.isFinite(n) && n >= 1 ? TEAM_COLORS[((n - 1) % (TEAM_COLORS.length - 1)) + 1] : "#898781";
 }
-const NEG = "#e34948";
 
 export function WeeklyReportView() {
   const [date, setDate] = useState("");
@@ -379,7 +378,6 @@ function groupTeams(rows: WeeklyBrandRow[], ctx: PaceContext): TeamGroup[] {
 }
 
 type SkuGroup = "all" | "win" | "test";
-const SKU_GROUP_TAG: Record<SkuGroup, string> = { all: "ALL SKU", win: "SKU WIN", test: "SKU TEST" };
 
 const sumTarget = (a: WeeklyBrandRow["target"], b: WeeklyBrandRow["target"]): WeeklyBrandRow["target"] =>
   a || b ? { revenue: (a?.revenue ?? 0) + (b?.revenue ?? 0), profit: (a?.profit ?? 0) + (b?.profit ?? 0) } : null;
@@ -406,7 +404,6 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
     () => (selectedStoreKey === "all" ? brands : brands.filter((b) => b.key === selectedStoreKey)),
     [brands, selectedStoreKey],
   );
-  const tests = selectedStoreId ? data.tests.filter((t) => t.storeId === selectedStoreId) : data.tests;
   const stock = selectedStoreId ? data.stock.filter((s) => s.storeId === selectedStoreId) : data.stock;
   const payout = data.payout;
 
@@ -455,7 +452,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
         </Section>
       )}
 
-      <Section title="Kinh doanh theo brand" tag={SKU_GROUP_TAG[skuGroup]} theme="blue">
+      <Section title="Kinh doanh theo brand" theme="blue">
         <BrandPanel
           sectionRef={brandRef}
           teams={brandTeams}
@@ -468,30 +465,13 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
         />
       </Section>
 
-      {tests.length > 0 && (
-        <Section title="Hiệu quả SKU Test" tag="SKU TEST" theme="teal">
-          <TestBlock tests={tests} />
+      {stock.length > 0 && (
+        <Section title="Tồn kho" theme="amber">
+          <StockBlock stock={stock} days={data.days} weekStart={week.startDate} canEdit={data.canEditPrepaid} />
         </Section>
       )}
-
-      {(stock.length > 0 || payout) && (
-        <div className={`grid gap-7 ${stock.length > 0 && payout ? "xl:grid-cols-12" : ""}`}>
-          {stock.length > 0 && (
-            <div className={payout ? "xl:col-span-7" : ""}>
-              <Section title="Tồn kho Amazon" theme="amber">
-                <StockBlock stock={stock} days={data.days} />
-              </Section>
-            </div>
-          )}
-          {payout && (
-            <div className={stock.length > 0 ? "xl:col-span-5" : ""}>
-              <Section title="Dòng tiền" tag="Payment" theme="green">
-                <PayoutBlock payout={payout} />
-              </Section>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Tài chính & dòng tiền: chỉ admin / kế toán (server chỉ trả payout cho 2 vai trò này), mặc định thu gọn */}
+      {payout && <MoneySection payout={payout} cashflow={data.cashflow} canEdit={data.canEditPrepaid} />}
     </div>
   );
 }
@@ -559,11 +539,11 @@ function Section({
   return (
     <ThemeCtx.Provider value={t}>
       <section>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 text-base font-bold !text-slate-900">
-            <span className={`h-5 w-1.5 rounded-full ${t.bar}`} />
+        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2.5 !text-[20px] font-bold !tracking-tight !text-slate-950">
+            <span className={`h-6 w-1.5 rounded-full ${t.bar}`} />
             {title}
-            {tag && <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${t.tag}`}>{tag}</span>}
+            {tag && <span className={`rounded-md px-2 py-0.5 !text-[12px] font-bold ${t.tag}`}>{tag}</span>}
           </h2>
           {right}
         </div>
@@ -608,21 +588,12 @@ const TABLE =
 const rowCls = (t: Theme) => `border-b border-slate-200 ${t.stripeEven} transition-colors ${t.hover}`;
 const tint = (hex: string, a: number) => `${hex}${Math.round(a * 255).toString(16).padStart(2, "0")}`;
 
-// Ô % KPI: nền nhạt + chữ đậm theo trạng thái → quét mắt dọc cột là thấy brand/team nào đạt, sát hay dưới
+// Nhãn nền nhạt + chữ đậm theo trạng thái (SoftChip ở bảng team)
 const TONE_SOFT: Record<Tone, string> = {
   good: "bg-emerald-100 !text-emerald-800",
   near: "bg-amber-100 !text-amber-900",
   bad: "bg-rose-100 !text-rose-800",
 };
-function KpiCell({ ratio, digits = 0, title }: { ratio: number | null | undefined; digits?: number; title?: string }) {
-  const tone = kpiTone(ratio ?? null);
-  if (ratio == null || !tone) return <span className="!text-slate-400">—</span>;
-  return (
-    <span className={`inline-block min-w-[52px] rounded-md px-2 py-0.5 text-right font-bold tabular-nums ${TONE_SOFT[tone]}`} title={title}>
-      {pct(ratio, digits)}
-    </span>
-  );
-}
 
 /**
  * % WoW. quiet (dùng trong bảng): không nền; chỉ tô màu khi biến động bất thường (|WoW| ≥ 20%), còn lại chữ thường.
@@ -646,7 +617,7 @@ function WowPill({
   if (quiet) {
     const strong = Math.abs(value) >= 0.2 && !flat;
     return (
-      <span className={`tabular-nums ${strong ? `font-bold ${good ? "!text-emerald-700" : "!text-rose-600"}` : "!text-slate-700"}`}>
+      <span className={`tabular-nums ${strong ? `font-bold ${good ? "!text-emerald-700" : "!text-rose-600"}` : "!text-slate-950"}`}>
         <span className="text-[0.75em]">{arrow}</span>
         {text}
       </span>
@@ -848,7 +819,7 @@ function KpiTiles({ total, dataThrough }: { total: GroupSummary; dataThrough: st
             <span className={`text-[30px] font-bold leading-none tracking-tight ${t.negative ? "!text-rose-600" : "!text-slate-900"}`}>{t.value}</span>
             {t.wow}
           </div>
-          <span className="mt-1.5 text-[13px] tabular-nums !text-slate-500">Tuần trước {t.prev}</span>
+          <span className="mt-1.5 text-[13px] tabular-nums !text-slate-950">Tuần trước {t.prev}</span>
           {/* Chỉ Revenue / Profit có tiến độ KPI tuần / tháng */}
           {t.week && t.month && (
             <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-3">
@@ -894,7 +865,7 @@ function TileRow({ label, d, until }: { label: string; d: TileRowData; until: st
       {d.plain ? <span /> : <ProgressBar ratio={d.ratio == null ? null : Math.min(1, d.ratio)} tone={d.tone} height="h-2.5" />}
       <span className="flex min-w-[72px] flex-col items-end leading-tight">
         <span className={`text-[14px] font-bold tabular-nums ${d.tone ? TONE_TEXT[d.tone] : "!text-slate-800"}`}>{done}</span>
-        {d.full != null && <span className="text-[11.5px] font-semibold tabular-nums !text-slate-400">MT {usd(d.full)}</span>}
+        {d.full != null && <span className="text-[11.5px] font-semibold tabular-nums !text-slate-950">MT {usd(d.full)}</span>}
       </span>
     </div>
   );
@@ -928,12 +899,12 @@ function TeamTable({
     const m = s.profit?.month ?? null;
     const tone = kpiTone(m?.ratio ?? null);
     const monthBg = isTotal ? "bg-orange-300" : "bg-orange-50";
-    const quiet = !isTotal && s.cur.revenue === 0 ? "!text-slate-400" : "";
+    const quiet = "";
     return (
       <>
         {/* Doanh thu tuần */}
         <td className={`px-4 py-3.5 text-right !text-[14.5px] font-bold ${quiet}`}>{usd(s.cur.revenue)}</td>
-        <td className="px-4 py-3.5 text-right !text-slate-500">{usd(s.prev.revenue)}</td>
+        <td className="px-4 py-3.5 text-right font-medium !text-slate-950">{usd(s.prev.revenue)}</td>
         <td className="px-4 py-3.5 text-right">
           <WowPill value={wow(s.cur.revenue, s.prev.revenue)} quiet />
         </td>
@@ -944,7 +915,7 @@ function TeamTable({
         <td className={`px-4 py-3.5 text-right ${monthBg}`}>
           {m ? (
             <span
-              className={`!text-[16px] font-semibold tabular-nums ${tone ? PACE_TEXT[tone] : "!text-slate-900"}`}
+              className={`!text-[16px] font-bold tabular-nums ${tone ? PACE_TEXT[tone] : "!text-slate-900"}`}
               title={`Profit lũy kế ${usd(m.actual)} ÷ cần đạt tới nay ${usd(m.due)} (MT tháng × ngày ÷ số ngày tháng)`}
             >
               {pct(m.ratio, 1)}
@@ -1000,7 +971,7 @@ function TeamTable({
                         onPick(team);
                       }}
                       className={`inline-flex cursor-pointer items-center gap-2.5 rounded font-bold whitespace-nowrap hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 ${
-                        idle ? "!text-slate-400" : "!text-slate-900"
+                        idle ? "!text-slate-950" : "!text-slate-900"
                       }`}
                     >
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: idle ? "#cbd5e1" : color }} />
@@ -1009,7 +980,7 @@ function TeamTable({
                     </button>
                   </td>
                   {idle ? (
-                    <td colSpan={6} className="px-4 py-3 text-center !text-slate-400 italic">
+                    <td colSpan={6} className="px-4 py-3 text-center !text-slate-950 italic">
                       Không phát sinh trong tháng
                     </td>
                   ) : (
@@ -1059,10 +1030,10 @@ function ProfitTargetBar({
       }
     >
       <div className="flex items-baseline justify-between gap-2 !text-[13px] leading-none tabular-nums">
-        <span className={`font-semibold ${actual < 0 ? "!text-rose-600" : "!text-slate-900"}`}>{usd(actual)}</span>
-        <span className="!text-slate-500">{target != null ? `MT ${usd(target)}` : "Chưa có KPI"}</span>
+        <span className={`!text-[14px] font-bold ${actual < 0 ? "!text-rose-600" : "!text-slate-950"}`}>{usd(actual)}</span>
+        <span className="font-medium !text-slate-950">{target != null ? `MT ${usd(target)}` : "Chưa có KPI"}</span>
       </div>
-      <div className="mt-2 h-2.5 rounded-full bg-slate-100">
+      <div className="mt-2 h-2.5 rounded-full bg-slate-200">
         <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${ratio * 100}%`, backgroundColor: fill }} />
       </div>
     </div>
@@ -1075,7 +1046,7 @@ function SoftChip({ tone, label }: { tone: Tone; label: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. BRAND — 1 bảng chính (Cơ bản / Chi tiết); biểu đồ Profit là tùy chọn
+// 4. BRAND — 1 bảng (Cột Cơ bản / Chi tiết · SKU All / Win / Test)
 // ---------------------------------------------------------------------------
 
 type SortKey = "revenue" | "dRevenue" | "profit" | "margin" | "tacos" | "pace";
@@ -1104,10 +1075,23 @@ interface Col {
 
 const money = (v: number, cls = "") => <span className={`${v < 0 ? "!text-rose-600" : ""} ${cls}`}>{usd(v)}</span>;
 
+// Ô Profit như tab Day (fba-daily-view): lãi nền xanh, lỗ nền đỏ — áp cho cột Profit tuần và Profit lũy kế
+const SHEET_GREEN = "#83C75D";
+const SHEET_RED = "#FF0000";
+const profitCellStyle = (v: number) => ({ backgroundColor: v < 0 ? SHEET_RED : SHEET_GREEN });
+const PROFIT_COLS = new Set(["profit", "mtd"]);
+const profitColValue = (key: string, s: GroupSummary) => (key === "profit" ? s.cur.profit : key === "mtd" ? s.mtd.profit : null);
+
+// Ngưỡng cảnh báo đỏ ở bảng brand: TACoS > 30%, ROI < 100%, Biên LN < 15%
+const BAD_TACOS = 0.3;
+const BAD_ROI = 1;
+const BAD_MARGIN = 0.15;
+const BAD = "font-semibold !text-rose-600";
+
 // Thứ tự cột như file; "basic" = chế độ Cơ bản
 const BRAND_COLS: Col[] = [
   { key: "rev", label: "Revenue\ntuần này", basic: true, sort: "revenue", render: (s) => <span className="font-semibold">{money(s.cur.revenue)}</span> },
-  { key: "revPrev", label: "Revenue\ntuần trước", basic: false, render: (s) => <span className="!text-slate-600">{usd(s.prev.revenue)}</span> },
+  { key: "revPrev", label: "Revenue\ntuần trước", basic: false, render: (s) => <span className="!text-slate-950">{usd(s.prev.revenue)}</span> },
   {
     key: "wow",
     label: "% WoW",
@@ -1116,14 +1100,15 @@ const BRAND_COLS: Col[] = [
     render: (s, total) => (!total && isIdle(s) ? "—" : <WowPill value={wow(s.cur.revenue, s.prev.revenue)} size="sm" quiet />),
   },
   { key: "qty", label: "Quantity", basic: false, render: (s) => int(s.cur.quantity) },
-  { key: "ads", label: "Ads Fee", basic: false, render: (s) => <span className="!text-slate-600">{usd(s.cur.adsFee)}</span> },
+  { key: "ads", label: "Ads Fee", basic: false, render: (s) => usd(s.cur.adsFee) },
   {
     key: "profit",
     label: "Profit",
     basic: true,
     sort: "profit",
     strong: true,
-    render: (s) => <span className="font-bold">{money(s.cur.profit)}</span>,
+    // Nền ô xanh / đỏ như cột Profit tab Day (profitCellStyle) → chữ đen cho dễ đọc
+    render: (s) => <span className="font-bold !text-black">{usd(s.cur.profit)}</span>,
   },
   {
     key: "tacos",
@@ -1132,10 +1117,18 @@ const BRAND_COLS: Col[] = [
     sort: "tacos",
     render: (s) => {
       const v = ratiosOf(s.cur).tacos;
-      return <>{pct(v)}</>;
+      return <span className={v != null && v > BAD_TACOS ? BAD : ""}>{pct(v)}</span>;
     },
   },
-  { key: "roi", label: "ROI", basic: false, render: (s) => pct(ratiosOf(s.cur).roi) },
+  {
+    key: "roi",
+    label: "ROI",
+    basic: false,
+    render: (s) => {
+      const v = ratiosOf(s.cur).roi;
+      return <span className={v != null && v < BAD_ROI ? BAD : ""}>{pct(v)}</span>;
+    },
+  },
   {
     key: "margin",
     label: "Biên LN",
@@ -1144,37 +1137,60 @@ const BRAND_COLS: Col[] = [
     strong: true,
     render: (s) => {
       const v = ratiosOf(s.cur).margin;
-      return <span className={`font-semibold ${v != null && v < 0 ? "!text-rose-600" : ""}`}>{pct(v)}</span>;
+      return <span className={`font-semibold ${v != null && v < BAD_MARGIN ? "!text-rose-600" : ""}`}>{pct(v)}</span>;
     },
   },
-  { key: "mtd", label: "Profit\nlũy kế tháng", basic: false, month: true, render: (s) => <span className="font-semibold">{money(s.mtd.profit)}</span> },
+  {
+    key: "mtd",
+    label: "Profit\nlũy kế",
+    basic: true,
+    month: true,
+    title: "Profit cộng dồn từ ngày 1 đến ngày có số liệu",
+    // Nền xanh / đỏ như cột Profit tuần (profitCellStyle) → chữ đen
+    render: (s) => <span className="font-bold !text-black">{usd(s.mtd.profit)}</span>,
+  },
+  {
+    key: "target",
+    label: "MT Profit\ntháng",
+    basic: true,
+    month: true,
+    render: (s) => (s.profit ? <span className="font-semibold">{usd(s.profit.month.full)}</span> : ""),
+  },
+  {
+    key: "full",
+    label: "Đã đạt /\nMT cả tháng",
+    basic: true,
+    month: true,
+    title: "Profit lũy kế ÷ MT Profit cả tháng",
+    render: (s) => {
+      const m = s.profit?.month;
+      if (!m) return "";
+      const tone = kpiTone(m.ratio);
+      return (
+        <div className="ml-auto flex w-[160px] items-center justify-end gap-2">
+          <div className="h-1.5 min-w-[60px] flex-1 rounded-full bg-slate-200">
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${Math.min(100, Math.max(0, (m.fullRatio ?? 0) * 100))}%`, backgroundColor: tone ? TONE_HEX[tone] : "#94a3b8" }}
+            />
+          </div>
+          <span className="shrink-0 whitespace-nowrap text-right font-semibold tabular-nums">{pct(m.fullRatio, 1)}</span>
+        </div>
+      );
+    },
+  },
   {
     key: "pace",
-    label: "% đạt kế hoạch Profit\ntháng (tới nay)",
+    label: "Nhịp so với\nkế hoạch tới nay",
     basic: true,
     month: true,
     sort: "pace",
-    title: "Profit lũy kế ÷ kế hoạch Profit tháng tới ngày báo cáo (MT tháng × ngày ÷ số ngày tháng)",
-    render: (s) => <KpiCell ratio={s.profit?.month.ratio} title={s.profit ? undefined : "Chưa có KPI"} />,
-  },
-  { key: "target", label: "MT Profit\ntháng", basic: false, month: true, render: (s) => <span className="!text-slate-600">{s.profit ? usd(s.profit.month.full) : "—"}</span> },
-  {
-    key: "full",
-    label: "% đạt MT Profit\ncả tháng",
-    title: "Profit lũy kế ÷ Mục tiêu Profit cả tháng",
-    basic: false,
-    month: true,
+    title: "Profit lũy kế ÷ MT tới ngày báo cáo (MT tháng × ngày ÷ số ngày tháng)",
     render: (s) => {
       const m = s.profit?.month;
-      if (!m) return "—";
-      return (
-        <div className="ml-auto flex w-[110px] items-center gap-2">
-          <div className="flex-1">
-            <ProgressBar ratio={m.fullRatio} tone={kpiTone(m.ratio)} height="h-2" />
-          </div>
-          <span className="w-10 text-right font-semibold">{pct(m.fullRatio, 0)}</span>
-        </div>
-      );
+      if (!m) return "";
+      const tone = kpiTone(m.ratio);
+      return <span className={`font-bold ${tone ? TONE_TEXT[tone] : ""}`}>{pct(m.ratio, 1)}</span>;
     },
   },
 ];
@@ -1198,19 +1214,17 @@ function BrandPanel({
   activeTeam: string | null;
   onClearTeam: () => void;
 }) {
-  const [view, setView] = useState<"table" | "chart">("table");
   const [mode, setMode] = useState<"basic" | "detail">("basic");
-  const [showIdle, setShowIdle] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: "desc" | "asc" } | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
 
   const cols = mode === "basic" ? BRAND_COLS.filter((c) => c.basic) : BRAND_COLS;
   const grouped = teams.length > 1;
-  const idleCount = teams.reduce((n, t) => n + t.brands.filter((r) => isIdle(r.s)).length, 0);
   const shownTeams = activeTeam ? teams.filter((t) => t.team === activeTeam) : teams;
 
   const order = (rows: { b: WeeklyBrandRow; s: GroupSummary }[]) => {
-    const list = showIdle ? rows : rows.filter((r) => !isIdle(r.s));
+    // Brand không phát sinh luôn ẩn
+    const list = rows.filter((r) => !isIdle(r.s));
     if (!sort) return list;
     const val = SORT_VALUE[sort.key];
     return [...list].sort((x, y) => {
@@ -1247,31 +1261,17 @@ function BrandPanel({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-200 px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-medium !text-slate-600">Xem</span>
+            <span className="text-[13px] font-medium !text-slate-600">Cột</span>
             <Segmented
-              label="Kiểu xem"
-              value={view}
-              onChange={setView}
+              label="Mức chi tiết"
+              value={mode}
+              onChange={setMode}
               options={[
-                { value: "table", label: "Bảng" },
-                { value: "chart", label: "Biểu đồ Profit" },
+                { value: "basic", label: "Cơ bản" },
+                { value: "detail", label: "Chi tiết" },
               ]}
             />
           </div>
-          {view === "table" && (
-            <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
-              <span className="text-[13px] font-medium !text-slate-600">Cột</span>
-              <Segmented
-                label="Mức chi tiết"
-                value={mode}
-                onChange={setMode}
-                options={[
-                  { value: "basic", label: "Cơ bản" },
-                  { value: "detail", label: "Chi tiết" },
-                ]}
-              />
-            </div>
-          )}
           {activeTeam && (
             <button
               type="button"
@@ -1285,13 +1285,7 @@ function BrandPanel({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          {idleCount > 0 && (
-            <label className="flex cursor-pointer items-center gap-1.5 text-[13px] !text-slate-700">
-              <input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
-              Hiện brand không phát sinh ({idleCount})
-            </label>
-          )}
-          <div className="flex items-center gap-2 border-l border-slate-200 pl-4" title="Chia SKU như trang KPI kinh doanh: Win = Bảng mã Phát triển (đã qua Tháng đánh giá), Test = trạng thái Test + SKU chưa tới Tháng đánh giá; FBM tính hết vào Win">
+          <div className="flex items-center gap-2" title="Chia SKU như trang KPI kinh doanh: Win = Bảng mã Phát triển (đã qua Tháng đánh giá), Test = trạng thái Test + SKU chưa tới Tháng đánh giá; FBM tính hết vào Win">
             <span className="text-[13px] font-medium !text-slate-600">SKU</span>
             <Segmented
               label="Nhóm SKU"
@@ -1307,10 +1301,7 @@ function BrandPanel({
         </div>
       </div>
 
-      {view === "chart" ? (
-        <ProfitChart teams={shownTeams} showIdle={showIdle} />
-      ) : (
-        <div className="overflow-x-auto">
+      <div className="overflow-x-auto">
           <table className={`${TABLE} ${mode === "detail" ? "min-w-[1380px]" : "min-w-[860px]"}`}>
             <thead>
               <tr className="text-[11.5px] font-bold uppercase tracking-wide">
@@ -1329,6 +1320,8 @@ function BrandPanel({
               <tr>
                 {cols.map((c, i) => {
                   const cls = `${c.month ? `${MONTH_TH} px-3 py-2.5 text-right text-[12.5px] font-bold leading-tight whitespace-pre-line align-bottom` : th} ${
+                    PROFIT_COLS.has(c.key) ? "!bg-[#83C75D] !text-black !font-extrabold [&_*]:!font-extrabold" : ""
+                  } ${
                     i === firstMonth ? "border-l-2 border-white" : ""
                   } ${i === cols.length - 1 ? "pr-4" : ""}`;
                   if (!c.sort)
@@ -1380,7 +1373,7 @@ function BrandPanel({
                         >
                           {isCollapsed ? <CaretRightIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
                           {t.team}
-                          <span className="font-semibold !text-slate-700">
+                          <span className="font-semibold !text-slate-950">
                             · {rows.length} brand · Profit {usd(t.summary.cur.profit)}
                           </span>
                         </button>
@@ -1394,7 +1387,7 @@ function BrandPanel({
                       const bg = odd ? theme.stripe : "bg-white";
                       const neg = s.cur.profit < 0;
                       return (
-                        <tr key={b.key} className={`group border-b border-slate-200/70 ${bg} ${idle ? "!text-slate-500" : "!text-slate-800"}`}>
+                        <tr key={b.key} className={`group border-b border-slate-200/70 ${bg} ${idle ? "!text-slate-950" : "!text-slate-950"}`}>
                           {/* Cột Brand cố định khi cuộn ngang; brand lỗ có vạch đỏ bên trái */}
                           <td
                             className={`sticky left-0 z-[1] py-2.5 pr-3 text-left font-semibold ${bg} group-hover:bg-orange-50 ${grouped ? "pl-8" : "pl-4"} ${
@@ -1408,9 +1401,10 @@ function BrandPanel({
                           {cols.map((c, i) => (
                             <td
                               key={c.key}
-                              className={`px-3 py-2.5 text-right group-hover:bg-orange-50 ${cellGroup(c, i, odd)} ${
-                                c.key === "profit" && neg ? "!bg-rose-50" : ""
-                              } ${i === cols.length - 1 ? "pr-4" : ""}`}
+                              style={PROFIT_COLS.has(c.key) ? profitCellStyle(profitColValue(c.key, s) ?? 0) : undefined}
+                              className={`px-3 py-2.5 text-right font-medium ${PROFIT_COLS.has(c.key) ? "" : "group-hover:bg-orange-50"} ${cellGroup(c, i, odd)} ${
+                                i === cols.length - 1 ? "pr-4" : ""
+                              }`}
                             >
                               {c.render(s, false)}
                             </td>
@@ -1428,6 +1422,7 @@ function BrandPanel({
                 {cols.map((c, i) => (
                   <td
                     key={c.key}
+                    style={PROFIT_COLS.has(c.key) ? profitCellStyle(profitColValue(c.key, total) ?? 0) : undefined}
                     className={`px-3 py-3 text-right ${c.month ? "bg-[#FFD199]" : ""} ${i === firstMonth ? "border-l-2 border-[#FFB366]" : ""} ${
                       i === cols.length - 1 ? "pr-4" : ""
                     }`}
@@ -1438,198 +1433,11 @@ function BrandPanel({
               </tr>
             </tfoot>
           </table>
-        </div>
-      )}
+      </div>
     </section>
   );
 }
 
-type ProfitDatum = { label: string; color: string; profit: number; margin: number | null; revenue: number; growth: number | null };
-
-function ProfitChart({ teams, showIdle }: { teams: TeamGroup[]; showIdle: boolean }) {
-  const rows: ProfitDatum[] = teams
-    .flatMap((t) =>
-      t.brands
-        .filter((r) => showIdle || !isIdle(r.s))
-        .map((r) => ({
-          label: r.b.label,
-          color: t.color,
-          profit: r.s.cur.profit,
-          margin: div(r.s.cur.profit, r.s.cur.revenue),
-          revenue: r.s.cur.revenue,
-          growth: wow(r.s.cur.profit, r.s.prev.profit),
-        })),
-    )
-    .sort((a, b) => b.profit - a.profit);
-  if (!rows.length) return <div className="px-5 py-10 text-center text-[13px] !text-slate-400">Không có brand phát sinh.</div>;
-  return (
-    <div className="px-4 pt-4 pb-2">
-      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs !text-slate-600">
-        {teams.map((t) => (
-          <span key={t.team} className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: t.color }} />
-            {t.team}
-          </span>
-        ))}
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: NEG }} />
-          Lỗ
-        </span>
-        <span className="ml-auto !text-slate-400">Nhãn: Profit · Biên LN</span>
-      </div>
-      <div style={{ height: Math.max(160, rows.length * 34 + 16) }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 96, bottom: 0, left: 0 }} barCategoryGap="30%">
-            <XAxis type="number" hide domain={[(min: number) => Math.min(0, min), "auto"]} />
-            <YAxis type="category" dataKey="label" width={150} tick={{ fontSize: 12, fill: "#334155" }} axisLine={false} tickLine={false} interval={0} />
-            <Tooltip
-              cursor={{ fill: "#f1f5f9" }}
-              content={({ active, payload }) => {
-                const p = active ? (payload?.[0]?.payload as ProfitDatum | undefined) : undefined;
-                if (!p) return null;
-                return (
-                  <div className="min-w-[180px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
-                    <p className="mb-1 font-semibold !text-slate-900">{p.label}</p>
-                    <TipRow k="Profit" v={usd(p.profit)} />
-                    <TipRow k="% WoW" v={<WowPill value={p.growth} size="sm" />} />
-                    <TipRow k="Revenue" v={usd(p.revenue)} />
-                    <TipRow k="Biên LN" v={pct(p.margin)} />
-                  </div>
-                );
-              }}
-            />
-            <Bar dataKey="profit" radius={4} isAnimationActive={false}>
-              {rows.map((d) => (
-                <Cell key={d.label} fill={d.profit < 0 ? NEG : d.color} />
-              ))}
-              <LabelList
-                dataKey="profit"
-                content={(props) => {
-                  const { x, y, width, height, index } = props as { x: number; y: number; width: number; height: number; index: number };
-                  const d = rows[index];
-                  if (!d) return null;
-                  const end = Math.max(Number(x), Number(x) + Number(width));
-                  return (
-                    <text x={end + 6} y={Number(y) + Number(height) / 2} dominantBaseline="central" fontSize={11}>
-                      <tspan fill={d.profit < 0 ? NEG : "#0f172a"} fontWeight={600}>
-                        {usdK(d.profit)}
-                      </tspan>
-                      <tspan fill="#94a3b8"> · {pct(d.margin, 0)}</tspan>
-                    </text>
-                  );
-                }}
-              />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
-
-function TipRow({ k, v }: { k: string; v: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-0.5">
-      <span className="!text-slate-500">{k}</span>
-      <span className="font-semibold tabular-nums !text-slate-900">{v}</span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 5. SKU TEST — mặc định chỉ brand có phát sinh
-// ---------------------------------------------------------------------------
-
-function TestBlock({ tests }: { tests: WeeklyReport["tests"] }) {
-  const [showAll, setShowAll] = useState(false);
-  const cur = tests.reduce((s, t) => add(s, t.current), ZERO);
-  const prev = tests.reduce((s, t) => add(s, t.previous), ZERO);
-  const rc = ratiosOf(cur);
-  const rp = ratiosOf(prev);
-  const activeRows = tests.filter((t) => t.current.revenue !== 0 || t.current.profit !== 0 || t.previous.revenue !== 0);
-  const rows = (showAll ? tests : activeRows).slice().sort((a, b) => b.current.revenue - a.current.revenue);
-  const hidden = tests.length - activeRows.length;
-  const stats = [
-    { label: "Revenue", value: usd(cur.revenue), delta: <WowPill value={wow(cur.revenue, prev.revenue)} size="sm" /> },
-    { label: "Profit", value: usd(cur.profit), delta: <WowPill value={wow(cur.profit, prev.profit)} size="sm" /> },
-    { label: "TACoS", value: pct(rc.tacos), delta: <WowPill value={wow(rc.tacos, rp.tacos)} goodWhen="down" size="sm" /> },
-    { label: "Biên LN", value: pct(rc.margin), delta: <WowPill value={wow(rc.margin, rp.margin)} size="sm" /> },
-    { label: "Quantity", value: int(cur.quantity), delta: <WowPill value={wow(cur.quantity, prev.quantity)} size="sm" /> },
-  ];
-  const max = Math.max(1, ...rows.map((t) => t.current.revenue));
-  const theme = useTheme();
-  const th = thCls(theme);
-  return (
-    <div className={tableCard(theme)}>
-      <div className="grid grid-cols-2 divide-x divide-y divide-orange-100 border-b border-orange-200 bg-orange-50 md:grid-cols-5 md:divide-y-0">
-        {stats.map((s) => (
-          <div key={s.label} className="flex flex-col gap-1 px-4 py-3">
-            <span className="text-[13px] font-semibold !text-orange-800">{s.label}</span>
-            <span className="flex items-baseline justify-between gap-2">
-              <span className="text-lg font-bold tabular-nums !text-slate-900">{s.value}</span>
-              {s.delta}
-            </span>
-          </div>
-        ))}
-      </div>
-      {rows.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className={`${TABLE} min-w-[880px]`}>
-            <thead>
-              <tr>
-                <th className={`${th} pl-4 !text-left`}>Brand</th>
-                <th className={th}>Revenue</th>
-                <th className={th}>% WoW</th>
-                <th className={th}>Quantity</th>
-                <th className={`${th} !text-slate-900`}>Profit</th>
-                <th className={th}>TACoS</th>
-                <th className={th}>ROI</th>
-                <th className={`${th} pr-4 !text-slate-900`}>Biên LN</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((t) => {
-                const r = ratiosOf(t.current);
-                return (
-                  <tr key={t.storeId} className={rowCls(theme)}>
-                    <td className="py-2.5 pr-3 pl-4 font-semibold !text-slate-800">{t.label}</td>
-                    <td className="px-3 py-2.5 text-right">
-                      <div className="ml-auto flex w-[160px] items-center gap-2">
-                        <div className="h-2 flex-1 rounded-full bg-slate-200">
-                          <div className="h-full rounded-full bg-orange-400" style={{ width: `${Math.max(0, (t.current.revenue / max) * 100)}%` }} />
-                        </div>
-                        <span className="w-[66px] text-right font-semibold !text-slate-900">{usd(t.current.revenue)}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <WowPill value={wow(t.current.revenue, t.previous.revenue)} quiet />
-                    </td>
-                    <td className="px-3 py-2.5 text-right">{int(t.current.quantity)}</td>
-                    <td className={`px-3 py-2.5 text-right font-bold ${t.current.profit < 0 ? "!text-rose-600" : "!text-slate-900"}`}>{usd(t.current.profit)}</td>
-                    <td className="px-3 py-2.5 text-right">
-                      {pct(r.tacos)}
-                    </td>
-                    <td className="px-3 py-2.5 text-right">{pct(r.roi)}</td>
-                    <td className={`px-3 py-2.5 pr-4 text-right font-semibold ${r.margin != null && r.margin < 0 ? "!text-rose-600" : ""}`}>{pct(r.margin)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setShowAll((v) => !v)}
-          className="w-full cursor-pointer border-t border-slate-200 py-2 text-[13px] font-semibold !text-indigo-700 hover:bg-slate-50"
-        >
-          {showAll ? "Chỉ hiện brand có phát sinh" : `Hiện cả ${hidden} brand không phát sinh`}
-        </button>
-      )}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // 6. TỒN KHO & DÒNG TIỀN — trạng thái cần xử lý lên đầu
@@ -1652,71 +1460,216 @@ function stockState(units: number, perWeek: number, weeksLeft: number | null): S
   return { tone: "good", label: "Đủ tồn", title: "4–20 tuần bán", rank: 6 };
 }
 
-function StockBlock({ stock, days }: { stock: WeeklyReport["stock"]; days: number }) {
-  const totalValue = stock.reduce((s, r) => s + r.value, 0);
-  const totalUnits = stock.reduce((s, r) => s + r.units, 0);
+type Prepaid = { units: number | null; value: number | null };
+
+/**
+ * Ô nhập trả trước cho SUP (cột hồng như sheet). Lưu khi rời ô / Enter; Esc để huỷ.
+ */
+function PrepaidInput({
+  value,
+  integer,
+  label,
+  onSave,
+  width = "w-[96px]",
+  placeholder = "",
+  allowNegative = false,
+  tone = "rose",
+}: {
+  value: number | null;
+  integer: boolean;
+  label: string;
+  onSave: (v: number | null) => Promise<void>;
+  width?: string;
+  placeholder?: string;
+  allowNegative?: boolean;
+  tone?: "rose" | "orange";
+}) {
+  // Khi không gõ: hiện có dấu phẩy ngăn nghìn cho dễ đọc
+  const shown = value == null ? "" : value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const [draft, setDraft] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [error, setError] = useState("");
+  const commit = async () => {
+    if (draft == null) return;
+    let raw = draft.replace(/[,$\s]/g, "");
+    // Kiểu Việt "26.000" / "7.809.700" = dấu chấm ngăn nghìn
+    if (/^-?\d{1,3}(\.\d{3})+$/.test(raw)) raw = raw.replace(/\./g, "");
+    const next = raw === "" ? null : Number(raw);
+    if (next != null && (!Number.isFinite(next) || (!allowNegative && next < 0) || (integer && !Number.isInteger(next)))) {
+      setStatus("error");
+      setError(allowNegative ? "Nhập một số" : integer ? "Nhập số nguyên ≥ 0" : "Nhập số ≥ 0");
+      return;
+    }
+    if (next === value) {
+      setDraft(null);
+      return;
+    }
+    setStatus("saving");
+    try {
+      await onSave(next);
+      setDraft(null);
+      setStatus("idle");
+    } catch (e) {
+      setStatus("error");
+      setError(e instanceof Error ? e.message : "Không lưu được");
+    }
+  };
+  return (
+    <input
+      type="text"
+      inputMode={integer ? "numeric" : "decimal"}
+      aria-label={label}
+      value={draft ?? shown}
+      placeholder={placeholder}
+      disabled={status === "saving"}
+      title={status === "error" ? error : "Kế toán nhập · Enter hoặc bấm ra ngoài để lưu, Esc để huỷ"}
+      onFocus={(e) => {
+        // Bấm vào ô: hiện số gốc (không dấu phẩy) và chọn hết → gõ là thay số cũ, không bị nối thêm
+        if (draft == null) setDraft(value == null ? "" : String(value));
+        const el = e.currentTarget;
+        requestAnimationFrame(() => el.select());
+      }}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        if (status === "error") setStatus("idle");
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          setDraft(null);
+          setStatus("idle");
+        }
+      }}
+      className={`${width} rounded-md border bg-white px-2.5 py-1.5 text-right font-semibold tabular-nums !text-slate-950 outline-none placeholder:font-normal placeholder:!text-slate-400 ${
+        tone === "orange" ? "focus:border-orange-400 focus:ring-2 focus:ring-orange-200" : "focus:ring-2 focus:ring-rose-300"
+      } ${status === "error" ? "border-rose-500 !text-rose-700" : tone === "orange" ? "border-orange-200 hover:border-orange-300" : "border-rose-200"} ${
+        status === "saving" ? "opacity-60" : ""
+      }`}
+    />
+  );
+}
+
+// Cột hồng = kế toán nhập (như sheet); cột cam nhạt = tồn Amazon tự lấy; Tổng = AMZ + trả trước
+const PREPAID_TH = "!bg-[#F4CCCC]";
+const PREPAID_TD = "bg-rose-50";
+
+function StockBlock({
+  stock,
+  days,
+  weekStart,
+  canEdit,
+}: {
+  stock: WeeklyReport["stock"];
+  days: number;
+  weekStart: string;
+  canEdit: boolean;
+}) {
+  // Số đã lưu trong phiên (không phải tải lại cả báo cáo)
+  const [saved, setSaved] = useState<Record<string, Prepaid>>({});
+  const prepaidOf = (s: WeeklyReport["stock"][number]): Prepaid =>
+    saved[`${weekStart}|${s.storeId}`] ?? { units: s.prepaidUnits ?? null, value: s.prepaidValue ?? null };
+  const save = async (s: WeeklyReport["stock"][number], patch: Partial<Prepaid>) => {
+    const next = { ...prepaidOf(s), ...patch };
+    const res = await fetch("/api/accounting/financials/weekly-report/prepaid", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ store_id: s.storeId, week_start: weekStart, units: next.units, value: next.value }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body?.error || "Không lưu được");
+    setSaved((cur) => ({ ...cur, [`${weekStart}|${s.storeId}`]: next }));
+  };
+
   const perWeekOf = (sold: number) => (days ? (sold * 7) / days : 0);
   const rows = stock
     .map((s) => {
+      const p = prepaidOf(s);
+      const units = s.units + (p.units ?? 0);
+      const value = s.value + (p.value ?? 0);
       const perWeek = perWeekOf(s.soldInPeriod);
-      const weeksLeft = perWeek > 0 && s.units > 0 ? s.units / perWeek : null;
-      return { s, perWeek, weeksLeft, state: stockState(s.units, perWeek, weeksLeft) };
+      const weeksLeft = perWeek > 0 && units > 0 ? units / perWeek : null;
+      return { s, p, units, value, perWeek, weeksLeft, state: stockState(units, perWeek, weeksLeft) };
     })
-    .sort((a, b) => a.state.rank - b.state.rank || b.s.value - a.s.value);
-  const totalPerWeek = rows.reduce((n, r) => n + r.perWeek, 0);
-  // Số tuần bán hết cấp tổng: chỉ tính brand vừa có tồn vừa có bán (không cộng tồn của brand không bán / bán của brand hết tồn)
+    .sort((a, b) => a.state.rank - b.state.rank || b.value - a.value);
+  const sum = (pick: (r: (typeof rows)[number]) => number) => rows.reduce((n, r) => n + pick(r), 0);
+  const totalValue = sum((r) => r.value);
+  const totalPerWeek = sum((r) => r.perWeek);
+  // Số tuần bán hết cấp tổng: chỉ tính brand vừa có tồn vừa có bán
   const valid = rows.filter((r) => r.weeksLeft != null);
-  const validUnits = valid.reduce((n, r) => n + r.s.units, 0);
+  const validUnits = valid.reduce((n, r) => n + r.units, 0);
   const validPerWeek = valid.reduce((n, r) => n + r.perWeek, 0);
   const totalWeeks = validPerWeek > 0 ? validUnits / validPerWeek : null;
   const excluded = rows.length - valid.length;
-  const noData = rows.filter((r) => r.state.tone == null).map((r) => r.s.label);
+  // Người xem: gộp store không tồn, không bán thành 1 dòng. Kế toán: hiện hết để nhập trả trước.
+  const listed = canEdit ? rows : rows.filter((r) => r.state.tone != null);
+  const noData = canEdit ? [] : rows.filter((r) => r.state.tone == null).map((r) => r.s.label);
   const theme = useTheme();
   const th = thCls(theme);
+  const ncol = 11;
   return (
     <div className={`${tableCard(theme)} h-full`}>
       <div className="overflow-x-auto">
-        <table className={`${TABLE} min-w-[660px]`}>
+        <table className={`${TABLE} min-w-[1100px]`}>
           <thead>
             <tr>
               <th className={`${th} pl-4 !text-left`}>Brand</th>
-              <th className={th}>SL tồn</th>
-              <th className={th}>Giá trị tồn</th>
+              <th className={th}>{"SL tồn\nAMZ"}</th>
+              <th className={th}>{"Giá trị tồn\nAMZ ($)"}</th>
+              <th className={`${th} ${PREPAID_TH}`}>{"SL trả trước\ncho SUP"}</th>
+              <th className={`${th} ${PREPAID_TH}`}>{"Giá trị\ntrả trước ($)"}</th>
+              <th className={th}>{"Tổng\nSL tồn"}</th>
+              <th className={th}>{"Tổng\ntồn kho ($)"}</th>
               <th className={th}>% tổng tồn</th>
               <th className={th}>Bán / tuần</th>
-              <th className={th}>Số tuần bán hết</th>
+              <th className={th}>{"Số tuần\nbán hết"}</th>
               <th className={`${th} pr-4 !text-center`}>Trạng thái</th>
             </tr>
           </thead>
           <tbody>
-            {rows.filter((r) => r.state.tone != null).map(({ s, perWeek, weeksLeft, state }) => {
-              const share = div(s.value, totalValue);
+            {listed.map(({ s, p, units, value, perWeek, weeksLeft, state }) => {
+              const share = div(value, totalValue);
               return (
                 <tr key={s.storeId} className={rowCls(theme)}>
-                  <td className="py-2.5 pr-3 pl-4 font-semibold !text-slate-800">{s.label}</td>
-                  <td className="px-3 py-2 text-right">{int(s.units)}</td>
-                  <td className="px-3 py-2 text-right font-semibold !text-slate-900">{usd(s.value)}</td>
+                  <td className="py-2.5 pr-3 pl-4 font-semibold !text-slate-900">{s.label}</td>
+                  <td className="px-3 py-2 text-right font-medium">{int(s.units)}</td>
+                  <td className="px-3 py-2 text-right font-medium">{usd(s.value)}</td>
+                  <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
+                    {canEdit ? (
+                      <PrepaidInput value={p.units} integer label={`SL trả trước cho SUP — ${s.label}`} onSave={(v) => save(s, { units: v })} />
+                    ) : (
+                      <span className="font-medium">{p.units == null ? "" : int(p.units)}</span>
+                    )}
+                  </td>
+                  <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
+                    {canEdit ? (
+                      <PrepaidInput value={p.value} integer={false} label={`Giá trị trả trước — ${s.label}`} onSave={(v) => save(s, { value: v })} />
+                    ) : (
+                      <span className="font-medium">{p.value == null ? "" : usd(p.value)}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold !text-slate-950">{int(units)}</td>
+                  <td className="px-3 py-2 text-right font-bold !text-slate-950">{usd(value)}</td>
                   <td className="px-3 py-2 text-right">
                     <div className="ml-auto flex w-[96px] items-center gap-2">
                       <div className="h-2 flex-1 rounded-full bg-slate-200">
                         <div className="h-full rounded-full bg-orange-400" style={{ width: `${(share ?? 0) * 100}%` }} />
                       </div>
-                      <span className="w-10 text-right !text-slate-700">{pct(share, 0)}</span>
+                      <span className="w-10 text-right font-medium !text-slate-800">{pct(share, 0)}</span>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right">{int(perWeek)}</td>
+                  <td className="px-3 py-2 text-right font-medium">{int(perWeek)}</td>
                   <td className="px-3 py-2 text-right font-bold">{weeksLeft == null ? "—" : weeksLeft.toFixed(1)}</td>
                   <td className="px-3 py-2 pr-4 text-center">
-                    <StatusChip tone={state.tone} label={state.label} title={state.title} />
+                    {state.tone ? <StatusChip tone={state.tone} label={state.label} title={state.title} /> : <span className="!text-[12px] !text-slate-950">{state.label}</span>}
                   </td>
                 </tr>
               );
             })}
-            {/* Store không tồn, không bán: gộp 1 dòng thay vì nhiều dòng toàn số 0 */}
             {noData.length > 0 && (
-              <tr className="border-b border-slate-200/70 bg-slate-50 !text-slate-600">
-                <td colSpan={7} className="px-4 py-2.5 text-[13px]" title={noData.join(", ")}>
-                  <span className="font-semibold !text-slate-700">{noData.length} store chưa có dữ liệu tồn:</span> {noData.join(", ")}
+              <tr className="border-b border-slate-200/70 bg-slate-50 !text-slate-950">
+                <td colSpan={ncol} className="px-4 py-2.5 text-[13px]" title={noData.join(", ")}>
+                  <span className="font-semibold !text-slate-950">{noData.length} store chưa có dữ liệu tồn:</span> {noData.join(", ")}
                 </td>
               </tr>
             )}
@@ -1724,22 +1677,179 @@ function StockBlock({ stock, days }: { stock: WeeklyReport["stock"]; days: numbe
           <tfoot>
             <tr className={`${theme.total} font-bold`}>
               <td className="py-2.5 pr-3 pl-4">TỔNG</td>
-              <td className="px-3 py-2.5 text-right">{int(totalUnits)}</td>
+              <td className="px-3 py-2.5 text-right">{int(sum((r) => r.s.units))}</td>
+              <td className="px-3 py-2.5 text-right">{usd(sum((r) => r.s.value))}</td>
+              <td className="px-3 py-2.5 text-right">{int(sum((r) => r.p.units ?? 0))}</td>
+              <td className="px-3 py-2.5 text-right">{usd(sum((r) => r.p.value ?? 0))}</td>
+              <td className="px-3 py-2.5 text-right">{int(sum((r) => r.units))}</td>
               <td className="px-3 py-2.5 text-right">{usd(totalValue)}</td>
               <td className="px-3 py-2.5 text-right">100%</td>
               <td className="px-3 py-2.5 text-right">{int(totalPerWeek)}</td>
               <td
                 className="px-3 py-2.5 text-right"
-                title={`Tổng tồn ÷ tổng bán/tuần của ${valid.length} brand vừa có tồn vừa có bán${excluded ? ` (bỏ ${excluded} brand hết tồn hoặc không bán)` : ""}`}
+                title={`Tổng SL tồn ÷ tổng bán/tuần của ${valid.length} brand vừa có tồn vừa có bán${excluded ? ` (bỏ ${excluded} brand hết tồn hoặc không bán)` : ""}`}
               >
                 {totalWeeks == null ? "—" : totalWeeks.toFixed(1)}
-                {excluded > 0 && totalWeeks != null && <span className="ml-0.5 align-super text-[10px] !text-slate-500">*</span>}
+                {excluded > 0 && totalWeeks != null && <span className="ml-0.5 align-super text-[10px] !text-slate-950">*</span>}
               </td>
               <td className="px-3 py-2.5 pr-4" />
             </tr>
           </tfoot>
         </table>
       </div>
+    </div>
+  );
+}
+
+/** Mục tiền (thu gọn): bấm tiêu đề để mở bảng dòng tiền + Payment theo store */
+function MoneySection({
+  payout,
+  cashflow,
+  canEdit,
+}: {
+  payout: NonNullable<WeeklyReport["payout"]>;
+  cashflow: WeeklyCashflow | null;
+  canEdit: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-orange-200 bg-white px-4 py-3 text-left shadow-sm hover:bg-orange-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"
+      >
+        <span className="flex items-center gap-2.5 !text-[20px] font-bold !tracking-tight !text-slate-950">
+          <span className="h-6 w-1.5 rounded-full bg-orange-500" />
+          Tài chính & dòng tiền
+          <span className="rounded-md bg-orange-100 px-2 py-0.5 !text-[12px] font-bold !text-orange-800">Admin / Kế toán</span>
+        </span>
+        <span className="flex items-center gap-2 text-[13px] font-semibold !text-slate-950">
+          {open ? "Thu gọn" : "Mở"}
+          <CaretDownIcon size={14} weight="bold" className={`transition ${open ? "rotate-180" : ""}`} />
+        </span>
+      </button>
+      {open && (
+        <div className="mt-3 grid gap-5 xl:grid-cols-12">
+          {cashflow && (
+            <div className="xl:col-span-8">
+              <CashflowBlock key={cashflow.weekStart} cashflow={cashflow} payment={payout.current} canEdit={canEdit} />
+            </div>
+          )}
+          <div className={cashflow ? "xl:col-span-4" : "xl:col-span-6"}>
+            <PayoutBlock payout={payout} />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * VI. Tài chính & dòng tiền — đúng các dòng của sheet. Payment lấy từ hệ thống (payout); ô có khung = admin / kế toán
+ * nhập theo tuần; còn lại web tính. Ô trống để trắng.
+ */
+function CashflowBlock({ cashflow, payment, canEdit }: { cashflow: WeeklyCashflow; payment: number; canEdit: boolean }) {
+  const [values, setValues] = useState<CashflowValues>(cashflow.values);
+  const c = computeCashflow({ ...cashflow, values }, payment);
+  const save = (f: CashflowField) => async (v: number | null) => {
+    const res = await fetch("/api/accounting/financials/weekly-report/cashflow", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ week_start: cashflow.weekStart, values: { [f]: v } }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body?.error || "Không lưu được");
+    setValues(body.values ?? {});
+  };
+  const num = (v: number | null | undefined, digits = 0) =>
+    v == null || v === 0 ? "" : v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const edit = (f: CashflowField, label: string, opts: { placeholder?: string; allowNegative?: boolean; digits?: number } = {}) =>
+    canEdit ? (
+      <PrepaidInput
+        value={values[f] ?? null}
+        integer={false}
+        label={label}
+        onSave={save(f)}
+        width="w-[170px]"
+        placeholder={opts.placeholder}
+        allowNegative={opts.allowNegative}
+        tone="orange"
+      />
+    ) : (
+      num(values[f], opts.digits)
+    );
+
+  type Line =
+    | { kind: "head"; label: string }
+    | { kind: "row"; label: string; value: ReactNode; total?: boolean; negative?: boolean; hint?: string };
+  // Đúng các dòng của sheet: ô có khung = kế toán điền; còn lại lấy từ hệ thống / tự tính
+  const lines: Line[] = [
+    { kind: "head", label: "1. Dòng tiền KINH DOANH" },
+    { kind: "row", label: "Payment (USD)", value: num(c.payment, 2), hint: "Lấy từ hệ thống: Amazon giải ngân (payout Done) trong tuần" },
+    { kind: "row", label: "Chi mua hàng (USD + quy đổi VND)", value: edit("purchase", "Chi mua hàng (USD + quy đổi VND)", { digits: 2 }) },
+    { kind: "row", label: "Dòng tiền kinh doanh ròng", value: num(c.net, 2), total: true, negative: c.net < 0, hint: "Payment − Chi mua hàng" },
+    { kind: "head", label: "2. Dòng tiền VẬN HÀNH (CPVH)" },
+    { kind: "row", label: "CPVH chung (VND)", value: edit("cpvhCommon", "CPVH chung") },
+    { kind: "row", label: "CPVH Tiktok/khác (VND)", value: edit("tiktok", "CPVH Tiktok/khác") },
+    { kind: "row", label: "TỔNG CPVH", value: num(c.cpvh), total: true, hint: "CPVH chung + CPVH Tiktok/khác" },
+    { kind: "head", label: "3. VỐN & SINH HOẠT" },
+    { kind: "row", label: "Topup vốn trong tuần (VND)", value: edit("topup", "Topup vốn trong tuần") },
+    { kind: "head", label: "SỐ DƯ QUỸ TIỀN VIỆT" },
+    {
+      kind: "row",
+      label: "Số dư quỹ đầu tuần",
+      hint: cashflow.carriedOpening == null ? "Tuần đầu tiên: nhập số dư" : "Tự lấy số dư cuối tuần trước; nhập để đặt lại",
+      value: canEdit ? (
+        <PrepaidInput
+          value={values.openingBalance ?? null}
+          integer={false}
+          label="Số dư quỹ đầu tuần"
+          onSave={save("openingBalance")}
+          width="w-[170px]"
+          placeholder={num(cashflow.carriedOpening)}
+          allowNegative
+          tone="orange"
+        />
+      ) : (
+        num(c.opening)
+      ),
+    },
+    { kind: "row", label: "Tổng thu trong tuần", value: num(c.income), hint: "= Topup vốn trong tuần" },
+    { kind: "row", label: "Tổng chi trong tuần", value: edit("totalSpend", "Tổng chi trong tuần") },
+    { kind: "row", label: "Số dư quỹ cuối tuần", value: c.closing == null ? "" : num(c.closing) || "0", total: true, negative: (c.closing ?? 0) < 0, hint: "Đầu tuần + Tổng thu − Tổng chi" },
+  ];
+  type Row = Extract<Line, { kind: "row" }>;
+  const groups: { title: string; rows: Row[] }[] = [];
+  for (const l of lines) {
+    if (l.kind === "head") groups.push({ title: l.label, rows: [] });
+    else groups[groups.length - 1]?.rows.push(l);
+  }
+
+  return (
+    <div className="grid items-start gap-4 md:grid-cols-2">
+      {groups.map((g) => (
+        <div key={g.title} className="overflow-hidden rounded-xl border border-orange-200 bg-white shadow-sm">
+          <div className="bg-[#FF8C00] px-4 py-2.5 text-[14px] font-bold !text-black">{g.title}</div>
+          <table className="w-full border-collapse tabular-nums">
+            <tbody>
+              {g.rows.map((l) => (
+                <tr key={l.label} className={`border-b border-orange-100 last:border-b-0 ${l.total ? "bg-orange-100" : ""}`}>
+                  <td className={`py-2 pr-3 pl-4 font-bold !text-slate-950 ${l.total ? "!text-[14.5px]" : "!text-[13.5px]"}`} title={l.hint}>
+                    {l.label}
+                  </td>
+                  <td
+                    className={`px-4 py-1.5 text-right font-bold ${l.total ? "!text-[15px]" : "!text-[14px]"} ${l.negative ? "!text-rose-600" : "!text-slate-950"}`}
+                  >
+                    {l.value}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
     </div>
   );
 }

@@ -17,6 +17,7 @@ export async function GET(request: Request) {
       date: DATE_RE.test(date) ? date : new Date().toISOString().slice(0, 10),
       allowedChannels: access.full ? undefined : (id: string) => storeChannelsFor(access, id),
       canViewPayout: actor.role === "admin" || actor.role === "accountant",
+      canEditPrepaid: actor.role === "admin" || actor.role === "accountant",
     });
     return Response.json(report);
   } catch (error) {

@@ -10,6 +10,9 @@ import {
 import { queryStockAt } from "@/lib/accounting/dashboard-stock";
 import { getStoreMonthTargets } from "@/lib/accounting/kpi-month-targets";
 import { getDatabaseClient } from "@/lib/db";
+import { getWeeklyPrepaid, type WeeklyPrepaid } from "@/lib/accounting/weekly-prepaid-db";
+import { getWeeklyCashflow } from "@/lib/accounting/weekly-cashflow-db";
+import type { WeeklyCashflow } from "@/lib/accounting/weekly-cashflow";
 import {
   daysInMonthOf,
   previousWeekSegment,
@@ -25,8 +28,11 @@ import {
 //       của kỳ vẫn tính là Test. Mỗi dòng kèm số SKU TEST (row.test) để bảng brand chọn All / Win / Test.
 //   P/L theo người phụ trách: gom brand theo Team của store (FBA 1 → FBA TEAM 1…, kênh FBM → FBM).
 //   III. Hiệu quả RD (SKU TEST): getDashboardSkuGroup("test") — chỉ FBA.
-//   V.  Tồn kho: tồn FBA + AWD tại ngày cuối tuần (như Stores Performance), số tuần bán hết = tồn ÷ bán/tuần.
+//   V.  Tồn kho: tồn FBA + AWD tại ngày cuối tuần (như Stores Performance) + trả trước cho SUP (kế toán nhập theo tuần,
+//       accounting_weekly_prepaid_stock); số tuần bán hết = Tổng SL tồn ÷ bán/tuần.
 //   VI. Payment (USD): tiền về Amazon (Disbursements) trong tuần — chỉ admin / kế toán.
+//       Tài chính & dòng tiền: kế toán nhập chi phí / topup / tỷ giá theo tuần (accounting_weekly_cashflow), web tính
+//       Chi mua hàng (USD), dòng tiền ròng, TỔNG CPVH, số dư quỹ (lib/accounting/weekly-cashflow.ts).
 // Các mục lấy từ SỔ QUỸ, DS_MEDIA, trả trước SUP chưa có dữ liệu trong hệ thống nên không có ở đây.
 // Công thức như sheet: % WoW = (này − trước) ÷ |trước|; TACoS = Ads ÷ Revenue; ROI = Profit ÷ Base Cost;
 // nhịp mục tiêu = lũy kế từ đầu tháng ÷ (mục tiêu tháng × ngày cuối kỳ ÷ số ngày trong tháng).
@@ -78,6 +84,9 @@ export interface WeeklyStockRow {
   snapshotDate: string | null;
   /** SL bán FBA (Win + Test) trong kỳ */
   soldInPeriod: number;
+  /** Trả trước cho SUP của tuần — kế toán nhập (null = chưa nhập) */
+  prepaidUnits: number | null;
+  prepaidValue: number | null;
 }
 
 export interface WeeklyReport {
@@ -93,6 +102,10 @@ export interface WeeklyReport {
   brands: WeeklyBrandRow[];
   tests: WeeklyTestRow[];
   stock: WeeklyStockRow[];
+  /** Admin / kế toán được nhập trả trước cho SUP ở bảng Tồn kho */
+  canEditPrepaid: boolean;
+  /** Tài chính & dòng tiền (kế toán nhập + web tính) — null = không có quyền xem */
+  cashflow: WeeklyCashflow | null;
   /** null = người xem không có quyền xem tiền về */
   payout: { current: number; previous: number; byStore: { storeName: string; current: number; previous: number }[] } | null;
 }
@@ -146,6 +159,7 @@ export async function getWeeklyReport(options: {
   date: string;
   allowedChannels?: DashboardAllowedChannels;
   canViewPayout?: boolean;
+  canEditPrepaid?: boolean;
 }): Promise<WeeklyReport> {
   const [allStores, latestDate] = await Promise.all([listStores(), getLatestAvailableAccountingDate()]);
   // Tuần chưa có số liệu → lùi về tuần có ngày dữ liệu mới nhất
@@ -227,10 +241,16 @@ export async function getWeeklyReport(options: {
     previous: testPrv.get(`${s.storeId}|FBA`) ?? { ...EMPTY },
   }));
 
-  const stockAt = await queryStockAt(
-    fbaStores.map((s) => s.storeId),
-    dataThrough,
-  );
+  const [stockAt, prepaid] = await Promise.all([
+    queryStockAt(
+      fbaStores.map((s) => s.storeId),
+      dataThrough,
+    ),
+    getWeeklyPrepaid(
+      fbaStores.map((s) => s.storeId),
+      week.startDate,
+    ).catch(() => new Map<string, WeeklyPrepaid>()),
+  ]);
   const stock: WeeklyStockRow[] = fbaStores.map((s) => {
     const v = stockAt.get(s.storeId);
     return {
@@ -240,12 +260,17 @@ export async function getWeeklyReport(options: {
       value: v?.value ?? 0,
       snapshotDate: v?.snapshotDate ?? null,
       soldInPeriod: (winCur.get(`${s.storeId}|FBA`)?.quantity ?? 0) + (testCur.get(`${s.storeId}|FBA`)?.quantity ?? 0),
+      prepaidUnits: prepaid.get(s.storeId)?.units ?? null,
+      prepaidValue: prepaid.get(s.storeId)?.value ?? null,
     };
   });
 
-  const payout = options.canViewPayout
-    ? await loadPayout(week, previousWeek, win.byStore.map((s) => s.storeName))
-    : null;
+  const [payout, cashflow] = options.canViewPayout
+    ? await Promise.all([
+        loadPayout(week, previousWeek, win.byStore.map((s) => s.storeName)),
+        getWeeklyCashflow(week.startDate).catch(() => null),
+      ])
+    : [null, null];
 
   const dayCount = (a: string, b: string) => Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000) + 1);
   const prevThrough = latestDate && latestDate < previousWeek.endDate ? latestDate : previousWeek.endDate;
@@ -260,6 +285,8 @@ export async function getWeeklyReport(options: {
     brands,
     tests,
     stock,
+    canEditPrepaid: Boolean(options.canEditPrepaid),
+    cashflow,
     payout,
   };
 }
