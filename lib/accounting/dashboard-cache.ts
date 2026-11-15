@@ -163,6 +163,11 @@ export async function stampedParts<T>(
   return out;
 }
 
+/** Chờ mọi lượt tính lại ngầm đang chạy trong tiến trình này xong (bộ tính sẵn ở worker: chạy lần lượt, không dồn tải). */
+export async function waitForDashboardBackgroundLoads(): Promise<void> {
+  while (backgroundLoads.size) await Promise.allSettled([...backgroundLoads.values()]);
+}
+
 /** 1 giá trị cache có stamp (cùng quy tắc stale-while-revalidate). */
 export async function stampedValue<T>(cache: DashboardCacheScope, key: string, stamp: string, compute: () => Promise<T>): Promise<T> {
   const values = await stampedParts<T>(cache, [{ id: "v", key, stamp }], async () => new Map([["v", await compute()]]), key);

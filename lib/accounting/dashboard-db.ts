@@ -731,8 +731,8 @@ async function loadStockValues(
 ): Promise<Map<string, StoreStockAt | null>> {
   if (!storeIds.length || !asOf) return new Map();
   // Cache theo từng store + ngày (đổi lựa chọn store không phải tính lại). Ledger / AWD / Inbound tăng phiên bản dữ liệu
-  // (migration 150) nên stamp chỉ cần phiên bản dữ liệu. Các store thiếu cache tính chung 1 truy vấn
-  // (7 truy vấn song song từng store tranh CPU: ~2,9 s tổng so với ~30 ms mỗi store khi chạy riêng).
+  // (migration 150) nên stamp chỉ cần phiên bản dữ liệu (trước đây hết hạn mỗi 5 phút → hay phải tính lại).
+  // Vẫn truy vấn riêng từng store: gộp nhiều store vào 1 truy vấn đo trên DB thật chậm hơn (~1,1 s so với ~0,5 s).
   const values = await stampedParts<StoreStockAt | null>(
     cache,
     storeIds.map((id) => ({
@@ -741,8 +741,8 @@ async function loadStockValues(
       stamp: recentStamp(cache),
     })),
     async (ids) => {
-      const rows = await queryStockAt(ids, asOf, status);
-      return new Map(ids.map((id) => [id, rows.get(id) ?? null]));
+      const rows = await Promise.all(ids.map((id) => queryStockAt([id], asOf, status)));
+      return new Map(ids.map((id, i) => [id, rows[i].get(id) ?? null]));
     },
     `stock-at:${asOf}:${status || "all"}`,
   );

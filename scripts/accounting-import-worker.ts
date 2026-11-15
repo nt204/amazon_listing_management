@@ -5,6 +5,7 @@ import {
 } from "../lib/accounting/import-jobs";
 import { triggerDailyReportCheckAfterImport } from "../lib/accounting/daily-business-reporter";
 import { processNextSkuMonthlyRecalc } from "../lib/accounting/sku-monthly-recalc";
+import { startAccountingDashboardPrewarm } from "../lib/accounting/dashboard-prewarm";
 
 const workerId = process.env.ACCOUNTING_IMPORT_WORKER_ID || `${os.hostname()}:${process.pid}`;
 const pollMs = Math.max(1_000, Number(process.env.ACCOUNTING_IMPORT_POLL_SECONDS || 3) * 1_000);
@@ -15,6 +16,8 @@ async function main() {
   process.on("SIGTERM", () => { stopping = true; });
   process.on("SIGINT", () => { stopping = true; });
   console.log(`[Accounting Import Worker] Started as ${workerId}`);
+  // Tính sẵn cache Dashboard kế toán khi dữ liệu đổi (chạy song song với vòng nhập file, không chặn nhau)
+  const stopPrewarm = startAccountingDashboardPrewarm();
 
   while (!stopping) {
     let job;
@@ -41,6 +44,7 @@ async function main() {
     await executeAccountingImportJob(job);
     void triggerDailyReportCheckAfterImport().catch(() => {});
   }
+  stopPrewarm();
   console.log("[Accounting Import Worker] Stopped");
 }
 
