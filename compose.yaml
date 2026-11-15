@@ -2,6 +2,33 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Tinh chỉnh cho VPS 8 GB RAM (2026-11-15). shared_buffers giữ 512 MB vì next-server + ppc-ingestion-worker
+    # từng bị OOM-kill (~4 GB mỗi tiến trình). Trên server đang chạy qua /root/amazon-listing-db-tuning.yaml.
+    shm_size: 512mb
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=4GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - autovacuum_work_mem=64MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - jit=off
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+      - -c
+      - log_min_duration_statement=500
     environment:
       POSTGRES_DB: listing_desk
       POSTGRES_USER: listing_desk
