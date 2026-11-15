@@ -21,7 +21,8 @@ import {
 //   I.  KPI card: Revenue / Profit / Biên LN / TACoS của SKU WIN toàn công ty, so tuần trước + nhịp mục tiêu tháng.
 //   II. Kinh doanh theo brand (SKU WIN): mỗi store × kênh 1 dòng (store chạy cả FBA và FBM thì tách "(FBA)" / "(FBM)").
 //       Số SKU WIN = getDashboardSkuGroup("win"), cùng nguồn "Data Win" của sheet (FBA: Bảng mã trạng thái Phát triển;
-//       FBM: toàn bộ FBM của store).
+//       FBM: toàn bộ FBM của store). Win / Test chia như trang KPI kinh doanh: SKU "Phát triển" có Tháng đánh giá ≥ tháng
+//       của kỳ vẫn tính là Test. Mỗi dòng kèm số SKU TEST (row.test) để bảng brand chọn All / Win / Test.
 //   P/L theo người phụ trách: gom brand theo Team của store (FBA 1 → FBA TEAM 1…, kênh FBM → FBM).
 //   III. Hiệu quả RD (SKU TEST): getDashboardSkuGroup("test") — chỉ FBA.
 //   V.  Tồn kho: tồn FBA + AWD tại ngày cuối tuần (như Stores Performance), số tuần bán hết = tồn ÷ bán/tuần.
@@ -50,6 +51,15 @@ export interface WeeklyBrandRow {
   /** Lũy kế từ đầu tháng đến ngày cuối kỳ */
   mtd: WeeklyMetrics;
   /** Mục tiêu tháng (KPI kinh doanh, SKU WIN) — kênh FBM chưa có KPI → null */
+  target: { revenue: number; profit: number } | null;
+  /** Cùng dòng nhưng SKU TEST (FBM không có Test → số 0, target null) — bảng brand chọn All / Win / Test */
+  test: WeeklyGroupMetrics;
+}
+
+export interface WeeklyGroupMetrics {
+  current: WeeklyMetrics;
+  previous: WeeklyMetrics;
+  mtd: WeeklyMetrics;
   target: { revenue: number; profit: number } | null;
 }
 
@@ -145,18 +155,26 @@ export async function getWeeklyReport(options: {
   const monthStart = `${week.startDate.slice(0, 7)}-01`;
   const base = { allowedChannels: options.allowedChannels };
 
-  const [win, winPrev, winMtd, test, testPrev] = await Promise.all([
-    getDashboardSkuGroup({ ...base, group: "win", startDate: week.startDate, endDate: week.endDate }),
-    getDashboardSkuGroup({ ...base, group: "win", startDate: previousWeek.startDate, endDate: previousWeek.endDate }),
-    getDashboardSkuGroup({ ...base, group: "win", startDate: monthStart, endDate: week.endDate }),
-    getDashboardSkuGroup({ ...base, group: "test", startDate: week.startDate, endDate: week.endDate }),
-    getDashboardSkuGroup({ ...base, group: "test", startDate: previousWeek.startDate, endDate: previousWeek.endDate }),
+  // Win / Test chia như trang KPI kinh doanh theo tháng của từng kỳ: SKU "Phát triển" chưa qua Tháng đánh giá vẫn là Test
+  const cur = { startDate: week.startDate, endDate: week.endDate, kpiMonth: week.startDate.slice(0, 7) };
+  const prv = { startDate: previousWeek.startDate, endDate: previousWeek.endDate, kpiMonth: previousWeek.startDate.slice(0, 7) };
+  const mtdRange = { startDate: monthStart, endDate: week.endDate, kpiMonth: week.startDate.slice(0, 7) };
+  const [win, winPrev, winMtd, test, testPrev, testMtd] = await Promise.all([
+    getDashboardSkuGroup({ ...base, group: "win", ...cur }),
+    getDashboardSkuGroup({ ...base, group: "win", ...prv }),
+    getDashboardSkuGroup({ ...base, group: "win", ...mtdRange }),
+    getDashboardSkuGroup({ ...base, group: "test", ...cur }),
+    getDashboardSkuGroup({ ...base, group: "test", ...prv }),
+    getDashboardSkuGroup({ ...base, group: "test", ...mtdRange }),
   ]);
 
   const storeById = new Map(allStores.map((s) => [s.id, s]));
   const winCur = byStoreChannel(win);
   const winPrv = byStoreChannel(winPrev);
   const winM = byStoreChannel(winMtd);
+  const testCur = byStoreChannel(test);
+  const testPrv = byStoreChannel(testPrev);
+  const testM = byStoreChannel(testMtd);
   const period = week.startDate.slice(0, 7);
 
   const brands: WeeklyBrandRow[] = await Promise.all(
@@ -166,10 +184,12 @@ export async function getWeeklyReport(options: {
       return channels.map(async (channel): Promise<WeeklyBrandRow> => {
         const key = `${s.storeId}|${channel}`;
         let target: WeeklyBrandRow["target"] = null;
+        let testTarget: WeeklyBrandRow["target"] = null;
         if (channel === "FBA") {
           try {
             const t = await getStoreMonthTargets(s.storeId, period);
             if (t.dev) target = { revenue: t.dev.revenue, profit: t.dev.profit };
+            if (t.test) testTarget = { revenue: t.test.revenue, profit: t.test.profit };
           } catch {
             // Store chưa có KPI tháng → bỏ qua mục tiêu
           }
@@ -185,6 +205,12 @@ export async function getWeeklyReport(options: {
           previous: winPrv.get(key) ?? { ...EMPTY },
           mtd: winM.get(key) ?? { ...EMPTY },
           target,
+          test: {
+            current: testCur.get(key) ?? { ...EMPTY },
+            previous: testPrv.get(key) ?? { ...EMPTY },
+            mtd: testM.get(key) ?? { ...EMPTY },
+            target: testTarget,
+          },
         };
       });
     }),
@@ -193,8 +219,6 @@ export async function getWeeklyReport(options: {
   brands.sort((a, b) => a.team.localeCompare(b.team, "en", { numeric: true }) || a.label.localeCompare(b.label));
   brands.sort((a, b) => Number(b.team === "FBM") - Number(a.team === "FBM"));
 
-  const testCur = byStoreChannel(test);
-  const testPrv = byStoreChannel(testPrev);
   const fbaStores = win.byStore.filter((s) => (s.byChannel?.map((c) => c.channel) ?? s.channels).includes("FBA"));
   const tests: WeeklyTestRow[] = fbaStores.map((s) => ({
     storeId: s.storeId,

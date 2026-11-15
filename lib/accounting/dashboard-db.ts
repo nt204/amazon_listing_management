@@ -686,21 +686,30 @@ export interface DashboardSkuGroupData {
  * SKU FBA của nhóm trong BẢNG MÃ (accounting_sku_master, Loại FBA), khoá `${storeId}|FBA`.
  * Mỗi SKU lấy dòng đầu trong bảng (như KPI kinh doanh) rồi mới xét trạng thái. FBM không lọc theo Bảng mã.
  */
-async function loadGroupSkus(storeIds: string[], group: DashboardSkuGroup): Promise<Map<string, Set<string>>> {
+/**
+ * SKU FBA của nhóm theo trạng thái Bảng mã. Có kpiMonth (YYYY-MM) thì chia như trang KPI kinh doanh:
+ * SKU "Phát triển" có Tháng đánh giá ≥ kpiMonth tháng đó vẫn tính là Test (chưa lên Win).
+ */
+async function loadGroupSkus(storeIds: string[], group: DashboardSkuGroup, kpiMonth?: string): Promise<Map<string, Set<string>>> {
   const out = new Map<string, Set<string>>();
   if (!storeIds.length) return out;
   const sql = await getDatabaseClient();
   const status = SKU_GROUP_STATUS[group];
-  const fba = await sql<{ store_id: string; sku: string }[]>`
-    SELECT store_id::text, sku FROM (
-      SELECT DISTINCT ON (store_id, sku) store_id, sku, status
+  const rows = await sql<{ store_id: string; sku: string; status: string; eval_month: string }[]>`
+    SELECT store_id::text, sku, LOWER(TRIM(COALESCE(status, ''))) AS status, LEFT(COALESCE(thang_danh_gia, ''), 7) AS eval_month FROM (
+      SELECT DISTINCT ON (store_id, sku) store_id, sku, status, thang_danh_gia
       FROM accounting_sku_master
       WHERE store_id::text IN ${sql(storeIds)} AND deleted_at IS NULL
         AND UPPER(TRIM(COALESCE(NULLIF(loai, ''), 'FBA'))) = 'FBA'
       ORDER BY store_id, sku, row_order NULLS LAST, updated_at DESC
     ) m
-    WHERE LOWER(TRIM(COALESCE(status, ''))) = ${status}
+    WHERE LOWER(TRIM(COALESCE(status, ''))) IN (${SKU_GROUP_STATUS.win}, ${SKU_GROUP_STATUS.test})
   `;
+  const fba = rows.filter((r) => {
+    if (!kpiMonth) return r.status === status;
+    const graduating = r.status === SKU_GROUP_STATUS.win && /^\d{4}-\d{2}$/.test(r.eval_month) && r.eval_month >= kpiMonth;
+    return group === "win" ? r.status === SKU_GROUP_STATUS.win && !graduating : r.status === SKU_GROUP_STATUS.test || graduating;
+  });
   for (const r of fba) {
     const key = `${r.store_id}|FBA`;
     if (!out.has(key)) out.set(key, new Set());
@@ -714,9 +723,6 @@ async function loadGroupSkus(storeIds: string[], group: DashboardSkuGroup): Prom
  * không quá ngày đó, ghép Bảng mã theo SKU, Giá trị = Tồn × Giá TB năm (như cột "Giá trị tồn" của BẢNG MÃ).
  * Truyền status để chỉ cộng SKU của nhóm (Win = "phát triển", Test = "test").
  */
-// Ledger / Chi Tiết Đi Hàng không tăng phiên bản dữ liệu Dashboard → tính lại sau mỗi 5 phút.
-const STOCK_CACHE_TTL_SECONDS = 300;
-
 async function loadStockValues(
   cache: DashboardCacheScope,
   storeIds: string[],
@@ -724,18 +730,23 @@ async function loadStockValues(
   status?: string,
 ): Promise<Map<string, StoreStockAt | null>> {
   if (!storeIds.length || !asOf) return new Map();
-  // Cache theo từng store + ngày (đổi lựa chọn store không phải tính lại)
-  const values = await Promise.all(
-    storeIds.map((id) =>
-      stampedValue(
-        cache,
-        `${DASHBOARD_CACHE_PREFIX}stock-at:${id}:${asOf}:${status || "all"}`,
-        `${recentStamp(cache)}:${Math.floor(Date.now() / (STOCK_CACHE_TTL_SECONDS * 1000))}`,
-        async () => (await queryStockAt([id], asOf, status)).get(id) ?? null,
-      ),
-    ),
+  // Cache theo từng store + ngày (đổi lựa chọn store không phải tính lại). Ledger / AWD / Inbound tăng phiên bản dữ liệu
+  // (migration 150) nên stamp chỉ cần phiên bản dữ liệu. Các store thiếu cache tính chung 1 truy vấn
+  // (7 truy vấn song song từng store tranh CPU: ~2,9 s tổng so với ~30 ms mỗi store khi chạy riêng).
+  const values = await stampedParts<StoreStockAt | null>(
+    cache,
+    storeIds.map((id) => ({
+      id,
+      key: `${DASHBOARD_CACHE_PREFIX}stock-at:${id}:${asOf}:${status || "all"}`,
+      stamp: recentStamp(cache),
+    })),
+    async (ids) => {
+      const rows = await queryStockAt(ids, asOf, status);
+      return new Map(ids.map((id) => [id, rows.get(id) ?? null]));
+    },
+    `stock-at:${asOf}:${status || "all"}`,
   );
-  return new Map(storeIds.map((id, i) => [id, values[i] ?? null]));
+  return new Map(storeIds.map((id) => [id, values.get(id) ?? null]));
 }
 
 /** Các trường tồn của 1 dòng store / kênh: kênh FBA lấy số tại ngày cuối kỳ, FBM → null */
@@ -792,6 +803,8 @@ export async function getDashboardSkuGroup(options: {
   storeIds?: string[];
   team?: string;
   allowedChannels?: DashboardAllowedChannels;
+  /** YYYY-MM: chia Win / Test như trang KPI kinh doanh của tháng đó (SKU chưa tới Tháng đánh giá vẫn là Test) */
+  kpiMonth?: string;
 }): Promise<DashboardSkuGroupData> {
   const [allStores, latestDate, cache] = await Promise.all([
     listStores(),
@@ -807,7 +820,7 @@ export async function getDashboardSkuGroup(options: {
   );
   const period = resolveDashboardPeriods(options.startDate ?? "", options.endDate ?? "", latestDate, "none").current;
   const [groupSkus, stockValues] = await Promise.all([
-    loadGroupSkus(stores.map((s) => s.id), options.group),
+    loadGroupSkus(stores.map((s) => s.id), options.group, options.kpiMonth),
     loadStockValues(cache, stores.map((s) => s.id), period.endDate, SKU_GROUP_STATUS[options.group]),
   ]);
 
