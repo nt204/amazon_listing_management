@@ -408,7 +408,7 @@ export function AccountingWorkspace({
     );
   }
 
-  // Section 6: Dòng tiền Payout (key "reports" giữ nguyên để URL / localStorage cũ vẫn chạy)
+  // Section 6: Payout Amount (key "reports" giữ nguyên để URL / localStorage cũ vẫn chạy)
   if (effectiveSection === "reports") {
     return (
       <AccountingSectionShell sectionKey="reports">

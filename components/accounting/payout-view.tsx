@@ -1,6 +1,6 @@
 "use client";
 
-// Dòng tiền Payout — tiền Amazon chuyển về (Disbursements), gom theo store, lọc theo khoảng ngày.
+// Payout Amount — tiền Amazon chuyển về (Disbursements), gom theo store, lọc theo khoảng ngày.
 // Dữ liệu: /api/accounting/payouts (bảng accounting_payout_disbursements, status Done).
 
 import { useEffect, useMemo, useState } from "react";
@@ -21,7 +21,6 @@ interface PayoutResponse {
 }
 
 const DATE_PRESETS = ["all", "this_week", "last_week", "last_30_days", "this_month", "last_month", "ytd", "this_year", "last_year"];
-const RANGE_KEY = "nce_payout_range_v3";
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const fmtUsd = (n: number) => usd.format(n);
@@ -33,12 +32,10 @@ function localToday() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function readRange(): DateRange {
-  try {
-    const saved = typeof window !== "undefined" ? JSON.parse(localStorage.getItem(RANGE_KEY) || "null") : null;
-    if (saved && typeof saved.startDate === "string") return saved;
-  } catch {}
-  return { startDate: `${localToday().slice(0, 4)}-01-01`, endDate: localToday() };
+/** Mở trang luôn bắt đầu từ This month (đầu tháng → hôm nay) */
+function thisMonthRange(): DateRange {
+  const today = localToday();
+  return { startDate: `${today.slice(0, 7)}-01`, endDate: today };
 }
 
 function downloadCsv(filename: string, lines: (string | number)[][]) {
@@ -52,8 +49,9 @@ function downloadCsv(filename: string, lines: (string | number)[][]) {
 }
 
 export function PayoutView() {
-  const [range, setRange] = useState<DateRange>(readRange);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [range, setRange] = useState<DateRange>(thisMonthRange);
+  // Mặc định đóng hết, bấm store mới mở danh sách ngày
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const requestKey = `${range.startDate}|${range.endDate}`;
   const [settled, setSettled] = useState<{ key: string; data: PayoutResponse | null; error: { status: number; message: string } | null }>({
@@ -63,12 +61,6 @@ export function PayoutView() {
   });
   const loading = settled.key !== requestKey;
   const error = loading ? null : settled.error;
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(RANGE_KEY, JSON.stringify(range));
-    } catch {}
-  }, [range]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -116,10 +108,10 @@ export function PayoutView() {
   }, [settled.data]);
 
   const grandTotal = groups.reduce((s, g) => s + g.total, 0);
-  const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.store));
+  const allCollapsed = groups.every((g) => !expanded.has(g.store));
 
   const toggle = (store: string) =>
-    setCollapsed((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(store)) next.delete(store);
       else next.add(store);
@@ -146,7 +138,7 @@ export function PayoutView() {
   return (
     <div className="mx-auto max-w-[720px] space-y-4 px-3 pb-8 pt-4 sm:px-6 sm:pt-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold tracking-tight text-slate-900">Dòng tiền Payout</h1>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900">Payout Amount</h1>
         <PpcAmazonDatePicker value={range} onChange={setRange} align="right" presets={DATE_PRESETS} anchorDate={localToday()} />
       </div>
 
@@ -169,7 +161,7 @@ export function PayoutView() {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(groups.map((g) => g.store)))}
+              onClick={() => setExpanded(allCollapsed ? new Set(groups.map((g) => g.store)) : new Set())}
               className="h-8 cursor-pointer rounded-lg px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
             >
               {allCollapsed ? "Mở hết" : "Thu gọn hết"}
@@ -191,7 +183,7 @@ export function PayoutView() {
             <span>Payout Amount</span>
           </div>
           {groups.map((g) => {
-            const open = !collapsed.has(g.store);
+            const open = expanded.has(g.store);
             const share = grandTotal ? (g.total / grandTotal) * 100 : 0;
             return (
               <div key={g.store} className="border-b border-slate-200 last:border-b-0">
@@ -213,23 +205,34 @@ export function PayoutView() {
                   <span className="ml-auto text-[14px] font-bold text-slate-900 tabular-nums">{fmtUsd(g.total)}</span>
                 </button>
                 {open && (
-                  <div className="pb-2">
-                    {g.months.map((m) => (
-                      <div key={m.month}>
-                        <div className="flex justify-between pb-1 pl-11 pr-5 pt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                          <span>
-                            Tháng {Number(m.month.slice(5, 7))}/{m.month.slice(0, 4)}
-                          </span>
-                          <span className="tabular-nums">{fmtUsd(m.total)}</span>
-                        </div>
-                        {m.rows.map((r) => (
-                          <div key={r.id} className="flex justify-between py-1.5 pl-11 pr-5 text-[13px] tabular-nums hover:bg-indigo-50/50">
-                            <span className="text-slate-600">{fmtDate(r.date)}</span>
-                            <span className="font-medium text-slate-900">{fmtUsd(r.amount)}</span>
+                  <div className="space-y-3 bg-white px-4 py-3 sm:pl-9 sm:pr-5">
+                    {g.months.map((m, i) => {
+                      const label = `${Number(m.month.slice(5, 7))}/${m.month.slice(0, 4)}`;
+                      // Hai màu xen kẽ để tách từng tháng
+                      const tone = i % 2 === 0
+                        ? { box: "border-indigo-200", head: "bg-indigo-50 text-indigo-700", foot: "border-indigo-200 bg-indigo-100/70 text-indigo-900" }
+                        : { box: "border-teal-200", head: "bg-teal-50 text-teal-700", foot: "border-teal-200 bg-teal-100/70 text-teal-900" };
+                      return (
+                        <div key={m.month} className={`overflow-hidden rounded-lg border ${tone.box}`}>
+                          <div className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide ${tone.head}`}>Tháng {label}</div>
+                          {m.rows.map((r) => (
+                            <div
+                              key={r.id}
+                              className="grid grid-cols-[1fr_auto] border-t border-slate-100 text-[13px] tabular-nums hover:bg-slate-50"
+                            >
+                              <span className="border-r border-slate-100 px-3 py-1.5 text-slate-600">{fmtDate(r.date)}</span>
+                              <span className="min-w-[130px] px-3 py-1.5 text-right font-medium text-slate-900">{fmtUsd(r.amount)}</span>
+                            </div>
+                          ))}
+                          <div className={`grid grid-cols-[1fr_auto] border-t text-[13px] font-bold tabular-nums ${tone.foot}`}>
+                            <span className="px-3 py-1.5">
+                              Tổng tháng {label} <span className="font-medium opacity-70">· {m.rows.length} lần</span>
+                            </span>
+                            <span className="min-w-[130px] px-3 py-1.5 text-right">{fmtUsd(m.total)}</span>
                           </div>
-                        ))}
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
