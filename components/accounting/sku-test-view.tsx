@@ -2,6 +2,11 @@
 "use client";
 
 import { profitColClass } from "./profit-column";
+import { ColumnHeaderMenu, filterOptionsFor, passesValueFilters, type ValueFilters } from "./column-header-menu";
+
+const skuRowValue = (item: SkuWinItem, colId: string) => (item as unknown as Record<string, unknown>)[colId];
+// Cột không lọc theo giá trị được (ảnh, STT, biểu đồ)
+const NO_VALUE_FILTER = new Set(["stt", "mockup", "trend"]);
 
 // Ô Profit nền xanh khi ≥ 0, đỏ khi < 0 — cùng màu ô Profit ở bảng FBA theo ngày
 const PROFIT_GREEN = "#83C75D";
@@ -15,8 +20,6 @@ import {
   CaretDownIcon,
   CaretUpIcon,
   CheckCircleIcon,
-  CheckIcon,
-  CopyIcon,
   EyeSlashIcon,
   FileXlsIcon,
   FunnelIcon,
@@ -304,7 +307,6 @@ export function SkuTestView() {
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<SkuWinStats | null>(null);
   const [loading, setLoading] = useState(false);
-  const [copiedSku, setCopiedSku] = useState<string | null>(null);
 
   // Column Drag & Drop Reorder
   const [headerDragId, setHeaderDragId] = useState<string | null>(null);
@@ -319,7 +321,8 @@ export function SkuTestView() {
   const columnMenuRef = useRef<HTMLDivElement>(null);
 
   // Column Filters
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  // Lọc theo giá trị kiểu Excel (bấm tên cột)
+  const [columnFilters, setColumnFilters] = useState<ValueFilters>({});
 
   // Field Editor Modal (Cấu hình riêng 1 cột theo đúng Bảng Mã)
   const [fieldEditor, setFieldEditor] = useState<{
@@ -518,26 +521,6 @@ export function SkuTestView() {
     void fetchData();
   }, [fetchData]);
 
-  // Sorting Handler
-  const handleSort = (sortKey: string) => {
-    // Cột Trend không có giá trị để sắp: sắp theo Quantity
-    const field = sortKey === "trend" ? "quantity" : sortKey;
-    if (sortField === field) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      setSortDirection("desc");
-    }
-    setPage(1);
-  };
-
-  // Copy SKU
-  const handleCopySku = (sku: string) => {
-    navigator.clipboard.writeText(sku);
-    setCopiedSku(sku);
-    notify(`Đã copy SKU "${sku}"`, "success");
-    setTimeout(() => setCopiedSku(null), 2000);
-  };
 
   // Open Target Modal
   const handleOpenTargetModal = (item: SkuWinItem) => {
@@ -605,7 +588,20 @@ export function SkuTestView() {
   };
 
   // Visible Columns
-  const visibleColumns = useMemo(() => columns.filter((c) => c.visible !== false), [columns]);
+  // Cột SKU luôn hiện đủ mã (không "..."): rộng tối thiểu bằng mã SKU dài nhất đang có + lề ô
+  const skuColWidth = useMemo(() => {
+    const measure = createTextWidthMeasurer("700 12px system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif");
+    let w = 0;
+    for (const it of items) w = Math.max(w, measure(it.sku || ""));
+    return Math.ceil(w) + 28;
+  }, [items]);
+  const visibleColumns = useMemo(
+    () =>
+      columns
+        .filter((c) => c.visible !== false)
+        .map((c) => (c.id === "sku" && typeof c.width === "number" && c.width < skuColWidth ? { ...c, width: skuColWidth } : c)),
+    [columns, skuColWidth]
+  );
 
   // Pre-calculate freeze metrics for all visible columns (O(1) Map lookup instead of inner loops on every cell)
   const freezeMetrics = useMemo(() => {
@@ -813,20 +809,8 @@ export function SkuTestView() {
   });
 
   const displayItems = useMemo(() => {
-    if (!Object.values(columnFilters).some(Boolean)) {
-      return items;
-    }
-    return items.filter((item) => {
-      for (const [key, filterVal] of Object.entries(columnFilters)) {
-        if (!filterVal) continue;
-        const val = (item as unknown as Record<string, unknown>)[key];
-        if (val == null) return false;
-        if (String(val).toLowerCase() !== filterVal.toLowerCase()) {
-          return false;
-        }
-      }
-      return true;
-    });
+    if (!Object.keys(columnFilters).length) return items;
+    return items.filter((item) => passesValueFilters(item, columnFilters, skuRowValue));
   }, [items, columnFilters]);
 
   const totalPages = Math.max(1, Math.ceil((total || 1) / limit));
@@ -1008,8 +992,9 @@ export function SkuTestView() {
             <FunnelIcon size={12} weight="fill" />
             Đang lọc:
           </span>
-          {Object.entries(columnFilters).map(([field, val]) => {
-            if (!val) return null;
+          {Object.entries(columnFilters).map(([field, vals]) => {
+            const list = Array.from(vals);
+            const val = list.slice(0, 3).join(", ") + (list.length > 3 ? ` +${list.length - 3}` : "");
             const col = columns.find((c) => c.id === field);
             return (
               <span
@@ -1020,7 +1005,13 @@ export function SkuTestView() {
                 <span className="font-bold text-slate-900">{val}</span>
                 <button
                   type="button"
-                  onClick={() => setColumnFilters((prev) => ({ ...prev, [field]: "" }))}
+                  onClick={() =>
+                    setColumnFilters((prev) => {
+                      const out = { ...prev };
+                      delete out[field];
+                      return out;
+                    })
+                  }
                   className="ml-0.5 text-slate-400 hover:text-rose-600 cursor-pointer"
                 >
                   <XIcon size={11} weight="bold" />
@@ -1104,23 +1095,17 @@ export function SkuTestView() {
                         onResize={handleResizeColumn}
                         onAutoFit={handleAutoFitColumn}
                         onColumnClick={(id, e) => {
-                          setColumnContextMenu({
-                            field: id,
-                            x: e.clientX,
-                            y: e.clientY,
-                          });
+                          if (id === "stt") return;
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setColumnContextMenu({ field: id, x: r.left, y: r.bottom });
                         }}
                       >
                         <div
                           className={`flex items-center w-full min-h-[38px] relative group/title px-0.5 ${col.align === "center" ? "justify-center" : col.align === "right" ? "justify-end" : "justify-start"
                             }`}
                         >
-                          <button
-                            type="button"
-                            onClick={() => handleSort(col.id)}
-                            className="inline-flex min-w-0 items-center gap-1 hover:underline cursor-pointer"
-                            title={`Bấm để sắp xếp theo ${displayColLabel}`}
-                          >
+                          {/* Bấm vào tiêu đề → menu sắp xếp / lọc / tuỳ chọn cột (không còn nút nhỏ dễ bấm nhầm khi kéo dãn) */}
+                          <span className="inline-flex min-w-0 cursor-pointer items-center gap-1" title={`Bấm để sắp xếp / lọc / tuỳ chọn cột ${displayColLabel}`}>
                             <span
                               className={`line-clamp-2 whitespace-normal break-words leading-tight ${col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}`}
                             >
@@ -1133,33 +1118,8 @@ export function SkuTestView() {
                                 <CaretDownIcon size={12} weight="bold" className="shrink-0 text-slate-950" />
                               )
                             ) : null}
-                          </button>
-                          {columnFilters[col.id] && (
-                            <span
-                              title={`Đang lọc: ${columnFilters[col.id]}`}
-                              className="ml-1 inline-flex items-center justify-center h-3.5 w-3.5 rounded-full bg-slate-900 text-white shrink-0 text-[9px]"
-                            >
-                              <FunnelIcon size={8} weight="fill" />
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setColumnContextMenu({
-                                field: col.id,
-                                x: e.clientX,
-                                y: e.clientY,
-                              });
-                            }}
-                            className={`p-0.5 rounded text-slate-900 transition cursor-pointer shrink-0 ${columnFilters[col.id]
-                                ? "ml-1 opacity-100 bg-amber-600/30"
-                                : `absolute top-0 ${col.align === "right" ? "left-0" : "right-0"} z-10 bg-[#ff9900] opacity-0 group-hover/title:opacity-100 hover:bg-amber-600`
-                              }`}
-                            title={`Tùy chọn, Lọc & Setting cột "${col.label}"`}
-                          >
-                            <SlidersHorizontalIcon size={11} weight="bold" />
-                          </button>
+                            {columnFilters[col.id] && <FunnelIcon size={11} weight="fill" className="shrink-0 text-slate-900" />}
+                          </span>
                         </div>
                       </ColumnHeaderCell>
                     );
@@ -1168,7 +1128,7 @@ export function SkuTestView() {
 
                 {/* ROW 2: TOTAL / SUM ROW ĐỨNG NGAY TRÊN ĐẦU MỖI CỘT TƯƠNG ỨNG */}
                 {stats && (
-                  <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
+                  <tr className="bg-[#FFE699] text-slate-950 border-b border-amber-300 text-xs select-none shadow-2xs">
                     {visibleColumns.map((col) => {
                       const f = getCellFreezeProps(col.id, true);
                       const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
@@ -1177,7 +1137,7 @@ export function SkuTestView() {
                       const bgStyle = profitColor
                         ? { backgroundColor: profitColor }
                         : f.isFrozen
-                        ? { backgroundColor: "#fffbeb" }
+                        ? { backgroundColor: "#FFE699" }
                         : {};
 
                       return (
@@ -1455,21 +1415,9 @@ export function SkuTestView() {
                               {/* SKU */}
                               {col.id === "sku" && (
                                 <div className="flex items-center gap-1.5 font-bold text-slate-900 font-mono">
-                                  <span className="truncate max-w-[140px]" title={item.sku}>
+                                  <span className="whitespace-nowrap" title={item.sku}>
                                     {item.sku}
                                   </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleCopySku(item.sku)}
-                                    className="text-slate-400 hover:text-slate-700 transition cursor-pointer"
-                                    title="Copy SKU"
-                                  >
-                                    {copiedSku === item.sku ? (
-                                      <CheckIcon size={13} className="text-emerald-600 font-bold" />
-                                    ) : (
-                                      <CopyIcon size={13} />
-                                    )}
-                                  </button>
                                 </div>
                               )}
 
@@ -1680,23 +1628,20 @@ export function SkuTestView() {
         const col = columns.find((c) => c.id === field);
         const colLabel = col?.label || field;
         const isCurrentBoundary = frozenThrough === field;
-        const options = getColumnOptions(field);
 
         return (
-          <div
-            ref={columnMenuRef}
-            className="fixed z-[100] w-56 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-100"
-            style={{
-              left: Math.min(columnContextMenu.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 240),
-              top: Math.min(columnContextMenu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 220),
+          <ColumnHeaderMenu
+            key={field}
+            anchor={{ x: columnContextMenu.x, y: columnContextMenu.y }}
+            title={colLabel}
+            sortDir={field === "mockup" ? undefined : sortField === (field === "trend" ? "quantity" : field) ? sortDirection : null}
+            textSort={typeof (items[0] && skuRowValue(items[0], field)) === "string"}
+            onSort={(dir) => {
+              setSortField(field === "trend" ? "quantity" : field);
+              setSortDirection(dir);
+              setPage(1);
             }}
-          >
-            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50/90 flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tùy chọn cột</span>
-              <span className="text-xs font-bold text-slate-900 truncate max-w-[120px]">{colLabel}</span>
-            </div>
-
-            <div className="p-1 space-y-0.5">
+            actions={<>
               {/* Thu nhỏ cột này */}
               <button
                 type="button"
@@ -1769,34 +1714,19 @@ export function SkuTestView() {
                 <EyeSlashIcon size={14} className="text-rose-500 shrink-0" />
                 <span>Ẩn cột này</span>
               </button>
-            </div>
-
-            {/* Lọc cột này */}
-            {options.length > 0 && (
-              <label className="block border-t border-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-50/50">
-                Lọc cột này
-                <select
-                  autoFocus
-                  value={columnFilters[field] || ""}
-                  onChange={(event) => {
-                    setColumnFilters((prev) => ({
-                      ...prev,
-                      [field]: event.target.value,
-                    }));
-                    setColumnContextMenu(null);
-                  }}
-                  className="mt-1.5 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-800 focus:border-indigo-500 focus:outline-hidden"
-                >
-                  <option value="">Tất cả</option>
-                  {options.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
+            </>}
+            options={NO_VALUE_FILTER.has(field) ? undefined : filterOptionsFor(items, field, columnFilters, skuRowValue)}
+            selected={columnFilters[field]}
+            onApply={(next) =>
+              setColumnFilters((prev) => {
+                const out = { ...prev };
+                if (next) out[field] = next;
+                else delete out[field];
+                return out;
+              })
+            }
+            onClose={() => setColumnContextMenu(null)}
+          />
         );
       })()}
 

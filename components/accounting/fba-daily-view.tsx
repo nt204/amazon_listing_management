@@ -1,6 +1,7 @@
 "use client";
 
 import { profitColClass } from "./profit-column";
+import { ColumnHeaderMenu, filterOptionsFor, passesValueFilters, type ValueFilters } from "./column-header-menu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwiseIcon,
@@ -16,6 +17,7 @@ import {
   PencilSimpleIcon,
   PlusIcon,
   SlidersHorizontalIcon,
+  FunnelIcon,
   StorefrontIcon,
   SidebarSimpleIcon,
 } from "@phosphor-icons/react";
@@ -81,6 +83,8 @@ const MONTH_HEADER_BG = "#fde3c3";
 const MONTH_TOTAL_BG = "#fff4e6";
 const SHEET_NAVY = "#e9b98a";
 const resultBg = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? undefined : v < 0 ? SHEET_RED : SHEET_GREEN);
+
+const dailyValue = (item: DailyItem, colId: string) => (item as unknown as Record<string, unknown>)[colId];
 
 type DailyItem = FbaDailyItem & Partial<Pick<FbmDailyItem, "organic_sales" | "aov" | "basecost_per_item" | "ads_per_item">>;
 type DailyStats = FbaDailyStats & Partial<Pick<FbmDailyStats, "totalQuantityAds" | "avgMarginPreAds">>;
@@ -508,17 +512,16 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
     fetchData();
   }, [fetchData]);
 
-  const handleSort = (field: string) => {
-    if (sortField === field) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      setSortDirection("desc");
-    }
-  };
 
   // Chia theo tháng như sheet khi đang xếp theo ngày và không lọc (lọc thì tổng tháng không còn đúng nghĩa)
-  const grouped = sortField === "date" && !debouncedSearch;
+  // Lọc theo giá trị kiểu Excel (bấm tên cột) — lọc trên các ngày đã tải
+  const [valueFilters, setValueFilters] = useState<ValueFilters>({});
+  const hasValueFilters = Object.keys(valueFilters).length > 0;
+  const filteredItems = useMemo(
+    () => (hasValueFilters ? items.filter((it) => passesValueFilters(it, valueFilters, dailyValue)) : items),
+    [items, valueFilters, hasValueFilters],
+  );
+  const grouped = sortField === "date" && !debouncedSearch && !hasValueFilters;
   const monthAggs = useMemo(() => monthAggregates(items, fbm ? [] : serviceFees, !fbm), [items, serviceFees, fbm]);
   // Như nhóm hàng của sheet: tháng đã qua thu gọn (chỉ tiêu đề + tổng + TB/Quantity), tháng hiện tại mở; bấm tiêu đề để đổi
   const currentMonth = financialMaxDate.slice(0, 7);
@@ -897,6 +900,11 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       }}
                       onResize={handleResizeColumn}
                       onAutoFit={handleAutoFitColumn}
+                      onColumnClick={(id, e) => {
+                        if (id === "stt") return;
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setColumnContextMenu({ field: id, x: r.left, y: r.bottom });
+                      }}
                     >
                       <div
                         className={`group/title flex min-h-[38px] w-full items-center gap-1 ${
@@ -907,39 +915,16 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                             : "justify-start"
                         }`}
                       >
-                        <button
-                          type="button"
-                          onClick={() => handleSort(col.id)}
-                          className="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate transition-colors hover:text-amber-100"
-                          title={`Bấm để sắp xếp theo ${col.label}`}
-                        >
+                        {/* Bấm vào tiêu đề → menu sắp xếp / lọc / tuỳ chọn cột (không còn nút nhỏ dễ bấm nhầm khi kéo dãn) */}
+                        <span className="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate" title={`Bấm để sắp xếp / lọc / tuỳ chọn cột ${col.label}`}>
                           <span className="truncate">{col.label}</span>
                           {isSorted && (
                             <span className="shrink-0 text-white">
-                            {sortDirection === "asc" ? (
-                              <CaretUpIcon size={12} weight="bold" />
-                            ) : (
-                              <CaretDownIcon size={12} weight="bold" />
-                            )}
+                              {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
                             </span>
                           )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setColumnContextMenu({
-                              field: col.id,
-                              x: event.clientX,
-                              y: event.clientY,
-                            });
-                          }}
-                          className="ml-0.5 shrink-0 cursor-pointer rounded p-0.5 text-slate-900 opacity-0 transition hover:bg-amber-600/40 group-hover/title:opacity-100 focus-visible:opacity-100"
-                          title={`Tùy chọn & Setting cột "${col.label}"`}
-                          aria-label={`Tùy chọn cột ${col.label}`}
-                        >
-                          <SlidersHorizontalIcon size={11} weight="bold" />
-                        </button>
+                          {valueFilters[col.id] && <FunnelIcon size={11} weight="fill" className="shrink-0 text-slate-900" />}
+                        </span>
                       </div>
                     </ColumnHeaderCell>
                   );
@@ -948,7 +933,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
 
               {/* ROW 2: STICKY TOTAL ROW RIGHT BELOW HEADERS */}
               {stats && (
-                <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
+                <tr className="bg-[#FFE699] text-slate-950 border-b border-amber-300 text-xs select-none shadow-2xs">
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
                     const isProfitCol = col.id === "profit";
@@ -961,7 +946,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                     const bgStyle = totalResultColor
                       ? { backgroundColor: totalResultColor }
                       : f.isFrozen
-                      ? { backgroundColor: "#fffbeb" }
+                      ? { backgroundColor: "#FFE699" }
                       : {};
 
                     return (
@@ -1154,7 +1139,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
               ) : (
                 (grouped
                   ? monthRows
-                  : items.map((item, index): DailyRow<DailyItem> => ({ kind: "day", key: item.id, item, index }))
+                  : filteredItems.map((item, index): DailyRow<DailyItem> => ({ kind: "day", key: item.id, item, index }))
                 ).map((row) => {
                   if (row.kind !== "day") return renderGroupRow(row);
                   const { item, index } = row;
@@ -1421,20 +1406,17 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           !visibleColumns.slice(visibleIndex + 1).some((item) => frozenColumns.includes(item.id));
 
         return (
-          <div
-            ref={columnMenuRef}
-            className="fixed z-[100] w-56 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-100"
-            style={{
-              left: Math.max(8, Math.min(columnContextMenu.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 232)),
-              top: Math.max(8, Math.min(columnContextMenu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 210)),
+          <ColumnHeaderMenu
+            key={field}
+            anchor={{ x: columnContextMenu.x, y: columnContextMenu.y }}
+            title={colLabel}
+            sortDir={sortField === field ? sortDirection : null}
+            textSort={field === "week"}
+            onSort={(dir) => {
+              setSortField(field);
+              setSortDirection(dir);
             }}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/90 px-3 py-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tùy chọn cột</span>
-              <span className="max-w-[120px] truncate text-xs font-bold text-slate-900">{colLabel}</span>
-            </div>
-
-            <div className="space-y-0.5 p-1">
+            actions={<>
               <button
                 type="button"
                 onClick={() => {
@@ -1496,8 +1478,19 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                 <EyeSlashIcon size={14} className="shrink-0 text-rose-500" />
                 <span>Ẩn cột này</span>
               </button>
-            </div>
-          </div>
+            </>}
+            options={filterOptionsFor(items, field, valueFilters, dailyValue)}
+            selected={valueFilters[field]}
+            onApply={(next) =>
+              setValueFilters((prev) => {
+                const out = { ...prev };
+                if (next) out[field] = next;
+                else delete out[field];
+                return out;
+              })
+            }
+            onClose={() => setColumnContextMenu(null)}
+          />
         );
       })()}
 

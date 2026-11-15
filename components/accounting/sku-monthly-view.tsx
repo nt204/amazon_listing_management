@@ -14,7 +14,6 @@ import {
   CalendarBlankIcon,
   CaretDownIcon,
   CaretUpIcon,
-  CopyIcon,
   DownloadSimpleIcon,
   EyeIcon,
   EyeSlashIcon,
@@ -26,6 +25,7 @@ import {
   PencilSimpleIcon,
   PlusIcon,
   SlidersHorizontalIcon,
+  FunnelIcon,
   StorefrontIcon,
 } from "@phosphor-icons/react";
 import type { SkuMonthlyItem, SkuMonthlyStoreSummary, AvailableMonthOption } from "@/lib/accounting/sku-monthly-db";
@@ -39,6 +39,7 @@ import {
   createTextWidthMeasurer,
 } from "./column-manager-modal";
 import { PaginationBar } from "./pagination-bar";
+import { ColumnHeaderMenu, filterOptionsFor, passesValueFilters, type ValueFilters } from "./column-header-menu";
 import {
   AccountingTableSkeletonRows,
   AccountingTopProgressBar,
@@ -67,6 +68,8 @@ const PAGE_SIZE_STORAGE_KEY = "acc_sku_monthly_page_size";
 
 // Cột hiển thị khác tên trường dữ liệu
 const SORT_FIELD_ALIAS: Record<string, string> = { amazon_fee: "amazon_fee_total" };
+const skuMonthlyValue = (item: SkuMonthlyItem, colId: string) =>
+  (item as unknown as Record<string, unknown>)[SORT_FIELD_ALIAS[colId] ?? colId];
 // So chuỗi kiểu tự nhiên: SKU2 < SKU10, không phân biệt hoa thường / dấu
 const COLLATOR = new Intl.Collator("vi", { numeric: true, sensitivity: "base" });
 
@@ -175,7 +178,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
   const [summary, setSummary] = useState<SkuMonthlyStoreSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [copiedSku, setCopiedSku] = useState<string | null>(null);
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMonthlyItem | null>(null);
 
   // Table zoom
@@ -254,10 +256,27 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     y: number;
   } | null>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
+  // Lọc theo giá trị kiểu Excel (bấm tên cột)
+  const [valueFilters, setValueFilters] = useState<ValueFilters>({});
+  const openColumnMenu = (id: string, event: React.MouseEvent<HTMLTableCellElement>) => {
+    if (id === "stt") return;
+    const r = event.currentTarget.getBoundingClientRect();
+    setColumnContextMenu({ field: id, x: r.left, y: r.bottom });
+  };
 
+  // Cột SKU luôn hiện đủ mã (không "..."): rộng tối thiểu bằng mã SKU dài nhất đang có + lề ô
+  const skuColWidth = useMemo(() => {
+    const measure = createTextWidthMeasurer("700 12px system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif");
+    let w = 0;
+    for (const it of items) w = Math.max(w, measure(it.sku || ""));
+    return Math.ceil(w) + 28;
+  }, [items]);
   const visibleColumns = useMemo(
-    () => columns.filter((col) => col.visible !== false),
-    [columns]
+    () =>
+      columns
+        .filter((col) => col.visible !== false)
+        .map((c) => (c.id === "sku" && typeof c.width === "number" && c.width < skuColWidth ? { ...c, width: skuColWidth } : c)),
+    [columns, skuColWidth]
   );
 
   const handleSaveColumns = (newCols: ColumnConfig[]) => {
@@ -359,6 +378,10 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
         leftOffset += typeof c.width === "number" ? c.width : 110;
       }
 
+      // Cột khoá phải rộng đúng bằng độ rộng dùng để tính vị trí "left", nếu không các cột khoá sẽ lệch / chồng nhau
+      const self = frozenVisible.find((c) => c.id === colId);
+      const width = typeof self?.width === "number" ? self.width : 110;
+
       return {
         isFrozen: true,
         isBoundary: isLast,
@@ -366,6 +389,9 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
           position: "sticky" as const,
           left: `${leftOffset}px`,
           zIndex: isHeader ? 30 : 20,
+          width,
+          minWidth: width,
+          maxWidth: width,
         },
         className: isLast
           ? isHeader
@@ -525,7 +551,10 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
   // Tìm kiếm + sắp xếp trên TOÀN BỘ SKU của kỳ rồi mới chia trang
   const displayItems = useMemo(() => {
     const matcher = buildSearchMatcher(deferredSearch);
-    const filtered = matcher ? items.filter(matcher) : items;
+    const searched = matcher ? items.filter(matcher) : items;
+    const filtered = Object.keys(valueFilters).length
+      ? searched.filter((it) => passesValueFilters(it, valueFilters, skuMonthlyValue))
+      : searched;
     const field = SORT_FIELD_ALIAS[sortField] ?? sortField;
     const dir = sortDirection === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
@@ -538,30 +567,13 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       if (typeof av === "number" && typeof bv === "number") return dir * (av - bv);
       return dir * COLLATOR.compare(String(av), String(bv));
     });
-  }, [items, deferredSearch, sortField, sortDirection]);
+  }, [items, deferredSearch, sortField, sortDirection, valueFilters]);
 
   const totalPages = Math.max(1, Math.ceil(displayItems.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * pageSize;
   const pageItems = displayItems.slice(pageStart, pageStart + pageSize);
 
-  // Handle column sorting
-  const handleSort = (field: string) => {
-    if (field === "stt" || field === "mockup") return;
-    setPage(1);
-    if (sortField === field) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      setSortDirection("desc");
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedSku(text);
-    setTimeout(() => setCopiedSku(null), 1500);
-  };
 
   const handleStoreSelect = (newStoreId: string) => {
     if (!newStoreId) return;
@@ -775,6 +787,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                       }}
                       onResize={handleResizeColumn}
                       onAutoFit={handleAutoFitColumn}
+                      onColumnClick={openColumnMenu}
                     >
                       <div
                         className={`group/title relative flex min-h-[38px] w-full items-center gap-1 ${
@@ -785,42 +798,19 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             : "justify-start"
                         }`}
                       >
-                        <button
-                          type="button"
-                          onClick={() => handleSort(col.id)}
-                          className="inline-flex min-w-0 cursor-pointer items-center gap-1 transition-colors hover:text-amber-100"
-                          title={`Bấm để sắp xếp theo ${col.label}`}
-                        >
+                        {/* Bấm vào tiêu đề → menu sắp xếp / lọc / tuỳ chọn cột (không còn nút nhỏ dễ bấm nhầm khi kéo dãn) */}
+                        <span className="inline-flex min-w-0 cursor-pointer items-center gap-1" title={`Bấm để sắp xếp / lọc / tuỳ chọn cột ${col.label}`}>
                           <TwoLineHeaderLabel
                             text={col.label}
                             className={col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}
                           />
                           {isSorted && (
                             <span className="shrink-0 text-white">
-                              {sortDirection === "asc" ? (
-                                <CaretUpIcon size={12} weight="bold" />
-                              ) : (
-                                <CaretDownIcon size={12} weight="bold" />
-                              )}
+                              {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
                             </span>
                           )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setColumnContextMenu({
-                              field: col.id,
-                              x: event.clientX,
-                              y: event.clientY,
-                            });
-                          }}
-                          className={`absolute top-0 ${col.align === "right" ? "left-0" : "right-0"} z-10 cursor-pointer rounded bg-[#ff9900] p-0.5 text-slate-900 opacity-0 transition hover:bg-amber-600 group-hover/title:opacity-100 focus-visible:opacity-100`}
-                          title={`Tùy chọn & Setting cột "${col.label}"`}
-                          aria-label={`Tùy chọn cột ${col.label}`}
-                        >
-                          <SlidersHorizontalIcon size={11} weight="bold" />
-                        </button>
+                          {valueFilters[col.id] && <FunnelIcon size={11} weight="fill" className="shrink-0 text-slate-900" />}
+                        </span>
                       </div>
                     </ColumnHeaderCell>
                   );
@@ -829,7 +819,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
               {/* ROW 2: STICKY TOTAL ROW RIGHT BELOW HEADERS */}
               {summary && (
-                <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
+                <tr className="bg-[#FFE699] text-slate-950 border-b border-amber-300 text-xs select-none shadow-2xs">
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
                     const isProfitCol = col.id === "profit";
@@ -837,7 +827,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                     const cellBg = resultColor
                       ? { backgroundColor: resultColor }
                       : f.isFrozen
-                      ? { backgroundColor: "#fffbeb" }
+                      ? { backgroundColor: "#FFE699" }
                       : {};
 
                     return (
@@ -1148,17 +1138,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                                 <span className="font-bold text-black group-hover:text-amber-700 transition">
                                   {item.sku}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    copyToClipboard(item.sku);
-                                  }}
-                                  className="text-slate-400 hover:text-black transition"
-                                  title="Copy SKU"
-                                >
-                                  <CopyIcon size={12} />
-                                </button>
                               </div>
                             )}
 
@@ -1349,11 +1328,9 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                               </span>
                             )}
 
-                            {/* VAT/Tax Adjustment */}
+                            {/* Phí cấp store: chỉ hiển thị ở dòng tổng */}
                             {col.id === "vat_tax_adjustment" && (
-                              <span className="tabular-nums text-black">
-                                {formatCurrency(item.vat_tax_adjustment)}
-                              </span>
+                              <span aria-hidden="true" />
                             )}
 
                             {/* SL đã removal 2024 */}
@@ -1363,11 +1340,9 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                               </span>
                             )}
 
-                            {/* AWD/Subscription/Amazon Fees/Disposal Fee */}
+                            {/* Phí cấp store: chỉ hiển thị ở dòng tổng */}
                             {col.id === "awd_subscription_fees" && (
-                              <span className="tabular-nums text-black">
-                                {formatCurrency(item.awd_subscription_fees)}
-                              </span>
+                              <span aria-hidden="true" />
                             )}
 
                             {/* Basecost Adjustment */}
@@ -1499,20 +1474,18 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
           !visibleColumns.slice(visibleIndex + 1).some((item) => lockedColumns.includes(item.id));
 
         return (
-          <div
-            ref={columnMenuRef}
-            className="fixed z-[100] w-56 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-100"
-            style={{
-              left: Math.max(8, Math.min(columnContextMenu.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 232)),
-              top: Math.max(8, Math.min(columnContextMenu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 210)),
+          <ColumnHeaderMenu
+            key={field}
+            anchor={{ x: columnContextMenu.x, y: columnContextMenu.y }}
+            title={colLabel}
+            sortDir={field === "mockup" ? undefined : sortField === field ? sortDirection : null}
+            textSort={typeof (items[0] && skuMonthlyValue(items[0], field)) === "string"}
+            onSort={(dir) => {
+              setPage(1);
+              setSortField(field);
+              setSortDirection(dir);
             }}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/90 px-3 py-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tùy chọn cột</span>
-              <span className="max-w-[120px] truncate text-xs font-bold text-slate-900">{colLabel}</span>
-            </div>
-
-            <div className="space-y-0.5 p-1">
+            actions={<>
               <button
                 type="button"
                 onClick={() => {
@@ -1574,8 +1547,20 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                 <EyeSlashIcon size={14} className="shrink-0 text-rose-500" />
                 <span>Ẩn cột này</span>
               </button>
-            </div>
-          </div>
+            </>}
+            options={field === "mockup" ? undefined : filterOptionsFor(items, field, valueFilters, skuMonthlyValue)}
+            selected={valueFilters[field]}
+            onApply={(next) => {
+              setPage(1);
+              setValueFilters((prev) => {
+                const out = { ...prev };
+                if (next) out[field] = next;
+                else delete out[field];
+                return out;
+              });
+            }}
+            onClose={() => setColumnContextMenu(null)}
+          />
         );
       })()}
 
