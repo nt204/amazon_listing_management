@@ -58,7 +58,14 @@ export interface KpiSku {
   amazon_fee_unit: number | null;
   referral_pct: number | null;
   /** Kết quả các tháng: prev (tháng trước), cur (tháng xem), ly (cùng kỳ năm trước), lyNext (cùng kỳ tháng sau năm trước) */
-  actual: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null };
+  actual: {
+    prev: KpiMetrics | null;
+    cur: KpiMetrics | null;
+    ly: KpiMetrics | null;
+    lyNext: KpiMetrics | null;
+    /** SKU phát triển có Tháng đánh giá ≥ tháng đang xem (tháng đó còn là Test): kết quả tháng đang xem, cộng vào tổng SKU TEST */
+    curAsTest?: KpiMetrics | null;
+  };
   target: { cur: KpiTargetRow | null; next: KpiTargetRow | null };
 }
 
@@ -390,6 +397,8 @@ export async function getKpi(storeId: string, period: string, options: { refresh
       cur: graduating ? null : (cur.data.get(sku) ?? null),
       ly: ly.data.get(sku) ?? null,
       lyNext: lyNext.data.get(sku) ?? null,
+      // Tháng đó SKU còn là Test → bảng tổng cộng kết quả vào [Result] SKU TEST (tab SKU test vẫn không liệt kê)
+      curAsTest: graduating ? (cur.data.get(sku) ?? null) : null,
     };
     // Dự phòng khi chưa có đơn / chưa có giá vốn tháng: bình quân từ kết quả các tháng
     const avgPrice = [a.prev, a.cur, a.ly, a.lyNext].find((m) => m && m.quantity > 0);

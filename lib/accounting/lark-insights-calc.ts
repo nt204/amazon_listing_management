@@ -69,7 +69,7 @@ export interface KpiSkuLike {
   basecost_unit: number | null;
   amazon_fee_unit: number | null;
   referral_pct: number | null;
-  actual: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null };
+  actual: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null; curAsTest?: KpiMetrics | null };
   target: { cur: KpiTargetInput | null; next: KpiTargetInput | null };
 }
 
@@ -106,6 +106,8 @@ export function summarizeKpi(input: KpiSummaryInput): { report: MonthReport; has
     const g = by[s.group];
     g.prev = addMetrics(g.prev, s.actual.prev);
     g.cur = addMetrics(g.cur, s.actual.cur);
+    // SKU mới lên WIN trong tháng: tháng đó còn là Test → tính vào tổng SKU TEST
+    by.test.cur = addMetrics(by.test.cur, s.actual.curAsTest);
     g.ly = addMetrics(g.ly, s.actual.ly);
     g.lyNext = addMetrics(g.lyNext, s.actual.lyNext);
     const tc = skuTarget(s, "cur", input.targetFormula);

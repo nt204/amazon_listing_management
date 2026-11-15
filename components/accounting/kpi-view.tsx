@@ -8,8 +8,8 @@ import {
   ArrowUpRightIcon,
   CaretLeftIcon,
   CaretRightIcon,
-  CloudArrowDownIcon,
   MagnifyingGlassIcon,
+  PencilSimpleIcon,
   StorefrontIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -37,6 +37,7 @@ import {
   type KpiTargetInput,
 } from "@/lib/accounting/kpi-calc";
 import { AccountingTopProgressBar, AnimatedTabPill } from "./accounting-skeleton";
+import { KpiDashboardView } from "./kpi-dashboard-view";
 
 // Mục "KPI kinh doanh" — theo file "<STORE> - KẾ HOẠCH KINH DOANH 2026":
 // Tổng quan tháng (BÁO CÁO THÁNG) · SKU phát triển (CHI TIẾT SKU) · SKU test (CHI TIẾT SKU TEST).
@@ -48,7 +49,7 @@ interface Store {
   access?: StoreAccessInfo;
 }
 
-interface TargetRow extends KpiTargetInput {
+export interface TargetRow extends KpiTargetInput {
   cause: string | null;
   solution: string | null;
   action: string | null;
@@ -58,7 +59,7 @@ interface TargetRow extends KpiTargetInput {
   updated_at: string | null;
 }
 
-interface KpiSku {
+export interface KpiSku {
   sku: string;
   group: "dev" | "test";
   status: string | null;
@@ -73,12 +74,12 @@ interface KpiSku {
   basecost_unit: number | null;
   amazon_fee_unit: number | null;
   referral_pct: number | null;
-  actual: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null };
+  actual: { prev: KpiMetrics | null; cur: KpiMetrics | null; ly: KpiMetrics | null; lyNext: KpiMetrics | null; curAsTest?: KpiMetrics | null };
   target: { cur: TargetRow | null; next: TargetRow | null };
 }
 
 type Source = "closed" | "history" | "live" | "none";
-interface KpiData {
+export interface KpiData {
   period: string;
   periods: { prev: string; cur: string; next: string; ly: string; lyNext: string };
   sources: Record<"prev" | "cur" | "ly" | "lyNext", Source>;
@@ -92,7 +93,7 @@ interface KpiData {
   generatedAt: string;
 }
 
-type Mode = "overview" | "dev" | "test";
+type Mode = "dashboard" | "overview" | "dev" | "test";
 type TargetSlot = "cur" | "next";
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -103,6 +104,9 @@ const fmtUsd = (v: number | null | undefined) => (v == null || !Number.isFinite(
 const fmtUsd0 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "" : usd0.format(Math.abs(v) < 0.5 ? 0 : v));
 const fmtInt = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "" : int.format(v));
 const fmtPct = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "" : `${(v * 100).toFixed(1)}%`);
+
+/** Che số tiền khi ẩn lợi nhuận */
+const MASK = "••••";
 
 const GROUP_LABEL = { dev: "SKU phát triển", test: "SKU test" } as const;
 
@@ -319,6 +323,57 @@ function monthOptions(center: string) {
   return out.reverse();
 }
 
+// ───────────────────────── Nút bút: lướt lần lượt tới các cột leader cần điền ─────────────────────────
+// Các cột cần điền được đánh dấu data-kpi-edit-col ở tiêu đề bảng SKU phát triển / SKU test.
+function EditColumnJumper() {
+  const [step, setStep] = useState<{ i: number; n: number; label: string } | null>(null);
+
+  const jump = () => {
+    const heads = Array.from(document.querySelectorAll<HTMLElement>("[data-kpi-edit-col]"));
+    if (!heads.length) return;
+    const i = step ? (step.i + 1) % heads.length : 0;
+    const head = heads[i];
+    const scroller = head.closest<HTMLElement>(".overflow-auto");
+    if (scroller) {
+      if (head.dataset.kpiSticky) {
+        scroller.scrollTo({ left: 0, behavior: "smooth" });
+      } else {
+        // Chừa chỗ cho các cột cố định bên trái (Product Type, Mockup, SKU, Price)
+        // Mép phải của các cột cố định trên cùng hàng tiêu đề (cột sticky luôn đứng yên khi cuộn ngang)
+        const stickyRight = Math.max(
+          scroller.getBoundingClientRect().left,
+          ...Array.from(head.parentElement?.querySelectorAll<HTMLElement>("th.sticky") ?? []).map((el) => el.getBoundingClientRect().right),
+        );
+        // Tính vị trí tuyệt đối (scrollLeft + lệch) để bấm liên tục khi đang cuộn dở vẫn đúng cột
+        const left = scroller.scrollLeft + head.getBoundingClientRect().left - stickyRight - 24;
+        scroller.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
+      }
+    }
+    head.animate(
+      [{ boxShadow: "inset 0 0 0 3px #2563eb" }, { boxShadow: "inset 0 0 0 3px #2563eb" }, { boxShadow: "inset 0 0 0 0 transparent" }],
+      { duration: 1400, easing: "ease-out" },
+    );
+    setStep({ i, n: heads.length, label: (head.dataset.kpiEditCol || "").replace("✎", "").trim() });
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={jump}
+      title="Lướt tới cột cần điền tiếp theo (bấm tiếp để sang cột sau)"
+      aria-label="Lướt tới cột cần điền tiếp theo"
+      className="ml-auto inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+    >
+      <PencilSimpleIcon size={14} weight="bold" />
+      {step && (
+        <span className="tabular-nums">
+          {step.label} · {step.i + 1}/{step.n}
+        </span>
+      )}
+    </button>
+  );
+}
+
 // ───────────────────────── Ô nhập số (lưu khi rời ô / Enter) ─────────────────────────
 function NumInput({
   value,
@@ -371,7 +426,7 @@ function NumInput({
           }
         }}
         onClick={(e) => e.stopPropagation()}
-        className={`${width} h-7 rounded-md border border-slate-200 bg-amber-50/40 px-1.5 text-right text-xs font-semibold tabular-nums text-slate-900 placeholder:font-normal placeholder:text-slate-400 hover:border-amber-300 focus:border-blue-500 focus:bg-white focus:outline-hidden disabled:cursor-not-allowed disabled:bg-transparent disabled:hover:border-slate-200 ${percent ? "pr-4" : ""}`}
+        className={`${width} h-7 rounded-md border border-slate-200 ${value == null && draft == null ? "bg-white" : "bg-amber-50/40"} px-1.5 text-right text-xs font-semibold tabular-nums text-slate-900 placeholder:font-normal placeholder:text-slate-400 hover:border-amber-300 focus:border-blue-500 focus:bg-white focus:outline-hidden disabled:cursor-not-allowed disabled:bg-transparent disabled:hover:border-slate-200 ${percent ? "pr-4" : ""}`}
       />
       {percent && <span className="pointer-events-none absolute right-1.5 text-[10px] text-slate-400">%</span>}
     </div>
@@ -495,10 +550,10 @@ function Thumb({ url, size = "md" }: { url: string | null; size?: "sm" | "md" })
 
 // ───────────────────────── Tổng quan tháng ─────────────────────────
 /** Mũi tên tăng / giảm + màu tốt / xấu (chi phí như TACoS: giảm là tốt). Không dấu +/−: mũi tên đã thể hiện. */
-function Delta({ label, value, base, kind, cost, baseLabel }: { label: string; value: number | null; base: number | null; kind: "usd" | "int" | "pct"; cost?: boolean; baseLabel: string }) {
+function Delta({ label, value, base, kind, cost, baseLabel, masked }: { label: string; value: number | null; base: number | null; kind: "usd" | "int" | "pct"; cost?: boolean; baseLabel: string; masked?: boolean }) {
   // pct (TACoS): chênh lệch theo điểm %; số tiền / số lượng: % tăng trưởng
   const d = kind === "pct" ? (value != null && base != null ? value - base : null) : growth(value, base);
-  const fmtBase = kind === "usd" ? fmtUsd0(base) : kind === "int" ? fmtInt(base) : fmtPct(base);
+  const fmtBase = kind === "usd" ? (masked ? MASK : fmtUsd0(base)) : kind === "int" ? fmtInt(base) : fmtPct(base);
   const flat = d == null || Math.abs(d) < 0.0005;
   return (
     <span className="inline-flex items-center gap-1" title={base != null ? `${baseLabel}: ${fmtBase}` : `${baseLabel}: chưa có số`}>
@@ -522,7 +577,6 @@ function Delta({ label, value, base, kind, cost, baseLabel }: { label: string; v
  */
 function Tile({
   label,
-  period,
   live,
   actual,
   target,
@@ -534,9 +588,10 @@ function Tile({
   cost,
   pace,
   extra,
+  middleContent,
+  hidden,
 }: {
   label: string;
-  period: string;
   /** Số tạm tính (tháng chưa chốt) */
   live?: boolean;
   actual: number | null;
@@ -550,8 +605,12 @@ function Tile({
   /** Phần tháng đã qua (0–1) khi tháng chưa hết; null = tháng đã qua */
   pace: number | null;
   extra?: ReactNode;
+  middleContent?: ReactNode;
+  /** Che số tiền của thẻ (lợi nhuận khi trình chiếu), % vẫn hiện — bật ở nút "Ẩn lợi nhuận" cạnh bảng */
+  hidden?: boolean;
 }) {
-  const fmt = (v: number | null) => (kind === "usd" ? fmtUsd0(v) : kind === "int" ? fmtInt(v) : fmtPct(v));
+  // Ẩn: chỉ che số tiền, % đạt / tăng trưởng vẫn hiện
+  const fmt = (v: number | null) => (kind === "usd" ? (hidden && v != null ? MASK : fmtUsd0(v)) : kind === "int" ? fmtInt(v) : fmtPct(v));
   const ach = cost ? null : achievement(actual, target);
   // Tháng đang chạy: so với nhịp (đạt ≥ nhịp là xanh), tháng đã qua: so với 100%
   const goal = pace ?? 1;
@@ -565,9 +624,13 @@ function Tile({
     <div className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-3.5">
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-[12px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
-        <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold ${live ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`} title={live ? "Số tạm tính, tháng chưa chốt" : undefined}>
-          {period}
-          {live ? " · tạm tính" : ""}
+        <span className="flex shrink-0 items-center gap-1">
+          {/* Tháng đã hiện ở bộ chọn phía trên → chỉ báo "Tạm tính" khi tháng chưa chốt */}
+          {live && (
+            <span className="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-700" title="Số tạm tính, tháng chưa chốt">
+              Tạm tính
+            </span>
+          )}
         </span>
       </div>
       <div className="mt-1.5 flex items-baseline gap-2">
@@ -576,7 +639,9 @@ function Tile({
       </div>
 
       <div className="mt-3 min-h-[44px]">
-        {target == null ? (
+        {middleContent !== undefined ? (
+          middleContent
+        ) : target == null ? (
           <div className="text-[11.5px] text-slate-400">Chưa có mục tiêu</div>
         ) : cost ? (
           (() => {
@@ -638,8 +703,8 @@ function Tile({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2.5 text-[11.5px]">
-        <Delta label="Tháng trước" value={actual} base={prev} kind={kind} cost={cost} baseLabel={prevLabel} />
-        <Delta label="Cùng kỳ" value={actual} base={ly} kind={kind} cost={cost} baseLabel={lyLabel} />
+        <Delta label="Tháng trước" value={actual} base={prev} kind={kind} cost={cost} baseLabel={prevLabel} masked={hidden} />
+        <Delta label="Cùng kỳ" value={actual} base={ly} kind={kind} cost={cost} baseLabel={lyLabel} masked={hidden} />
       </div>
     </div>
   );
@@ -678,152 +743,30 @@ function RatePill({ v }: { v: number | null }) {
   );
 }
 
-function StatusBadge({ status }: { status: string | null | undefined }) {
-  const k = statusKind(status);
-  const bg = k === "win" ? "bg-emerald-100 text-emerald-800" : k === "test" ? "bg-amber-100 text-amber-800" : "bg-slate-200 text-slate-700";
+/** % mục tiêu R&D Testing: đạt (≥ 100%) xanh, chưa đạt đỏ */
+function TargetPill({ v }: { v: number | null }) {
+  if (v == null) return <span className="text-slate-300">—</span>;
   return (
-    <span className={`inline-block rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${bg}`}>
-      {status || "—"}
+    <span
+      className={`inline-block rounded-md px-1.5 py-0.5 text-[11px] font-bold ${
+        v >= 1 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+      }`}
+    >
+      {fmtPct(v)}
     </span>
-  );
-}
-
-function ExpandedSkuList({
-  skus,
-  title,
-  period,
-  onOpenSku,
-}: {
-  skus: Array<Record<string, unknown>>;
-  title: string;
-  period: string;
-  onOpenSku?: (sku: string) => void;
-}) {
-  return (
-    <div className="border-l-4 border-l-blue-600 bg-slate-50/90 p-2.5 sm:p-3">
-      <div className="mb-2 flex items-center justify-between text-xs">
-        <span className="font-bold text-slate-800">
-          Danh sách {skus.length} SKU ({title}):
-        </span>
-        <span className="text-[11px] text-slate-400">
-          Rê chuột vào ảnh để phóng to · Bấm SKU để xem chi tiết
-        </span>
-      </div>
-
-      <div className="max-h-[380px] overflow-auto rounded-lg border border-slate-200 bg-white shadow-xs">
-        <table className="w-full border-collapse text-[11.5px]">
-          <thead>
-            <tr className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 text-slate-700">
-              <th className="w-8 px-2 py-1.5 text-center font-medium">#</th>
-              <th className="w-10 px-1 py-1.5 text-center font-medium">Ảnh</th>
-              <th className="px-2.5 py-1.5 text-left font-semibold">SKU / Phôi</th>
-              <th className="px-2 py-1.5 text-center font-medium">Trạng thái</th>
-              <th className="px-2 py-1.5 text-left font-medium">PIC Idea</th>
-              <th className="px-2 py-1.5 text-right font-medium">Đơn</th>
-              <th className="px-2.5 py-1.5 text-right font-semibold">Revenue</th>
-              <th className="px-2.5 py-1.5 text-right font-semibold">Profit</th>
-              <th className="px-2.5 py-1.5 text-right font-medium">TACoS</th>
-              <th className="px-2 py-1.5 text-right font-medium">Tồn</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {skus.length === 0 ? (
-              <tr>
-                <td colSpan={10} className="py-4 text-center text-slate-400">
-                  Không có SKU nào
-                </td>
-              </tr>
-            ) : (
-              skus.map((sItem, idx) => {
-                const s = sItem as {
-                  sku?: string;
-                  mockup_url?: string;
-                  product_type?: string;
-                  status?: string;
-                  pic_idea?: string;
-                  actual?: { cur?: KpiMetrics };
-                  months?: Record<string, { revenue?: number; profit?: number; ads_fee?: number; quantity?: number }>;
-                  revenue?: number;
-                  profit?: number;
-                  ads_fee?: number;
-                  quantity?: number;
-                  ton_kho?: number;
-                };
-                const isKpiSku = Boolean(s.actual);
-                const mCell = !isKpiSku ? (s.months?.[period] || s) : null;
-                const rev = isKpiSku ? s.actual?.cur?.revenue : (mCell?.revenue ?? s.revenue);
-                const prof = isKpiSku ? s.actual?.cur?.profit : (mCell?.profit ?? s.profit);
-                const ads = isKpiSku ? s.actual?.cur?.ads_fee : (mCell?.ads_fee ?? s.ads_fee);
-                const units = isKpiSku ? s.actual?.cur?.quantity : (mCell?.quantity ?? s.quantity);
-                const tacos = isKpiSku ? tacosOf(s.actual?.cur) : ratio(-(ads || 0), rev || 0);
-                const ton = s.ton_kho;
-
-                return (
-                  <tr key={s.sku || idx} className="hover:bg-blue-50/40 transition-colors">
-                    <td className="px-2 py-1.5 text-center text-slate-400 font-mono text-[10px]">
-                      {idx + 1}
-                    </td>
-                    <td className="px-1 py-1 text-center">
-                      <Thumb url={s.mockup_url ?? null} size="sm" />
-                    </td>
-                    <td className="px-2.5 py-1.5">
-                      <div
-                        onClick={() => s.sku && onOpenSku?.(s.sku)}
-                        className={`font-semibold font-mono text-slate-800 ${
-                          onOpenSku ? "cursor-pointer hover:text-blue-700 hover:underline" : ""
-                        }`}
-                        title={onOpenSku ? "Nhấn để xem chi tiết SKU" : undefined}
-                      >
-                        {s.sku}
-                      </div>
-                      {s.product_type && (
-                        <div className="text-[10.5px] text-slate-400 truncate max-w-[200px]" title={s.product_type}>
-                          {s.product_type}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-2 py-1.5 text-center whitespace-nowrap">
-                      <StatusBadge status={s.status} />
-                    </td>
-                    <td className="px-2 py-1.5 text-left text-slate-600 truncate max-w-[120px]" title={s.pic_idea || ""}>
-                      {s.pic_idea || "—"}
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-600 font-mono">
-                      {units != null && units > 0 ? fmtInt(units) : "—"}
-                    </td>
-                    <td className="px-2.5 py-1.5 text-right tabular-nums font-semibold text-slate-900 font-mono">
-                      {fmtUsd(rev)}
-                    </td>
-                    <td className={`px-2.5 py-1.5 text-right tabular-nums font-semibold font-mono ${
-                      prof != null && prof < 0 ? "text-rose-600" : "text-slate-900"
-                    }`}>
-                      {fmtUsd(prof)}
-                    </td>
-                    <td className="px-2.5 py-1.5 text-right tabular-nums text-slate-700 font-mono">
-                      {fmtPct(tacos)}
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 font-mono">
-                      {ton != null ? fmtInt(ton) : "—"}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }
 
 function KpiPhoiPicTable({
   storeId,
+  canEdit = false,
   period,
   skus,
   targetFormula,
   onOpenSku,
 }: {
   storeId?: string;
+  canEdit?: boolean;
   period: string;
   skus: KpiSku[];
   targetFormula?: KpiTargetFormula;
@@ -832,7 +775,6 @@ function KpiPhoiPicTable({
   const year = useMemo(() => Number(period.slice(0, 4)) || new Date().getFullYear(), [period]);
   const [kqkdData, setKqkdData] = useState<Record<string, unknown> | null>(null);
   const [breakdown, setBreakdown] = useState<"phoi" | "pic_idea">("phoi");
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!storeId) return;
@@ -848,9 +790,57 @@ function KpiPhoiPicTable({
     };
   }, [storeId, year]);
 
-  const toggleExpanded = (key: string) => {
-    setExpandedKey((prev) => (prev === key ? null : key));
+  // Bấm dòng phôi / PIC → sang KQKD SKU › SKU Testing, lọc đúng các SKU của dòng đó (KqkdView đọc acc_kqkd_jump)
+  const openInSkuTesting = (label: string, rowSkus: Array<Record<string, unknown>>) => {
+    if (!storeId) return;
+    const list = rowSkus.map((s) => String(s.sku || "")).filter(Boolean);
+    try {
+      window.sessionStorage.setItem("acc_kqkd_jump", JSON.stringify({ storeId, year, label, skus: list }));
+      window.sessionStorage.setItem("acc_kqkd_mode", "skus");
+      window.localStorage.setItem("acc_selected_store_id", storeId);
+    } catch {
+      // bỏ qua: trình duyệt chặn storage
+    }
+    window.dispatchEvent(new CustomEvent("acc_navigate_section", { detail: { section: "kqkd" } }));
   };
+
+  // R&D Testing: KPI số mẫu test đi hàng của cả store, đặt đầu tháng (nhập tay ở dòng Tổng)
+  const [storeTestTarget, setStoreTestTarget] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!storeId) return;
+    // OverviewPage gắn key theo store + tháng → đổi tháng là dựng lại, không cần reset state ở đây
+    let active = true;
+    fetch(`/api/accounting/financials/kqkd/test-targets?store_id=${storeId}&month=${period}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (active && res) setStoreTestTarget(res.target ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [storeId, period]);
+
+  const saveStoreTestTarget = useCallback(
+    async (target: number | null) => {
+      if (!storeId) return;
+      const value = target == null ? null : Math.round(target);
+      const prev = storeTestTarget;
+      setStoreTestTarget(value);
+      const res = await fetch("/api/accounting/financials/kqkd/test-targets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store_id: storeId, month: period, target: value }),
+      }).catch(() => null);
+      if (!res?.ok) {
+        setStoreTestTarget(prev);
+        const msg = res ? ((await res.json().catch(() => null))?.error as string | undefined) : undefined;
+        window.alert(msg || "Không lưu được mục tiêu R&D Testing.");
+      }
+    },
+    [storeId, period, storeTestTarget],
+  );
 
   const nameLabel = breakdown === "phoi" ? "Tên Phôi" : "PIC Idea";
 
@@ -876,20 +866,17 @@ function KpiPhoiPicTable({
     return pool.filter((s) => s.eval_month === period);
   }, [kqkdData, period]);
 
+  // Result = số SKU test listing (đi hàng) trong tháng, tách theo phôi / PIC Idea
   const lRows = useMemo(() => {
-    const m = new Map<string, { name: string; n: number; von: number; hoanVon: number; skus: Array<Record<string, unknown>> }>();
+    const m = new Map<string, { name: string; n: number; skus: Array<Record<string, unknown>> }>();
     for (const s of curListingSkus) {
-      const rawName = String((breakdown === "phoi" ? s.product_type : s.pic_idea) || "(trống)");
-      const cur = m.get(rawName) || { name: rawName, n: 0, von: 0, hoanVon: 0, skus: [] };
+      const name = String((breakdown === "phoi" ? s.product_type : s.pic_idea) || "(trống)");
+      const cur = m.get(name) || { name, n: 0, skus: [] };
       cur.n += 1;
-      cur.von += Number(s.von_hang || 0);
-      const basecost = s.unit_cost != null ? Number(s.unit_cost) * Number(s.quantity || 0) : 0;
-      const hoanVon = basecost + Number(s.profit || 0);
-      cur.hoanVon += hoanVon;
       cur.skus.push(s);
-      m.set(rawName, cur);
+      m.set(name, cur);
     }
-    return Array.from(m.values()).sort((a, b) => b.von - a.von);
+    return Array.from(m.values()).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
   }, [curListingSkus, breakdown]);
 
   const eRows = useMemo(() => {
@@ -914,10 +901,8 @@ function KpiPhoiPicTable({
 
   const lTotal = useMemo(() => {
     const n = lRows.reduce((a, r) => a + r.n, 0);
-    const von = lRows.reduce((a, r) => a + r.von, 0);
-    const hoanVon = lRows.reduce((a, r) => a + r.hoanVon, 0);
-    return { n, von, hoanVon, rate: ratio(hoanVon, von) };
-  }, [lRows]);
+    return { n, target: storeTestTarget, rate: ratio(n, storeTestTarget) };
+  }, [lRows, storeTestTarget]);
 
   const eTotal = useMemo(() => {
     const n = eRows.reduce((a, r) => a + r.n, 0);
@@ -939,7 +924,6 @@ function KpiPhoiPicTable({
               type="button"
               onClick={() => {
                 setBreakdown("phoi");
-                setExpandedKey(null);
               }}
               className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-all ${
                 breakdown === "phoi" ? "bg-blue-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
@@ -951,7 +935,6 @@ function KpiPhoiPicTable({
               type="button"
               onClick={() => {
                 setBreakdown("pic_idea");
-                setExpandedKey(null);
               }}
               className={`cursor-pointer rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-all ${
                 breakdown === "pic_idea" ? "bg-blue-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
@@ -964,28 +947,28 @@ function KpiPhoiPicTable({
 
                 <div className="flex items-center gap-2">
           <span className="text-[11px] text-slate-400">
-            Ấn vào dòng để xổ danh sách SKU
+            Bấm vào dòng để xem các SKU ở SKU Testing
           </span>
         </div>
       </div>
 
       
         <div className="overflow-x-auto">
-          <table className="w-full acc-kpi-subtable min-w-[880px] table-fixed border-collapse text-xs [&_td]:py-2 [&_td]:px-2.5">
+          <table className="w-full acc-kpi-subtable min-w-[880px] table-fixed border-collapse text-xs [&_th]:py-2 [&_th]:px-3 [&_td]:py-2 [&_td]:px-3">
             <colgroup>
-              <col className="w-[18%]" />
-              <col className="w-[8%]" />
+              <col className="w-[17%]" />
+              <col className="w-[7%]" />
               <col className="w-[11%]" />
-              <col className="w-[11%]" />
+              <col className="w-[13%]" />
               <col className="w-[18%]" />
-              <col className="w-[8%]" />
+              <col className="w-[7%]" />
               <col className="w-[8%]" />
               <col className="w-[9%]" />
-              <col className="w-[9%]" />
+              <col className="w-[10%]" />
             </colgroup>
             <thead>
               <tr className="border-b border-slate-300">
-                <th colSpan={4} className="border-r border-slate-300 bg-blue-200 py-2 text-center font-bold text-blue-950 text-xs">
+                <th colSpan={4} className="border-r-2 border-slate-300 bg-blue-200 py-2 text-center font-bold text-blue-950 text-xs">
                   R&amp;D Testing ({periodLabel(period)})
                 </th>
                 <th colSpan={5} className="bg-emerald-200 py-2 text-center font-bold text-emerald-950 text-xs">
@@ -994,9 +977,9 @@ function KpiPhoiPicTable({
               </tr>
               <tr className="border-b border-slate-300 text-[11.5px]">
                 <th className="bg-blue-100 py-2 text-left font-bold text-blue-950">{nameLabel}</th>
-                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950">Số SKU</th>
-                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950">Vốn test</th>
-                <th className="border-r border-slate-300 bg-blue-100 py-2 text-right font-bold text-blue-950">% Hoàn vốn</th>
+                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950" title="KPI số mẫu test đi hàng của cả store, đặt đầu tháng (nhập ở dòng Tổng)">Target</th>
+                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950" title="Số SKU test thực tế đi hàng (listing) trong tháng">Result</th>
+                <th className="border-r-2 border-slate-300 bg-blue-100 py-2 text-right font-bold text-blue-950" title="Result ÷ Target">% mục tiêu</th>
                 <th className="bg-emerald-100 py-2 text-left font-bold text-emerald-950">{nameLabel}</th>
                 <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">Số SKU</th>
                 <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">Mục tiêu</th>
@@ -1005,12 +988,24 @@ function KpiPhoiPicTable({
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b border-slate-200 bg-slate-100 font-bold text-slate-900">
+              <tr className="border-b border-slate-200 bg-[#FFE699] font-bold text-slate-950">
                 <td className="text-left font-bold">Tổng</td>
-                <td className="text-right font-mono">{lTotal.n || "—"}</td>
-                <td className="text-right font-mono">{lTotal.von ? fmtUsd(lTotal.von) : "—"}</td>
-                <td className="border-r border-slate-200 text-right font-mono">
-                  {lTotal.rate != null ? fmtPct(lTotal.rate) : "—"}
+                <td className="text-right font-mono">
+                  {canEdit ? (
+                    <NumInput
+                      value={lTotal.target}
+                      onCommit={(v) => void saveStoreTestTarget(v)}
+                      width="w-16"
+                      decimals={0}
+                      ariaLabel="Target số mẫu test đi hàng của store"
+                    />
+                  ) : (
+                    lTotal.target ?? "—"
+                  )}
+                </td>
+                <td className="text-right font-mono">{lTotal.n}</td>
+                <td className="border-r-2 border-slate-300 text-right font-mono">
+                  <TargetPill v={lTotal.rate} />
                 </td>
                 <td className="text-left font-bold">Tổng</td>
                 <td className="text-right font-mono">{eTotal.n || "—"}</td>
@@ -1023,7 +1018,7 @@ function KpiPhoiPicTable({
 
               {childN === 0 ? (
                 <tr>
-                  <td colSpan={4} className="border-r border-slate-200 py-6 text-center text-slate-400">
+                  <td colSpan={4} className="border-r-2 border-slate-300 py-6 text-center text-slate-400">
                     Không có SKU listing mới trong tháng {periodLabel(period)}
                   </td>
                   <td colSpan={5} className="py-6 text-center text-slate-400">
@@ -1034,10 +1029,8 @@ function KpiPhoiPicTable({
                 Array.from({ length: childN }).map((_, pi) => {
                   const lr = lRows[pi];
                   const er = eRows[pi];
-                  const lKey = lr ? `l:${lr.name}` : null;
-                  const eKey = er ? `e:${er.name}` : null;
-                  const isExpL = lKey && expandedKey === lKey;
-                  const isExpE = eKey && expandedKey === eKey;
+                  const goL = lr ? () => openInSkuTesting(`R&D ${periodLabel(period)} · ${lr.name}`, lr.skus) : undefined;
+                  const goE = er ? () => openInSkuTesting(`Đánh giá WIN ${periodLabel(period)} · ${er.name}`, er.skus) : undefined;
 
                   return (
                     <Fragment key={pi}>
@@ -1045,121 +1038,89 @@ function KpiPhoiPicTable({
                         {lr ? (
                           <>
                             <td
-                              onClick={() => lKey && toggleExpanded(lKey)}
+                              onClick={goL}
                               className="cursor-pointer font-medium text-slate-800 hover:text-blue-700"
                             >
                               <span className="inline-flex items-center gap-1.5">
                                 <CaretRightIcon
                                   size={11}
-                                  className={`text-slate-400 transition-transform ${isExpL ? "rotate-90 text-blue-600" : ""}`}
+                                  className="text-slate-400"
                                 />
-                                <span className="truncate max-w-[160px]" title={lr.name}>
+                                <span className="truncate max-w-[160px]" title={`${lr.name} — bấm để xem các SKU ở SKU Testing`}>
                                   {lr.name}
                                 </span>
                               </span>
                             </td>
+                            <td onClick={goL} className="cursor-pointer" />
                             <td
-                              onClick={() => lKey && toggleExpanded(lKey)}
-                              className="cursor-pointer text-right font-mono"
+                              onClick={goL}
+                              className="cursor-pointer text-right font-mono font-semibold"
                             >
                               {lr.n}
                             </td>
                             <td
-                              onClick={() => lKey && toggleExpanded(lKey)}
-                              className="cursor-pointer text-right font-mono"
+                              onClick={goL}
+                              className="cursor-pointer border-r-2 border-slate-300 text-right font-mono"
                             >
-                              {fmtUsd(lr.von)}
-                            </td>
-                            <td
-                              onClick={() => lKey && toggleExpanded(lKey)}
-                              className="cursor-pointer border-r border-slate-200 text-right font-mono"
-                            >
-                              {fmtPct(ratio(lr.hoanVon, lr.von))}
+                              {/* Target đặt cho cả store → % mục tiêu chỉ tính ở dòng Tổng */}
                             </td>
                           </>
                         ) : (
-                          <td colSpan={4} className="border-r border-slate-200 text-center text-slate-300">
-                            —
-                          </td>
+                          // Bên này hết dòng: ô trống không kẻ ngang (chỉ giữ vạch dọc ngăn 2 bảng + đường đáy bảng)
+                          <td colSpan={4} className={`border-r-2 border-slate-300 ${pi < childN - 1 ? "[border-bottom-style:hidden]" : ""}`} />
                         )}
 
                         {er ? (
                           <>
                             <td
-                              onClick={() => eKey && toggleExpanded(eKey)}
+                              onClick={goE}
                               className="cursor-pointer font-medium text-slate-800 hover:text-blue-700"
                             >
                               <span className="inline-flex items-center gap-1.5">
                                 <CaretRightIcon
                                   size={11}
-                                  className={`text-slate-400 transition-transform ${isExpE ? "rotate-90 text-blue-600" : ""}`}
+                                  className="text-slate-400"
                                 />
-                                <span className="truncate max-w-[160px]" title={er.name}>
+                                <span className="truncate max-w-[160px]" title={`${er.name} — bấm để xem các SKU ở SKU Testing`}>
                                   {er.name}
                                 </span>
                               </span>
                             </td>
                             <td
-                              onClick={() => eKey && toggleExpanded(eKey)}
+                              onClick={goE}
                               className="cursor-pointer text-right font-mono"
                             >
                               {er.n}
                             </td>
                             <td
-                              onClick={() => eKey && toggleExpanded(eKey)}
+                              onClick={goE}
                               className="cursor-pointer text-right font-mono"
                             >
                               {fmtTarget(er.n * 0.4)}
                             </td>
                             <td
-                              onClick={() => eKey && toggleExpanded(eKey)}
+                              onClick={goE}
                               className="cursor-pointer text-right font-mono font-semibold"
                             >
                               {er.win ?? "—"}
                             </td>
                             <td
-                              onClick={() => eKey && toggleExpanded(eKey)}
+                              onClick={goE}
                               className="cursor-pointer text-center font-mono"
                             >
                               <RatePill v={ratio(er.win, er.n)} />
                             </td>
                           </>
                         ) : (
-                          <td colSpan={5} className="text-center text-slate-300">
-                            —
-                          </td>
+                          <td colSpan={5} className={pi < childN - 1 ? "[border-bottom-style:hidden]" : ""} />
                         )}
                       </tr>
 
-                      {isExpL && lr && (
-                        <tr className="border-b border-slate-200 bg-slate-50/70 animate-in fade-in duration-150">
-                          <td colSpan={9} className="p-0">
-                            <ExpandedSkuList
-                              skus={lr.skus}
-                              title={`R&D Listing: ${lr.name}`}
-                              period={period}
-                              onOpenSku={onOpenSku}
-                            />
-                          </td>
-                        </tr>
-                      )}
-
-                      {isExpE && er && (
-                        <tr className="border-b border-slate-200 bg-slate-50/70 animate-in fade-in duration-150">
-                          <td colSpan={9} className="p-0">
-                            <ExpandedSkuList
-                              skus={er.skus}
-                              title={`Đánh giá WIN: ${er.name}`}
-                              period={period}
-                              onOpenSku={onOpenSku}
-                            />
-                          </td>
-                        </tr>
-                      )}
                     </Fragment>
                   );
                 })
               )}
+
             </tbody>
           </table>
         </div>
@@ -1190,6 +1151,8 @@ function OverviewPage({
       const g = by[s.group];
       g.prev = addMetrics(g.prev, s.actual.prev);
       g.cur = addMetrics(g.cur, s.actual.cur);
+      // SKU mới lên WIN trong tháng: tháng đó còn là Test → tính vào [Result] SKU TEST (tab SKU test không liệt kê)
+      by.test.cur = addMetrics(by.test.cur, s.actual.curAsTest);
       g.ly = addMetrics(g.ly, s.actual.ly);
       g.lyNext = addMetrics(g.lyNext, s.actual.lyNext);
       const tc = targetOf(s, "cur", data.targetFormula);
@@ -1244,7 +1207,18 @@ function OverviewPage({
   const grossTarget = total.tCur?.profit ?? null;
   const grossPrev = total.prev.profit;
   const grossLy = lyOk ? total.ly.profit : null;
+  const marginCur = ratio(grossCur, total.cur.revenue);
+  const marginPrev = ratio(grossPrev, total.prev.revenue);
+  const marginLy = lyOk ? ratio(grossLy, total.ly.revenue) : null;
 
+  // Ẩn / hiện thẻ Gross Profit + Margin (vd khi trình chiếu) — nhớ theo trình duyệt
+  const [hideProfit, setHideProfit] = useState(() => {
+    try {
+      return typeof window !== "undefined" && window.localStorage.getItem("acc_kpi_hide_profit") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [note, setNote] = useState(data.note?.note ?? "");
   const [savingNote, setSavingNote] = useState(false);
   const dirty = note !== (data.note?.note ?? "");
@@ -1388,8 +1362,17 @@ function OverviewPage({
     const elapsed = now.getDate() - 1;
     return elapsed > 0 ? elapsed / days : null;
   })();
+  const toggleProfit = () => {
+    setHideProfit((v) => {
+      try {
+        window.localStorage.setItem("acc_kpi_hide_profit", v ? "0" : "1");
+      } catch {
+        // trình duyệt chặn storage
+      }
+      return !v;
+    });
+  };
   const tileCommon = {
-    period: periodLabel(periods.cur),
     live: data.sources.cur === "live",
     prevLabel: periodLabel(periods.prev),
     lyLabel: periodLabel(periods.ly),
@@ -1411,12 +1394,12 @@ function OverviewPage({
         <Tile
           {...tileCommon}
           label="Gross Profit"
+          hidden={hideProfit}
           actual={grossCur}
           target={grossTarget}
           prev={grossPrev}
           ly={grossLy}
           kind="usd"
-          extra={grossCur != null && total.cur.revenue ? `Margin ${fmtPct(grossCur / total.cur.revenue)}` : undefined}
         />
         <Tile
           {...tileCommon}
@@ -1429,19 +1412,34 @@ function OverviewPage({
         />
         <Tile
           {...tileCommon}
-          label="TACoS"
-          actual={tacosOf(total.cur)}
-          target={total.tCur ? tacosOf(total.tCur) : null}
-          prev={tacosOf(total.prev)}
-          ly={lyOk ? tacosOf(total.ly) : null}
+          label="Margin"
+          hidden={hideProfit}
+          actual={marginCur}
+          target={null}
+          prev={marginPrev}
+          ly={marginLy}
           kind="pct"
-          cost
+          middleContent={
+            <div className="flex h-full flex-col justify-center text-[11.5px] text-slate-500">
+              {grossCur != null && total.cur.revenue ? (
+                <span className="font-semibold text-slate-600 tabular-nums">
+                  {hideProfit ? MASK : fmtUsd0(grossCur)} / {fmtUsd0(total.cur.revenue)}
+                </span>
+              ) : null}
+            </div>
+          }
         />
       </div>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
         <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 bg-slate-50/50">
           <h3 className="text-sm font-bold text-slate-900">Báo cáo tổng team · {periodLabel(periods.cur)}</h3>
+          <label
+            className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-slate-600 select-none"
+          >
+            <input type="checkbox" checked={hideProfit} onChange={toggleProfit} className="h-3.5 w-3.5 cursor-pointer accent-blue-600" />
+            Ẩn lợi nhuận
+          </label>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full acc-kpi-report-table border-separate border-spacing-0 border-l border-t border-black text-xs">
@@ -1489,7 +1487,8 @@ function OverviewPage({
                     {REPORT_COLS.map((c) => {
                       const v = row[c.key];
                       const isRatio = c.ratio;
-                      const text = v == null ? "" : isRatio || r.kind === "pct" ? fmtPct(v) : r.kind === "int" ? fmtInt(v) : fmtUsd(v);
+                      // Ẩn lợi nhuận: che số tiền dòng Gross Profit, giữ các cột %
+                      const text = v == null ? "" : isRatio || r.kind === "pct" ? fmtPct(v) : r.kind === "int" ? fmtInt(v) : profitRow && hideProfit ? MASK : fmtUsd(v);
                       return (
                         <td
                           key={c.key}
@@ -1511,6 +1510,7 @@ function OverviewPage({
 
       <KpiPhoiPicTable
         storeId={storeId}
+        canEdit={canEdit}
         period={periods.cur}
         skus={data.skus}
         targetFormula={data.targetFormula}
@@ -1894,6 +1894,8 @@ function SkuTable({
               {FIX.map((f, i) => (
                 <th
                   key={f.label}
+                  data-kpi-edit-col={f.label.includes("✎") ? f.label : undefined}
+                  data-kpi-sticky={f.label.includes("✎") ? "1" : undefined}
                   style={{ left: leftOf(i), minWidth: f.w, maxWidth: f.w }}
                   className={`sticky z-30 ${GROUP_PALETTE.info.sub} px-2 py-1.5 ${f.label.startsWith("Price") ? "text-right" : "text-left"} text-[11px] font-bold text-black ${grid}`}
                 >
@@ -1902,7 +1904,12 @@ function SkuTable({
               ))}
               {shown.map((g) =>
                 g.cols.map((col) => (
-                  <th key={col.id} style={col.width ? { minWidth: col.width } : undefined} className={`${th} ${pal(g).sub} ${col.kind === "text" ? "text-left" : ""}`}>
+                  <th
+                    key={col.id}
+                    data-kpi-edit-col={col.render ? col.label : undefined}
+                    style={col.width ? { minWidth: col.width } : undefined}
+                    className={`${th} ${pal(g).sub} ${col.kind === "text" ? "text-left" : ""}`}
+                  >
                     {col.label}
                   </th>
                 )),
@@ -2319,7 +2326,7 @@ export function KpiView() {
     if (typeof window === "undefined") return "overview";
     try {
       const saved = window.sessionStorage.getItem("acc_kpi_mode");
-      return saved === "dev" || saved === "test" ? saved : "overview";
+      return saved === "dev" || saved === "test" || saved === "dashboard" ? saved : "overview";
     } catch {
       return "overview";
     }
@@ -2542,7 +2549,8 @@ export function KpiView() {
 
   let body: ReactNode = null;
   if (data) {
-    if (mode === "overview") body = <OverviewPage key={`${selectedStoreId}:${data.period}`} data={data} canEdit={canEdit} storeId={selectedStoreId} onSaveNote={saveNote} onSaveFormula={saveFormula} onOpenSku={setOpenSku} />;
+    if (mode === "dashboard") body = <KpiDashboardView key={`${selectedStoreId}:${data.period}`} data={data} storeId={selectedStoreId} />;
+    else if (mode === "overview") body = <OverviewPage key={`${selectedStoreId}:${data.period}`} data={data} canEdit={canEdit} storeId={selectedStoreId} onSaveNote={saveNote} onSaveFormula={saveFormula} onOpenSku={setOpenSku} />;
     else body = <SkuTable data={data} skus={visibleSkus} canEdit={canEdit} onSaveTarget={saveTarget} onSavePrice={savePrice} onOpen={setOpenSku} />;
   }
 
@@ -2594,6 +2602,7 @@ export function KpiView() {
           <div className="relative flex h-8 items-center rounded-lg border border-slate-300 bg-slate-100/90 p-0.5 shadow-2xs">
             {(
               [
+                { key: "dashboard", label: "Dashboard" },
                 { key: "overview", label: "Tổng quan tháng" },
                 { key: "dev", label: `SKU phát triển${data ? ` (${counts.dev})` : ""}` },
                 { key: "test", label: `SKU test${data ? ` (${counts.test})` : ""}` },
@@ -2616,26 +2625,6 @@ export function KpiView() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {canEdit && selectedStore && (
-              <button
-                type="button"
-                onClick={() => setShowImport(true)}
-                className="flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                <CloudArrowDownIcon size={14} className="text-slate-600" />
-                <span>Nạp số năm trước</span>
-              </button>
-            )}
-            {canEdit && selectedStore && (
-              <button
-                type="button"
-                onClick={() => setShowTargetImport(true)}
-                className="flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                <CloudArrowDownIcon size={14} className="text-slate-600" />
-                <span>Nạp mục tiêu</span>
-              </button>
-            )}
             <button
               type="button"
               onClick={() => load(true)}
@@ -2648,7 +2637,7 @@ export function KpiView() {
           </div>
         </div>
 
-        {mode !== "overview" && data && (
+        {(mode === "dev" || mode === "test") && data && (
           <div className="flex flex-wrap items-center gap-2 bg-slate-50/60 p-2">
             <div className="relative w-56 transition-all duration-200 focus-within:w-72">
               <MagnifyingGlassIcon size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2678,7 +2667,7 @@ export function KpiView() {
               <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} className="h-3.5 w-3.5 cursor-pointer accent-blue-600" />
               Chỉ SKU có bán / có mục tiêu
             </label>
-            <span className="ml-auto text-[11px] text-slate-500">Ô vàng ✎ là leader nhập · Nhấn đúp ô Price để sửa giá mục tiêu · Nhấn mã SKU để xem chi tiết</span>
+            <EditColumnJumper />
           </div>
         )}
       </div>
@@ -2690,7 +2679,7 @@ export function KpiView() {
         <AccountingTopProgressBar loading={loading} variant="indigo" />
         {loading && !data && <div className="p-6 text-center text-xs text-slate-500">Đang tải KPI...</div>}
         {!loading && !data && !error && <div className="p-6 text-center text-xs text-slate-500">Chọn store để xem KPI.</div>}
-        {data && <div className={`flex-1 ${mode === "overview" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
+        {data && <div className={`flex-1 ${mode === "overview" || mode === "dashboard" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
       </div>
 
       {openSkuRow && data && (

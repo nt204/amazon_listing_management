@@ -1404,7 +1404,15 @@ export function KqkdView() {
   const [stores, setStores] = useState<Store[]>([]);
   const [loadingStores, setLoadingStores] = useState(true);
   const [selectedStoreId, setSelectedStoreId] = useState("");
-  const [year, setYear] = useState(currentYear);
+  const [year, setYear] = useState(() => {
+    if (typeof window === "undefined") return currentYear;
+    try {
+      const y = Number(JSON.parse(window.sessionStorage.getItem("acc_kqkd_jump") || "null")?.year);
+      return Number.isFinite(y) && y >= 2020 ? y : currentYear;
+    } catch {
+      return currentYear;
+    }
+  });
   const [mode, setMode] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "overview";
     try {
@@ -1431,7 +1439,29 @@ export function KqkdView() {
   const [colFilters, setColFilters] = useState<ColFilters>({});
   // Lọc mang từ thẻ KPI của Tổng quan sang (bấm thẻ): giữ đúng danh sách SKU của thẻ, có nhãn để bỏ
   // (chỉ áp cho đúng store + năm lúc bấm; đổi store / năm là tự bỏ)
-  const [kpiPresetState, setKpiPreset] = useState<{ scope: string; label: string; skus: Set<string>; outside: number } | null>(null);
+  // Bấm dòng phôi ở tab KPI kinh doanh → mở thẳng SKU Testing lọc đúng các SKU đó (KpiPhoiPicTable ghi acc_kqkd_jump)
+  const [kpiJump] = useState<{ storeId: string; year: number; label: string; skus: string[] } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      // Không xoá ở đây (StrictMode gọi hàm khởi tạo 2 lần) — xoá trong effect bên dưới
+      const raw = window.sessionStorage.getItem("acc_kqkd_jump");
+      if (!raw) return null;
+      const j = JSON.parse(raw);
+      return j?.storeId && Array.isArray(j.skus) ? { storeId: String(j.storeId), year: Number(j.year), label: String(j.label || ""), skus: j.skus.map(String) } : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.sessionStorage.removeItem("acc_kqkd_jump");
+    } catch {
+      // bỏ qua
+    }
+  }, []);
+  const [kpiPresetState, setKpiPreset] = useState<{ scope: string; label: string; skus: Set<string>; outside: number; from?: string } | null>(() =>
+    kpiJump ? { scope: `${kpiJump.storeId}|${kpiJump.year}`, label: kpiJump.label, skus: new Set(kpiJump.skus), outside: -1, from: "KPI kinh doanh" } : null,
+  );
   const kpiPreset = kpiPresetState?.scope === `${selectedStoreId}|${year}` ? kpiPresetState : null;
   const [filterOpen, setFilterOpen] = useState<FilterOpen | null>(null);
   const openFilter = useCallback(
@@ -2035,13 +2065,16 @@ export function KqkdView() {
               )}
             </div>
 
-            {kpiPreset && (
+            {kpiPreset && (() => {
+              // Mở từ KPI kinh doanh: chưa biết SKU nào nằm ngoài bảng lúc tạo lọc → đếm theo dữ liệu đã tải
+              const outside = kpiPreset.outside >= 0 ? kpiPreset.outside : kpiPreset.skus.size - allSkus.filter((s) => kpiPreset.skus.has(s.sku)).length;
+              return (
               <span
                 className="animate-in fade-in zoom-in-95 duration-150 inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 pl-2.5 pr-1 text-xs font-semibold text-blue-800"
-                title={kpiPreset.outside ? `${kpiPreset.outside} SKU listing năm trước không có trong bảng SKU Testing (chỉ có ở phần đánh giá)` : undefined}
+                title={outside ? `${outside} SKU listing năm trước không có trong bảng SKU Testing (chỉ có ở phần đánh giá)` : undefined}
               >
-                Từ Tổng quan: {kpiPreset.label} ({kpiPreset.skus.size - kpiPreset.outside}
-                {kpiPreset.outside ? ` + ${kpiPreset.outside} SKU năm trước` : ""})
+                Từ {kpiPreset.from || "Tổng quan"}: {kpiPreset.label} ({kpiPreset.skus.size - outside}
+                {outside ? ` + ${outside} SKU năm trước` : ""})
                 <button
                   type="button"
                   onClick={() => {
@@ -2056,7 +2089,8 @@ export function KqkdView() {
                   <XIcon size={10} weight="bold" />
                 </button>
               </span>
-            )}
+              );
+            })()}
             <span className="text-[11px] font-medium text-slate-400">Bấm tên cột để lọc / sắp xếp</span>
             {(activeFilters > 0 || sort) && (
               <button
