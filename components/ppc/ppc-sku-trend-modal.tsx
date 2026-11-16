@@ -12,7 +12,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
-import { X, Tag, StackIcon, ShoppingCartIcon, CubeIcon, PercentIcon, TargetIcon, CaretRight, CircleNotch } from "@phosphor-icons/react";
+import { X, Tag, StackIcon, ShoppingCartIcon, CubeIcon, PercentIcon, CaretRight, CircleNotch } from "@phosphor-icons/react";
 import type { PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
 
 interface PpcSkuTrendModalProps {
@@ -222,7 +222,7 @@ export function PpcSkuTrendModal({
         </div>
 
         {/* KPI */}
-        <div className="grid grid-cols-2 gap-2.5 my-4 sm:grid-cols-[1fr_1fr_0.8fr_1.25fr]">
+        <div className="grid grid-cols-2 gap-2.5 my-4 sm:grid-cols-4">
           <KpiCard
             tone="bg-indigo-50/70"
             iconTone="bg-indigo-100/70 text-indigo-600"
@@ -251,15 +251,6 @@ export function PpcSkuTrendModal({
             label="ACoS"
             value={noData ? "—" : totals.acos > 500 ? "0 sales" : `${totals.acos.toFixed(1)}%`}
             valueClass={noData ? "text-slate-400" : totals.acos > 500 ? "text-rose-600" : acosTone(totals.acos)}
-            aside={
-              <div className="rounded-lg bg-white/90 px-2 py-1 text-center shadow-2xs">
-                <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500">
-                  <TargetIcon size={11} weight="bold" />
-                  Target
-                </span>
-                <span className="font-mono text-xs font-bold text-slate-700">{targetAcos.toFixed(1)}%</span>
-              </div>
-            }
           />
         </div>
 
