@@ -5,7 +5,7 @@ import { getDatabaseClient } from "@/lib/db";
 import { readSpreadsheetMeta, readSpreadsheetRange } from "@/lib/google/sheets";
 
 // KPI tháng kênh FBM — file "FBM - <STORE> - KẾ HOẠCH KINH DOANH 2026":
-//   mỗi tab "Tháng MYYYY" (vd. "Tháng 112026"), hàng 3 có tiêu đề "[Target] T11/2026" ở 1 cột (hiện là J);
+//   mỗi tab "Tháng M/YYYY" (vd. "Tháng 11/2026"), hàng 3 có tiêu đề "[Target] T11/2026" ở 1 cột (hiện là J);
 //   cột A là tên chỉ tiêu: Revenue, Quantity, Ads Fee, Basecost, Amazon Fee, Promotion, Taxs, Return, Profit
 //   (dòng tổng nằm trước các dòng "- SP test" / "- SP Cũ" nên lấy lần xuất hiện đầu tiên).
 
@@ -49,8 +49,9 @@ export async function importFbmTargetsFromSheet(
   if (!meta.title.toUpperCase().includes(store.name.toUpperCase())) {
     throw new ApiError(`File "${meta.title}" không phải của store ${store.name}.`, 400);
   }
-  const tabs = meta.tabs.filter((t) => /^\s*Tháng\s*\d{5,6}\s*$/i.test(t));
-  if (!tabs.length) throw new ApiError('File không có tab "Tháng MYYYY" (vd. "Tháng 112026").', 400);
+  // Tên tab có thể ở dạng Unicode tổ hợp (NFD) → chuẩn hoá trước khi so
+  const tabs = meta.tabs.filter((t) => /^\s*tháng\s*\d{1,2}\s*\/?\s*\d{4}\s*$/i.test(t.normalize("NFC")));
+  if (!tabs.length) throw new ApiError('File không có tab "Tháng M/YYYY" (vd. "Tháng 11/2026").', 400);
 
   const months: FbmImportResult["months"] = [];
   const skipped: string[] = [];
@@ -70,7 +71,7 @@ export async function importFbmTargetsFromSheet(
       });
     }
     if (col < 0) {
-      skipped.push(tab.trim());
+      skipped.push(tab.normalize("NFC").trim());
       continue;
     }
     const metrics: Record<string, number> = {};
@@ -79,11 +80,11 @@ export async function importFbmTargetsFromSheet(
       if (key && metrics[key] === undefined) metrics[key] = num(r[col]);
     }
     if (!metrics.revenue && !metrics.profit) {
-      skipped.push(tab.trim());
+      skipped.push(tab.normalize("NFC").trim());
       continue;
     }
-    rows.push({ period, metrics, tab: tab.trim() });
-    months.push({ tab: tab.trim(), period, revenue: metrics.revenue ?? 0, quantity: metrics.quantity ?? 0, profit: metrics.profit ?? 0 });
+    rows.push({ period, metrics, tab: tab.normalize("NFC").trim() });
+    months.push({ tab: tab.normalize("NFC").trim(), period, revenue: metrics.revenue ?? 0, quantity: metrics.quantity ?? 0, profit: metrics.profit ?? 0 });
   }
 
   if (!options.dryRun && rows.length) {
