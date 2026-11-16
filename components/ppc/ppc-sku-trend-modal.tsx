@@ -494,6 +494,8 @@ function SkuTargetBreakdown({
   const acosClass = (spend: number, sales: number) =>
     sales > 0 ? ((spend / sales) * 100 <= targetAcos ? "text-emerald-600" : "text-rose-600") : spend > 0 ? "text-rose-600" : "text-slate-300";
   const noReportYet = Boolean(selectedDate && latestReportDate && selectedDate > latestReportDate);
+  // Search term report về chậm hơn số Ads theo ngày → tổng bảng có thể thấp hơn tổng biểu đồ
+  const partialCoverage = Boolean(!selectedDate && latestReportDate && latestReportDate < endDate);
 
   return (
     <div className="mt-4 rounded-xl border border-slate-200">
@@ -519,6 +521,11 @@ function SkuTargetBreakdown({
         )}
       </div>
 
+      {partialCoverage && rows && (
+        <div className="border-b border-amber-100 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+          Search term report mới có tới {fmtDate(latestReportDate!)} — các ngày sau đó chưa tách được theo target.
+        </div>
+      )}
       {error ? (
         <div className="px-3 py-4 text-xs text-rose-600">{error}</div>
       ) : rows === null ? (
