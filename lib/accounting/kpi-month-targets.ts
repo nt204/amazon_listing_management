@@ -4,8 +4,10 @@ import { getKpi } from "@/lib/accounting/kpi-db";
 import { computeTarget } from "@/lib/accounting/kpi-calc";
 import { addProgressTotals, kpiWindowWeights, type KpiProgressTotals, type KpiWindow } from "@/lib/accounting/kpi-progress";
 
-// Mục tiêu tháng của 1 store đúng như trang KPI kinh doanh: SKU WIN (phát triển) + SKU TEST, mỗi SKU tính theo công thức
-// mục tiêu của store (computeTarget); nhóm chưa có mục tiêu từng SKU thì dùng mục tiêu tổng team nạp từ BÁO CÁO THÁNG.
+// Mục tiêu tháng của 1 store: ưu tiên mục tiêu tổng team nạp từ tab BÁO CÁO THÁNG của file KPI (ô "[Target] SKU WIN T…",
+// đúng số sheet BÁO CÁO TUẦN dùng); nhóm chưa có tổng team thì cộng mục tiêu từng SKU theo công thức của store
+// (computeTarget) như trang KPI kinh doanh. Cộng từng SKU có thể lệch tổng của file (giá / giá vốn / return lấy theo web,
+// vd. MALFIRST T11: 23,010.3 so với 23,095.0 của file).
 
 export interface StoreKpiTargets {
   dev: KpiProgressTotals | null;
@@ -27,7 +29,7 @@ async function computeMonthTargets(storeId: string, period: string): Promise<Sto
   }
   for (const g of ["dev", "test"] as const) {
     const team = data.teamTargets?.cur[g];
-    if (!out[g] && team) out[g] = { revenue: team.revenue ?? 0, quantity: team.quantity ?? 0, profit: team.profit ?? 0 };
+    if (team && (team.revenue || team.profit)) out[g] = { revenue: team.revenue ?? 0, quantity: team.quantity ?? 0, profit: team.profit ?? 0 };
   }
   return out;
 }
