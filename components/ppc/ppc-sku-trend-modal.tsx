@@ -499,7 +499,7 @@ function SkuTargetBreakdown({
             </span>
           )}
         </div>
-        {selectedDate ? (
+        {selectedDate && (
           <button
             type="button"
             onClick={onClearDate}
@@ -507,8 +507,6 @@ function SkuTargetBreakdown({
           >
             Xem cả {periodLabel}
           </button>
-        ) : (
-          <span className="text-[11px] text-slate-400">Bấm vào 1 cột để xem riêng ngày đó</span>
         )}
       </div>
 
