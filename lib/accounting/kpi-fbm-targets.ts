@@ -58,16 +58,15 @@ export async function importFbmTargetsFromSheet(
   const rows: { period: string; metrics: Record<string, number>; tab: string }[] = [];
   for (const tab of tabs) {
     const grid = await readSpreadsheetRange(meta.spreadsheetId, `'${tab.replace(/'/g, "''")}'!A1:Z40`);
-    // Cột có tiêu đề "[Target] T{M}/{YYYY}" ở 5 hàng đầu
+    // Tháng của tab ("Tháng 11/2026") → chỉ nhận cột "[Target] T11/2026" (hàng tiêu đề còn có "[Target]" của tháng trước
+    // ở phần BÁO CÁO THÁNG, không được lấy nhầm)
+    const tm = tab.normalize("NFC").match(/(\d{1,2})\s*\/?\s*(\d{4})\s*$/);
+    const period = tm ? `${tm[2]}-${tm[1].padStart(2, "0")}` : "";
     let col = -1;
-    let period = "";
     for (const r of grid.slice(0, 5)) {
       r.forEach((cell, i) => {
         const m = String(cell ?? "").match(/^\s*\[Target\]\s*T(\d{1,2})\/(\d{4})\s*$/i);
-        if (m && col < 0) {
-          col = i;
-          period = `${m[2]}-${m[1].padStart(2, "0")}`;
-        }
+        if (m && col < 0 && `${m[2]}-${m[1].padStart(2, "0")}` === period) col = i;
       });
     }
     if (col < 0) {
