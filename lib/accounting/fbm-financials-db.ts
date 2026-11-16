@@ -405,9 +405,11 @@ async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, en
       WHERE TRUE ${dateRangeCondition(sql, "date", startDate, endDate)}
       GROUP BY 1, 2
     ),
-    -- Gộp theo Portfolio trước rồi mới so khớp "chứa SKU" để tránh nhân chéo SKU × từng dòng ADS
+    -- Ads của SKU = portfolio có CHỮ CUỐI đúng bằng SKU (như tab FBM theo ngày: chữ cuối Portfolio → BẢNG MÃ FBM).
+    -- Trước đây so "portfolio chứa SKU" nên SKU nằm gọn trong SKU khác (PNLEP1015CM07C ⊂ CPNLEP1015CM07C) bị cộng
+    -- Ads của cả portfolio kia → Ads FBM bị tính lặp (EVERPHANT 1–14/11: dư ~615$).
     portfolio_ads AS (
-      SELECT UPPER(COALESCE(portfolio, '')) AS portfolio,
+      SELECT UPPER(substring(COALESCE(portfolio, '') from '([^ ]*)$')) AS sku_tail,
         SUM(COALESCE(spend, 0)) AS spend,
         SUM(COALESCE(sales, 0)) AS sales
       FROM accounting_ads
@@ -417,7 +419,7 @@ async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, en
     sku_ads AS (
       SELECT m.sku_key, m.asin_key, SUM(pa.spend) AS spend, SUM(pa.sales) AS sales
       FROM fbm_master_sku m
-      JOIN portfolio_ads pa ON strpos(pa.portfolio, m.sku_key) > 0
+      JOIN portfolio_ads pa ON pa.sku_tail = m.sku_key
       GROUP BY 1, 2
     ),
     sku_returns AS (
