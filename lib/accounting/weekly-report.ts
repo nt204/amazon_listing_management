@@ -113,14 +113,14 @@ export interface WeeklyReport {
   /** null = người xem không có quyền xem tiền về */
   payout: { current: number; previous: number; byStore: { storeName: string; current: number; previous: number }[] } | null;
   /**
-   * Payment theo tháng: lũy kế từ mùng 1 đến ngày cuối tuần (current) so với cùng kỳ tháng trước (previous: mùng 1 → cùng
-   * ngày) và cả tháng trước (previousFull). null = không có quyền xem tiền về.
+   * Payment của tuần đang xem (current) so với cùng kỳ tháng trước (previous: cùng các ngày, lùi 1 tháng) và cả tháng
+   * trước (previousFull, tháng của ngày cuối kỳ so sánh). null = không có quyền xem tiền về.
    */
   payoutMonth: {
     current: number;
     previous: number;
     previousFull: number;
-    range: { start: string; end: string; prevStart: string; prevEnd: string; prevMonthEnd: string };
+    range: { start: string; end: string; prevStart: string; prevEnd: string; prevMonthStart: string; prevMonthEnd: string };
     byStore: { storeName: string; current: number; previous: number; previousFull: number }[];
   } | null;
 }
@@ -147,18 +147,24 @@ function teamOf(storeTeam: string | null | undefined, channel: "FBA" | "FBM"): s
   return m ? `FBA TEAM ${m[1]}` : "FBA";
 }
 
-/** Payment lũy kế tháng của tuần đang xem so với cùng kỳ tháng trước + cả tháng trước */
-async function loadPayoutMonth(weekEnd: string, storeNames: string[]): Promise<NonNullable<WeeklyReport["payoutMonth"]>> {
+/** Payment của tuần đang xem so với cùng kỳ tháng trước (cùng các ngày, lùi 1 tháng) + cả tháng trước */
+async function loadPayoutMonth(weekStart: string, weekEnd: string, storeNames: string[]): Promise<NonNullable<WeeklyReport["payoutMonth"]>> {
   const pad = (n: number) => String(n).padStart(2, "0");
-  const y = Number(weekEnd.slice(0, 4)), m = Number(weekEnd.slice(5, 7)), d = Number(weekEnd.slice(8, 10));
-  const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
-  const prevDim = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+  /** Lùi 1 tháng, giữ ngày (kẹp về ngày cuối tháng nếu tháng trước ngắn hơn) */
+  const backOneMonth = (iso: string) => {
+    const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7)), d = Number(iso.slice(8, 10));
+    const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+    const dim = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+    return { iso: `${py}-${pad(pm)}-${pad(Math.min(d, dim))}`, monthStart: `${py}-${pad(pm)}-01`, monthEnd: `${py}-${pad(pm)}-${pad(dim)}` };
+  };
+  const ps = backOneMonth(weekStart), pe = backOneMonth(weekEnd);
   const range = {
-    start: `${weekEnd.slice(0, 7)}-01`,
+    start: weekStart,
     end: weekEnd,
-    prevStart: `${py}-${pad(pm)}-01`,
-    prevEnd: `${py}-${pad(pm)}-${pad(Math.min(d, prevDim))}`,
-    prevMonthEnd: `${py}-${pad(pm)}-${pad(prevDim)}`,
+    prevStart: ps.iso,
+    prevEnd: pe.iso,
+    prevMonthStart: pe.monthStart,
+    prevMonthEnd: pe.monthEnd,
   };
   if (!storeNames.length) return { current: 0, previous: 0, previousFull: 0, range, byStore: [] };
   const sql = await getDatabaseClient();
@@ -166,10 +172,10 @@ async function loadPayoutMonth(weekEnd: string, storeNames: string[]): Promise<N
     SELECT UPPER(store_name) AS store_name,
       COALESCE(SUM(payout_amount) FILTER (WHERE acknowledged_date BETWEEN ${range.start}::date AND ${range.end}::date), 0)::float AS cur,
       COALESCE(SUM(payout_amount) FILTER (WHERE acknowledged_date BETWEEN ${range.prevStart}::date AND ${range.prevEnd}::date), 0)::float AS prev,
-      COALESCE(SUM(payout_amount) FILTER (WHERE acknowledged_date BETWEEN ${range.prevStart}::date AND ${range.prevMonthEnd}::date), 0)::float AS full
+      COALESCE(SUM(payout_amount) FILTER (WHERE acknowledged_date BETWEEN ${range.prevMonthStart}::date AND ${range.prevMonthEnd}::date), 0)::float AS full
     FROM accounting_payout_disbursements
     WHERE payout_status = 'Done'
-      AND acknowledged_date BETWEEN ${range.prevStart}::date AND ${range.end}::date
+      AND acknowledged_date BETWEEN LEAST(${range.prevStart}::date, ${range.prevMonthStart}::date) AND ${range.end}::date
       AND UPPER(store_name) = ANY(${storeNames.map((n) => n.toUpperCase())})
     GROUP BY 1
     ORDER BY 1
@@ -325,7 +331,7 @@ export async function getWeeklyReport(options: {
   const [payout, payoutMonth, cashflow] = options.canViewPayout
     ? await Promise.all([
         loadPayout(week, previousWeek, win.byStore.map((s) => s.storeName)),
-        loadPayoutMonth(week.endDate, win.byStore.map((s) => s.storeName)),
+        loadPayoutMonth(week.startDate, week.endDate, win.byStore.map((s) => s.storeName)),
         getWeeklyCashflow(week.startDate).catch(() => null),
       ])
     : [null, null, null];

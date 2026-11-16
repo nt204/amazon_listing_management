@@ -1854,7 +1854,7 @@ function CashflowBlock({ cashflow, payment, canEdit }: { cashflow: WeeklyCashflo
   );
 }
 
-/** Payment theo tháng: lũy kế tháng này (mùng 1 → cuối tuần) so với cùng kỳ tháng trước; kèm cả tháng trước */
+/** Payment của tuần đang xem so với cùng kỳ tháng trước (cùng các ngày, lùi 1 tháng); kèm cả tháng trước */
 function PayoutBlock({ payout }: { payout: NonNullable<WeeklyReport["payoutMonth"]> }) {
   const max = Math.max(1, ...payout.byStore.map((p) => Math.max(p.current, p.previous)));
   const rows = [...payout.byStore].filter((p) => p.current || p.previous || p.previousFull).sort((a, b) => b.current - a.current);
@@ -1867,13 +1867,13 @@ function PayoutBlock({ payout }: { payout: NonNullable<WeeklyReport["payoutMonth
     <div className={`${tableCard(theme)} h-full`}>
       <div className="flex items-end justify-between gap-3 border-b border-[#D97300] bg-[#FF8C00] px-5 py-4 !text-black">
         <div>
-          <div className="text-sm font-bold !text-black">Payment tháng {Number(r.end.slice(5, 7))} — Amazon đã giải ngân ({cur})</div>
+          <div className="text-sm font-bold !text-black">Payment tuần — Amazon đã giải ngân ({cur})</div>
           <div className="text-[28px] font-bold leading-tight tabular-nums !text-black">{usd2(payout.current)}</div>
           <div
             className="text-[13px] !text-black/80"
             title="Tổng Disbursement trạng thái Done có ngày nhận (Acknowledged) trong khoảng ngày; không phải doanh thu hay lợi nhuận"
           >
-            Cùng kỳ tháng trước ({prev}) {usd2(payout.previous)} · cả tháng {Number(r.prevStart.slice(5, 7))} {usd2(payout.previousFull)}
+            Cùng kỳ tháng trước ({prev}) {usd2(payout.previous)} · cả tháng {Number(r.prevMonthEnd.slice(5, 7))} {usd2(payout.previousFull)}
           </div>
         </div>
         <WowPill value={wow(payout.current, payout.previous)} />
@@ -1886,7 +1886,7 @@ function PayoutBlock({ payout }: { payout: NonNullable<WeeklyReport["payoutMonth
             </span>
             <div
               className="flex flex-col gap-1"
-              title={`Tháng này (${cur}) ${usd2(p.current)} · cùng kỳ tháng trước (${prev}) ${usd2(p.previous)} · cả tháng trước ${usd2(p.previousFull)}`}
+              title={`Tuần này (${cur}) ${usd2(p.current)} · cùng kỳ tháng trước (${prev}) ${usd2(p.previous)} · cả tháng trước ${usd2(p.previousFull)}`}
             >
               <div className="h-2 rounded-full bg-orange-500" style={{ width: `${Math.max(1, (p.current / max) * 100)}%` }} />
               <div className="h-1 rounded-full bg-slate-300" style={{ width: `${Math.max(1, (p.previous / max) * 100)}%` }} />
