@@ -12,6 +12,7 @@ import { getStoreMonthTargets } from "@/lib/accounting/kpi-month-targets";
 import { getDatabaseClient } from "@/lib/db";
 import { getWeeklyPrepaid, type WeeklyPrepaid } from "@/lib/accounting/weekly-prepaid-db";
 import { getWeeklyCashflow } from "@/lib/accounting/weekly-cashflow-db";
+import { getFbmMonthTarget } from "@/lib/accounting/kpi-fbm-targets";
 import type { WeeklyCashflow } from "@/lib/accounting/weekly-cashflow";
 import {
   daysInMonthOf,
@@ -56,7 +57,7 @@ export interface WeeklyBrandRow {
   previous: WeeklyMetrics;
   /** Lũy kế từ đầu tháng đến ngày cuối kỳ */
   mtd: WeeklyMetrics;
-  /** Mục tiêu tháng (KPI kinh doanh, SKU WIN) — kênh FBM chưa có KPI → null */
+  /** Mục tiêu tháng: FBA = KPI kinh doanh (SKU WIN); FBM = KPI nạp từ file FBM của store (null = chưa có) */
   target: { revenue: number; profit: number } | null;
   /** Cùng dòng nhưng SKU TEST (FBM không có Test → số 0, target null) — bảng brand chọn All / Win / Test */
   test: WeeklyGroupMetrics;
@@ -207,6 +208,10 @@ export async function getWeeklyReport(options: {
           } catch {
             // Store chưa có KPI tháng → bỏ qua mục tiêu
           }
+        } else {
+          // FBM: KPI tháng nạp từ file "FBM - <STORE> - KẾ HOẠCH KINH DOANH" (cả kênh FBM tính là Win)
+          const t = await getFbmMonthTarget(s.storeId, period).catch(() => null);
+          if (t) target = { revenue: t.revenue, profit: t.profit };
         }
         return {
           key,
