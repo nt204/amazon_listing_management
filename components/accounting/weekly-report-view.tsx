@@ -422,7 +422,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
   const total = useMemo(() => summarize(visibleBrands, ctx), [visibleBrands, ctx]);
   const teams: TeamGroup[] = useMemo(() => groupTeams(visibleBrands, ctx), [visibleBrands, ctx]);
 
-  // Bảng brand: chọn All / Win / Test (Win / Test chia như trang KPI kinh doanh — server đã tách sẵn)
+  // Bảng brand: chọn All / Win / Test (Win / Test theo trạng thái Bảng mã như sheet — server đã tách sẵn)
   const [skuGroup, setSkuGroup] = useState<SkuGroup>("win");
   const groupBrands = useMemo(() => visibleBrands.map((b) => brandOfGroup(b, skuGroup)), [visibleBrands, skuGroup]);
   const brandTotal = useMemo(() => (skuGroup === "win" ? total : summarize(groupBrands, ctx)), [skuGroup, total, groupBrands, ctx]);
@@ -1285,7 +1285,7 @@ function BrandPanel({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="flex items-center gap-2" title="Chia SKU như trang KPI kinh doanh: Win = Bảng mã Phát triển (đã qua Tháng đánh giá), Test = trạng thái Test + SKU chưa tới Tháng đánh giá; FBM tính hết vào Win">
+          <div className="flex items-center gap-2" title="Chia SKU như sheet: Win = Bảng mã trạng thái Phát triển, Test = trạng thái Test; FBM tính hết vào Win">
             <span className="text-[13px] font-medium !text-slate-600">SKU</span>
             <Segmented
               label="Nhóm SKU"

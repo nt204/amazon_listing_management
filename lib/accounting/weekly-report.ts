@@ -24,8 +24,8 @@ import {
 //   I.  KPI card: Revenue / Profit / Biên LN / TACoS của SKU WIN toàn công ty, so tuần trước + nhịp mục tiêu tháng.
 //   II. Kinh doanh theo brand (SKU WIN): mỗi store × kênh 1 dòng (store chạy cả FBA và FBM thì tách "(FBA)" / "(FBM)").
 //       Số SKU WIN = getDashboardSkuGroup("win"), cùng nguồn "Data Win" của sheet (FBA: Bảng mã trạng thái Phát triển;
-//       FBM: toàn bộ FBM của store). Win / Test chia như trang KPI kinh doanh: SKU "Phát triển" có Tháng đánh giá ≥ tháng
-//       của kỳ vẫn tính là Test. Mỗi dòng kèm số SKU TEST (row.test) để bảng brand chọn All / Win / Test.
+//       FBM: toàn bộ FBM của store). Win / Test theo đúng trạng thái Bảng mã như sheet (Phát triển = Win, Test = Test),
+//       KHÔNG áp quy tắc Tháng đánh giá của trang KPI. Mỗi dòng kèm số SKU TEST (row.test) để bảng brand chọn All / Win / Test.
 //   P/L theo người phụ trách: gom brand theo Team của store (FBA 1 → FBA TEAM 1…, kênh FBM → FBM).
 //   III. Hiệu quả RD (SKU TEST): getDashboardSkuGroup("test") — chỉ FBA.
 //   V.  Tồn kho: tồn FBA + AWD tại ngày cuối tuần (như Stores Performance) + trả trước cho SUP (kế toán nhập theo tuần,
@@ -169,10 +169,10 @@ export async function getWeeklyReport(options: {
   const monthStart = `${week.startDate.slice(0, 7)}-01`;
   const base = { allowedChannels: options.allowedChannels };
 
-  // Win / Test chia như trang KPI kinh doanh theo tháng của từng kỳ: SKU "Phát triển" chưa qua Tháng đánh giá vẫn là Test
-  const cur = { startDate: week.startDate, endDate: week.endDate, kpiMonth: week.startDate.slice(0, 7) };
-  const prv = { startDate: previousWeek.startDate, endDate: previousWeek.endDate, kpiMonth: previousWeek.startDate.slice(0, 7) };
-  const mtdRange = { startDate: monthStart, endDate: week.endDate, kpiMonth: week.startDate.slice(0, 7) };
+  // Win / Test theo trạng thái Bảng mã như sheet "Data Win" / "Data Test" (không áp quy tắc Tháng đánh giá của trang KPI)
+  const cur = { startDate: week.startDate, endDate: week.endDate };
+  const prv = { startDate: previousWeek.startDate, endDate: previousWeek.endDate };
+  const mtdRange = { startDate: monthStart, endDate: week.endDate };
   const [win, winPrev, winMtd, test, testPrev, testMtd] = await Promise.all([
     getDashboardSkuGroup({ ...base, group: "win", ...cur }),
     getDashboardSkuGroup({ ...base, group: "win", ...prv }),
