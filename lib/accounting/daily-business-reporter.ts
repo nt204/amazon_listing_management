@@ -343,12 +343,13 @@ export async function reportDailyBusinessData(
           await sendLarkTextNotification(text, { receiveId: webhookUrl, receiveIdType: "webhook" }).catch(() => {});
         }
       }
+    } else {
+      await notifyLarkEventBestEffort(
+        { teamId: scope.teamId, actorId: "system" },
+        "accounting",
+        { card, fallbackText: text },
+      );
     }
-    await notifyLarkEventBestEffort(
-      { teamId: scope.teamId, actorId: "system" },
-      "accounting",
-      { card, fallbackText: text },
-    );
   }
 
   if (options.force && !options.recipient) {
