@@ -530,7 +530,7 @@ async function fetchMagnetDirectApi(
       keyword,
       marketplace: mpId,
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(45000),
   });
 
   if (!createRes.ok) {
@@ -548,7 +548,7 @@ async function fetchMagnetDirectApi(
   let tableData: any[] = [];
   const pageSize = Math.min(Math.max(limit, 50), 200);
 
-  for (let attempt = 1; attempt <= 12; attempt++) {
+  for (let attempt = 1; attempt <= 15; attempt++) {
     const dataUrl = `https://h10api.pacvue.com/rta/magnet/v1/amazon/search/single/${searchId}/results?accountId=${accountId}&page=1&per_page=${pageSize}`;
     const dataRes = await fetch(dataUrl, {
       headers: {
@@ -557,7 +557,7 @@ async function fetchMagnetDirectApi(
         referer: `https://members.helium10.com/magnet/search/single/${searchId}?accountId=${accountId}`,
         accept: "application/json",
       },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (dataRes.ok) {
@@ -568,7 +568,7 @@ async function fetchMagnetDirectApi(
       }
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   if (tableData.length === 0) {
