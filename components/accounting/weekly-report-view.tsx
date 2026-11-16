@@ -1084,7 +1084,7 @@ function BrandPanel({
         )}
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto pb-3">
           <table className={`${TABLE} min-w-[1240px]`}>
             <thead>
               <tr className="text-[11.5px] font-bold uppercase tracking-wide">
@@ -1419,7 +1419,7 @@ function StockBlock({
   const ncol = 11;
   return (
     <div className={`${tableCard(theme)} h-full`}>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto pb-3">
         <table className={`${TABLE} min-w-[1100px]`}>
           <thead>
             <tr>
