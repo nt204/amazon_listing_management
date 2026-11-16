@@ -28,5 +28,12 @@
     "profile_id": "k1hiklwi",
     "enabled": true,
     "description": "Store MALFIRST"
+  },
+  {
+    "store_name": "EVERPHANT",
+    "profile_id": "k1j4bpmc",
+    "enabled": true,
+    "ppc": false,
+    "description": "Store EVERPHANT (chỉ crawl accounting, không chạy PPC)"
   }
 ]

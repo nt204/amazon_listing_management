@@ -120,6 +120,8 @@ export interface StoreTarget {
   store_name: string;
   profile_id: string;
   enabled?: boolean;
+  /** false = store chỉ crawl accounting, không chạy PPC */
+  ppc?: boolean;
   description?: string;
 }
 
@@ -130,7 +132,8 @@ export function getStoreList(): StoreTarget[] {
       const raw = fs.readFileSync(storesPath, "utf8");
       const list = JSON.parse(raw) as StoreTarget[];
       if (Array.isArray(list) && list.length > 0) {
-        const enabled = list.filter((s) => s.enabled !== false && s.store_name && s.profile_id);
+        // ppc: false = store chỉ dùng cho accounting (crawler.ts là crawler PPC)
+        const enabled = list.filter((s) => s.enabled !== false && s.ppc !== false && s.store_name && s.profile_id);
         if (enabled.length > 0) {
           const names = new Set<string>();
           const profiles = new Set<string>();

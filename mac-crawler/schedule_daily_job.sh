@@ -42,7 +42,8 @@ for store in stores:
     name=str(store.get("store_name", "")).strip()
     profile=str(store.get("profile_id", "")).strip()
     key=name.lower()
-    if store.get("enabled", True) is not False and name and profile and key not in seen:
+    # "ppc": false = store chỉ crawl accounting, không xếp job PPC
+    if store.get("enabled", True) is not False and store.get("ppc", True) is not False and name and profile and key not in seen:
         seen.add(key)
         names.append(name)
 if not names: raise SystemExit("stores.json không có store hợp lệ")
