@@ -82,6 +82,14 @@ interface PpcSkuRecommendationGroupProps {
   onOpenSkuTrend?: (data: { sku: string; storeName: string; mockupUrl?: string | null; dailyTrend: PpcSkuDailyTrendPoint[] }) => void;
 }
 
+interface SkuCampaignStatsResponse {
+  campaigns: Array<{ campaignId: string; campaignName: string; campaignState: string; clicks: number; spend: number; sales: number; orders: number }>;
+  targets: Array<{ campaignId: string; campaignName: string; targetId: string; keyword: string; matchType: string; state: string; bid: number; clicks: number; spend: number; sales: number; orders: number }>;
+}
+type SkuTargetStat = SkuCampaignStatsResponse["targets"][number];
+
+const normName = (v?: string | null) => (v || "").replace(/\s+/g, " ").trim().toLowerCase();
+
 export type QuickFilterType =
   | "ALL"
   | "INCREASE"
@@ -569,6 +577,28 @@ export function PpcSkuRecommendationGroupView({
     }
   };
 
+  // Số thật theo campaign / target (cả target không có đề xuất) — để thấy spend đến từ đâu.
+  const selectedSkuCode = selectedSkuGroup?.sku || "";
+  const campaignStatsKey = `${selectedStore || "ALL"}|${selectedSkuCode}|${recommendationWindowDays}`;
+  const [campaignStatsResult, setCampaignStatsResult] = useState<{ key: string; data: SkuCampaignStatsResponse } | null>(null);
+  const skuCampaignStats = campaignStatsResult?.key === campaignStatsKey ? campaignStatsResult.data : null;
+  useEffect(() => {
+    if (!selectedSkuCode) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      storeName: selectedStore || "ALL",
+      sku: selectedSkuCode,
+      days: String(recommendationWindowDays),
+    });
+    fetch(`/api/ppc/sku-campaign-stats?${params}`, { cache: "no-store", signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.campaigns)) setCampaignStatsResult({ key: campaignStatsKey, data });
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [campaignStatsKey, selectedSkuCode, selectedStore, recommendationWindowDays]);
+
   // Handle ESC key to close modal
   useEffect(() => {
     if (!selectedSkuGroup) return;
@@ -891,6 +921,24 @@ export function PpcSkuRecommendationGroupView({
         campType = "SB";
       }
 
+      // Số thật của campaign (cả target không có đề xuất); chưa tải xong thì cộng từ các dòng đề xuất
+      const campId = recs.find((r) => r.campaignId)?.campaignId;
+      const actual = skuCampaignStats?.campaigns.find((c) =>
+        (campId && c.campaignId === campId) || normName(c.campaignName) === normName(campaignName),
+      );
+      const recKeys = new Set(
+        skuAllRecs
+          .filter((r) => normName(r.campaignName) === normName(campaignName))
+          .flatMap((r) => [r.keywordId || "", `${normName(r.keyword)}|${normName(r.matchType)}`]),
+      );
+      const otherTargets: SkuTargetStat[] = (skuCampaignStats?.targets || [])
+        .filter((t) =>
+          ((actual && t.campaignId === actual.campaignId) || normName(t.campaignName) === normName(campaignName))
+          && !(t.targetId && recKeys.has(t.targetId))
+          && !recKeys.has(`${normName(t.keyword)}|${normName(t.matchType)}`),
+        )
+        .sort((a, b) => b.spend - a.spend || b.clicks - a.clicks);
+
       return {
         campaignName,
         campaignType: campType,
@@ -900,13 +948,29 @@ export function PpcSkuRecommendationGroupView({
         totalIncrease,
         totalDecrease,
         totalPause,
-        spend,
-        sales,
-        orders,
-        clicks,
+        spend: actual ? actual.spend : spend,
+        sales: actual ? actual.sales : sales,
+        orders: actual ? actual.orders : orders,
+        clicks: actual ? actual.clicks : clicks,
+        otherTargets,
       };
     });
-  }, [currentSkuRecs]);
+  }, [currentSkuRecs, skuAllRecs, skuCampaignStats]);
+
+  // Campaign của SKU có chi tiêu nhưng không có target nào cần đổi bid → không nằm trong danh sách đề xuất
+  const campaignsWithoutRecs = useMemo(() => {
+    if (!skuCampaignStats) return [];
+    const recCampaigns = new Set(skuAllRecs.map((r) => normName(r.campaignName)));
+    return skuCampaignStats.campaigns
+      .filter((c) => !recCampaigns.has(normName(c.campaignName)) && (c.spend > 0 || c.clicks > 0 || c.orders > 0))
+      .sort((a, b) => b.spend - a.spend)
+      .map((c) => ({
+        ...c,
+        targets: skuCampaignStats.targets
+          .filter((t) => t.campaignId === c.campaignId && (t.spend > 0 || t.clicks > 0 || t.orders > 0))
+          .sort((a, b) => b.spend - a.spend),
+      }));
+  }, [skuCampaignStats, skuAllRecs]);
 
   // Đóng tất cả các thẻ campaign khi đổi SKU / đóng modal (mặc định đóng, chỉ mở khi người dùng bấm vào)
   useEffect(() => {
@@ -2313,6 +2377,17 @@ export function PpcSkuRecommendationGroupView({
                                   {cg.totalIncrease > 0 && <span className="font-semibold text-emerald-600">↑{cg.totalIncrease}</span>}
                                   {cg.totalDecrease > 0 && <span className="font-semibold text-rose-600">↓{cg.totalDecrease}</span>}
                                   {cg.totalPause > 0 && <span className="font-semibold text-amber-700">⏸{cg.totalPause}</span>}
+                                  {cg.otherTargets.length > 0 && (
+                                    <span
+                                      className="text-slate-400"
+                                      title="Target trong campaign không có đề xuất đổi bid (giữ nguyên). Mở campaign để xem spend của từng target."
+                                    >
+                                      • +{cg.otherTargets.length} target giữ nguyên
+                                      {cg.otherTargets.some((t) => t.spend > 0) && (
+                                        <> (chi ${cg.otherTargets.reduce((s, t) => s + t.spend, 0).toFixed(2)})</>
+                                      )}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -2539,6 +2614,37 @@ export function PpcSkuRecommendationGroupView({
                                       </Fragment>
                                     );
                                   })}
+                                  {cg.otherTargets.length > 0 && (
+                                    <tr className="bg-slate-50/80">
+                                      <td></td>
+                                      <td colSpan={13} className="px-2 py-1.5 text-[11px] font-semibold text-slate-500">
+                                        Target không có đề xuất (giữ nguyên bid) — số {recommendationWindowDays} ngày
+                                      </td>
+                                    </tr>
+                                  )}
+                                  {cg.otherTargets.map((t) => (
+                                    <tr key={`${t.campaignId}-${t.targetId || t.keyword}-${t.matchType}`} className="bg-slate-50/40 text-slate-500">
+                                      <td className="py-2 pl-4 pr-2"></td>
+                                      <td className="py-2 px-2 min-w-[180px]">
+                                        <div className="font-semibold text-[13px] text-slate-700 break-words">{t.keyword}</div>
+                                        <div className="text-[11px] text-slate-400 capitalize">
+                                          {t.matchType.toLowerCase()}
+                                          {t.state && t.state !== "enabled" && <span className="ml-1 text-amber-700">· {t.state}</span>}
+                                        </div>
+                                      </td>
+                                      <td className="py-2 px-2" colSpan={3}></td>
+                                      <td className={`py-2 px-2 text-right font-mono ${t.clicks ? "text-slate-700" : "text-slate-300"}`}>{t.clicks}</td>
+                                      <td className={`py-2 px-2 text-right font-mono ${t.orders ? "text-slate-900 font-bold" : "text-slate-300"}`}>{t.orders}</td>
+                                      <td className={`py-2 px-2 text-right font-mono whitespace-nowrap ${t.spend ? "text-slate-700" : "text-slate-300"}`}>${t.spend.toFixed(2)}</td>
+                                      <td className={`py-2 px-2 text-right font-mono whitespace-nowrap ${t.sales ? "text-slate-700" : "text-slate-300"}`}>${t.sales.toFixed(2)}</td>
+                                      <td className="py-2 px-2 text-right font-mono whitespace-nowrap">
+                                        <AcosValue spend={t.spend} sales={t.sales} breakEvenAcos={selectedSkuGroup.breakEvenAcos} />
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-mono text-slate-600">${t.bid.toFixed(2)}</td>
+                                      <td className="py-2 px-2 text-right text-[11px] text-slate-400">Giữ</td>
+                                      <td className="py-2 px-2" colSpan={2}></td>
+                                    </tr>
+                                  ))}
                                 </tbody>
                               </table>
                             </div>
@@ -2546,6 +2652,49 @@ export function PpcSkuRecommendationGroupView({
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {!loadingSkuDetails && campaignsWithoutRecs.length > 0 && modalCampaignFilter === "ALL" && !modalSearch && (
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/60">
+                    <div className="px-4 py-2.5 text-xs font-semibold text-slate-600 border-b border-slate-200">
+                      Campaign có chi tiêu nhưng không có đề xuất đổi bid ({recommendationWindowDays} ngày)
+                    </div>
+                    <div className="divide-y divide-slate-200">
+                      {campaignsWithoutRecs.map((c) => (
+                        <div key={c.campaignId} className="px-4 py-2.5">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                            <span className="flex-1 min-w-[240px] text-[13px] font-bold text-slate-800 break-all">
+                              {c.campaignName}
+                              {c.campaignState && c.campaignState !== "enabled" && (
+                                <span className="ml-2 text-[11px] font-semibold text-amber-700">{c.campaignState}</span>
+                              )}
+                            </span>
+                            <span className="text-xs font-mono text-slate-600">
+                              {c.clicks} clicks · {c.orders} đơn · <strong className="text-slate-900">${c.spend.toFixed(2)}</strong> spend · ${c.sales.toFixed(2)} sales
+                            </span>
+                          </div>
+                          {c.targets.length > 0 ? (
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {c.targets.map((t) => (
+                                <span
+                                  key={`${t.targetId || t.keyword}-${t.matchType}`}
+                                  className="rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600"
+                                >
+                                  {t.keyword} <span className="text-slate-400 capitalize">({t.matchType.toLowerCase()})</span>
+                                  {" "}<span className="font-mono">${t.spend.toFixed(2)}</span>
+                                  {t.orders > 0 && <span className="font-mono font-bold text-emerald-700"> · {t.orders} đơn</span>}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              Không còn target nào có chi tiêu trong file (target đã xoá/archive hoặc chi từ placement).
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 

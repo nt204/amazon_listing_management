@@ -5,13 +5,14 @@ import {
   ResponsiveContainer,
   ComposedChart,
   Bar,
+  Cell,
   Area,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
 } from "recharts";
-import { X, Tag, StackIcon, ShoppingCartIcon, CubeIcon, PercentIcon, TargetIcon } from "@phosphor-icons/react";
+import { X, Tag, StackIcon, ShoppingCartIcon, CubeIcon, PercentIcon, TargetIcon, CaretRight, CircleNotch } from "@phosphor-icons/react";
 import type { PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
 
 interface PpcSkuTrendModalProps {
@@ -61,6 +62,16 @@ export function PpcSkuTrendModal({
   };
 
   const activeDays = timeframe === "7D" ? 7 : timeframe === "14D" ? 14 : 30;
+
+  // Bấm 1 cột → xem spend/đơn ngày đó đến từ target nào; null = cả kỳ đang xem
+  // Gắn ngày đang chọn với SKU/store/kỳ — đổi một trong ba thì tự về "cả kỳ"
+  const selectionScope = `${storeName}|${sku}|${timeframe}`;
+  const [dateSelection, setDateSelection] = useState<{ scope: string; date: string } | null>(null);
+  const selectedDate = dateSelection?.scope === selectionScope ? dateSelection.date : null;
+  const setSelectedDate = (update: (prev: string | null) => string | null) => {
+    const next = update(selectedDate);
+    setDateSelection(next ? { scope: selectionScope, date: next } : null);
+  };
 
   const { chartData, totals } = useMemo(() => {
     const sliced = (dailyTrend || []).slice(-activeDays);
@@ -155,7 +166,7 @@ export function PpcSkuTrendModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-3xl bg-white rounded-2xl p-5 shadow-2xl border border-slate-200 cursor-default animate-in zoom-in-95 duration-150"
+        className="relative w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-white rounded-2xl p-5 shadow-2xl border border-slate-200 cursor-default animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -260,7 +271,21 @@ export function PpcSkuTrendModal({
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={plotData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }} barGap={2}>
+              <ComposedChart
+                data={plotData}
+                margin={{ top: 10, right: 0, left: 0, bottom: 0 }}
+                barGap={2}
+                className="cursor-pointer"
+                onClick={(state: unknown) => {
+                  const st = state as { activeTooltipIndex?: number | string | null; activeIndex?: number | string | null; activeLabel?: string | number } | null;
+                  const idx = Number(st?.activeTooltipIndex ?? st?.activeIndex);
+                  const point = Number.isInteger(idx) && plotData[idx]
+                    ? plotData[idx]
+                    : plotData.find((d) => d.shortDate === st?.activeLabel);
+                  if (!point) return;
+                  setSelectedDate((prev) => (prev === point.date ? null : point.date));
+                }}
+              >
                 <defs>
                   <linearGradient id="ppcSkuAcosFill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#f97316" stopOpacity={0.18} />
@@ -299,8 +324,16 @@ export function PpcSkuTrendModal({
                 />
                 <Tooltip content={renderTooltip} cursor={{ fill: "#f8fafc" }} />
 
-                <Bar yAxisId="money" dataKey="spend" fill="#6366f1" radius={[3, 3, 0, 0]} barSize={barSize} />
-                <Bar yAxisId="money" dataKey="sales" fill="#22c55e" radius={[3, 3, 0, 0]} barSize={barSize} />
+                <Bar yAxisId="money" dataKey="spend" fill="#6366f1" radius={[3, 3, 0, 0]} barSize={barSize}>
+                  {plotData.map((d) => (
+                    <Cell key={d.date} fillOpacity={selectedDate && selectedDate !== d.date ? 0.3 : 1} />
+                  ))}
+                </Bar>
+                <Bar yAxisId="money" dataKey="sales" fill="#22c55e" radius={[3, 3, 0, 0]} barSize={barSize}>
+                  {plotData.map((d) => (
+                    <Cell key={d.date} fillOpacity={selectedDate && selectedDate !== d.date ? 0.3 : 1} />
+                  ))}
+                </Bar>
 
                 <Area
                   yAxisId="acos"
@@ -334,7 +367,227 @@ export function PpcSkuTrendModal({
             label="ACoS"
           />
         </div>
+
+        {chartData.length > 0 && (
+          <SkuTargetBreakdown
+            sku={sku}
+            storeName={storeName}
+            startDate={selectedDate ?? chartData[0].date}
+            endDate={selectedDate ?? chartData[chartData.length - 1].date}
+            selectedDate={selectedDate}
+            periodLabel={`${activeDays} ngày`}
+            onClearDate={() => setDateSelection(null)}
+            targetAcos={targetAcos}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+interface BreakdownRow {
+  storeName: string;
+  campaignName: string;
+  adGroupName: string;
+  targetKeyword: string;
+  matchType: string;
+  searchTerm: string;
+  clicks: number;
+  spend: number;
+  sales: number;
+  orders: number;
+}
+
+/** Spend / đơn của SKU tách theo target (search term report theo ngày). */
+function SkuTargetBreakdown({
+  sku,
+  storeName,
+  startDate,
+  endDate,
+  selectedDate,
+  periodLabel,
+  onClearDate,
+  targetAcos,
+}: {
+  sku: string;
+  storeName: string;
+  startDate: string;
+  endDate: string;
+  selectedDate: string | null;
+  periodLabel: string;
+  onClearDate: () => void;
+  targetAcos: number;
+}) {
+  // Kết quả gắn với khoá request: đổi ngày / SKU thì dữ liệu cũ tự bị bỏ qua cho tới khi tải xong
+  const requestKey = `${storeName}|${sku}|${startDate}|${endDate}`;
+  const [result, setResult] = useState<{
+    key: string;
+    rows: BreakdownRow[] | null;
+    latestReportDate: string | null;
+    error: string | null;
+  } | null>(null);
+  const [expandedState, setExpanded] = useState<{ key: string; ids: Set<string> } | null>(null);
+  const current = result?.key === requestKey ? result : null;
+  const rows = current?.rows ?? null;
+  const latestReportDate = current?.latestReportDate ?? null;
+  const error = current?.error ?? null;
+  const expanded = expandedState?.key === requestKey ? expandedState.ids : new Set<string>();
+  const toggleExpanded = (id: string) => {
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setExpanded({ key: requestKey, ids: next });
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({ storeName: storeName || "ALL", sku, startDate, endDate });
+    fetch(`/api/ppc/sku-target-breakdown?${params}`, { cache: "no-store", signal: controller.signal })
+      .then(async (res) => {
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.error || "Không tải được chi tiết target.");
+        setResult({
+          key: requestKey,
+          rows: Array.isArray(data?.rows) ? data.rows : [],
+          latestReportDate: data?.latestReportDate ?? null,
+          error: null,
+        });
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setResult({ key: requestKey, rows: null, latestReportDate: null, error: err instanceof Error ? err.message : String(err) });
+      });
+    return () => controller.abort();
+  }, [requestKey, sku, storeName, startDate, endDate]);
+
+  const targets = useMemo(() => {
+    const map = new Map<string, {
+      key: string; campaignName: string; targetKeyword: string; matchType: string;
+      clicks: number; spend: number; sales: number; orders: number; terms: BreakdownRow[];
+    }>();
+    for (const r of rows || []) {
+      const key = `${r.storeName}|${r.campaignName}|${r.adGroupName}|${r.targetKeyword}|${r.matchType}`;
+      let t = map.get(key);
+      if (!t) {
+        t = { key, campaignName: r.campaignName, targetKeyword: r.targetKeyword, matchType: r.matchType, clicks: 0, spend: 0, sales: 0, orders: 0, terms: [] };
+        map.set(key, t);
+      }
+      t.clicks += r.clicks;
+      t.spend += r.spend;
+      t.sales += r.sales;
+      t.orders += r.orders;
+      t.terms.push(r);
+    }
+    return [...map.values()].sort((a, b) => b.spend - a.spend || b.sales - a.sales);
+  }, [rows]);
+
+  const total = targets.reduce(
+    (acc, t) => ({ spend: acc.spend + t.spend, sales: acc.sales + t.sales, orders: acc.orders + t.orders, clicks: acc.clicks + t.clicks }),
+    { spend: 0, sales: 0, orders: 0, clicks: 0 },
+  );
+  const fmtDate = (d: string) => {
+    const p = d.split("-");
+    return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
+  };
+  const acosText = (spend: number, sales: number) =>
+    sales > 0 ? `${((spend / sales) * 100).toFixed(1)}%` : spend > 0 ? "0 sales" : "—";
+  const acosClass = (spend: number, sales: number) =>
+    sales > 0 ? ((spend / sales) * 100 <= targetAcos ? "text-emerald-600" : "text-rose-600") : spend > 0 ? "text-rose-600" : "text-slate-300";
+  const noReportYet = Boolean(selectedDate && latestReportDate && selectedDate > latestReportDate);
+
+  return (
+    <div className="mt-4 rounded-xl border border-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
+        <div className="text-xs font-bold text-slate-800">
+          Spend / đơn theo target · {selectedDate ? `ngày ${fmtDate(selectedDate)}` : periodLabel}
+          {rows && rows.length > 0 && (
+            <span className="ml-2 font-mono font-semibold text-slate-500">
+              ${total.spend.toFixed(2)} spend · {total.orders} đơn · ${total.sales.toFixed(2)} sales
+            </span>
+          )}
+        </div>
+        {selectedDate ? (
+          <button
+            type="button"
+            onClick={onClearDate}
+            className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 cursor-pointer"
+          >
+            Xem cả {periodLabel}
+          </button>
+        ) : (
+          <span className="text-[11px] text-slate-400">Bấm vào 1 cột để xem riêng ngày đó</span>
+        )}
+      </div>
+
+      {error ? (
+        <div className="px-3 py-4 text-xs text-rose-600">{error}</div>
+      ) : rows === null ? (
+        <div className="flex items-center gap-2 px-3 py-4 text-xs text-slate-500">
+          <CircleNotch size={14} className="animate-spin" /> Đang tải chi tiết target...
+        </div>
+      ) : targets.length === 0 ? (
+        <div className="px-3 py-4 text-xs text-slate-400">
+          {noReportYet
+            ? `Chưa có search term report cho ngày này (report mới nhất: ${fmtDate(latestReportDate!)}).`
+            : "Không có click / spend nào theo target trong khoảng này (search term report)."}
+        </div>
+      ) : (
+        <div className="max-h-80 overflow-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] font-semibold text-slate-500">
+              <tr>
+                <th className="py-2 pl-3 pr-2">Target</th>
+                <th className="py-2 px-2">Campaign</th>
+                <th className="py-2 px-2 text-right">Clicks</th>
+                <th className="py-2 px-2 text-right">Spend</th>
+                <th className="py-2 px-2 text-right">Orders</th>
+                <th className="py-2 px-2 text-right">Sales</th>
+                <th className="py-2 pl-2 pr-3 text-right">ACoS</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {targets.map((t) => {
+                const isOpen = expanded.has(t.key);
+                return (
+                  <React.Fragment key={t.key}>
+                    <tr
+                      className="cursor-pointer hover:bg-slate-50"
+                      onClick={() => toggleExpanded(t.key)}
+                      title="Bấm để xem search term"
+                    >
+                      <td className="py-2 pl-3 pr-2">
+                        <div className="flex items-start gap-1">
+                          <CaretRight size={11} weight="bold" className={`mt-0.5 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                          <div>
+                            <div className="font-semibold text-slate-900 break-words">{t.targetKeyword || "(auto / không rõ)"}</div>
+                            <div className="text-[10px] text-slate-400 capitalize">{(t.matchType || "").toLowerCase()} · {t.terms.length} search term</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2 px-2 text-[11px] text-slate-500 break-all max-w-[280px]">{t.campaignName}</td>
+                      <td className="py-2 px-2 text-right font-mono">{t.clicks}</td>
+                      <td className="py-2 px-2 text-right font-mono font-semibold text-slate-900">${t.spend.toFixed(2)}</td>
+                      <td className={`py-2 px-2 text-right font-mono ${t.orders ? "font-bold text-emerald-700" : "text-slate-300"}`}>{t.orders}</td>
+                      <td className={`py-2 px-2 text-right font-mono ${t.sales ? "text-slate-900" : "text-slate-300"}`}>${t.sales.toFixed(2)}</td>
+                      <td className={`py-2 pl-2 pr-3 text-right font-mono font-semibold ${acosClass(t.spend, t.sales)}`}>{acosText(t.spend, t.sales)}</td>
+                    </tr>
+                    {isOpen && t.terms.map((st) => (
+                      <tr key={`${t.key}|${st.searchTerm}`} className="bg-slate-50/60 text-slate-500">
+                        <td className="py-1.5 pl-8 pr-2 italic break-words" colSpan={2}>“{st.searchTerm}”</td>
+                        <td className="py-1.5 px-2 text-right font-mono">{st.clicks}</td>
+                        <td className="py-1.5 px-2 text-right font-mono">${st.spend.toFixed(2)}</td>
+                        <td className={`py-1.5 px-2 text-right font-mono ${st.orders ? "font-bold text-emerald-700" : ""}`}>{st.orders}</td>
+                        <td className="py-1.5 px-2 text-right font-mono">${st.sales.toFixed(2)}</td>
+                        <td className={`py-1.5 pl-2 pr-3 text-right font-mono ${acosClass(st.spend, st.sales)}`}>{acosText(st.spend, st.sales)}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
