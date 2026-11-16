@@ -161,13 +161,50 @@ export async function getLarkBotOpenId(): Promise<string | null> {
   return cachedBotOpenId;
 }
 
+export async function sendLarkWebhookNotification(
+  webhookUrl: string,
+  payload: { card?: Record<string, any>; text?: string },
+): Promise<LarkNotificationResult> {
+  const url = webhookUrl.trim();
+  if (!url) return { sent: false, reason: "not_configured" };
+
+  const body = payload.card
+    ? { msg_type: "interactive", card: payload.card }
+    : { msg_type: "text", content: { text: payload.text || "" } };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(configuredTimeoutMs()),
+  });
+
+  const resData = (await response.json().catch(() => ({}))) as LarkApiResponse & {
+    StatusCode?: number;
+    StatusMessage?: string;
+  };
+  if (
+    !response.ok ||
+    (typeof resData.code === "number" && resData.code !== 0) ||
+    (typeof resData.StatusCode === "number" && resData.StatusCode !== 0)
+  ) {
+    const detail = resData.msg || resData.StatusMessage || response.statusText || "Lỗi webhook không xác định";
+    throw new Error(`Lark Webhook lỗi (${resData.code ?? resData.StatusCode ?? response.status}): ${detail}`);
+  }
+  return { sent: true };
+}
+
 export async function sendLarkTextNotification(
   text: string,
   recipient: LarkRecipient,
 ): Promise<LarkNotificationResult> {
+  const receiveId = recipient.receiveId.trim();
+  if (recipient.receiveIdType === "webhook" || receiveId.startsWith("http")) {
+    return sendLarkWebhookNotification(receiveId, { text });
+  }
+
   const appId = process.env.LARK_APP_ID?.trim();
   const appSecret = process.env.LARK_APP_SECRET?.trim();
-  const receiveId = recipient.receiveId.trim();
 
   if (!appId || !appSecret || !receiveId) return { sent: false, reason: "not_configured" };
 
@@ -188,9 +225,13 @@ export async function sendLarkCardNotification(
   card: Record<string, any>,
   recipient: LarkRecipient,
 ): Promise<LarkNotificationResult> {
+  const receiveId = recipient.receiveId.trim();
+  if (recipient.receiveIdType === "webhook" || receiveId.startsWith("http")) {
+    return sendLarkWebhookNotification(receiveId, { card });
+  }
+
   const appId = process.env.LARK_APP_ID?.trim();
   const appSecret = process.env.LARK_APP_SECRET?.trim();
-  const receiveId = recipient.receiveId.trim();
 
   if (!appId || !appSecret || !receiveId) return { sent: false, reason: "not_configured" };
 

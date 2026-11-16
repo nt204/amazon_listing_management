@@ -12,12 +12,19 @@ function arg(name: string): string | undefined {
 
 async function main() {
   const email = arg("email");
+  const webhook = arg("webhook");
+  const recipient = webhook
+    ? { receiveId: webhook, receiveIdType: "webhook" }
+    : email
+      ? { receiveId: email, receiveIdType: "email" }
+      : undefined;
+
   const analyze = arg("analyze");
   if (analyze) {
     const result = await sendChannelDiagnosis({
       message: analyze,
       targetDate: arg("date"),
-      recipient: email ? { receiveId: email, receiveIdType: "email" } : undefined,
+      recipient,
     });
     console.log(result.matched ? result.message : "Không nhận ra store trong câu hỏi.");
     if (result.text) console.log(result.text);
@@ -27,17 +34,17 @@ async function main() {
     const result = await sendDailyReportStoreCard({
       targetDate: arg("date"),
       layout: process.argv.includes("--stores") ? "stores" : "brief",
-      recipient: email ? { receiveId: email, receiveIdType: "email" } : undefined,
+      recipient,
     });
     console.log(result.message);
     const out = arg("out");
     if (out && result.card) writeFileSync(out, JSON.stringify(result.card, null, 2));
-    if (email && result.success) console.log(`Đã gửi card tới ${email}`);
+    if (recipient && result.success) console.log(`Đã gửi card tới ${recipient.receiveId}`);
     process.exit(result.success ? 0 : 1);
   }
   const result = await sendDailyReportImage({
     targetDate: arg("date"),
-    recipient: email ? { receiveId: email, receiveIdType: "email" } : undefined,
+    recipient,
   });
   console.log(result.message);
   const out = arg("out");
@@ -46,7 +53,7 @@ async function main() {
     if (result.html) writeFileSync(out.replace(/\.png$/, ".html"), result.html);
     console.log(`Đã lưu ${out}`);
   }
-  if (email && result.success) console.log(`Đã gửi ảnh tới ${email}`);
+  if (recipient && result.success) console.log(`Đã gửi ảnh tới ${recipient.receiveId}`);
   process.exit(result.success ? 0 : 1);
 }
 

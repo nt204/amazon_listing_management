@@ -27,6 +27,7 @@ import {
   notifyLarkEventBestEffort,
   sendLarkCardNotification,
   sendLarkImageNotification,
+  sendLarkTextNotification,
   uploadLarkImage,
   type LarkRecipient,
 } from "@/lib/lark-notifications";
@@ -337,6 +338,17 @@ export async function reportDailyBusinessData(
   if (options.recipient) {
     await sendLarkCardNotification(card, options.recipient);
   } else {
+    const webhookUrl = process.env.LARK_ACCOUNTING_WEBHOOK_URL?.trim() || process.env.LARK_WEBHOOK_URL?.trim();
+    if (webhookUrl) {
+      try {
+        await sendLarkCardNotification(card, { receiveId: webhookUrl, receiveIdType: "webhook" });
+      } catch (whErr) {
+        console.error("[DailyReport] Lỗi gửi qua Webhook:", whErr);
+        if (text) {
+          await sendLarkTextNotification(text, { receiveId: webhookUrl, receiveIdType: "webhook" }).catch(() => {});
+        }
+      }
+    }
     await notifyLarkEventBestEffort(
       { teamId: scope.teamId, actorId: "system" },
       "accounting",

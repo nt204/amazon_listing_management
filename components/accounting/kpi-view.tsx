@@ -1135,6 +1135,7 @@ function OverviewPage({
   onSaveNote,
   onSaveFormula,
   onOpenSku,
+  aggregate = false,
 }: {
   data: KpiData;
   canEdit: boolean;
@@ -1142,6 +1143,8 @@ function OverviewPage({
   onSaveNote: (note: string) => Promise<void>;
   onSaveFormula: (patch: Partial<KpiTargetFormula>) => Promise<void>;
   onOpenSku?: (sku: string) => void;
+  /** Chế độ All (gộp mọi store): chỉ xem số, ẩn phần gắn với 1 store */
+  aggregate?: boolean;
 }) {
   const { periods } = data;
   const sum = useMemo(() => {
@@ -1508,17 +1511,20 @@ function OverviewPage({
         </div>
       </section>
 
-      <KpiPhoiPicTable
-        storeId={storeId}
-        canEdit={canEdit}
-        period={periods.cur}
-        skus={data.skus}
-        targetFormula={data.targetFormula}
-        onOpenSku={onOpenSku}
-      />
+      {!aggregate && (
+        <KpiPhoiPicTable
+          storeId={storeId}
+          canEdit={canEdit}
+          period={periods.cur}
+          skus={data.skus}
+          targetFormula={data.targetFormula}
+          onOpenSku={onOpenSku}
+        />
+      )}
 
-      <TargetFormulaPanel formula={data.targetFormula} canEdit={canEdit} onSave={onSaveFormula} />
+      {!aggregate && <TargetFormulaPanel formula={data.targetFormula} canEdit={canEdit} onSave={onSaveFormula} />}
 
+      {!aggregate && (
       <section className="rounded-xl border border-slate-200 bg-white p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h3 className="text-sm font-bold text-slate-900">Đánh giá tổng quan</h3>
@@ -1560,6 +1566,7 @@ function OverviewPage({
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }
@@ -2315,6 +2322,94 @@ function TargetImportModal({ storeId, storeName, onClose, onDone }: { storeId: s
   );
 }
 
+// ───────────────────────── Gộp KPI nhiều store (All) ─────────────────────────
+const ALL_STORES = "__all__";
+
+/**
+ * Gộp KPI của nhiều store thành 1 KpiData chỉ để XEM (Dashboard + Tổng quan tháng):
+ *  - Mục tiêu từng SKU tính sẵn theo công thức của CHÍNH store đó rồi gắn vào sheet_metrics → khi gộp không phụ thuộc công thức
+ *  - Store / nhóm không có mục tiêu từng SKU nhưng có mục tiêu tổng team (BÁO CÁO THÁNG) → thêm 1 dòng ảo mang số đó
+ *  - Phí cấp store (storeFees) cộng lại; nguồn số liệu: có store nào có thì coi là có
+ * Số All = tổng số của từng store; tỷ lệ (TACoS, Margin, % đạt) được tính lại trên số đã cộng.
+ */
+function mergeKpiStores(list: { name: string; data: KpiData }[]): KpiData {
+  const first = list[0].data;
+  const skus: KpiSku[] = [];
+  const blankRow = (metrics: KpiMetrics): TargetRow => ({
+    units: 0,
+    tacos: null,
+    price: null,
+    storage_fee: null,
+    sheet_metrics: metrics,
+    cause: null,
+    solution: null,
+    action: null,
+    review: null,
+    target_action: null,
+    updated_by: null,
+    updated_at: null,
+  } as TargetRow);
+  for (const { name, data } of list) {
+    const has = { cur: { dev: false, test: false }, next: { dev: false, test: false } };
+    for (const s of data.skus) {
+      const target = { ...s.target };
+      for (const slot of ["cur", "next"] as const) {
+        const m = targetOf(s, slot, data.targetFormula);
+        if (m && target[slot]) {
+          target[slot] = { ...(target[slot] as TargetRow), sheet_metrics: m };
+          has[slot][s.group] = true;
+        }
+      }
+      skus.push({ ...s, sku: `${name} · ${s.sku}`, target });
+    }
+    for (const slot of ["cur", "next"] as const) {
+      for (const g of ["dev", "test"] as const) {
+        const team = data.teamTargets?.[slot]?.[g];
+        if (has[slot][g] || !team) continue;
+        skus.push({
+          sku: `${name} · (mục tiêu tổng team ${g === "dev" ? "WIN" : "TEST"})`,
+          group: g,
+          status: null,
+          brand: name,
+          asin: null,
+          product_type: null,
+          mockup_url: null,
+          pic_mkt: null,
+          ton_kho: null,
+          price: null,
+          basecost_unit: null,
+          amazon_fee_unit: null,
+          referral_pct: null,
+          actual: { prev: null, cur: null, ly: null, lyNext: null },
+          target: { cur: slot === "cur" ? blankRow({ ...emptyMetrics(), ...team }) : null, next: slot === "next" ? blankRow({ ...emptyMetrics(), ...team }) : null },
+        });
+      }
+    }
+  }
+  const keys = ["prev", "cur", "ly", "lyNext"] as const;
+  const storeFees = Object.fromEntries(
+    keys.map((k) => {
+      const vals = list.map((x) => x.data.storeFees?.[k]).filter((v): v is number => v != null);
+      return [k, vals.length ? vals.reduce((a, b) => a + b, 0) : null];
+    }),
+  ) as KpiData["storeFees"];
+  const sources = Object.fromEntries(
+    keys.map((k) => [k, list.find((x) => x.data.sources[k] !== "none")?.data.sources[k] ?? "none"]),
+  ) as KpiData["sources"];
+  return {
+    period: first.period,
+    periods: first.periods,
+    sources,
+    storeFees,
+    skus,
+    note: null,
+    teamTargets: undefined,
+    historyYears: Array.from(new Set(list.flatMap((x) => x.data.historyYears))).sort(),
+    targetFormula: first.targetFormula,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 // ───────────────────────── Trang chính ─────────────────────────
 export function KpiView() {
   const defaultPeriod = useMemo(() => shiftPeriod(new Date().toISOString().slice(0, 7), -1), []);
@@ -2383,6 +2478,8 @@ export function KpiView() {
 
   const handleStoreSelect = (id: string) => {
     setSelectedStoreId(id);
+    // All chỉ là chế độ xem của trang KPI → không đổi store đang chọn của các trang khác
+    if (id === ALL_STORES) return;
     window.localStorage.setItem("acc_selected_store_id", id);
     window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: id }));
   };
@@ -2393,19 +2490,32 @@ export function KpiView() {
       setLoading(true);
       setError(null);
       try {
-        const params = new URLSearchParams({ store_id: selectedStoreId, period });
-        if (refresh) params.set("refresh", "1");
-        const res = await fetch(`/api/accounting/financials/kpi?${params.toString()}`);
-        const json = await res.json();
-        if (!res.ok) throw new Error(json?.error || "Không tải được dữ liệu");
-        setData(json as KpiData);
+        const fetchOne = async (storeId: string) => {
+          const params = new URLSearchParams({ store_id: storeId, period });
+          if (refresh) params.set("refresh", "1");
+          const res = await fetch(`/api/accounting/financials/kpi?${params.toString()}`);
+          const json = await res.json();
+          if (!res.ok) throw new Error(json?.error || "Không tải được dữ liệu");
+          return json as KpiData;
+        };
+        if (selectedStoreId === ALL_STORES) {
+          // All: tải KPI mọi store song song rồi gộp (store lỗi thì bỏ qua, báo tên)
+          const results = await Promise.allSettled(stores.map(async (st) => ({ name: st.name, data: await fetchOne(st.id) })));
+          const ok = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+          const failed = stores.filter((_, i) => results[i].status === "rejected").map((st) => st.name);
+          if (!ok.length) throw new Error("Không tải được KPI của store nào.");
+          setData(mergeKpiStores(ok));
+          if (failed.length) setError(`Chưa gộp được: ${failed.join(", ")} (lỗi tải KPI).`);
+        } else {
+          setData(await fetchOne(selectedStoreId));
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Không tải được dữ liệu");
       } finally {
         setLoading(false);
       }
     },
-    [selectedStoreId, period],
+    [selectedStoreId, period, stores],
   );
 
   useEffect(() => {
@@ -2413,8 +2523,11 @@ export function KpiView() {
     void load();
   }, [load]);
 
+  const isAll = selectedStoreId === ALL_STORES;
   const selectedStore = stores.find((s) => s.id === selectedStoreId);
-  const canEdit = storeCanEdit(selectedStore, "FBA");
+  const canEdit = !isAll && storeCanEdit(selectedStore, "FBA");
+  // All chỉ có Dashboard + Tổng quan tháng (danh sách / sửa SKU chỉ có nghĩa trong từng store)
+  const viewMode: Mode = isAll && (mode === "dev" || mode === "test") ? "overview" : mode;
 
   const saveTarget = useCallback(
     async (sku: string, slot: TargetSlot, patch: Partial<TargetRow>) => {
@@ -2549,8 +2662,20 @@ export function KpiView() {
 
   let body: ReactNode = null;
   if (data) {
-    if (mode === "dashboard") body = <KpiDashboardView key={`${selectedStoreId}:${data.period}`} data={data} storeId={selectedStoreId} />;
-    else if (mode === "overview") body = <OverviewPage key={`${selectedStoreId}:${data.period}`} data={data} canEdit={canEdit} storeId={selectedStoreId} onSaveNote={saveNote} onSaveFormula={saveFormula} onOpenSku={setOpenSku} />;
+    if (viewMode === "dashboard") body = <KpiDashboardView key={`${selectedStoreId}:${data.period}`} data={data} storeId={isAll ? "" : selectedStoreId} />;
+    else if (viewMode === "overview")
+      body = (
+        <OverviewPage
+          key={`${selectedStoreId}:${data.period}`}
+          data={data}
+          canEdit={canEdit}
+          storeId={isAll ? undefined : selectedStoreId}
+          onSaveNote={saveNote}
+          onSaveFormula={saveFormula}
+          onOpenSku={isAll ? undefined : setOpenSku}
+          aggregate={isAll}
+        />
+      );
     else body = <SkuTable data={data} skus={visibleSkus} canEdit={canEdit} onSaveTarget={saveTarget} onSavePrice={savePrice} onOpen={setOpenSku} />;
   }
 
@@ -2572,11 +2697,14 @@ export function KpiView() {
               ) : stores.length === 0 ? (
                 <option value="">Không có store</option>
               ) : (
-                stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))
+                <>
+                  {stores.length > 1 && <option value={ALL_STORES}>Tất cả store (All)</option>}
+                  {stores.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </>
               )}
             </select>
           </div>
@@ -2607,8 +2735,10 @@ export function KpiView() {
                 { key: "dev", label: `SKU phát triển${data ? ` (${counts.dev})` : ""}` },
                 { key: "test", label: `SKU test${data ? ` (${counts.test})` : ""}` },
               ] as const
-            ).map((o) => {
-              const isActive = mode === o.key;
+            )
+              .filter((o) => !isAll || o.key === "dashboard" || o.key === "overview")
+              .map((o) => {
+              const isActive = viewMode === o.key;
               return (
                 <button
                   key={o.key}
@@ -2637,7 +2767,7 @@ export function KpiView() {
           </div>
         </div>
 
-        {(mode === "dev" || mode === "test") && data && (
+        {(viewMode === "dev" || viewMode === "test") && data && (
           <div className="flex flex-wrap items-center gap-2 bg-slate-50/60 p-2">
             <div className="relative w-56 transition-all duration-200 focus-within:w-72">
               <MagnifyingGlassIcon size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2679,7 +2809,7 @@ export function KpiView() {
         <AccountingTopProgressBar loading={loading} variant="indigo" />
         {loading && !data && <div className="p-6 text-center text-xs text-slate-500">Đang tải KPI...</div>}
         {!loading && !data && !error && <div className="p-6 text-center text-xs text-slate-500">Chọn store để xem KPI.</div>}
-        {data && <div className={`flex-1 ${mode === "overview" || mode === "dashboard" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
+        {data && <div className={`flex-1 ${viewMode === "overview" || viewMode === "dashboard" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
       </div>
 
       {openSkuRow && data && (

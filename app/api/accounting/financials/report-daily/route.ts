@@ -20,6 +20,11 @@ export async function POST(request: Request) {
         receiveId: String(body.recipient.receiveId || "").trim(),
         receiveIdType: String(body.recipient.receiveIdType || "email").trim(),
       };
+    } else if (typeof body?.webhook === "string" && body.webhook.trim()) {
+      recipient = {
+        receiveId: body.webhook.trim(),
+        receiveIdType: "webhook",
+      };
     } else if (typeof body?.email === "string" && body.email.trim()) {
       recipient = {
         receiveId: body.email.trim(),
@@ -29,7 +34,7 @@ export async function POST(request: Request) {
       const rec = body.recipient.trim();
       recipient = {
         receiveId: rec,
-        receiveIdType: rec.includes("@") ? "email" : "open_id",
+        receiveIdType: rec.startsWith("http") ? "webhook" : rec.includes("@") ? "email" : "open_id",
       };
     }
 
