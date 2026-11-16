@@ -207,6 +207,42 @@ function targetTypeOf(r: ManualBidRow): "EXACT" | "PHRASE" | "PRODUCT" {
   return "PRODUCT";
 }
 
+// Lọc bảng target theo khoảng số (nút "Lọc" cạnh ô tìm). null = target không tính được chỉ số → bị loại khi lọc chỉ số đó.
+type TargetMetricKey = "spend" | "sales" | "acos" | "impressions" | "clicks" | "orders" | "cpc" | "cvr" | "bid" | "searchVolume";
+const TARGET_METRICS: Array<{ key: TargetMetricKey; label: string; unit: "$" | "%" | "" }> = [
+  { key: "spend", label: "Spend", unit: "$" },
+  { key: "sales", label: "Sales", unit: "$" },
+  { key: "acos", label: "ACOS", unit: "%" },
+  { key: "impressions", label: "Impr", unit: "" },
+  { key: "clicks", label: "Click", unit: "" },
+  { key: "orders", label: "Order", unit: "" },
+  { key: "cpc", label: "CPC", unit: "$" },
+  { key: "cvr", label: "CVR", unit: "%" },
+  { key: "bid", label: "Bid", unit: "$" },
+  { key: "searchVolume", label: "SV", unit: "" },
+];
+function targetMetric(r: ManualBidRow, key: TargetMetricKey): number | null {
+  switch (key) {
+    case "acos": return r.sales > 0 ? (r.spend / r.sales) * 100 : null;
+    case "cpc": return r.clicks > 0 ? r.spend / r.clicks : null;
+    case "cvr": return r.clicks > 0 ? (r.orders / r.clicks) * 100 : null;
+    case "searchVolume": return r.searchVolume;
+    default: return r[key];
+  }
+}
+function parseTargetRanges(ranges: Partial<Record<TargetMetricKey, MetricRange>>) {
+  const out: Array<{ key: TargetMetricKey; min: number | null; max: number | null }> = [];
+  for (const m of TARGET_METRICS) {
+    const r = ranges[m.key];
+    const min = r?.min ? parseFloat(r.min) : NaN;
+    const max = r?.max ? parseFloat(r.max) : NaN;
+    if (Number.isFinite(min) || Number.isFinite(max)) {
+      out.push({ key: m.key, min: Number.isFinite(min) ? min : null, max: Number.isFinite(max) ? max : null });
+    }
+  }
+  return out;
+}
+
 type ColKey =
   | "cb"
   | "idx"
@@ -413,6 +449,26 @@ export function PpcManualBidView({
   const [tierSet, setTierSet] = useState<ManualBidTier[]>([]);
   const [editedOnly, setEditedOnly] = useState(false);
   const [keywordFilter, setKeywordFilter] = useState("");
+  const [targetRanges, setTargetRanges] = useState<Partial<Record<TargetMetricKey, MetricRange>>>({});
+  const parsedTargetRanges = useMemo(() => parseTargetRanges(targetRanges), [targetRanges]);
+  const setTargetRange = (key: TargetMetricKey, r: MetricRange) => {
+    setTargetRanges((prev) => {
+      const next = { ...prev };
+      if (r.min || r.max) next[key] = r;
+      else delete next[key];
+      return next;
+    });
+  };
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const rangeRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!rangeOpen) return;
+    const close = (e: MouseEvent) => { if (!rangeRef.current?.contains(e.target as Node)) setRangeOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setRangeOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [rangeOpen]);
   // Mặc định: trong mỗi nấc xếp ACOS cao → thấp (bằng nhau thì spend cao trước).
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "acos", dir: -1 });
 
@@ -623,30 +679,41 @@ export function PpcManualBidView({
     return map;
   }, [actionQueue]);
 
-  const scoped = useMemo(
+  const scopedBase = useMemo(
     () => enriched.filter((r) => (!activeOnly || isLive(r))
       && (!keywordFilter || r.keyword.toLowerCase().includes(keywordFilter.toLowerCase()) || r.campaignName.toLowerCase().includes(keywordFilter.toLowerCase()))),
     [enriched, activeOnly, keywordFilter],
   );
+  // Lọc khoảng số (nút Lọc) áp sau cùng; chọn dạng chạy vẫn dựa trên scopedBase để lọc không làm nhảy SP03 sang dạng khác.
+  const scoped = useMemo(
+    () => parsedTargetRanges.length === 0 ? scopedBase : scopedBase.filter((r) => parsedTargetRanges.every((f) => {
+      const v = targetMetric(r, f.key);
+      if (v == null) return false;
+      return (f.min == null || v >= f.min) && (f.max == null || v <= f.max);
+    })),
+    [scopedBase, parsedTargetRanges],
+  );
 
   // Tự động chọn SP03 nếu có, hoặc dạng SP đầu tiên, hoặc dạng có dữ liệu đầu tiên
   useEffect(() => {
-    if (scoped.length === 0) return;
-    const hasCurrent = scoped.some((r) => r.runType === runType);
+    if (scopedBase.length === 0) return;
+    const hasCurrent = scopedBase.some((r) => r.runType === runType);
     if (!hasCurrent) {
-      const sp03 = scoped.some((r) => r.runType === "SP03");
+      const sp03 = scopedBase.some((r) => r.runType === "SP03");
       if (sp03) {
         setRunType("SP03");
       } else {
-        const sp = scoped.find((r) => r.runType.startsWith("SP"));
-        setRunType(sp ? sp.runType : scoped[0].runType);
+        const sp = scopedBase.find((r) => r.runType.startsWith("SP"));
+        setRunType(sp ? sp.runType : scopedBase[0].runType);
       }
     }
-  }, [scoped, runType]);
+  }, [scopedBase, runType]);
 
   // Nhóm theo dạng SP | SB | SD; SP03 luôn đứng đầu
   const runTypeGroups = useMemo(() => {
     const countMap = new Map<string, number>();
+    // Dạng chạy lấy từ scopedBase (không mất nút khi lọc khoảng số), số đếm theo danh sách đã lọc.
+    for (const r of scopedBase) if (!countMap.has(r.runType)) countMap.set(r.runType, 0);
     for (const r of scoped) countMap.set(r.runType, (countMap.get(r.runType) || 0) + 1);
 
     const getFamily = (rt: string) => {
@@ -677,18 +744,18 @@ export function PpcManualBidView({
     if (families.SD.length > 0) res.push({ family: "SD", items: families.SD });
     if (families.OTHER.length > 0) res.push({ family: "OTHER", items: families.OTHER });
     return res;
-  }, [scoped]);
+  }, [scoped, scopedBase]);
 
   const byRunType = useMemo(() => {
     const list = scoped.filter((r) => r.runType === runType);
-    if (list.length > 0) return list;
-    if (scoped.length > 0) {
-      const sp03 = scoped.find((r) => r.runType === "SP03");
-      const fallback = sp03?.runType || scoped.find((r) => r.runType.startsWith("SP"))?.runType || scoped[0].runType;
+    if (list.length > 0 || scopedBase.some((r) => r.runType === runType)) return list;
+    if (scopedBase.length > 0) {
+      const sp03 = scopedBase.find((r) => r.runType === "SP03");
+      const fallback = sp03?.runType || scopedBase.find((r) => r.runType.startsWith("SP"))?.runType || scopedBase[0].runType;
       return scoped.filter((r) => r.runType === fallback);
     }
     return [];
-  }, [scoped, runType]);
+  }, [scoped, scopedBase, runType]);
 
   const tierStats = useMemo(() => {
     const stats = new Map<ManualBidTier, { count: number; spend: number; sales: number }>();
@@ -1376,6 +1443,70 @@ export function PpcManualBidView({
             )}
           </div>
         )}
+
+        {/* Lọc target theo khoảng số: Spend, Sales, ACOS, Click… */}
+        {sku && (
+          <div ref={rangeRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setRangeOpen((v) => !v)}
+              className={`flex h-7 cursor-pointer items-center gap-1.5 rounded border bg-white px-2.5 text-xs font-semibold hover:bg-slate-50 ${
+                rangeOpen || parsedTargetRanges.length > 0 ? "border-slate-800 text-slate-900" : "border-slate-300 text-slate-600"
+              }`}
+            >
+              Lọc
+              {parsedTargetRanges.length > 0 && (
+                <span className="rounded-full bg-slate-800 px-1.5 text-[10.5px] font-bold text-white">{parsedTargetRanges.length}</span>
+              )}
+              <span className="text-[9px] text-slate-400">▼</span>
+            </button>
+            {rangeOpen && (
+              <div className="absolute left-0 top-9 z-40 w-80 space-y-1.5 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                <div className="grid grid-cols-[1fr_76px_10px_76px] items-center gap-1 text-[10.5px] font-semibold text-slate-400">
+                  <span />
+                  <span className="text-center">từ</span>
+                  <span />
+                  <span className="text-center">đến</span>
+                </div>
+                {TARGET_METRICS.map((m) => (
+                  <RangeRow
+                    key={m.key}
+                    label={m.label}
+                    unit={m.unit}
+                    value={targetRanges[m.key] || { min: "", max: "" }}
+                    onChange={(r) => setTargetRange(m.key, r)}
+                  />
+                ))}
+                {parsedTargetRanges.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTargetRanges({})}
+                    className="mt-1 h-7 w-full cursor-pointer rounded-md text-[12px] font-semibold text-indigo-600 hover:bg-indigo-50"
+                  >
+                    Bỏ lọc
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {sku && parsedTargetRanges.map((f) => {
+          const m = TARGET_METRICS.find((x) => x.key === f.key)!;
+          const fmt = (v: number) => (m.unit === "$" ? `$${v}` : m.unit === "%" ? `${v}%` : `${v}`);
+          const label = f.min != null && f.max != null ? `${m.label} ${fmt(f.min)}–${fmt(f.max)}`
+            : f.min != null ? `${m.label} ≥ ${fmt(f.min)}` : `${m.label} ≤ ${fmt(f.max!)}`;
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setTargetRange(f.key, { min: "", max: "" })}
+              className="flex h-6 cursor-pointer items-center gap-1 rounded-full bg-slate-100 pl-2.5 pr-2 text-[11.5px] font-semibold text-slate-700 hover:bg-slate-200"
+            >
+              {label}
+              <span className="text-slate-400">×</span>
+            </button>
+          );
+        })}
 
         {/* Phân nhóm dạng chạy SP | SB | SD */}
         {sku && runTypeGroups.length > 0 && (
