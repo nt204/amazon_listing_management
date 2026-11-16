@@ -77,7 +77,7 @@ const STORE_COLORS = ["#5b9ce6", "#f28a5e", "#4fb8b1", "#8a7ae0", "#ffc247", "#3
 type Pair = { actual: number; target: number | null };
 type StoreRow = { name: string; color: string; revenue: Pair; quantity: Pair; testRevenue: Pair; testQuantity: Pair };
 type TeamRow = { name: string; stores: StoreRow[]; revenue: Pair; quantity: Pair };
-type Highlight = { label: string; ratio: number };
+type Highlight = { store: string; color: string; items: { metric: string; ratio: number }[] };
 
 /** "FBA 1" → "Team 1" (như file báo cáo); store chưa có team FBA → "Khác" */
 function teamLabel(team: string) {
@@ -111,17 +111,19 @@ function buildAllStores(parts: KpiStorePart[]) {
     return { name, stores: list, revenue: sumPair(list.map((s) => s.revenue)), quantity: sumPair(list.map((s) => s.quantity)) };
   });
   const highlights: Highlight[] = [];
-  const push = (who: string, metric: string, p: Pair) => {
-    const ratio = achievement(p.actual, p.target);
-    if (p.target != null && p.target > 0 && ratio != null && ratio >= 1) highlights.push({ label: `${who} vượt mục tiêu ${metric}`, ratio });
-  };
   for (const t of teams) {
     for (const st of t.stores) {
-      // Chỉ số nào của store có mục tiêu và đạt ≥ 100% thì vinh danh
-      push(st.name, "doanh thu SKU WIN", st.revenue);
-      push(st.name, "lượng bán SKU WIN", st.quantity);
-      push(st.name, "doanh thu SKU TEST", st.testRevenue);
-      push(st.name, "lượng bán SKU TEST", st.testQuantity);
+      // Gộp theo store: chỉ số nào của store có mục tiêu và đạt ≥ 100% thì liệt kê trong thẻ của store đó
+      const items: Highlight["items"] = [];
+      const push = (metric: string, p: Pair) => {
+        const ratio = achievement(p.actual, p.target);
+        if (p.target != null && p.target > 0 && ratio != null && ratio >= 1) items.push({ metric, ratio });
+      };
+      push("Doanh thu SKU WIN", st.revenue);
+      push("Lượng bán SKU WIN", st.quantity);
+      push("Doanh thu SKU TEST", st.testRevenue);
+      push("Lượng bán SKU TEST", st.testQuantity);
+      if (items.length) highlights.push({ store: st.name, color: st.color, items });
     }
   }
   return { teams, highlights, storeCount: stores.length };
@@ -162,9 +164,20 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
         {highlights.length ? (
           <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
             {highlights.map((h) => (
-              <div key={h.label} className="rounded-[10px] border border-l-4 border-emerald-500 bg-white px-3.5 py-3.5 shadow-2xs">
-                <div className="mb-1 text-sm text-slate-600">{h.label}</div>
-                <div className="font-mono text-2xl font-bold tabular-nums text-emerald-600">{fmtPct(h.ratio)}</div>
+              <div key={h.store} className="rounded-[10px] border border-l-4 border-emerald-500 bg-white px-4 py-3.5 shadow-2xs">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: h.color }} />
+                  <span className="text-[15px] font-bold text-slate-900">{h.store}</span>
+                  <span className="text-sm text-slate-500">vượt mục tiêu</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {h.items.map((it) => (
+                    <div key={it.metric} className="flex items-baseline justify-between gap-3">
+                      <span className="text-sm text-slate-600">{it.metric}</span>
+                      <span className="font-mono text-2xl font-bold tabular-nums text-emerald-600">{fmtPct(it.ratio)}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
