@@ -404,11 +404,11 @@ export function buildTeamReportCard(r: TeamReport, options: TeamReportOptions = 
     schema: "2.0",
     config: { width_mode: "fill" },
     header: {
-      template: "blue",
+      template: options.missingStores?.length ? "orange" : "blue",
       title: { tag: "plain_text", content: `📊 BÁO CÁO KINH DOANH · ${ddmm(r.date)}/${r.date.slice(0, 4)}` },
       subtitle: {
         tag: "plain_text",
-        content: `${r.company.storeCount} store · ${r.teams.length} team · so với hôm qua ${ddmm(r.yesterdayDate)} và cùng ngày tháng trước ${ddmm(r.lastMonthDate)}`,
+        content: `${r.company.storeCount} store${options.missingStores?.length ? ` (thiếu ${options.missingStores.length} store)` : ""} · ${r.teams.length} team · so với hôm qua ${ddmm(r.yesterdayDate)} và cùng ngày tháng trước ${ddmm(r.lastMonthDate)}`,
       },
     },
     body: { elements },

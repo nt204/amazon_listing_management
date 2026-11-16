@@ -219,24 +219,18 @@ async function loadTeamLeads(teamId: string): Promise<Record<string, string>> {
   }
 }
 
-/** Ngày mới nhất (< hôm nay) mà mọi store ĐANG HOẠT ĐỘNG (có đơn trong 7 ngày gần nhất) đều đã có đơn. */
+/**
+ * Ngày mới nhất (< hôm nay) có dữ liệu đơn hàng để lập báo cáo.
+ * Không cần đợi 100% store hoàn tất: store chưa có số sẽ được ghi nhận là "thiếu dữ liệu".
+ */
 export async function latestCompleteDate(): Promise<string | undefined> {
   const sql = await getDatabaseClient();
   const rows = await sql<Array<{ latest_date: string }>>`
-    WITH active AS (
-      SELECT DISTINCT store_id FROM accounting_orders
-      WHERE date IS NOT NULL AND date < CURRENT_DATE
-        AND date > (SELECT MAX(date) FROM accounting_orders WHERE date < CURRENT_DATE) - ${ACTIVE_STORE_WINDOW_DAYS}::int
-    )
-    SELECT o.date::text AS latest_date
-    FROM accounting_orders o
-    JOIN active a ON a.store_id = o.store_id
-    WHERE o.date < CURRENT_DATE
-      AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
-    GROUP BY o.date
-    HAVING COUNT(DISTINCT o.store_id) = (SELECT COUNT(*) FROM active)
-    ORDER BY o.date DESC
-    LIMIT 1
+    SELECT MAX(date)::text AS latest_date
+    FROM accounting_orders
+    WHERE date IS NOT NULL
+      AND date < CURRENT_DATE
+      AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
   `;
   return rows[0]?.latest_date;
 }
@@ -256,28 +250,26 @@ export async function reportDailyBusinessData(
   const sql = await getDatabaseClient();
   const isAutomatic = !options.force && !options.recipient && !options.dryRun;
 
-  // 1. Không chỉ định ngày: ngày mới nhất mà mọi store đang hoạt động đã có đơn.
-  //    Store ngừng nạp dữ liệu không chặn báo cáo.
+  // 1. Không chỉ định ngày: ngày mới nhất có đơn hàng (< hôm nay).
+  //    Store chưa nạp dữ liệu không chặn báo cáo (sẽ ghi chú thiếu dữ liệu).
   const latestDate = options.targetDate?.trim() || (await latestCompleteDate());
   if (!latestDate) {
     return {
       success: false,
       reportedDate: null,
-      message: "Chưa có ngày nào hoàn tất đầy đủ dữ liệu cho tất cả các Store đang hoạt động.",
+      message: "Chưa có dữ liệu đơn hàng nào trước hôm nay để lập báo cáo.",
     };
   }
 
   // 2. Kiểm tra nhanh đã báo cáo ngày này (hoặc ngày mới hơn) chưa
   const settingKey = `lark_accounting_last_reported_date:${scope.teamId}`;
-  if (isAutomatic) {
-    const lastReportedDate = await lastReportedDateOf(settingKey);
-    if (lastReportedDate && lastReportedDate >= latestDate) {
-      return {
-        success: true,
-        reportedDate: latestDate,
-        message: `Dữ liệu ngày ${latestDate} đã được gửi báo cáo trước đó.`,
-      };
-    }
+  const lastState = await lastReportedStateOf(settingKey);
+  if (isAutomatic && lastState.date > latestDate) {
+    return {
+      success: true,
+      reportedDate: latestDate,
+      message: `Dữ liệu ngày ${latestDate} đã được gửi báo cáo trước đó.`,
+    };
   }
 
   // 3. Số liệu từng kênh → chỉ số theo team, so với hôm qua và cùng ngày tháng trước
@@ -287,6 +279,23 @@ export async function reportDailyBusinessData(
   }
   const analysis = analyzeDailyReport(latestDate, channels);
   const teamLeads = options.teamLeads ?? (await loadTeamLeads(scope.teamId));
+  const missingStores = await loadStaleStores(latestDate, channels.map((c) => c.storeName));
+  const currentMissingNames = missingStores.map((s) => s.name.toUpperCase()).sort();
+
+  // Kiểm tra nếu ngày này đã gửi rồi:
+  // Nếu đã gửi ngày này và danh sách store thiếu không giảm (chưa có store nào mới được nạp thêm), bỏ qua tránh spam
+  if (isAutomatic && lastState.date === latestDate) {
+    const prevMissing = lastState.missingStores.map((n) => n.toUpperCase()).sort();
+    const hasNewData = prevMissing.length > 0 && currentMissingNames.length < prevMissing.length;
+    if (!hasNewData) {
+      return {
+        success: true,
+        reportedDate: latestDate,
+        message: `Dữ liệu ngày ${latestDate} đã được gửi báo cáo trước đó.`,
+      };
+    }
+  }
+
   const cardOptions = {
     teamLeads,
     warnings: analysis.warnings,
@@ -295,7 +304,7 @@ export async function reportDailyBusinessData(
       team: m.team,
       text: storeAlert(m, teamLeads[m.team]?.trim() || undefined),
     })),
-    missingStores: await loadStaleStores(latestDate, channels.map((c) => c.storeName)),
+    missingStores,
   };
   const roster = await sql<Array<{ name: string; team: string | null }>>`SELECT name, team FROM stores ORDER BY name`;
   const teamReport = buildTeamReport(latestDate, channels, roster);
@@ -311,27 +320,13 @@ export async function reportDailyBusinessData(
     };
   }
 
-  // 4. Chống gửi trùng khi nhiều lần import kết thúc cùng lúc: chiếm ngày báo cáo trước khi gửi
+  // 4. Chống gửi trùng khi nhiều lần import kết thúc cùng lúc: ghi nhận ngày & danh sách store thiếu
   if (isAutomatic) {
-    const claimed = await sql<Array<{ key: string }>>`
+    await sql`
       INSERT INTO app_settings (key, value, updated_at)
-      VALUES (${settingKey}, ${sql.json({ date: latestDate })}, NOW())
+      VALUES (${settingKey}, ${sql.json({ date: latestDate, missingStores: currentMissingNames })}, NOW())
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-      WHERE COALESCE(
-        CASE
-          WHEN jsonb_typeof(app_settings.value) = 'object' THEN app_settings.value ->> 'date'
-          WHEN jsonb_typeof(app_settings.value) = 'string' AND (app_settings.value #>> '{}') ~ '^\\s*\\{'
-            THEN (app_settings.value #>> '{}')::jsonb ->> 'date'
-          WHEN jsonb_typeof(app_settings.value) = 'string' THEN app_settings.value #>> '{}'
-          ELSE ''
-        END,
-        ''
-      ) < ${latestDate}
-      RETURNING key
     `;
-    if (!claimed.length) {
-      return { success: true, reportedDate: latestDate, message: `Dữ liệu ngày ${latestDate} đã được gửi báo cáo trước đó.` };
-    }
   }
 
   // 5. Gửi card Lark (card lỗi thì notifyLarkEventBestEffort gửi bản text)
@@ -360,20 +355,24 @@ export async function reportDailyBusinessData(
     // Gửi ép (force) không đi qua bước chiếm ngày ở trên nên ghi lại ngày đã báo cáo ở đây
     await sql`
       INSERT INTO app_settings (key, value, updated_at)
-      VALUES (${settingKey}, ${sql.json({ date: latestDate })}, NOW())
+      VALUES (${settingKey}, ${sql.json({ date: latestDate, missingStores: currentMissingNames })}, NOW())
       ON CONFLICT (key) DO UPDATE SET
         value = EXCLUDED.value, updated_at = NOW()
     `;
   }
 
+  const missingSuffix = missingStores.length
+    ? ` (ghi chú thiếu ${missingStores.length} store: ${missingStores.map((s) => s.name).join(", ")})`
+    : "";
+
   return {
     success: true,
     reportedDate: latestDate,
-    message: `Đã gửi báo cáo kinh doanh ngày ${displayDate(latestDate)} cho ${new Set(channels.map((c) => c.storeName)).size} store qua Lark bot.`,
+    message: `Đã gửi báo cáo kinh doanh ngày ${displayDate(latestDate)} cho ${new Set(channels.map((c) => c.storeName)).size} store qua Lark bot${missingSuffix}.`,
   };
 }
 
-async function lastReportedDateOf(settingKey: string): Promise<string> {
+async function lastReportedStateOf(settingKey: string): Promise<{ date: string; missingStores: string[] }> {
   const sql = await getDatabaseClient();
   const rows = await sql<Array<{ value: unknown }>>`
     SELECT value FROM app_settings
@@ -381,16 +380,26 @@ async function lastReportedDateOf(settingKey: string): Promise<string> {
     LIMIT 1
   `;
   const rawVal = rows[0]?.value;
+  let parsed: unknown = rawVal;
   if (typeof rawVal === "string") {
     try {
-      const parsed = JSON.parse(rawVal);
-      return typeof parsed === "object" && parsed ? (parsed as { date?: string }).date || "" : String(parsed || "");
+      parsed = JSON.parse(rawVal);
     } catch {
-      return rawVal;
+      return { date: rawVal, missingStores: [] };
     }
   }
-  if (typeof rawVal === "object" && rawVal !== null) return (rawVal as { date?: string }).date || "";
-  return "";
+  if (parsed && typeof parsed === "object" && parsed !== null) {
+    const obj = parsed as Record<string, unknown>;
+    const date = typeof obj.date === "string" ? obj.date : "";
+    const missingStores = Array.isArray(obj.missingStores) ? obj.missingStores.map(String) : [];
+    return { date, missingStores };
+  }
+  return { date: String(rawVal || ""), missingStores: [] };
+}
+
+async function lastReportedDateOf(settingKey: string): Promise<string> {
+  const state = await lastReportedStateOf(settingKey);
+  return state.date;
 }
 
 /**
@@ -580,8 +589,10 @@ async function loadStaleStores(date: string, reportedStores: string[]): Promise<
     HAVING MAX(o.date) < ${date}::date
     ORDER BY s.name
   `;
-  const reported = new Set(reportedStores);
-  return rows.filter((r) => !reported.has(r.name)).map((r) => ({ name: titleCase(r.name), team: r.team, lastDate: r.last_date }));
+  const reported = new Set(reportedStores.map((n) => n.trim().toUpperCase()));
+  return rows
+    .filter((r) => !reported.has(r.name.trim().toUpperCase()))
+    .map((r) => ({ name: titleCase(r.name), team: r.team, lastDate: r.last_date }));
 }
 
 /** Nhận diện "phân tích Warmstorey", "phan tich fastpeace fba 03/11"... Trả về ngày (YYYY-MM-DD) nếu có. */
