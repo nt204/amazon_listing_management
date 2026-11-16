@@ -68,7 +68,7 @@ function computeKpi(data: KpiData) {
   return { report, tTotal, prevTotal, hasDevT: dev.hasT, hasTestT: test.hasT };
 }
 
-export type KpiStorePart = { name: string; team: string; data: KpiData };
+export type KpiStorePart = { id: string; name: string; team: string; data: KpiData };
 
 // ── All store: vinh danh từng store vượt mục tiêu (không gộp theo team) (như "Điểm sáng tháng này" của Báo cáo Tổng quan) ──
 // Số theo SKU đang target (SKU WIN): thực tế / mục tiêu Doanh thu · Lượng bán; team = cộng các store của team.
@@ -223,6 +223,112 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
   );
 }
 
+type KqkdJson = { skus?: Record<string, unknown>[]; evalSkus?: Record<string, unknown>[]; winResults?: Record<string, unknown>[] };
+
+/** R&D như bảng "Theo phôi" của Tổng quan tháng: mẫu đi hàng trong tháng, SKU WIN / SKU đánh giá */
+function computeRnd(kqkd: KqkdJson, curPeriod: string) {
+  const listed = (kqkd.skus || []).filter((s) => s.listing_month === curPeriod).length;
+  const manual = new Map<string, number>();
+  for (const w of kqkd.winResults || []) if (w.eval_month === curPeriod) manual.set(String(w.product_type), Number(w.win_count) || 0);
+  const byType = new Map<string, { n: number; suggest: number }>();
+  for (const s of [...(kqkd.skus || []), ...(kqkd.evalSkus || [])]) {
+    if (s.eval_month !== curPeriod) continue;
+    const name = String(s.product_type || "(trống)");
+    const cur = byType.get(name) || { n: 0, suggest: 0 };
+    cur.n += 1;
+    if (String(s.status || "").trim().toLowerCase() === WIN_STATUS) cur.suggest += 1;
+    byType.set(name, cur);
+  }
+  let win = 0;
+  let evaluated = 0;
+  for (const [name, x] of byType) {
+    evaluated += x.n;
+    win += manual.get(name) ?? x.suggest;
+  }
+  return { listed, win, evaluated };
+}
+
+/** All store: R&D theo team (như mục "4. R&D Product — theo team" của Báo cáo Tổng quan) */
+function RndByTeam({ parts, period }: { parts: KpiStorePart[]; period: string }) {
+  const year = Number(period.slice(0, 4));
+  const [byStore, setByStore] = useState<Record<string, { win: number; evaluated: number }> | null>(null);
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled(
+      parts.map(async (p) => {
+        const res = await fetch(`/api/accounting/financials/kqkd?store_id=${p.id}&year=${year}`);
+        if (!res.ok) throw new Error(`KQKD ${p.name}`);
+        return [p.id, computeRnd((await res.json()) as KqkdJson, period)] as const;
+      }),
+    ).then((results) => {
+      if (!active) return;
+      const map: Record<string, { win: number; evaluated: number }> = {};
+      for (const r of results) if (r.status === "fulfilled") map[r.value[0]] = r.value[1];
+      setByStore(map);
+    });
+    return () => {
+      active = false;
+    };
+  }, [parts, period, year]);
+
+  const teams = useMemo(() => {
+    const groups = new Map<string, { stores: { name: string; revenue: number }[]; win: number; evaluated: number }>();
+    for (const p of parts) {
+      const name = teamLabel(p.team);
+      const g = groups.get(name) || { stores: [], win: 0, evaluated: 0 };
+      g.stores.push({ name: p.name, revenue: computeKpi(p.data).report.revenue.cur ?? 0 });
+      const x = byStore?.[p.id];
+      if (x) {
+        g.win += x.win;
+        g.evaluated += x.evaluated;
+      }
+      groups.set(name, g);
+    }
+    return [...groups.entries()]
+      .sort(([a], [b]) => (a === "Khác" ? 1 : b === "Khác" ? -1 : a.localeCompare(b, undefined, { numeric: true })))
+      .map(([name, g]) => ({
+        name,
+        label: `${name} · ${g.stores
+          .sort((a, b) => b.revenue - a.revenue)
+          .map((s) => s.name)
+          .join(" + ")}`,
+        win: g.win,
+        evaluated: g.evaluated,
+      }));
+  }, [parts, byStore]);
+
+  return (
+    <section className="mb-7">
+      <h3 className="mb-1 text-[22px] font-extrabold text-slate-900">R&D Product — theo team</h3>
+      <div className="mb-3 text-sm font-semibold text-slate-500">Tỉ lệ WIN (SKU Win / SKU đánh giá) · mục tiêu 40%</div>
+      {!byStore ? (
+        <div className="text-sm font-semibold text-slate-500">Đang tải số liệu R&D...</div>
+      ) : (
+        <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+          {teams.map((t) => {
+            const rate = t.evaluated ? t.win / t.evaluated : null;
+            const tone = kpiTone(rate == null ? null : rate / WIN_TARGET_RATE);
+            return (
+              <div key={t.name} className="rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-2xs">
+                <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-[15px] font-extrabold text-slate-900">{t.label}</span>
+                  <span className="text-sm font-semibold text-slate-600">
+                    <b className="font-mono text-base font-extrabold text-slate-900">{fmtInt(t.win)}</b> / {fmtInt(t.evaluated)} SKU win
+                    <span className={`ml-2 rounded-full px-2.5 py-0.5 text-[13px] font-extrabold ${tone ? TONE_PILL[tone] : "bg-slate-200 text-slate-600"}`}>{fmtPct(rate)}</span>
+                  </span>
+                </div>
+                <div className="h-2.5 rounded-full bg-slate-100">
+                  <div className={`h-full rounded-full ${tone ? TONE_BAR[tone] : "bg-slate-300"}`} style={{ width: `${Math.min(100, (rate ?? 0) * 100)}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Pill({ tone, children, big }: { tone: Tone; children: ReactNode; big?: boolean }) {
   return (
     <span className={`inline-block rounded-full font-bold ${big ? "px-2.5 py-0.5 text-[13px]" : "px-2 py-0.5 text-[11px]"} ${tone ? TONE_PILL[tone] : "border border-slate-200 bg-slate-50 text-slate-500"}`}>
@@ -235,8 +341,8 @@ function Mom({ value, label }: { value: number | null; label: string }) {
   if (value == null || !Number.isFinite(value)) return null;
   const up = value >= 0;
   return (
-    <span className="text-[11px] text-slate-400">
-      <span className={`font-mono font-semibold tabular-nums ${up ? "text-emerald-600" : "text-rose-600"}`}>
+    <span className="text-[13px] font-semibold text-slate-500">
+      <span className={`font-mono font-bold tabular-nums ${up ? "text-emerald-600" : "text-rose-600"}`}>
         {up ? "▲+" : "▼"}
         {(value * 100).toFixed(1)}%
       </span>{" "}
@@ -264,15 +370,15 @@ function StatRow({ label, actual, target, fmt }: { label: string; actual: number
   const tone = kpiTone(r);
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-2">
-        <span className="text-[13px] text-slate-500">{label}</span>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <span className="text-[15px] font-bold text-slate-700">{label}</span>
         <span className="font-mono tabular-nums">
-          <b className="text-[15px] text-slate-900">{fmtBy(a, fmt)}</b>
-          <span className="text-xs text-slate-400"> / {target == null ? "—" : fmtBy(target, fmt)}</span>
+          <b className="text-lg font-extrabold text-slate-900">{fmtBy(a, fmt)}</b>
+          <span className="ml-1 text-[15px] font-bold text-slate-500">/ {target == null ? "—" : fmtBy(target, fmt)}</span>
         </span>
       </div>
       <Bullet actual={a} target={target} tone={tone} />
-      <div className="mt-1.5">{target == null ? <Pill tone={null}>Chưa có mục tiêu</Pill> : <Pill tone={tone}>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}</div>
+      <div className="mt-1.5">{target == null ? <Pill tone={null} big>Chưa có mục tiêu</Pill> : <Pill tone={tone} big>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}</div>
     </div>
   );
 }
@@ -283,13 +389,13 @@ function BigCard({ label, actual, target, fmt, mom, momLabel, hideBar }: { label
   const tone = kpiTone(r);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-2xs">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mb-1 text-sm font-bold uppercase tracking-wide text-slate-600">{label}</div>
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className="font-mono text-[28px] font-semibold tabular-nums text-slate-900">{fmtBy(a, fmt)}</span>
-        <span className="font-mono text-sm text-slate-400">/ {target == null ? "—" : fmtBy(target, fmt)}</span>
+        <span className="font-mono text-[32px] font-extrabold tabular-nums text-slate-900">{fmtBy(a, fmt)}</span>
+        <span className="font-mono text-base font-bold text-slate-500">/ {target == null ? "—" : fmtBy(target, fmt)}</span>
       </div>
       <div className="mb-2 mt-1 flex flex-wrap items-center justify-between gap-2">
-        {target == null ? <Pill tone={null}>Chưa có mục tiêu</Pill> : <Pill tone={tone}>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}
+        {target == null ? <Pill tone={null} big>Chưa có mục tiêu</Pill> : <Pill tone={tone} big>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}
         <Mom value={mom} label={momLabel} />
       </div>
       {!hideBar && <Bullet actual={a} target={target} tone={tone} noMarker />}
@@ -302,8 +408,8 @@ function Panel({ title, sub, accent, children }: { title: string; sub?: string; 
     <section className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
       <div className="mb-4 flex items-center gap-2">
         <span className={`h-5 w-1.5 rounded-full ${accent}`} />
-        <h3 className="text-[15px] font-bold text-slate-900">{title}</h3>
-        {sub && <span className="ml-auto text-[11px] text-slate-400">{sub}</span>}
+        <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
+        {sub && <span className="ml-auto text-[13px] font-semibold text-slate-500">{sub}</span>}
       </div>
       <div className="flex flex-col gap-5">{children}</div>
     </section>
@@ -335,7 +441,7 @@ export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData;
 
   // ── R&D: như bảng "Theo phôi" của Tổng quan tháng ──
   const year = Number(periods.cur.slice(0, 4));
-  const [kqkd, setKqkd] = useState<{ skus?: Record<string, unknown>[]; evalSkus?: Record<string, unknown>[]; winResults?: Record<string, unknown>[] } | null>(null);
+  const [kqkd, setKqkd] = useState<KqkdJson | null>(null);
   const [testTarget, setTestTarget] = useState<number | null>(null);
   useEffect(() => {
     if (!storeId) return;
@@ -354,35 +460,14 @@ export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData;
   }, [storeId, year, periods.cur]);
 
   const curPeriod = periods.cur;
-  const rnd = useMemo(() => {
-    if (!kqkd) return null;
-    const listed = (kqkd.skus || []).filter((s) => s.listing_month === curPeriod).length;
-    const manual = new Map<string, number>();
-    for (const w of kqkd.winResults || []) if (w.eval_month === curPeriod) manual.set(String(w.product_type), Number(w.win_count) || 0);
-    const byType = new Map<string, { n: number; suggest: number }>();
-    for (const s of [...(kqkd.skus || []), ...(kqkd.evalSkus || [])]) {
-      if (s.eval_month !== curPeriod) continue;
-      const name = String(s.product_type || "(trống)");
-      const cur = byType.get(name) || { n: 0, suggest: 0 };
-      cur.n += 1;
-      if (String(s.status || "").trim().toLowerCase() === WIN_STATUS) cur.suggest += 1;
-      byType.set(name, cur);
-    }
-    let win = 0;
-    let evaluated = 0;
-    for (const [name, x] of byType) {
-      evaluated += x.n;
-      win += manual.get(name) ?? x.suggest;
-    }
-    return { listed, win, evaluated };
-  }, [kqkd, curPeriod]);
+  const rnd = useMemo(() => (kqkd ? computeRnd(kqkd, curPeriod) : null), [kqkd, curPeriod]);
 
 
   return (
     <div ref={rootRef} className="min-h-full overflow-auto bg-slate-50">
       <div className="mx-auto max-w-[1280px] px-4 pb-10 pt-5 sm:px-6">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-[13px] font-bold uppercase tracking-wide text-slate-600">Tổng quan tháng</h2>
+          <h2 className="text-[15px] font-extrabold uppercase tracking-wide text-slate-700">Tổng quan tháng</h2>
           <div className="flex items-center gap-3">
             <span className="hidden items-center gap-3 text-[11px] text-slate-500 sm:flex">
               <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />≥ 100%</span>
@@ -408,7 +493,10 @@ export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData;
 
         {storeParts && storeParts.length > 0 && <AllStoresSections parts={storeParts} />}
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {isAll && storeParts && <RndByTeam parts={storeParts} period={periods.cur} />}
+
+        {!isAll && (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Panel title="KPI SKU WIN" sub="SKU phát triển" accent="bg-blue-600">
             <StatRow label="Doanh thu" actual={r.revenue.cur ?? null} target={r.revenue.tCur ?? null} fmt="usd" />
             <StatRow label="Lượng bán" actual={r.quantity.cur ?? null} target={r.quantity.tCur ?? null} fmt="int" />
@@ -419,19 +507,20 @@ export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData;
           </Panel>
           <Panel title="KPI R&D" sub="Mẫu test & tỉ lệ WIN" accent="bg-emerald-500">
             {!rnd ? (
-              <div className="text-xs text-slate-400">Đang tải số liệu R&D...</div>
+              <div className="text-sm font-semibold text-slate-500">Đang tải số liệu R&D...</div>
             ) : (
               <>
                 <StatRow label="Số mẫu test đi hàng" actual={rnd.listed} target={testTarget} fmt="int" />
                 <StatRow label={`SKU WIN / ${rnd.evaluated} SKU đánh giá`} actual={rnd.win} target={rnd.evaluated ? rnd.evaluated * WIN_TARGET_RATE : null} fmt="int" />
                 <div className="flex items-baseline justify-between rounded-xl bg-slate-50 px-3 py-2.5">
-                  <span className="text-[13px] text-slate-500">Tỉ lệ WIN (mục tiêu 40%)</span>
-                  <span className="font-mono text-lg font-bold tabular-nums text-slate-900">{fmtPct(rnd.evaluated ? rnd.win / rnd.evaluated : null)}</span>
+                  <span className="text-[15px] font-bold text-slate-700">Tỉ lệ WIN (mục tiêu 40%)</span>
+                  <span className="font-mono text-xl font-extrabold tabular-nums text-slate-900">{fmtPct(rnd.evaluated ? rnd.win / rnd.evaluated : null)}</span>
                 </div>
               </>
             )}
           </Panel>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

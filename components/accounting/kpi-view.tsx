@@ -2502,7 +2502,7 @@ export function KpiView() {
         };
         if (selectedStoreId === ALL_STORES) {
           // All: tải KPI mọi store song song rồi gộp (store lỗi thì bỏ qua, báo tên)
-          const results = await Promise.allSettled(stores.map(async (st) => ({ name: st.name, team: st.team ?? "", data: await fetchOne(st.id) })));
+          const results = await Promise.allSettled(stores.map(async (st) => ({ id: st.id, name: st.name, team: st.team ?? "", data: await fetchOne(st.id) })));
           const ok = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
           const failed = stores.filter((_, i) => results[i].status === "rejected").map((st) => st.name);
           if (!ok.length) throw new Error("Không tải được KPI của store nào.");
