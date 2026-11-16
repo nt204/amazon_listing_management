@@ -210,15 +210,24 @@ export async function sendLarkTextNotification(
 
   const token = await getTenantAccessToken(appId, appSecret);
   const request = larkSendRequest(recipient, "text", JSON.stringify({ text }));
-  await fetchJson<LarkApiResponse>(request.url, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json; charset=utf-8",
-    },
-    body: request.body,
-  });
-  return { sent: true };
+  try {
+    await fetchJson<LarkApiResponse>(request.url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: request.body,
+    });
+    return { sent: true };
+  } catch (error) {
+    const webhookUrl = process.env.LARK_ACCOUNTING_WEBHOOK_URL?.trim() || process.env.LARK_WEBHOOK_URL?.trim();
+    if (webhookUrl && (recipient.receiveIdType === "chat_id" || !recipient.receiveIdType)) {
+      console.warn("[Lark] API lỗi, tự động fallback gửi text qua Webhook:", error instanceof Error ? error.message : error);
+      return sendLarkWebhookNotification(webhookUrl, { text });
+    }
+    throw error;
+  }
 }
 
 export async function sendLarkCardNotification(
@@ -237,15 +246,24 @@ export async function sendLarkCardNotification(
 
   const token = await getTenantAccessToken(appId, appSecret);
   const request = larkSendRequest(recipient, "interactive", JSON.stringify(card));
-  await fetchJson<LarkApiResponse>(request.url, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json; charset=utf-8",
-    },
-    body: request.body,
-  });
-  return { sent: true };
+  try {
+    await fetchJson<LarkApiResponse>(request.url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: request.body,
+    });
+    return { sent: true };
+  } catch (error) {
+    const webhookUrl = process.env.LARK_ACCOUNTING_WEBHOOK_URL?.trim() || process.env.LARK_WEBHOOK_URL?.trim();
+    if (webhookUrl && (recipient.receiveIdType === "chat_id" || !recipient.receiveIdType)) {
+      console.warn("[Lark] API lỗi, tự động fallback gửi card qua Webhook:", error instanceof Error ? error.message : error);
+      return sendLarkWebhookNotification(webhookUrl, { card });
+    }
+    throw error;
+  }
 }
 
 export async function uploadLarkImage(
