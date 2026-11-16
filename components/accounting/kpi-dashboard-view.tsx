@@ -107,7 +107,8 @@ function buildAllStores(parts: KpiStorePart[]) {
   });
   const teamNames = [...new Set(stores.map((s) => s.team))].sort((a, b) => (a === "Khác" ? 1 : b === "Khác" ? -1 : a.localeCompare(b, undefined, { numeric: true })));
   const teams: TeamRow[] = teamNames.map((name) => {
-    const list = stores.filter((s) => s.team === name);
+    // Trong team: store doanh thu (SKU WIN) cao xếp trước
+    const list = stores.filter((s) => s.team === name).sort((a, b) => b.revenue.actual - a.revenue.actual);
     return { name, stores: list, revenue: sumPair(list.map((s) => s.revenue)), quantity: sumPair(list.map((s) => s.quantity)) };
   });
   const highlights: Highlight[] = [];
@@ -132,22 +133,22 @@ function buildAllStores(parts: KpiStorePart[]) {
 function TonePct({ p }: { p: Pair }) {
   const r = achievement(p.actual, p.target);
   const tone = kpiTone(r);
-  return <b className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] text-white ${tone ? TONE_PILL[tone] : "bg-slate-400"}`}>{fmtPct(r)}</b>;
+  return <b className={`ml-2 rounded-full px-2 py-0.5 text-xs font-bold text-white ${tone ? TONE_PILL[tone] : "bg-slate-400"}`}>{fmtPct(r)}</b>;
 }
 
 function StoreStat({ label, p, fmt, color }: { label: string; p: Pair; fmt: Fmt; color: string }) {
   const r = achievement(p.actual, p.target);
   const tone = kpiTone(r);
   return (
-    <div className="mb-2.5 last:mb-1">
-      <div className="mb-1 flex items-baseline justify-between text-[11.5px]">
-        <span className="text-slate-500">{label}</span>
+    <div className="mb-3.5 last:mb-1">
+      <div className="mb-1.5 flex items-baseline justify-between text-sm">
+        <span className="font-semibold text-slate-600">{label}</span>
         <span className="font-mono tabular-nums">
-          <b className="text-[12.5px] text-slate-900">{fmtBy(p.actual, fmt)}</b>
-          <span className="ml-0.5 text-[11px] text-slate-400">/ {p.target == null ? "—" : fmtBy(p.target, fmt)}</span>
+          <b className="text-base font-bold text-slate-900">{fmtBy(p.actual, fmt)}</b>
+          <span className="ml-1 text-[13px] font-semibold text-slate-500">/ {p.target == null ? "—" : fmtBy(p.target, fmt)}</span>
         </span>
       </div>
-      <Bullet actual={p.actual} target={p.target} tone={tone} color={color} small />
+      <Bullet actual={p.actual} target={p.target} tone={tone} color={color} />
       <div className="mt-1">
         {p.target == null ? <Pill tone={null}>Chưa có mục tiêu</Pill> : <Pill tone={tone}>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}
       </div>
@@ -156,7 +157,7 @@ function StoreStat({ label, p, fmt, color }: { label: string; p: Pair; fmt: Fmt;
 }
 
 function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
-  const { teams, highlights, storeCount } = useMemo(() => buildAllStores(parts), [parts]);
+  const { teams, highlights } = useMemo(() => buildAllStores(parts), [parts]);
   return (
     <>
       <section className="mb-7">
@@ -187,20 +188,19 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
       </section>
 
       <section className="mb-7">
-        <h3 className="mb-3 flex items-center gap-2 text-[15px] font-bold text-slate-900">
+        <h3 className="mb-3 flex items-center gap-2 text-[17px] font-bold text-slate-900">
           Hiệu quả kinh doanh FBA
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-400">{storeCount} store · SKU đang target</span>
         </h3>
         <div className="flex flex-col gap-4">
           {teams.map((t) => (
             <div key={t.name} className="rounded-[14px] border border-slate-200 bg-slate-100/60 p-3.5">
               <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 px-0.5">
-                <span className="text-[12.5px] font-bold text-slate-900">
+                <span className="text-[15px] font-extrabold text-slate-900">
                   {t.name} · {t.stores.map((s) => s.name).join(" + ")}
                 </span>
-                <div className="flex flex-wrap gap-4 text-xs font-semibold">
-                  <div><span className="text-[10.5px] font-normal text-slate-400">Doanh thu</span><TonePct p={t.revenue} /></div>
-                  <div><span className="text-[10.5px] font-normal text-slate-400">Lượng bán</span><TonePct p={t.quantity} /></div>
+                <div className="flex flex-wrap gap-5 text-sm font-semibold">
+                  <div><span className="text-[13px] font-semibold text-slate-600">Doanh thu</span><TonePct p={t.revenue} /></div>
+                  <div><span className="text-[13px] font-semibold text-slate-600">Lượng bán</span><TonePct p={t.quantity} /></div>
                 </div>
               </div>
               <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
@@ -208,7 +208,7 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
                   <div key={st.name} className="rounded-xl border border-slate-200 bg-white px-4 pb-3 pt-3.5 shadow-2xs">
                     <div className="mb-2.5 flex items-center gap-2">
                       <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: st.color }} />
-                      <span className="text-[13.5px] font-bold text-slate-900">{st.name}</span>
+                      <span className="text-base font-extrabold text-slate-900">{st.name}</span>
                     </div>
                     <StoreStat label="Doanh thu" p={st.revenue} fmt="usd" color={st.color} />
                     <StoreStat label="Lượng bán" p={st.quantity} fmt="int" color={st.color} />
