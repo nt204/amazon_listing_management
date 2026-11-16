@@ -133,7 +133,7 @@ function buildAllStores(parts: KpiStorePart[]) {
 function TonePct({ p }: { p: Pair }) {
   const r = achievement(p.actual, p.target);
   const tone = kpiTone(r);
-  return <b className={`ml-2 rounded-full px-2 py-0.5 text-xs font-bold text-white ${tone ? TONE_PILL[tone] : "bg-slate-400"}`}>{fmtPct(r)}</b>;
+  return <b className={`ml-2 rounded-full px-2.5 py-0.5 text-sm font-extrabold text-white ${tone ? TONE_PILL[tone] : "bg-slate-400"}`}>{fmtPct(r)}</b>;
 }
 
 function StoreStat({ label, p, fmt, color }: { label: string; p: Pair; fmt: Fmt; color: string }) {
@@ -141,16 +141,16 @@ function StoreStat({ label, p, fmt, color }: { label: string; p: Pair; fmt: Fmt;
   const tone = kpiTone(r);
   return (
     <div className="mb-3.5 last:mb-1">
-      <div className="mb-1.5 flex items-baseline justify-between text-sm">
-        <span className="font-semibold text-slate-600">{label}</span>
+      <div className="mb-2 flex items-baseline justify-between text-[15px]">
+        <span className="font-bold text-slate-700">{label}</span>
         <span className="font-mono tabular-nums">
-          <b className="text-base font-bold text-slate-900">{fmtBy(p.actual, fmt)}</b>
-          <span className="ml-1 text-[13px] font-semibold text-slate-500">/ {p.target == null ? "—" : fmtBy(p.target, fmt)}</span>
+          <b className="text-lg font-extrabold text-slate-900">{fmtBy(p.actual, fmt)}</b>
+          <span className="ml-1 text-[15px] font-bold text-slate-500">/ {p.target == null ? "—" : fmtBy(p.target, fmt)}</span>
         </span>
       </div>
       <Bullet actual={p.actual} target={p.target} tone={tone} color={color} />
       <div className="mt-1">
-        {p.target == null ? <Pill tone={null}>Chưa có mục tiêu</Pill> : <Pill tone={tone}>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}
+        {p.target == null ? <Pill tone={null} big>Chưa có mục tiêu</Pill> : <Pill tone={tone} big>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}
       </div>
     </div>
   );
@@ -161,21 +161,21 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
   return (
     <>
       <section className="mb-7">
-        <h3 className="mb-3 text-[17px] font-bold text-slate-900">Điểm sáng tháng này</h3>
+        <h3 className="mb-3 text-[22px] font-extrabold text-slate-900">Điểm sáng tháng này</h3>
         {highlights.length ? (
           <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
             {highlights.map((h) => (
               <div key={h.store} className="rounded-[10px] border border-l-4 border-emerald-500 bg-white px-4 py-3.5 shadow-2xs">
                 <div className="mb-2 flex items-center gap-2">
                   <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: h.color }} />
-                  <span className="text-[15px] font-bold text-slate-900">{h.store}</span>
-                  <span className="text-sm text-slate-500">vượt mục tiêu</span>
+                  <span className="text-lg font-extrabold text-slate-900">{h.store}</span>
+                  <span className="text-[15px] font-semibold text-slate-500">vượt mục tiêu</span>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   {h.items.map((it) => (
                     <div key={it.metric} className="flex items-baseline justify-between gap-3">
-                      <span className="text-sm text-slate-600">{it.metric}</span>
-                      <span className="font-mono text-2xl font-bold tabular-nums text-emerald-600">{fmtPct(it.ratio)}</span>
+                      <span className="text-[15px] font-bold text-slate-700">{it.metric}</span>
+                      <span className="font-mono text-[26px] font-extrabold tabular-nums text-emerald-600">{fmtPct(it.ratio)}</span>
                     </div>
                   ))}
                 </div>
@@ -183,32 +183,32 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
             ))}
           </div>
         ) : (
-          <div className="rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-3 text-xs text-slate-500">Chưa có store nào vượt 100% mục tiêu tháng này.</div>
+          <div className="rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-500">Chưa có store nào vượt 100% mục tiêu tháng này.</div>
         )}
       </section>
 
       <section className="mb-7">
-        <h3 className="mb-3 flex items-center gap-2 text-[17px] font-bold text-slate-900">
+        <h3 className="mb-3 flex items-center gap-2 text-[22px] font-extrabold text-slate-900">
           Hiệu quả kinh doanh FBA
         </h3>
         <div className="flex flex-col gap-4">
           {teams.map((t) => (
             <div key={t.name} className="rounded-[14px] border border-slate-200 bg-slate-100/60 p-3.5">
               <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 px-0.5">
-                <span className="text-[15px] font-extrabold text-slate-900">
+                <span className="text-lg font-extrabold text-slate-900">
                   {t.name} · {t.stores.map((s) => s.name).join(" + ")}
                 </span>
-                <div className="flex flex-wrap gap-5 text-sm font-semibold">
-                  <div><span className="text-[13px] font-semibold text-slate-600">Doanh thu</span><TonePct p={t.revenue} /></div>
-                  <div><span className="text-[13px] font-semibold text-slate-600">Lượng bán</span><TonePct p={t.quantity} /></div>
+                <div className="flex flex-wrap gap-5 font-semibold">
+                  <div><span className="text-[15px] font-bold text-slate-700">Doanh thu</span><TonePct p={t.revenue} /></div>
+                  <div><span className="text-[15px] font-bold text-slate-700">Lượng bán</span><TonePct p={t.quantity} /></div>
                 </div>
               </div>
               <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
                 {t.stores.map((st) => (
                   <div key={st.name} className="rounded-xl border border-slate-200 bg-white px-4 pb-3 pt-3.5 shadow-2xs">
                     <div className="mb-2.5 flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: st.color }} />
-                      <span className="text-base font-extrabold text-slate-900">{st.name}</span>
+                      <span className="h-3 w-3 flex-none rounded-full" style={{ background: st.color }} />
+                      <span className="text-lg font-extrabold text-slate-900">{st.name}</span>
                     </div>
                     <StoreStat label="Doanh thu" p={st.revenue} fmt="usd" color={st.color} />
                     <StoreStat label="Lượng bán" p={st.quantity} fmt="int" color={st.color} />
@@ -223,9 +223,9 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
   );
 }
 
-function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
+function Pill({ tone, children, big }: { tone: Tone; children: ReactNode; big?: boolean }) {
   return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${tone ? TONE_PILL[tone] : "border border-slate-200 bg-slate-50 text-slate-500"}`}>
+    <span className={`inline-block rounded-full font-bold ${big ? "px-2.5 py-0.5 text-[13px]" : "px-2 py-0.5 text-[11px]"} ${tone ? TONE_PILL[tone] : "border border-slate-200 bg-slate-50 text-slate-500"}`}>
       {children}
     </span>
   );
@@ -246,14 +246,14 @@ function Mom({ value, label }: { value: number | null; label: string }) {
 }
 
 /** Thanh thực tế / mục tiêu: chưa đạt thì thanh = % đạt, vạch ở 100%; vượt thì thanh đầy, vạch lùi về mục tiêu */
-function Bullet({ actual, target, tone, color, small }: { actual: number; target: number | null; tone: Tone; color?: string; small?: boolean }) {
+function Bullet({ actual, target, tone, color, small, noMarker }: { actual: number; target: number | null; tone: Tone; color?: string; small?: boolean; noMarker?: boolean }) {
   const r = achievement(actual, target);
   const fill = target == null || r == null ? 0 : Math.max(0, Math.min(1, r)) * 100;
   const marker = target == null || r == null ? null : r > 1 && actual > 0 ? (target / actual) * 100 : 100;
   return (
     <div className={`relative rounded-full bg-slate-100 ${small ? "h-[7px]" : "h-2.5"}`}>
       <div className={`h-full rounded-full ${color ? "" : tone ? TONE_BAR[tone] : "bg-slate-300"}`} style={{ width: `${fill}%`, ...(color ? { background: color } : {}) }} />
-      {marker != null && <div className="absolute -bottom-1 -top-1 w-0.5 rounded bg-slate-800/60" style={{ left: `calc(${Math.min(100, Math.max(0, marker))}% - 1px)` }} />}
+      {marker != null && !noMarker && <div className="absolute -bottom-1 -top-1 w-0.5 rounded bg-slate-800/60" style={{ left: `calc(${Math.min(100, Math.max(0, marker))}% - 1px)` }} />}
     </div>
   );
 }
@@ -277,7 +277,7 @@ function StatRow({ label, actual, target, fmt }: { label: string; actual: number
   );
 }
 
-function BigCard({ label, actual, target, fmt, mom, momLabel }: { label: string; actual: number | null; target: number | null; fmt: Fmt; mom: number | null; momLabel: string }) {
+function BigCard({ label, actual, target, fmt, mom, momLabel, hideBar }: { label: string; actual: number | null; target: number | null; fmt: Fmt; mom: number | null; momLabel: string; hideBar?: boolean }) {
   const a = actual ?? 0;
   const r = achievement(a, target);
   const tone = kpiTone(r);
@@ -292,7 +292,7 @@ function BigCard({ label, actual, target, fmt, mom, momLabel }: { label: string;
         {target == null ? <Pill tone={null}>Chưa có mục tiêu</Pill> : <Pill tone={tone}>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}
         <Mom value={mom} label={momLabel} />
       </div>
-      <Bullet actual={a} target={target} tone={tone} />
+      {!hideBar && <Bullet actual={a} target={target} tone={tone} noMarker />}
     </div>
   );
 }
@@ -329,6 +329,8 @@ export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData;
   const k = useMemo(() => computeKpi(data), [data]);
 
   const r = k.report;
+  // Tất cả store: thẻ tổng chỉ hiện số, không vẽ thanh tiến độ
+  const isAll = !!storeParts?.length;
   const prevLabel = periodLabel(periods.prev);
 
   // ── R&D: như bảng "Theo phôi" của Tổng quan tháng ──
@@ -400,8 +402,8 @@ export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData;
         </div>
 
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <BigCard label="Doanh thu" actual={r.revenue.curTotal ?? null} target={k.tTotal?.revenue ?? null} fmt="usd" mom={growth(r.revenue.curTotal, k.prevTotal.revenue)} momLabel={prevLabel} />
-          <BigCard label="Lượng bán" actual={r.quantity.curTotal ?? null} target={k.tTotal?.quantity ?? null} fmt="int" mom={growth(r.quantity.curTotal, k.prevTotal.quantity)} momLabel={prevLabel} />
+          <BigCard label="Doanh thu" actual={r.revenue.curTotal ?? null} target={k.tTotal?.revenue ?? null} fmt="usd" mom={growth(r.revenue.curTotal, k.prevTotal.revenue)} momLabel={prevLabel} hideBar={isAll} />
+          <BigCard label="Lượng bán" actual={r.quantity.curTotal ?? null} target={k.tTotal?.quantity ?? null} fmt="int" mom={growth(r.quantity.curTotal, k.prevTotal.quantity)} momLabel={prevLabel} hideBar={isAll} />
         </div>
 
         {storeParts && storeParts.length > 0 && <AllStoresSections parts={storeParts} />}
