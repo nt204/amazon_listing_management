@@ -884,7 +884,6 @@ function NoteTile({ note, weekStart, canEdit }: { note: WeeklyReport["note"]; we
       setError(e instanceof Error ? e.message : "Không lưu được");
     }
   };
-  const when = saved.updatedAt ? new Date(saved.updatedAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
   return (
     <div className={`${CARD} flex min-w-0 flex-col border-t-4 px-5 pt-4 pb-4 shadow-sm`} style={{ borderTopColor: "#a5b4fc" }}>
       <div className="flex items-center justify-between gap-2">
@@ -940,14 +939,7 @@ function NoteTile({ note, weekStart, canEdit }: { note: WeeklyReport["note"]; we
           </div>
         </div>
       ) : saved.text ? (
-        <>
-          <div className="mt-3 max-h-[260px] flex-1 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed !text-slate-900">{saved.text}</div>
-          {saved.updatedBy && (
-            <span className="mt-2 text-[11.5px] !text-slate-500">
-              {saved.updatedBy} · {when}
-            </span>
-          )}
-        </>
+        <div className="mt-3 max-h-[260px] flex-1 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed !text-slate-900">{saved.text}</div>
       ) : (
         <p className="mt-3 text-[13px] !text-slate-500">{canEdit ? "Chưa có đánh giá cho tuần này." : "Kế toán chưa thêm đánh giá cho tuần này."}</p>
       )}
