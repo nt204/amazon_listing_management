@@ -46,6 +46,7 @@ import { PpcOrganicRankCell, PpcSearchVolumeCell, PpcSponsoredRankCell } from ".
 import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
+import { MockupHoverZoom } from "./ppc-manual-bid-view";
 import {
   PpcAiReviewerModal,
   type AiReviewApplicationSnapshot,
@@ -1787,30 +1788,9 @@ export function PpcSkuRecommendationGroupView({
                       />
                     </td>
                     <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      {/* Ảnh phóng to dạng fixed: không bị khung cuộn ngang của bảng cắt mất / đè lên cột SKU */}
                       {group.mockupUrl ? (
-                        <div className="relative group/mockup inline-block">
-                          <img
-                            src={getOptimizedThumbnailUrl(group.mockupUrl, 64) || group.mockupUrl}
-                            alt={group.sku}
-                            className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/mockup:ring-2 group-hover/mockup:ring-indigo-500 transition cursor-pointer"
-                            loading="lazy"
-                            onError={(e) => {
-                              e.currentTarget.style.display = "none";
-                              const fallback = e.currentTarget.parentElement?.querySelector(".mockup-fallback");
-                              if (fallback) (fallback as HTMLElement).style.display = "flex";
-                            }}
-                          />
-                          <div className="mockup-fallback hidden w-9 h-9 mx-auto rounded-md bg-slate-100 items-center justify-center text-slate-300">
-                            <Tag size={14} />
-                          </div>
-                          <div className="hidden group-hover/mockup:block absolute left-12 top-1/2 -translate-y-1/2 z-50 p-1 bg-white rounded-xl shadow-2xl border border-slate-200 pointer-events-none w-48 h-48">
-                            <img
-                              src={getOptimizedThumbnailUrl(group.mockupUrl, 400) || group.mockupUrl}
-                              alt={group.sku}
-                              className="w-full h-full object-cover rounded-lg"
-                            />
-                          </div>
-                        </div>
+                        <MockupHoverZoom url={group.mockupUrl} sku={group.sku} size={36} />
                       ) : (
                         <div className="w-9 h-9 mx-auto rounded-md bg-slate-100 flex items-center justify-center text-slate-300">
                           <Tag size={14} />
