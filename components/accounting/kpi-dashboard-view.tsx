@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowsInIcon, ArrowsOutIcon } from "@phosphor-icons/react";
 import { achievement, addMetrics, buildMonthReport, computeTarget, emptyMetrics, growth, periodLabel, type KpiMetrics } from "@/lib/accounting/kpi-calc";
 import { kpiTone } from "@/lib/accounting/kpi-progress";
+import { parseStoreTeams } from "@/lib/accounting/store-teams";
 import type { KpiData, KpiSku } from "./kpi-view";
 
 // Tab "Dashboard" của KPI kinh doanh — bản trình chiếu của "Tổng quan tháng" cho store đang chọn:
@@ -37,6 +38,178 @@ function targetOf(s: KpiSku, data: KpiData) {
   return computeTarget(s.target.cur, unit, data.targetFormula, s.actual.prev ? Math.abs(s.actual.prev.return_amount) : null);
 }
 
+/** Số liệu như Tổng quan tháng của 1 store (hoặc bản gộp All) */
+function computeKpi(data: KpiData) {
+  const blank = () => ({ prev: emptyMetrics(), cur: emptyMetrics(), tCur: emptyMetrics(), hasT: false });
+  const by = { dev: blank(), test: blank() };
+  for (const s of data.skus) {
+    const g = by[s.group];
+    g.prev = addMetrics(g.prev, s.actual.prev);
+    g.cur = addMetrics(g.cur, s.actual.cur);
+    by.test.cur = addMetrics(by.test.cur, s.actual.curAsTest);
+    const t = targetOf(s, data);
+    if (t) g.hasT = true;
+    g.tCur = addMetrics(g.tCur, t);
+  }
+  for (const g of ["dev", "test"] as const) {
+    const team = data.teamTargets?.cur[g];
+    if (!by[g].hasT && team) Object.assign(by[g], { tCur: { ...emptyMetrics(), ...team }, hasT: true });
+  }
+  const dev = by.dev;
+  const test = by.test;
+  const report = buildMonthReport({
+    dev: { prev: dev.prev, cur: dev.cur, ly: null, lyNext: null, tCur: dev.hasT ? dev.tCur : null, tNext: null },
+    test: { prev: test.prev, cur: test.cur, ly: null, lyNext: null, tNext: null, tCur: test.hasT ? test.tCur : null },
+    storeFeeCur: data.storeFees?.cur ?? null,
+    formula: data.targetFormula,
+  });
+  const tTotal: KpiMetrics | null = dev.hasT || test.hasT ? addMetrics(dev.hasT ? dev.tCur : emptyMetrics(), test.hasT ? test.tCur : emptyMetrics()) : null;
+  const prevTotal = addMetrics(dev.prev, test.prev);
+  return { report, tTotal, prevTotal, hasDevT: dev.hasT, hasTestT: test.hasT };
+}
+
+export type KpiStorePart = { name: string; team: string; data: KpiData };
+
+// ── All store: vinh danh từng store vượt mục tiêu (không gộp theo team) (như "Điểm sáng tháng này" của Báo cáo Tổng quan) ──
+// Số theo SKU đang target (SKU WIN): thực tế / mục tiêu Doanh thu · Lượng bán; team = cộng các store của team.
+const STORE_COLORS = ["#5b9ce6", "#f28a5e", "#4fb8b1", "#8a7ae0", "#ffc247", "#3fd39a", "#f39cc0", "#e06a8a", "#6bbf59", "#c08a5b"];
+
+type Pair = { actual: number; target: number | null };
+type StoreRow = { name: string; color: string; revenue: Pair; quantity: Pair; testRevenue: Pair; testQuantity: Pair };
+type TeamRow = { name: string; stores: StoreRow[]; revenue: Pair; quantity: Pair };
+type Highlight = { label: string; ratio: number };
+
+/** "FBA 1" → "Team 1" (như file báo cáo); store chưa có team FBA → "Khác" */
+function teamLabel(team: string) {
+  const fba = parseStoreTeams(team).find((t) => /^fba\b/i.test(t));
+  if (!fba) return "Khác";
+  const m = fba.match(/^fba\s*(\d+)$/i);
+  return m ? `Team ${m[1]}` : fba;
+}
+
+const sumPair = (list: Pair[]): Pair => {
+  const withT = list.filter((p) => p.target != null);
+  return { actual: list.reduce((a, p) => a + p.actual, 0), target: withT.length ? withT.reduce((a, p) => a + (p.target ?? 0), 0) : null };
+};
+
+function buildAllStores(parts: KpiStorePart[]) {
+  const stores = parts.map((p, i): StoreRow & { team: string } => {
+    const r = computeKpi(p.data).report;
+    return {
+      name: p.name,
+      team: teamLabel(p.team),
+      color: STORE_COLORS[i % STORE_COLORS.length],
+      revenue: { actual: r.revenue.cur ?? 0, target: r.revenue.tCur ?? null },
+      quantity: { actual: r.quantity.cur ?? 0, target: r.quantity.tCur ?? null },
+      testRevenue: { actual: r.revenue.curTest ?? 0, target: r.revenue.tCurTest ?? null },
+      testQuantity: { actual: r.quantity.curTest ?? 0, target: r.quantity.tCurTest ?? null },
+    };
+  });
+  const teamNames = [...new Set(stores.map((s) => s.team))].sort((a, b) => (a === "Khác" ? 1 : b === "Khác" ? -1 : a.localeCompare(b, undefined, { numeric: true })));
+  const teams: TeamRow[] = teamNames.map((name) => {
+    const list = stores.filter((s) => s.team === name);
+    return { name, stores: list, revenue: sumPair(list.map((s) => s.revenue)), quantity: sumPair(list.map((s) => s.quantity)) };
+  });
+  const highlights: Highlight[] = [];
+  const push = (who: string, metric: string, p: Pair) => {
+    const ratio = achievement(p.actual, p.target);
+    if (p.target != null && p.target > 0 && ratio != null && ratio >= 1) highlights.push({ label: `${who} vượt mục tiêu ${metric}`, ratio });
+  };
+  for (const t of teams) {
+    for (const st of t.stores) {
+      // Chỉ số nào của store có mục tiêu và đạt ≥ 100% thì vinh danh
+      push(st.name, "doanh thu SKU WIN", st.revenue);
+      push(st.name, "lượng bán SKU WIN", st.quantity);
+      push(st.name, "doanh thu SKU TEST", st.testRevenue);
+      push(st.name, "lượng bán SKU TEST", st.testQuantity);
+    }
+  }
+  return { teams, highlights, storeCount: stores.length };
+}
+
+function TonePct({ p }: { p: Pair }) {
+  const r = achievement(p.actual, p.target);
+  const tone = kpiTone(r);
+  return <b className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] text-white ${tone ? TONE_PILL[tone] : "bg-slate-400"}`}>{fmtPct(r)}</b>;
+}
+
+function StoreStat({ label, p, fmt, color }: { label: string; p: Pair; fmt: Fmt; color: string }) {
+  const r = achievement(p.actual, p.target);
+  const tone = kpiTone(r);
+  return (
+    <div className="mb-2.5 last:mb-1">
+      <div className="mb-1 flex items-baseline justify-between text-[11.5px]">
+        <span className="text-slate-500">{label}</span>
+        <span className="font-mono tabular-nums">
+          <b className="text-[12.5px] text-slate-900">{fmtBy(p.actual, fmt)}</b>
+          <span className="ml-0.5 text-[11px] text-slate-400">/ {p.target == null ? "—" : fmtBy(p.target, fmt)}</span>
+        </span>
+      </div>
+      <Bullet actual={p.actual} target={p.target} tone={tone} color={color} small />
+      <div className="mt-1">
+        {p.target == null ? <Pill tone={null}>Chưa có mục tiêu</Pill> : <Pill tone={tone}>{tone ? `${TONE_TEXT[tone]} · ${fmtPct(r)}` : fmtPct(r)}</Pill>}
+      </div>
+    </div>
+  );
+}
+
+function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
+  const { teams, highlights, storeCount } = useMemo(() => buildAllStores(parts), [parts]);
+  return (
+    <>
+      <section className="mb-7">
+        <h3 className="mb-3 text-[17px] font-bold text-slate-900">Điểm sáng tháng này</h3>
+        {highlights.length ? (
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+            {highlights.map((h) => (
+              <div key={h.label} className="rounded-[10px] border border-l-4 border-emerald-500 bg-white px-3.5 py-3.5 shadow-2xs">
+                <div className="mb-1 text-sm text-slate-600">{h.label}</div>
+                <div className="font-mono text-2xl font-bold tabular-nums text-emerald-600">{fmtPct(h.ratio)}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-3 text-xs text-slate-500">Chưa có store nào vượt 100% mục tiêu tháng này.</div>
+        )}
+      </section>
+
+      <section className="mb-7">
+        <h3 className="mb-3 flex items-center gap-2 text-[15px] font-bold text-slate-900">
+          Hiệu quả kinh doanh FBA
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-400">{storeCount} store · SKU đang target</span>
+        </h3>
+        <div className="flex flex-col gap-4">
+          {teams.map((t) => (
+            <div key={t.name} className="rounded-[14px] border border-slate-200 bg-slate-100/60 p-3.5">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 px-0.5">
+                <span className="text-[12.5px] font-bold text-slate-900">
+                  {t.name} · {t.stores.map((s) => s.name).join(" + ")}
+                </span>
+                <div className="flex flex-wrap gap-4 text-xs font-semibold">
+                  <div><span className="text-[10.5px] font-normal text-slate-400">Doanh thu</span><TonePct p={t.revenue} /></div>
+                  <div><span className="text-[10.5px] font-normal text-slate-400">Lượng bán</span><TonePct p={t.quantity} /></div>
+                </div>
+              </div>
+              <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
+                {t.stores.map((st) => (
+                  <div key={st.name} className="rounded-xl border border-slate-200 bg-white px-4 pb-3 pt-3.5 shadow-2xs">
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: st.color }} />
+                      <span className="text-[13.5px] font-bold text-slate-900">{st.name}</span>
+                    </div>
+                    <StoreStat label="Doanh thu" p={st.revenue} fmt="usd" color={st.color} />
+                    <StoreStat label="Lượng bán" p={st.quantity} fmt="int" color={st.color} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
 function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
   return (
     <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${tone ? TONE_PILL[tone] : "border border-slate-200 bg-slate-50 text-slate-500"}`}>
@@ -60,13 +233,13 @@ function Mom({ value, label }: { value: number | null; label: string }) {
 }
 
 /** Thanh thực tế / mục tiêu: chưa đạt thì thanh = % đạt, vạch ở 100%; vượt thì thanh đầy, vạch lùi về mục tiêu */
-function Bullet({ actual, target, tone }: { actual: number; target: number | null; tone: Tone }) {
+function Bullet({ actual, target, tone, color, small }: { actual: number; target: number | null; tone: Tone; color?: string; small?: boolean }) {
   const r = achievement(actual, target);
   const fill = target == null || r == null ? 0 : Math.max(0, Math.min(1, r)) * 100;
   const marker = target == null || r == null ? null : r > 1 && actual > 0 ? (target / actual) * 100 : 100;
   return (
-    <div className="relative h-2.5 rounded-full bg-slate-100">
-      <div className={`h-full rounded-full ${tone ? TONE_BAR[tone] : "bg-slate-300"}`} style={{ width: `${fill}%` }} />
+    <div className={`relative rounded-full bg-slate-100 ${small ? "h-[7px]" : "h-2.5"}`}>
+      <div className={`h-full rounded-full ${color ? "" : tone ? TONE_BAR[tone] : "bg-slate-300"}`} style={{ width: `${fill}%`, ...(color ? { background: color } : {}) }} />
       {marker != null && <div className="absolute -bottom-1 -top-1 w-0.5 rounded bg-slate-800/60" style={{ left: `calc(${Math.min(100, Math.max(0, marker))}% - 1px)` }} />}
     </div>
   );
@@ -124,7 +297,7 @@ function Panel({ title, sub, accent, children }: { title: string; sub?: string; 
   );
 }
 
-export function KpiDashboardView({ data, storeId }: { data: KpiData; storeId: string }) {
+export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData; storeId: string; storeParts?: KpiStorePart[] | null }) {
   const { periods } = data;
   const rootRef = useRef<HTMLDivElement>(null);
   const [isFull, setIsFull] = useState(false);
@@ -140,34 +313,7 @@ export function KpiDashboardView({ data, storeId }: { data: KpiData; storeId: st
   };
 
   // ── Số liệu như Tổng quan tháng ──
-  const k = useMemo(() => {
-    const blank = () => ({ prev: emptyMetrics(), cur: emptyMetrics(), tCur: emptyMetrics(), hasT: false });
-    const by = { dev: blank(), test: blank() };
-    for (const s of data.skus) {
-      const g = by[s.group];
-      g.prev = addMetrics(g.prev, s.actual.prev);
-      g.cur = addMetrics(g.cur, s.actual.cur);
-      by.test.cur = addMetrics(by.test.cur, s.actual.curAsTest);
-      const t = targetOf(s, data);
-      if (t) g.hasT = true;
-      g.tCur = addMetrics(g.tCur, t);
-    }
-    for (const g of ["dev", "test"] as const) {
-      const team = data.teamTargets?.cur[g];
-      if (!by[g].hasT && team) Object.assign(by[g], { tCur: { ...emptyMetrics(), ...team }, hasT: true });
-    }
-    const dev = by.dev;
-    const test = by.test;
-    const report = buildMonthReport({
-      dev: { prev: dev.prev, cur: dev.cur, ly: null, lyNext: null, tCur: dev.hasT ? dev.tCur : null, tNext: null },
-      test: { prev: test.prev, cur: test.cur, ly: null, lyNext: null, tNext: null, tCur: test.hasT ? test.tCur : null },
-      storeFeeCur: data.storeFees?.cur ?? null,
-      formula: data.targetFormula,
-    });
-    const tTotal: KpiMetrics | null = dev.hasT || test.hasT ? addMetrics(dev.hasT ? dev.tCur : emptyMetrics(), test.hasT ? test.tCur : emptyMetrics()) : null;
-    const prevTotal = addMetrics(dev.prev, test.prev);
-    return { report, tTotal, prevTotal, hasDevT: dev.hasT, hasTestT: test.hasT };
-  }, [data]);
+  const k = useMemo(() => computeKpi(data), [data]);
 
   const r = k.report;
   const prevLabel = periodLabel(periods.prev);
@@ -244,6 +390,8 @@ export function KpiDashboardView({ data, storeId }: { data: KpiData; storeId: st
           <BigCard label="Doanh thu" actual={r.revenue.curTotal ?? null} target={k.tTotal?.revenue ?? null} fmt="usd" mom={growth(r.revenue.curTotal, k.prevTotal.revenue)} momLabel={prevLabel} />
           <BigCard label="Lượng bán" actual={r.quantity.curTotal ?? null} target={k.tTotal?.quantity ?? null} fmt="int" mom={growth(r.quantity.curTotal, k.prevTotal.quantity)} momLabel={prevLabel} />
         </div>
+
+        {storeParts && storeParts.length > 0 && <AllStoresSections parts={storeParts} />}
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Panel title="KPI SKU WIN" sub="SKU phát triển" accent="bg-blue-600">

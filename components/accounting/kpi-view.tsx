@@ -37,7 +37,7 @@ import {
   type KpiTargetInput,
 } from "@/lib/accounting/kpi-calc";
 import { AccountingTopProgressBar, AnimatedTabPill } from "./accounting-skeleton";
-import { KpiDashboardView } from "./kpi-dashboard-view";
+import { KpiDashboardView, type KpiStorePart } from "./kpi-dashboard-view";
 
 // Mục "KPI kinh doanh" — theo file "<STORE> - KẾ HOẠCH KINH DOANH 2026":
 // Tổng quan tháng (BÁO CÁO THÁNG) · SKU phát triển (CHI TIẾT SKU) · SKU test (CHI TIẾT SKU TEST).
@@ -2435,6 +2435,8 @@ export function KpiView() {
     }
   };
   const [data, setData] = useState<KpiData | null>(null);
+  // All: giữ số liệu từng store để Dashboard vinh danh store / team vượt mục tiêu
+  const [storeParts, setStoreParts] = useState<KpiStorePart[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -2500,14 +2502,16 @@ export function KpiView() {
         };
         if (selectedStoreId === ALL_STORES) {
           // All: tải KPI mọi store song song rồi gộp (store lỗi thì bỏ qua, báo tên)
-          const results = await Promise.allSettled(stores.map(async (st) => ({ name: st.name, data: await fetchOne(st.id) })));
+          const results = await Promise.allSettled(stores.map(async (st) => ({ name: st.name, team: st.team ?? "", data: await fetchOne(st.id) })));
           const ok = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
           const failed = stores.filter((_, i) => results[i].status === "rejected").map((st) => st.name);
           if (!ok.length) throw new Error("Không tải được KPI của store nào.");
           setData(mergeKpiStores(ok));
+          setStoreParts(ok);
           if (failed.length) setError(`Chưa gộp được: ${failed.join(", ")} (lỗi tải KPI).`);
         } else {
           setData(await fetchOne(selectedStoreId));
+          setStoreParts(null);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Không tải được dữ liệu");
@@ -2662,7 +2666,7 @@ export function KpiView() {
 
   let body: ReactNode = null;
   if (data) {
-    if (viewMode === "dashboard") body = <KpiDashboardView key={`${selectedStoreId}:${data.period}`} data={data} storeId={isAll ? "" : selectedStoreId} />;
+    if (viewMode === "dashboard") body = <KpiDashboardView key={`${selectedStoreId}:${data.period}`} data={data} storeId={isAll ? "" : selectedStoreId} storeParts={isAll ? storeParts : null} />;
     else if (viewMode === "overview")
       body = (
         <OverviewPage
