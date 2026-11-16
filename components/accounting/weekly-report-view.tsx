@@ -10,6 +10,7 @@ import {
   CaretUpIcon,
   CurrencyDollarIcon,
   MegaphoneIcon,
+  NotePencilIcon,
   PercentIcon,
   TrendUpIcon,
   WarningIcon,
@@ -420,7 +421,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
   const teams: TeamGroup[] = useMemo(() => groupTeams(visibleBrands, ctx), [visibleBrands, ctx]);
 
   // Bảng brand: chọn All / Win / Test (Win / Test theo trạng thái Bảng mã như sheet — server đã tách sẵn)
-  const [skuGroup, setSkuGroup] = useState<SkuGroup>("win");
+  const [skuGroup, setSkuGroup] = useState<SkuGroup>("all");
   const groupBrands = useMemo(() => visibleBrands.map((b) => brandOfGroup(b, skuGroup)), [visibleBrands, skuGroup]);
   const brandTotal = useMemo(() => (skuGroup === "win" ? total : summarize(groupBrands, ctx)), [skuGroup, total, groupBrands, ctx]);
   const brandTeams = useMemo(() => (skuGroup === "win" ? teams : groupTeams(groupBrands, ctx)), [skuGroup, teams, groupBrands, ctx]);
@@ -433,9 +434,16 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
   const untargeted = teams.flatMap((t) => t.brands.filter((r) => !r.b.target && !isIdle(r.s)).map((r) => r.b.label));
 
   return (
-    <div className="mx-auto flex max-w-[1440px] flex-col gap-7">
+    <div className="weekly-report mx-auto flex max-w-[1440px] flex-col gap-7">
       <Section title="Tổng quan" right={untargeted.length > 0 ? <UntargetedNote names={untargeted} /> : null}>
-        <KpiTiles total={total} dataThrough={data.dataThrough} weekEnd={week.endDate} />
+        <KpiTiles
+          total={total}
+          dataThrough={data.dataThrough}
+          weekEnd={week.endDate}
+          weekStart={week.startDate}
+          note={data.note ?? { text: "", updatedBy: null, updatedAt: null }}
+          canEdit={data.canEditPrepaid}
+        />
       </Section>
 
       <Section title="Kinh doanh theo Team/Brand" theme="blue">
@@ -601,7 +609,7 @@ function WowPill({
   if (quiet) {
     const strong = Math.abs(value) >= 0.2 && !flat;
     return (
-      <span className={`tabular-nums ${strong ? `font-bold ${good ? "!text-emerald-700" : "!text-rose-600"}` : "!text-slate-950"}`}>
+      <span className={`tabular-nums ${strong ? (good ? "!text-emerald-700" : "!text-rose-600") : "!text-slate-950"}`}>
         <span className="text-[0.75em]">{arrow}</span>
         {text}
       </span>
@@ -705,7 +713,21 @@ function Segmented<T extends string>({
 // 1. TỔNG QUAN — kết quả (to nhất) → mức đạt KPI tuần → biến động so tuần trước
 // ---------------------------------------------------------------------------
 
-function KpiTiles({ total, dataThrough, weekEnd }: { total: GroupSummary; dataThrough: string; weekEnd: string }) {
+function KpiTiles({
+  total,
+  dataThrough,
+  weekEnd,
+  weekStart,
+  note,
+  canEdit,
+}: {
+  total: GroupSummary;
+  dataThrough: string;
+  weekEnd: string;
+  weekStart: string;
+  note: WeeklyReport["note"];
+  canEdit: boolean;
+}) {
   const cur = ratiosOf(total.cur);
   const prev = ratiosOf(total.prev);
   const revM = total.revenue?.month ?? null;
@@ -742,7 +764,7 @@ function KpiTiles({ total, dataThrough, weekEnd }: { total: GroupSummary; dataTh
           full: a.full,
         }
       : { ratio: null, tone: null, value: "—", hint: "Chưa có KPI tháng" };
-  const tiles: { label: string; icon: ReactNode; color: string; value: string; negative?: boolean; wow: ReactNode; prev: string; week?: TileRowData; month?: TileRowData }[] = [
+  const tiles: { label: string; icon: ReactNode; color: string; value: string; negative?: boolean; wow: ReactNode; prev: string; mtd?: string; week?: TileRowData; month?: TileRowData }[] = [
     {
       label: "Revenue",
       icon: <CurrencyDollarIcon size={16} weight="bold" />,
@@ -751,6 +773,7 @@ function KpiTiles({ total, dataThrough, weekEnd }: { total: GroupSummary; dataTh
       negative: total.cur.revenue < 0,
       wow: <WowPill value={wow(total.cur.revenue, total.prev.revenue)} size="sm" />,
       prev: usd(total.prev.revenue),
+      mtd: usd(total.mtd.revenue),
       week: weekRow(revM),
       month: monthRow(revM),
     },
@@ -762,25 +785,9 @@ function KpiTiles({ total, dataThrough, weekEnd }: { total: GroupSummary; dataTh
       negative: total.cur.profit < 0,
       wow: <WowPill value={wow(total.cur.profit, total.prev.profit)} size="sm" />,
       prev: usd(total.prev.profit),
+      mtd: usd(total.mtd.profit),
       week: weekRow(proM),
       month: monthRow(proM),
-    },
-    {
-      label: "Biên LN",
-      icon: <PercentIcon size={16} weight="bold" />,
-      color: "#6366f1",
-      value: pct(cur.margin),
-      negative: (cur.margin ?? 0) < 0,
-      wow: <WowPill value={wow(cur.margin, prev.margin)} size="sm" />,
-      prev: pct(prev.margin),
-    },
-    {
-      label: "TACoS",
-      icon: <MegaphoneIcon size={16} weight="bold" />,
-      color: "#818cf8",
-      value: pct(cur.tacos),
-      wow: <WowPill value={wow(cur.tacos, prev.tacos)} goodWhen="down" size="sm" />,
-      prev: pct(prev.tacos),
     },
   ];
 
@@ -805,7 +812,17 @@ function KpiTiles({ total, dataThrough, weekEnd }: { total: GroupSummary; dataTh
             <span className={`text-[30px] font-bold leading-none tracking-tight ${t.negative ? "!text-rose-600" : "!text-slate-900"}`}>{t.value}</span>
             {t.wow}
           </div>
-          <span className="mt-1.5 text-[13px] tabular-nums !text-slate-950">Tuần trước {t.prev}</span>
+          <span className="mt-1.5 text-[13px] tabular-nums !text-slate-500">
+            Tuần trước {t.prev}
+            {t.mtd && (
+              <>
+                <span className="mx-1.5 !text-slate-300">·</span>
+                <span title="Cộng dồn từ mùng 1 đến hết tuần">
+                  Lũy kế <b className="font-semibold !text-slate-600">{t.mtd}</b>
+                </span>
+              </>
+            )}
+          </span>
           {/* Chỉ Revenue / Profit có tiến độ KPI tuần / tháng */}
           {t.week && t.month && (
             <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-3">
@@ -815,6 +832,125 @@ function KpiTiles({ total, dataThrough, weekEnd }: { total: GroupSummary; dataTh
           )}
         </div>
       ))}
+      {/* Biên LN + TACoS chung 1 thẻ */}
+      <div className={`${CARD} flex min-w-0 flex-col border-t-4 px-5 pt-4 pb-4 shadow-sm`} style={{ borderTopColor: "#6366f1" }}>
+        {[
+          { label: "Biên LN", icon: <PercentIcon size={16} weight="bold" />, color: "#6366f1", value: cur.margin, prevV: prev.margin, goodWhen: "up" as const },
+          { label: "TACoS", icon: <MegaphoneIcon size={16} weight="bold" />, color: "#818cf8", value: cur.tacos, prevV: prev.tacos, goodWhen: "down" as const },
+        ].map((m, i) => (
+          <div key={m.label} className={i ? "mt-4 border-t border-slate-200 pt-4" : ""}>
+            <span className="flex items-center gap-2 text-sm font-bold" style={{ color: m.color }}>
+              <span className="grid h-8 w-8 place-items-center rounded-lg !text-white" style={{ backgroundColor: m.color }}>
+                {m.icon}
+              </span>
+              {m.label}
+            </span>
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+              <span className={`text-[26px] font-bold leading-none tracking-tight ${(m.value ?? 0) < 0 ? "!text-rose-600" : "!text-slate-900"}`}>{pct(m.value)}</span>
+              <WowPill value={wow(m.value, m.prevV)} goodWhen={m.goodWhen} size="sm" />
+            </div>
+            <span className="mt-1.5 block text-[13px] tabular-nums !text-slate-500">Tuần trước {pct(m.prevV)}</span>
+          </div>
+        ))}
+      </div>
+      <NoteTile key={weekStart} note={note} weekStart={weekStart} canEdit={canEdit} />
+    </div>
+  );
+}
+
+/** Thẻ "Đánh giá": kế toán / admin dán nhận xét tuần (lưu theo tuần); người khác chỉ xem */
+function NoteTile({ note, weekStart, canEdit }: { note: WeeklyReport["note"]; weekStart: string; canEdit: boolean }) {
+  const [saved, setSaved] = useState(note);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [error, setError] = useState("");
+  const editing = draft != null;
+  const save = async () => {
+    if (draft == null) return;
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/accounting/financials/weekly-report/note", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ week_start: weekStart, note: draft }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || "Không lưu được");
+      setSaved(body.note);
+      setDraft(null);
+      setStatus("idle");
+    } catch (e) {
+      setStatus("error");
+      setError(e instanceof Error ? e.message : "Không lưu được");
+    }
+  };
+  const when = saved.updatedAt ? new Date(saved.updatedAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  return (
+    <div className={`${CARD} flex min-w-0 flex-col border-t-4 px-5 pt-4 pb-4 shadow-sm`} style={{ borderTopColor: "#a5b4fc" }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-sm font-bold !text-indigo-500">
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-300 !text-white">
+            <NotePencilIcon size={16} weight="bold" />
+          </span>
+          Đánh giá
+        </span>
+        {canEdit && !editing && (
+          <button
+            type="button"
+            onClick={() => setDraft(saved.text)}
+            aria-label={saved.text ? "Sửa đánh giá" : "Thêm đánh giá"}
+            title={saved.text ? "Sửa đánh giá" : "Thêm đánh giá"}
+            className={`cursor-pointer rounded-md border border-slate-200 font-semibold !text-slate-700 hover:bg-slate-50 ${
+              saved.text ? "px-2.5 py-1 text-[12.5px]" : "grid h-7 w-7 place-items-center text-[18px] leading-none"
+            }`}
+          >
+            {saved.text ? "Sửa" : "+"}
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="mt-3 flex flex-1 flex-col gap-2">
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Dán đánh giá tuần vào đây…"
+            className="min-h-[180px] w-full flex-1 resize-y rounded-lg border border-slate-300 p-2.5 text-[13px] leading-relaxed !text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+          />
+          <div className="flex items-center justify-end gap-2">
+            {status === "error" && <span className="mr-auto text-[12px] !text-rose-600">{error}</span>}
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(null);
+                setStatus("idle");
+              }}
+              className="cursor-pointer rounded-md px-3 py-1.5 text-[13px] font-semibold !text-slate-600 hover:bg-slate-100"
+            >
+              Huỷ
+            </button>
+            <button
+              type="button"
+              disabled={status === "saving"}
+              onClick={save}
+              className="cursor-pointer rounded-md bg-indigo-600 px-3 py-1.5 text-[13px] font-semibold !text-white hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {status === "saving" ? "Đang lưu…" : "Lưu"}
+            </button>
+          </div>
+        </div>
+      ) : saved.text ? (
+        <>
+          <div className="mt-3 max-h-[260px] flex-1 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed !text-slate-900">{saved.text}</div>
+          {saved.updatedBy && (
+            <span className="mt-2 text-[11.5px] !text-slate-500">
+              {saved.updatedBy} · {when}
+            </span>
+          )}
+        </>
+      ) : (
+        <p className="mt-3 text-[13px] !text-slate-500">{canEdit ? "Chưa có đánh giá cho tuần này." : "Kế toán chưa thêm đánh giá cho tuần này."}</p>
+      )}
     </div>
   );
 }
@@ -905,11 +1041,11 @@ const teamTint = (hex: string, a: number) => {
 // Ngưỡng cảnh báo đỏ ở bảng brand: TACoS > 30%, Biên LN < 15%
 const BAD_TACOS = 0.3;
 const BAD_MARGIN = 0.15;
-const BAD = "font-semibold !text-rose-600";
+const BAD = "!text-rose-600";
 
 // Kết quả tuần: Revenue · % WoW Revenue · Quantity · Ads Fee · Profit · % WoW Profit · TACoS · Biên LN; Tiến độ tháng: 4 cột
 const BRAND_COLS: Col[] = [
-  { key: "rev", label: "Revenue\ntuần này", sort: "revenue", render: (s) => <span className="font-semibold">{money(s.cur.revenue)}</span> },
+  { key: "rev", label: "Revenue\ntuần này", sort: "revenue", render: (s) => money(s.cur.revenue) },
   {
     key: "wow",
     label: "% WoW\nRevenue",
@@ -954,7 +1090,7 @@ const BRAND_COLS: Col[] = [
     strong: true,
     render: (s) => {
       const v = ratiosOf(s.cur).margin;
-      return <span className={`font-semibold ${v != null && v < BAD_MARGIN ? "!text-rose-600" : ""}`}>{pct(v)}</span>;
+      return <span className={v != null && v < BAD_MARGIN ? "!text-rose-600" : ""}>{pct(v)}</span>;
     },
   },
   {
@@ -969,7 +1105,7 @@ const BRAND_COLS: Col[] = [
     key: "target",
     label: "Target Profit\ntháng",
     month: true,
-    render: (s) => (s.profit ? <span className="font-semibold">{usd(s.profit.month.full)}</span> : ""),
+    render: (s) => (s.profit ? usd(s.profit.month.full) : ""),
   },
   {
     key: "pace",
@@ -981,7 +1117,7 @@ const BRAND_COLS: Col[] = [
       const m = s.profit?.month;
       if (!m) return "";
       const tone = kpiTone(m.ratio);
-      return <span className={`font-bold ${tone ? TONE_TEXT[tone] : ""}`}>{pct(m.ratio, 1)}</span>;
+      return <span className={tone ? TONE_TEXT[tone] : ""}>{pct(m.ratio, 1)}</span>;
     },
   },
 ];
@@ -1163,7 +1299,7 @@ function BrandPanel({
                             <td
                               key={c.key}
                               style={PROFIT_COLS.has(c.key) ? profitCellStyle(profitColValue(c.key, s) ?? 0) : undefined}
-                              className={`px-3 py-2.5 text-right font-medium ${PROFIT_COLS.has(c.key) ? "" : "group-hover:bg-orange-50"} ${cellGroup(c, i, odd)} ${
+                              className={`px-3 py-2.5 text-right ${PROFIT_COLS.has(c.key) ? "font-bold" : "font-normal group-hover:bg-orange-50"} ${cellGroup(c, i, odd)} ${
                                 i === cols.length - 1 ? "pr-4" : ""
                               }`}
                             >
@@ -1211,14 +1347,14 @@ function BrandPanel({
 
             <tfoot>
               <tr className={`${theme.total} font-bold`}>
-                <td className="sticky left-0 z-[1] shadow-[inset_-2px_0_0_#000,6px_0_8px_-6px_rgba(0,0,0,0.25)] bg-[#FFE0B2] py-3 pr-3 pl-4 text-left">{totalLabel}</td>
+                <td className="sticky left-0 z-[1] shadow-[inset_-2px_0_0_#000,6px_0_8px_-6px_rgba(0,0,0,0.25)] bg-[#FFE0B2] py-3 pr-3 pl-4 text-left font-bold">{totalLabel}</td>
                 {cols.map((c, i) => (
                   <td
                     key={c.key}
                     style={PROFIT_COLS.has(c.key) ? profitCellStyle(profitColValue(c.key, total) ?? 0) : undefined}
-                    className={`px-3 py-3 text-right ${c.month ? "bg-[#FFD199]" : ""} ${i === firstMonth ? "border-l-2 border-[#FFB366]" : ""} ${
-                      i === cols.length - 1 ? "pr-4" : ""
-                    }`}
+                    className={`px-3 py-3 text-right font-bold ${c.month ? "bg-[#FFD199]" : ""} ${
+                      i === firstMonth ? "border-l-2 border-[#FFB366]" : ""
+                    } ${i === cols.length - 1 ? "pr-4" : ""}`}
                   >
                     {c.render(total, true)}
                   </td>
@@ -1454,34 +1590,34 @@ function StockBlock({
                     return (
                       <tr key={s.storeId} className={rowCls(theme)}>
                         <td className="py-2.5 pr-3 pl-9 font-semibold !text-slate-900">{s.label}</td>
-                        <td className="px-3 py-2 text-right font-medium">{int(s.units)}</td>
-                        <td className="px-3 py-2 text-right font-medium">{usd(s.value)}</td>
+                        <td className="px-3 py-2 text-right font-normal">{int(s.units)}</td>
+                        <td className="px-3 py-2 text-right font-normal">{usd(s.value)}</td>
                         <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
                           {canEdit ? (
                             <PrepaidInput value={p.units} integer label={`SL trả trước cho SUP — ${s.label}`} onSave={(v) => save(s, { units: v })} />
                           ) : (
-                            <span className="font-medium">{p.units == null ? "" : int(p.units)}</span>
+                            <span className="font-normal">{p.units == null ? "" : int(p.units)}</span>
                           )}
                         </td>
                         <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
                           {canEdit ? (
                             <PrepaidInput value={p.value} integer={false} label={`Giá trị trả trước — ${s.label}`} onSave={(v) => save(s, { value: v })} />
                           ) : (
-                            <span className="font-medium">{p.value == null ? "" : usd(p.value)}</span>
+                            <span className="font-normal">{p.value == null ? "" : usd(p.value)}</span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-right font-semibold !text-slate-950">{int(units)}</td>
-                        <td className="px-3 py-2 text-right font-bold !text-slate-950">{usd(value)}</td>
+                        <td className="px-3 py-2 text-right !text-[14.5px] font-bold !text-black">{int(units)}</td>
+                        <td className="px-3 py-2 text-right !text-[14.5px] font-bold !text-black">{usd(value)}</td>
                         <td className="px-3 py-2 text-right">
                           <div className="ml-auto flex w-[96px] items-center gap-2">
                             <div className="h-2 flex-1 rounded-full bg-slate-200">
                               <div className="h-full rounded-full bg-orange-400" style={{ width: `${(share ?? 0) * 100}%` }} />
                             </div>
-                            <span className="w-10 text-right font-medium !text-slate-800">{pct(share, 0)}</span>
+                            <span className="w-10 text-right font-normal !text-slate-800">{pct(share, 0)}</span>
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-right font-medium">{int(perWeek)}</td>
-                        <td className="px-3 py-2 text-right font-bold">{weeksLeft == null ? "" : weeksLeft.toFixed(1)}</td>
+                        <td className="px-3 py-2 text-right font-normal">{int(perWeek)}</td>
+                        <td className="px-3 py-2 text-right font-normal">{weeksLeft == null ? "" : weeksLeft.toFixed(1)}</td>
                         <td className="px-3 py-2 pr-4 text-center">
                           {state.tone ? (
                             <StatusChip tone={state.tone} label={state.label} title={state.title} />
@@ -1517,8 +1653,8 @@ function StockBlock({
                   <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{usd(g((r) => r.s.value))}</td>
                   <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{g((r) => r.p.units ?? 0) ? int(g((r) => r.p.units ?? 0)) : ""}</td>
                   <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{g((r) => r.p.value ?? 0) ? usd(g((r) => r.p.value ?? 0)) : ""}</td>
-                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{int(g((r) => r.units))}</td>
-                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{usd(g((r) => r.value))}</td>
+                  <td className="px-3 py-3 text-right !text-[15.5px] font-bold !text-black" style={{ backgroundColor: bg }}>{int(g((r) => r.units))}</td>
+                  <td className="px-3 py-3 text-right !text-[15.5px] font-bold !text-black" style={{ backgroundColor: bg }}>{usd(g((r) => r.value))}</td>
                   <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{pct(gShare, 0)}</td>
                   <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{int(g((r) => r.perWeek))}</td>
                   <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{gWeeks == null ? "" : gWeeks.toFixed(1)}</td>
@@ -1537,16 +1673,16 @@ function StockBlock({
           <tfoot>
             <tr className={`${theme.total} font-bold`}>
               <td className="py-2.5 pr-3 pl-4">TỔNG</td>
-              <td className="px-3 py-2.5 text-right">{int(sum((r) => r.s.units))}</td>
-              <td className="px-3 py-2.5 text-right">{usd(sum((r) => r.s.value))}</td>
-              <td className="px-3 py-2.5 text-right">{int(sum((r) => r.p.units ?? 0))}</td>
-              <td className="px-3 py-2.5 text-right">{usd(sum((r) => r.p.value ?? 0))}</td>
-              <td className="px-3 py-2.5 text-right">{int(sum((r) => r.units))}</td>
-              <td className="px-3 py-2.5 text-right">{usd(totalValue)}</td>
-              <td className="px-3 py-2.5 text-right">100%</td>
-              <td className="px-3 py-2.5 text-right">{int(totalPerWeek)}</td>
+              <td className="px-3 py-2.5 text-right font-bold">{int(sum((r) => r.s.units))}</td>
+              <td className="px-3 py-2.5 text-right font-bold">{usd(sum((r) => r.s.value))}</td>
+              <td className="px-3 py-2.5 text-right font-bold">{int(sum((r) => r.p.units ?? 0))}</td>
+              <td className="px-3 py-2.5 text-right font-bold">{usd(sum((r) => r.p.value ?? 0))}</td>
+              <td className="px-3 py-2.5 text-right !text-[15.5px] font-bold !text-black">{int(sum((r) => r.units))}</td>
+              <td className="px-3 py-2.5 text-right !text-[15.5px] font-bold !text-black">{usd(totalValue)}</td>
+              <td className="px-3 py-2.5 text-right font-bold">100%</td>
+              <td className="px-3 py-2.5 text-right font-bold">{int(totalPerWeek)}</td>
               <td
-                className="px-3 py-2.5 text-right"
+                className="px-3 py-2.5 text-right font-bold"
                 title={`Tổng SL tồn ÷ tổng bán/tuần của ${valid.length} brand vừa có tồn vừa có bán${excluded ? ` (bỏ ${excluded} brand hết tồn hoặc không bán)` : ""}`}
               >
                 {totalWeeks == null ? "—" : totalWeeks.toFixed(1)}

@@ -606,3 +606,13 @@ table tbody tr.weekly-team-gap > td {
   border-right-width: 0 !important;
   background: #f1f5f9 !important;
 }
+
+/* Báo cáo tuần: tiêu đề cột to hơn mức chung 11.5px của Accounting (cùng độ đặc hiệu, đặt sau nên thắng) */
+.font-accounting-system .weekly-report table th,
+.font-accounting-system .weekly-report table th * {
+  font-size: 13.5px !important;
+}
+.weekly-report table th,
+.weekly-report table th * {
+  font-size: 13.5px !important;
+}
