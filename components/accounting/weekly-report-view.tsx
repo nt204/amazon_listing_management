@@ -27,12 +27,12 @@ import { kpiRatio, kpiTone } from "@/lib/accounting/kpi-progress";
 import { AccountingModuleSkeleton, AccountingTopProgressBar } from "./accounting-skeleton";
 
 // BÁO CÁO TUẦN — mỗi khối 1 nhiệm vụ:
-//   1 Tổng quan (kết quả thế nào?) → 2 Tiến độ tháng (đạt mục tiêu chưa?) → 3 Team (ai đóng góp / có vấn đề?)
+//   1 Tổng quan (kết quả thế nào?, tiến độ tháng)
 //   → 4 Brand (nguyên nhân ở đâu?, chọn All / Win / Test) → 6 Tồn kho & dòng tiền (việc vận hành cần xử lý).
 // Công thức như file "BÁO CÁO TUẦN TỔNG HỢP":
 //   % WoW = (này − trước) ÷ |trước| (cả Biên LN, TACoS)
 //   Kế hoạch tới nay = MT kỳ × ngày đã có số liệu ÷ số ngày kỳ; Nhịp = thực đạt ÷ kế hoạch tới nay
-//   ≥100% Vượt/đạt nhịp · ≥85% Sát nhịp · còn lại Dưới nhịp; team: THƯỞNG / ĐẠT / PHÊ BÌNH (theo nhịp Profit tháng)
+//   ≥100% Vượt/đạt nhịp · ≥85% Sát nhịp · còn lại Dưới nhịp (màu xanh / cam / đỏ)
 //   Biên LN so với MT Biên LN = MT Profit ÷ MT Revenue
 //   Tồn kho: file chỉ có > 30 tuần Ứ vốn, > 20 tuần Theo dõi; bổ sung Hết hàng / Không bán / Sắp hết (< 4 tuần).
 
@@ -349,8 +349,6 @@ const isIdle = (s: GroupSummary) => s.cur.revenue === 0 && s.mtd.revenue === 0 &
 
 type Tone = "good" | "near" | "bad";
 const TONE_TEXT: Record<Tone, string> = { good: "!text-emerald-700", near: "!text-amber-700", bad: "!text-rose-600" };
-/** Chữ % nhịp: đạt xanh, sát nhịp đen, dưới nhịp đỏ */
-const PACE_TEXT: Record<Tone, string> = { good: "!text-emerald-700", near: "!text-slate-900", bad: "!text-rose-600" };
 const TONE_HEX: Record<Tone, string> = { good: "#059669", near: "#d97706", bad: "#e11d48" };
 const TONE_SOLID: Record<Tone, string> = {
   good: "bg-emerald-600 !text-white",
@@ -358,7 +356,6 @@ const TONE_SOLID: Record<Tone, string> = {
   bad: "bg-rose-600 !text-white",
 };
 const PACE_LABEL: Record<Tone, string> = { good: "Vượt/đạt nhịp", near: "Sát nhịp", bad: "Dưới nhịp" };
-const TEAM_LABEL: Record<Tone, string> = { good: "THƯỞNG", near: "ĐẠT", bad: "PHÊ BÌNH" };
 
 // ---------------------------------------------------------------------------
 // NỘI DUNG CHÍNH
@@ -431,28 +428,17 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const brandRef = useRef<HTMLElement>(null);
   const activeTeam = teamFilter && teams.some((t) => t.team === teamFilter) ? teamFilter : null;
-  const pickTeam = (team: string) => {
-    setTeamFilter((cur) => (cur === team ? null : team));
-    brandRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
 
   // Cảnh báo dữ liệu: brand có phát sinh nhưng chưa có KPI vẫn cộng vào thực đạt → % KPI có thể cao hơn thực tế
   const untargeted = teams.flatMap((t) => t.brands.filter((r) => !r.b.target && !isIdle(r.s)).map((r) => r.b.label));
-  const multiTeam = selectedStoreKey === "all" && teams.length > 1;
 
   return (
     <div className="mx-auto flex max-w-[1440px] flex-col gap-7">
       <Section title="Tổng quan" right={untargeted.length > 0 ? <UntargetedNote names={untargeted} /> : null}>
-        <KpiTiles total={total} dataThrough={data.dataThrough} />
+        <KpiTiles total={total} dataThrough={data.dataThrough} weekEnd={week.endDate} />
       </Section>
 
-      {multiTeam && (
-        <Section title="Kết quả theo team" theme="violet">
-          <TeamTable teams={teams} total={total} activeTeam={activeTeam} onPick={pickTeam} />
-        </Section>
-      )}
-
-      <Section title="Kinh doanh theo brand" theme="blue">
+      <Section title="Kinh doanh theo Team/Brand" theme="blue">
         <BrandPanel
           sectionRef={brandRef}
           teams={brandTeams}
@@ -467,11 +453,17 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
 
       {stock.length > 0 && (
         <Section title="Tồn kho" theme="amber">
-          <StockBlock stock={stock} days={data.days} weekStart={week.startDate} canEdit={data.canEditPrepaid} />
+          <StockBlock
+            stock={stock}
+            days={data.days}
+            weekStart={week.startDate}
+            canEdit={data.canEditPrepaid}
+            teamOfStore={new Map(brands.filter((b) => b.channel === "FBA").map((b) => [b.storeId, b.team]))}
+          />
         </Section>
       )}
       {/* Tài chính & dòng tiền: chỉ admin / kế toán (server chỉ trả payout cho 2 vai trò này), mặc định thu gọn */}
-      {payout && <MoneySection payout={payout} cashflow={data.cashflow} canEdit={data.canEditPrepaid} />}
+      {payout && <MoneySection payout={payout} payoutMonth={data.payoutMonth} cashflow={data.cashflow} canEdit={data.canEditPrepaid} />}
     </div>
   );
 }
@@ -586,14 +578,6 @@ const TABLE =
   "w-full border-collapse tabular-nums [&_td]:border [&_th]:border [&_td]:!border-black [&_th]:!border-black [&_td]:!text-[13.5px] [&_th]:!text-[12.5px] [&_th_*]:!text-[12.5px] [&_th]:!tracking-normal [&_th_*]:!tracking-normal";
 /** Dòng dữ liệu: sọc xen kẽ + hover theo màu khu vực */
 const rowCls = (t: Theme) => `border-b border-slate-200 ${t.stripeEven} transition-colors ${t.hover}`;
-const tint = (hex: string, a: number) => `${hex}${Math.round(a * 255).toString(16).padStart(2, "0")}`;
-
-// Nhãn nền nhạt + chữ đậm theo trạng thái (SoftChip ở bảng team)
-const TONE_SOFT: Record<Tone, string> = {
-  good: "bg-emerald-100 !text-emerald-800",
-  near: "bg-amber-100 !text-amber-900",
-  bad: "bg-rose-100 !text-rose-800",
-};
 
 /**
  * % WoW. quiet (dùng trong bảng): không nền; chỉ tô màu khi biến động bất thường (|WoW| ≥ 20%), còn lại chữ thường.
@@ -721,36 +705,38 @@ function Segmented<T extends string>({
 // 1. TỔNG QUAN — kết quả (to nhất) → mức đạt KPI tuần → biến động so tuần trước
 // ---------------------------------------------------------------------------
 
-function KpiTiles({ total, dataThrough }: { total: GroupSummary; dataThrough: string }) {
+function KpiTiles({ total, dataThrough, weekEnd }: { total: GroupSummary; dataThrough: string; weekEnd: string }) {
   const cur = ratiosOf(total.cur);
   const prev = ratiosOf(total.prev);
-  const revW = total.revenue?.week ?? null;
-  const proW = total.profit?.week ?? null;
   const revM = total.revenue?.month ?? null;
   const proM = total.profit?.month ?? null;
   const until = vnDate(dataThrough);
 
-  // Tuần: % đạt KPI tuần (thực đạt ÷ kế hoạch). Tháng: % đạt MT cả tháng, màu theo nhịp.
-  const weekRow = (a: Achieve | null): TileRowData =>
-    a
-      ? {
-          // Thanh = thực đạt ÷ MT cả tuần; màu theo nhịp (thực đạt ÷ cần đạt tới hôm nay)
-          ratio: a.fullRatio,
-          tone: kpiTone(a.ratio),
-          value: pct(a.ratio, 0),
-          hint: `Tuần: Đã đạt ${usd(a.actual)} / MT cả tuần ${usd(a.full)} · cần đạt tới hôm nay ${usd(a.due)}`,
-          actual: a.actual,
-          due: a.due,
-          full: a.full,
-        }
-      : { ratio: null, tone: null, value: "—", hint: "Chưa có KPI" };
+  // Tuần — như KPI card sheet BÁO CÁO TUẦN: lũy kế từ mùng 1 đến hết tuần ÷ "Mục tiêu tháng (lũy kế đến nay)"
+  //   = MT tháng × ngày cuối tuần ÷ số ngày tháng (mốc DAY($K$1) của sheet = ngày cuối tuần).
+  // Tháng: lũy kế ÷ MT cả tháng.
+  const endDay = Number(weekEnd.slice(8, 10));
+  const dim = daysInMonthOf(weekEnd);
+  const weekRow = (a: Achieve | null): TileRowData => {
+    if (!a) return { ratio: null, tone: null, value: "—", hint: "Chưa có KPI" };
+    const mtToWeek = (a.full * endDay) / dim;
+    const r = mtToWeek > 0 ? a.actual / mtToWeek : null;
+    return {
+      ratio: r,
+      tone: kpiTone(r),
+      value: pct(r, 0),
+      hint: `Lũy kế 1–${endDay}/${Number(weekEnd.slice(5, 7))}: ${usd(a.actual)} / Target lũy kế đến hết tuần ${usd(mtToWeek)} (Target tháng × ${endDay}/${dim})`,
+      actual: a.actual,
+      full: mtToWeek,
+    };
+  };
   const monthRow = (a: Achieve | null): TileRowData =>
     a
       ? {
           ratio: a.fullRatio,
           tone: kpiTone(a.ratio),
           value: pct(a.fullRatio, 0),
-          hint: `Lũy kế đến ${until}: Đã đạt ${usd(a.actual)} / MT tháng ${usd(a.full)} · cần đạt tới hôm nay ${usd(a.due)} (nhịp ${pct(a.ratio, 0)})`,
+          hint: `Lũy kế đến ${until}: Đã đạt ${usd(a.actual)} / Target tháng ${usd(a.full)} · cần đạt tới hôm nay ${usd(a.due)} (nhịp ${pct(a.ratio, 0)})`,
           actual: a.actual,
           due: a.due,
           full: a.full,
@@ -765,7 +751,7 @@ function KpiTiles({ total, dataThrough }: { total: GroupSummary; dataThrough: st
       negative: total.cur.revenue < 0,
       wow: <WowPill value={wow(total.cur.revenue, total.prev.revenue)} size="sm" />,
       prev: usd(total.prev.revenue),
-      week: weekRow(revW),
+      week: weekRow(revM),
       month: monthRow(revM),
     },
     {
@@ -776,7 +762,7 @@ function KpiTiles({ total, dataThrough }: { total: GroupSummary; dataThrough: st
       negative: total.cur.profit < 0,
       wow: <WowPill value={wow(total.cur.profit, total.prev.profit)} size="sm" />,
       prev: usd(total.prev.profit),
-      week: weekRow(proW),
+      week: weekRow(proM),
       month: monthRow(proM),
     },
     {
@@ -853,9 +839,10 @@ type TileRowData = {
 function TileRow({ label, d, until }: { label: string; d: TileRowData; until: string }) {
   const r = d.actual != null && d.full ? d.actual / d.full : null;
   const done = r == null ? d.value : r > 1 ? `Vượt ${pct(r - 1, 0)}` : `Đạt ${pct(r, 0)}`;
-  const title =
-    d.actual != null && d.full
-      ? `Đến ${until} đã đạt ${usd(d.actual)} / MT ${label.toLowerCase()} ${usd(d.full)}${
+  const title = d.hint
+    ? d.hint
+    : d.actual != null && d.full
+      ? `Đến ${until} đã đạt ${usd(d.actual)} / Target ${label.toLowerCase()} ${usd(d.full)}${
           d.due ? ` · cần đạt tới nay ${usd(d.due)} → nhịp ${pct(d.actual / d.due, 0)}` : ""
         }`
       : d.hint;
@@ -864,196 +851,23 @@ function TileRow({ label, d, until }: { label: string; d: TileRowData; until: st
       <span className="text-[13px] font-semibold !text-slate-600">{label}</span>
       {d.plain ? <span /> : <ProgressBar ratio={d.ratio == null ? null : Math.min(1, d.ratio)} tone={d.tone} height="h-2.5" />}
       <span className="flex min-w-[72px] flex-col items-end leading-tight">
-        <span className={`text-[14px] font-bold tabular-nums ${d.tone ? TONE_TEXT[d.tone] : "!text-slate-800"}`}>{done}</span>
-        {d.full != null && <span className="text-[11.5px] font-semibold tabular-nums !text-slate-950">MT {usd(d.full)}</span>}
+        <span className={`text-[12px] font-semibold tabular-nums ${d.tone ? TONE_TEXT[d.tone] : "!text-slate-800"}`}>{done}</span>
+        {d.full != null && <span className="text-[11.5px] font-semibold tabular-nums !text-slate-950">Target {usd(d.full)}</span>}
       </span>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// 3. TEAM — bảng gọn; bấm 1 team để lọc bảng brand
+// 4. BRAND — 1 bảng (SKU All / Win / Test, gom theo team)
 // ---------------------------------------------------------------------------
 
-function TeamTable({
-  teams,
-  total,
-  activeTeam,
-  onPick,
-}: {
-  teams: TeamGroup[];
-  total: GroupSummary;
-  activeTeam: string | null;
-  onPick: (team: string) => void;
-}) {
-  // Cột như "P/L THEO NGƯỜI PHỤ TRÁCH" trong sheet, đọc trái → phải:
-  //   DOANH THU TUẦN: Revenue tuần này · Tuần trước · % WoW
-  //   PROFIT THÁNG:   Profit lũy kế · Mục tiêu tháng · Nhịp đạt MT (thanh + vạch cần đạt tới nay) → Đánh giá
-  const rows = [...teams].sort((a, b) => Number(isIdle(a.summary)) - Number(isIdle(b.summary)));
-  const TH = "px-4 py-3 text-right !text-black font-bold whitespace-nowrap";
-  const TH_W = `${TH} bg-[#FF8C00]`;
-  const TH_M = `${TH} bg-[#FFB366]`;
-  const GROUP = "px-4 pt-2.5 pb-0.5 text-center !text-[11px] font-bold uppercase !tracking-[0.12em] !text-black";
-  const EDGE = "border-l-[3px] border-[#D97300]";
-  const cells = (s: GroupSummary, isTotal: boolean) => {
-    const m = s.profit?.month ?? null;
-    const tone = kpiTone(m?.ratio ?? null);
-    const monthBg = isTotal ? "bg-orange-300" : "bg-orange-50";
-    const quiet = "";
-    return (
-      <>
-        {/* Doanh thu tuần */}
-        <td className={`px-4 py-3.5 text-right !text-[14.5px] font-bold ${quiet}`}>{usd(s.cur.revenue)}</td>
-        <td className="px-4 py-3.5 text-right font-medium !text-slate-950">{usd(s.prev.revenue)}</td>
-        <td className="px-4 py-3.5 text-right">
-          <WowPill value={wow(s.cur.revenue, s.prev.revenue)} quiet />
-        </td>
-        {/* Profit tháng → đánh giá */}
-        <td className={`px-4 py-3 ${EDGE} ${monthBg}`}>
-          <ProfitTargetBar actual={s.mtd.profit} target={m?.full ?? null} due={m?.due ?? null} tone={tone} />
-        </td>
-        <td className={`px-4 py-3.5 text-right ${monthBg}`}>
-          {m ? (
-            <span
-              className={`!text-[16px] font-bold tabular-nums ${tone ? PACE_TEXT[tone] : "!text-slate-900"}`}
-              title={`Profit lũy kế ${usd(m.actual)} ÷ cần đạt tới nay ${usd(m.due)} (MT tháng × ngày ÷ số ngày tháng)`}
-            >
-              {pct(m.ratio, 1)}
-            </span>
-          ) : null}
-        </td>
-        <td className={`px-4 py-3.5 pr-5 text-center ${monthBg}`}>{tone ? <SoftChip tone={tone} label={TEAM_LABEL[tone]} /> : null}</td>
-      </>
-    );
-  };
-  return (
-    <div className={`${CARD} overflow-hidden shadow-sm`}>
-      <div className="overflow-x-auto">
-        <table className={`${TABLE} min-w-[1000px]`}>
-          <thead>
-            <tr>
-              <th className={`${GROUP} bg-[#FF8C00]`} />
-              <th colSpan={3} className={`${GROUP} bg-[#FF8C00]`}>
-                Doanh thu tuần
-              </th>
-              <th colSpan={3} className={`${GROUP} ${EDGE} bg-[#FFB366]`}>
-                Profit tháng (lũy kế) → Đánh giá
-              </th>
-            </tr>
-            <tr>
-              <th className={`${TH_W} pl-5 !text-left`}>Team</th>
-              <th className={TH_W}>Tuần này</th>
-              <th className={TH_W}>Tuần trước</th>
-              <th className={TH_W}>% WoW</th>
-              <th className={`${TH_M} ${EDGE} !text-left`}>Profit lũy kế / KPI tháng</th>
-              <th className={TH_M} title="Profit lũy kế ÷ (MT tháng × ngày ÷ số ngày tháng)">
-                Nhịp MT
-              </th>
-              <th className={`${TH_M} pr-5 !text-center`}>Đánh giá</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ team, color, summary: s }) => {
-              const idle = isIdle(s);
-              const active = activeTeam === team;
-              return (
-                <tr
-                  key={team}
-                  onClick={() => onPick(team)}
-                  className={`cursor-pointer border-b border-slate-200 transition-colors hover:bg-orange-50 ${active ? "bg-orange-100" : "bg-white"}`}
-                >
-                  <td className="py-3.5 pr-3 pl-5 text-left">
-                    <button
-                      type="button"
-                      aria-pressed={active}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onPick(team);
-                      }}
-                      className={`inline-flex cursor-pointer items-center gap-2.5 rounded font-bold whitespace-nowrap hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 ${
-                        idle ? "!text-slate-950" : "!text-slate-900"
-                      }`}
-                    >
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: idle ? "#cbd5e1" : color }} />
-                      {team}
-                      {active && <span className="rounded bg-orange-600 px-1.5 py-px !text-[11px] font-bold !text-white">Đang lọc</span>}
-                    </button>
-                  </td>
-                  {idle ? (
-                    <td colSpan={6} className="px-4 py-3 text-center !text-slate-950 italic">
-                      Không phát sinh trong tháng
-                    </td>
-                  ) : (
-                    cells(s, false)
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-orange-500 bg-orange-200 font-bold">
-              <td className="py-3.5 pr-3 pl-5 text-left !text-black">TỔNG</td>
-              {cells(total, true)}
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-/**
- * Profit lũy kế so với KPI tháng: dòng trên = số lũy kế (trái) · MT tháng (phải);
- * dòng dưới = thanh đã đạt ÷ MT tháng, màu theo nhịp (lũy kế ÷ cần đạt tới nay).
- */
-function ProfitTargetBar({
-  actual,
-  target,
-  due,
-  tone,
-}: {
-  actual: number;
-  target: number | null;
-  due: number | null;
-  tone: Tone | null;
-}) {
-  const ratio = target != null && target > 0 ? Math.min(1, Math.max(0, actual / target)) : 0;
-  const fill = actual < 0 ? "#e11d48" : tone ? TONE_HEX[tone] : "#94a3b8";
-  return (
-    <div
-      className="min-w-[280px]"
-      title={
-        target != null
-          ? `Lũy kế ${usd(actual)} / MT tháng ${usd(target)} (đạt ${pct(target ? actual / target : null, 1)})${due != null ? ` · cần đạt tới nay ${usd(due)}` : ""}`
-          : `Lũy kế ${usd(actual)} · chưa có KPI`
-      }
-    >
-      <div className="flex items-baseline justify-between gap-2 !text-[13px] leading-none tabular-nums">
-        <span className={`!text-[14px] font-bold ${actual < 0 ? "!text-rose-600" : "!text-slate-950"}`}>{usd(actual)}</span>
-        <span className="font-medium !text-slate-950">{target != null ? `MT ${usd(target)}` : "Chưa có KPI"}</span>
-      </div>
-      <div className="mt-2 h-2.5 rounded-full bg-slate-200">
-        <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${ratio * 100}%`, backgroundColor: fill }} />
-      </div>
-    </div>
-  );
-}
-
-/** Nhãn đánh giá nền nhạt, chữ màu (cột Đánh giá bảng team) */
-function SoftChip({ tone, label }: { tone: Tone; label: string }) {
-  return <span className={`inline-flex whitespace-nowrap rounded-full px-3 py-1 text-[13px] font-semibold ${TONE_SOFT[tone]}`}>{label}</span>;
-}
-
-// ---------------------------------------------------------------------------
-// 4. BRAND — 1 bảng (Cột Cơ bản / Chi tiết · SKU All / Win / Test)
-// ---------------------------------------------------------------------------
-
-type SortKey = "revenue" | "dRevenue" | "profit" | "margin" | "tacos" | "pace";
+type SortKey = "revenue" | "dRevenue" | "profit" | "dProfit" | "margin" | "tacos" | "pace";
 const SORT_VALUE: Record<SortKey, (s: GroupSummary) => number | null> = {
   revenue: (s) => s.cur.revenue,
   dRevenue: (s) => wow(s.cur.revenue, s.prev.revenue),
   profit: (s) => s.cur.profit,
+  dProfit: (s) => wow(s.cur.profit, s.prev.profit),
   margin: (s) => div(s.cur.profit, s.cur.revenue),
   tacos: (s) => div(s.cur.adsFee, s.cur.revenue),
   pace: (s) => s.profit?.month.ratio ?? null,
@@ -1063,7 +877,6 @@ const SORT_VALUE: Record<SortKey, (s: GroupSummary) => number | null> = {
 interface Col {
   key: string;
   label: string;
-  basic: boolean;
   sort?: SortKey;
   title?: string;
   /** Cột nhấn mạnh (Profit, Biên LN) */
@@ -1082,38 +895,52 @@ const profitCellStyle = (v: number) => ({ backgroundColor: v < 0 ? SHEET_RED : S
 const PROFIT_COLS = new Set(["profit", "mtd"]);
 const profitColValue = (key: string, s: GroupSummary) => (key === "profit" ? s.cur.profit : key === "mtd" ? s.mtd.profit : null);
 
-// Ngưỡng cảnh báo đỏ ở bảng brand: TACoS > 30%, ROI < 100%, Biên LN < 15%
+/** Pha màu team với trắng theo tỷ lệ a (0–1) → màu đặc rgb() */
+const teamTint = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c: number) => Math.round(255 - (255 - c) * a);
+  return `rgb(${mix((n >> 16) & 255)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
+};
+
+// Ngưỡng cảnh báo đỏ ở bảng brand: TACoS > 30%, Biên LN < 15%
 const BAD_TACOS = 0.3;
-const BAD_ROI = 1;
 const BAD_MARGIN = 0.15;
 const BAD = "font-semibold !text-rose-600";
 
-// Thứ tự cột như file; "basic" = chế độ Cơ bản
+// Kết quả tuần: Revenue · % WoW Revenue · Quantity · Ads Fee · Profit · % WoW Profit · TACoS · Biên LN; Tiến độ tháng: 4 cột
 const BRAND_COLS: Col[] = [
-  { key: "rev", label: "Revenue\ntuần này", basic: true, sort: "revenue", render: (s) => <span className="font-semibold">{money(s.cur.revenue)}</span> },
-  { key: "revPrev", label: "Revenue\ntuần trước", basic: false, render: (s) => <span className="!text-slate-950">{usd(s.prev.revenue)}</span> },
+  { key: "rev", label: "Revenue\ntuần này", sort: "revenue", render: (s) => <span className="font-semibold">{money(s.cur.revenue)}</span> },
   {
     key: "wow",
-    label: "% WoW",
-    basic: true,
+    label: "% WoW\nRevenue",
     sort: "dRevenue",
     render: (s, total) => (!total && isIdle(s) ? "—" : <WowPill value={wow(s.cur.revenue, s.prev.revenue)} size="sm" quiet />),
   },
-  { key: "qty", label: "Quantity", basic: false, render: (s) => int(s.cur.quantity) },
-  { key: "ads", label: "Ads Fee", basic: false, render: (s) => usd(s.cur.adsFee) },
+  { key: "qty", label: "Quantity", render: (s) => int(s.cur.quantity) },
+  { key: "ads", label: "Ads Fee", render: (s) => usd(s.cur.adsFee) },
   {
     key: "profit",
     label: "Profit",
-    basic: true,
     sort: "profit",
     strong: true,
     // Nền ô xanh / đỏ như cột Profit tab Day (profitCellStyle) → chữ đen cho dễ đọc
     render: (s) => <span className="font-bold !text-black">{usd(s.cur.profit)}</span>,
   },
   {
+    key: "wowProfit",
+    label: "% WoW\nProfit",
+    sort: "dProfit",
+    title: "Profit tuần này so với tuần trước: (này − trước) ÷ |trước|",
+    render: (s, total) =>
+      !total && isIdle(s) ? "—" : (
+        <span title={`Tuần trước ${usd(s.prev.profit)}`}>
+          <WowPill value={wow(s.cur.profit, s.prev.profit)} size="sm" quiet />
+        </span>
+      ),
+  },
+  {
     key: "tacos",
     label: "TACoS",
-    basic: true,
     sort: "tacos",
     render: (s) => {
       const v = ratiosOf(s.cur).tacos;
@@ -1121,18 +948,8 @@ const BRAND_COLS: Col[] = [
     },
   },
   {
-    key: "roi",
-    label: "ROI",
-    basic: false,
-    render: (s) => {
-      const v = ratiosOf(s.cur).roi;
-      return <span className={v != null && v < BAD_ROI ? BAD : ""}>{pct(v)}</span>;
-    },
-  },
-  {
     key: "margin",
     label: "Biên LN",
-    basic: true,
     sort: "margin",
     strong: true,
     render: (s) => {
@@ -1143,7 +960,6 @@ const BRAND_COLS: Col[] = [
   {
     key: "mtd",
     label: "Profit\nlũy kế",
-    basic: true,
     month: true,
     title: "Profit cộng dồn từ ngày 1 đến ngày có số liệu",
     // Nền xanh / đỏ như cột Profit tuần (profitCellStyle) → chữ đen
@@ -1151,41 +967,16 @@ const BRAND_COLS: Col[] = [
   },
   {
     key: "target",
-    label: "MT Profit\ntháng",
-    basic: true,
+    label: "Target Profit\ntháng",
     month: true,
     render: (s) => (s.profit ? <span className="font-semibold">{usd(s.profit.month.full)}</span> : ""),
   },
   {
-    key: "full",
-    label: "Đã đạt /\nMT cả tháng",
-    basic: true,
-    month: true,
-    title: "Profit lũy kế ÷ MT Profit cả tháng",
-    render: (s) => {
-      const m = s.profit?.month;
-      if (!m) return "";
-      const tone = kpiTone(m.ratio);
-      return (
-        <div className="ml-auto flex w-[160px] items-center justify-end gap-2">
-          <div className="h-1.5 min-w-[60px] flex-1 rounded-full bg-slate-200">
-            <div
-              className="h-full rounded-full"
-              style={{ width: `${Math.min(100, Math.max(0, (m.fullRatio ?? 0) * 100))}%`, backgroundColor: tone ? TONE_HEX[tone] : "#94a3b8" }}
-            />
-          </div>
-          <span className="shrink-0 whitespace-nowrap text-right font-semibold tabular-nums">{pct(m.fullRatio, 1)}</span>
-        </div>
-      );
-    },
-  },
-  {
     key: "pace",
-    label: "Nhịp so với\nkế hoạch tới nay",
-    basic: true,
+    label: "% đạt Target\n(lũy kế)",
     month: true,
     sort: "pace",
-    title: "Profit lũy kế ÷ MT tới ngày báo cáo (MT tháng × ngày ÷ số ngày tháng)",
+    title: "Profit lũy kế ÷ Target tới ngày báo cáo (Target tháng × ngày ÷ số ngày tháng)",
     render: (s) => {
       const m = s.profit?.month;
       if (!m) return "";
@@ -1214,12 +1005,14 @@ function BrandPanel({
   activeTeam: string | null;
   onClearTeam: () => void;
 }) {
-  const [mode, setMode] = useState<"basic" | "detail">("basic");
   const [sort, setSort] = useState<{ key: SortKey; dir: "desc" | "asc" } | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  // TEAM: mỗi team 1 dòng tổng (mặc định) · BRAND: chi tiết từng brand trong team
+  const [level, setLevel] = useState<"team" | "brand">("team");
 
-  const cols = mode === "basic" ? BRAND_COLS.filter((c) => c.basic) : BRAND_COLS;
+  const cols = BRAND_COLS;
   const grouped = teams.length > 1;
+  // Chỉ 1 team (lọc 1 store) thì luôn hiện brand, không có dòng team
+  const showBrands = !grouped || level === "brand";
   const shownTeams = activeTeam ? teams.filter((t) => t.team === activeTeam) : teams;
 
   const order = (rows: { b: WeeklyBrandRow; s: GroupSummary }[]) => {
@@ -1238,13 +1031,6 @@ function BrandPanel({
   };
   const toggleSort = (key: SortKey) =>
     setSort((cur) => (cur?.key !== key ? { key, dir: "desc" } : cur.dir === "desc" ? { key, dir: "asc" } : null));
-  const toggleTeam = (team: string) =>
-    setCollapsed((cur) => {
-      const next = new Set(cur);
-      if (next.has(team)) next.delete(team);
-      else next.add(team);
-      return next;
-    });
 
   const theme = useTheme();
   const th = thCls(theme);
@@ -1257,18 +1043,19 @@ function BrandPanel({
     c.month ? `${odd ? "bg-orange-100/70" : "bg-orange-50"} ${i === firstMonth ? "border-l-2 border-[#FFB366]" : ""}` : "";
 
   return (
-    <section ref={sectionRef} aria-label="Kinh doanh theo brand" className={`${tableCard(theme)} scroll-mt-4`}>
+    <section ref={sectionRef} aria-label="Kinh doanh theo Team/Brand" className={`${tableCard(theme)} scroll-mt-4`}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-200 px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-medium !text-slate-600">Cột</span>
+          <div className="flex items-center gap-2" title="Chia SKU như sheet: Win = Bảng mã trạng thái Phát triển, Test = trạng thái Test; FBM tính hết vào Win">
+            <span className="text-[13px] font-medium !text-slate-600">SKU</span>
             <Segmented
-              label="Mức chi tiết"
-              value={mode}
-              onChange={setMode}
+              label="Nhóm SKU"
+              value={skuGroup}
+              onChange={onSkuGroup}
               options={[
-                { value: "basic", label: "Cơ bản" },
-                { value: "detail", label: "Chi tiết" },
+                { value: "all", label: "All" },
+                { value: "win", label: "Win" },
+                { value: "test", label: "Test" },
               ]}
             />
           </div>
@@ -1284,29 +1071,25 @@ function BrandPanel({
             </button>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="flex items-center gap-2" title="Chia SKU như sheet: Win = Bảng mã trạng thái Phát triển, Test = trạng thái Test; FBM tính hết vào Win">
-            <span className="text-[13px] font-medium !text-slate-600">SKU</span>
-            <Segmented
-              label="Nhóm SKU"
-              value={skuGroup}
-              onChange={onSkuGroup}
-              options={[
-                { value: "all", label: "All" },
-                { value: "win", label: "Win" },
-                { value: "test", label: "Test" },
-              ]}
-            />
-          </div>
-        </div>
+        {grouped && (
+          <Segmented
+            label="Mức xem"
+            value={level}
+            onChange={setLevel}
+            options={[
+              { value: "team", label: "TEAM" },
+              { value: "brand", label: "BRAND" },
+            ]}
+          />
+        )}
       </div>
 
       <div className="overflow-x-auto">
-          <table className={`${TABLE} ${mode === "detail" ? "min-w-[1380px]" : "min-w-[860px]"}`}>
+          <table className={`${TABLE} min-w-[1240px]`}>
             <thead>
               <tr className="text-[11.5px] font-bold uppercase tracking-wide">
-                <th rowSpan={2} className={`${th} sticky left-0 z-[2] pl-4 !text-left !align-middle normal-case tracking-normal`}>
-                  Brand
+                <th rowSpan={2} className={`${th} sticky left-0 z-[2] shadow-[inset_-2px_0_0_#000,6px_0_8px_-6px_rgba(0,0,0,0.25)] pl-4 !text-left !align-middle normal-case tracking-normal`}>
+                  {showBrands ? "Brand" : "Team"}
                 </th>
                 <th colSpan={weekCols} className={`${theme.thGroup} px-3 py-1.5 text-center`}>
                   Kết quả tuần
@@ -1353,35 +1136,13 @@ function BrandPanel({
               </tr>
             </thead>
 
-            {shownTeams.map((t) => {
+            {shownTeams.map((t, ti) => {
               const rows = order(t.brands);
-              const isCollapsed = collapsed.has(t.team);
               // Team không còn brand nào để hiện (đều không phát sinh) → bỏ cả dòng nhóm
               if (!rows.length) return null;
               return (
                 <tbody key={t.team}>
-                  {grouped && (
-                    // Dòng nhóm team: dải màu của team (nền nhạt + vạch trái đậm) → tách rõ từng team
-                    <tr className="border-y border-slate-300" style={{ backgroundColor: tint(t.color, 0.16) }}>
-                      <td colSpan={cols.length + 1} className="border-l-4 px-3 py-2" style={{ borderLeftColor: t.color }}>
-                        <button
-                          type="button"
-                          aria-expanded={!isCollapsed}
-                          onClick={() => toggleTeam(t.team)}
-                          className="inline-flex cursor-pointer items-center gap-2 rounded text-[13.5px] font-bold focus-visible:outline-2 focus-visible:outline-slate-900"
-                          style={{ color: t.color }}
-                        >
-                          {isCollapsed ? <CaretRightIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
-                          {t.team}
-                          <span className="font-semibold !text-slate-950">
-                            · {rows.length} brand · Profit {usd(t.summary.cur.profit)}
-                          </span>
-                        </button>
-                      </td>
-                    </tr>
-                  )}
-                  {!isCollapsed &&
-                    rows.map(({ b, s }, ri) => {
+                  {showBrands && rows.map(({ b, s }, ri) => {
                       const idle = isIdle(s);
                       const odd = ri % 2 === 1;
                       const bg = odd ? theme.stripe : "bg-white";
@@ -1390,7 +1151,7 @@ function BrandPanel({
                         <tr key={b.key} className={`group border-b border-slate-200/70 ${bg} ${idle ? "!text-slate-950" : "!text-slate-950"}`}>
                           {/* Cột Brand cố định khi cuộn ngang; brand lỗ có vạch đỏ bên trái */}
                           <td
-                            className={`sticky left-0 z-[1] py-2.5 pr-3 text-left font-semibold ${bg} group-hover:bg-orange-50 ${grouped ? "pl-8" : "pl-4"} ${
+                            className={`sticky left-0 z-[1] shadow-[inset_-2px_0_0_#000,6px_0_8px_-6px_rgba(0,0,0,0.25)] py-2.5 pr-3 text-left font-semibold ${bg} group-hover:bg-orange-50 ${grouped ? "pl-8" : "pl-4"} ${
                               neg ? "border-l-4 border-l-rose-500" : ""
                             }`}
                           >
@@ -1412,13 +1173,45 @@ function BrandPanel({
                         </tr>
                       );
                     })}
+                  {/* Dòng tổng của team nằm dưới các brand (tên team, luôn mở) */}
+                  {grouped && (
+                    // Dòng tổng team: nền xám đồng nhất cho mọi team, chữ đen đậm, kẻ đậm phía trên → tách rõ khỏi dòng brand
+                    <tr className="border-t-2 border-t-slate-700" style={{ backgroundColor: teamTint(t.color, 0.22) }}>
+                      <td
+                        className="sticky left-0 z-[1] shadow-[inset_-2px_0_0_#000,6px_0_8px_-6px_rgba(0,0,0,0.25)] border-l-[6px] py-3 pr-3 pl-3 text-left !text-[14.5px] font-bold uppercase !tracking-wide !text-black"
+                        style={{ borderLeftColor: t.color, backgroundColor: teamTint(t.color, 0.22) }}
+                      >
+                        <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
+                          {t.team}
+                        </span>
+                      </td>
+                      {cols.map((c, i) => (
+                        <td
+                          key={c.key}
+                          style={PROFIT_COLS.has(c.key) ? profitCellStyle(profitColValue(c.key, t.summary) ?? 0) : { backgroundColor: teamTint(t.color, 0.22) }}
+                          className={`px-3 py-3 text-right !text-[14.5px] font-bold !text-black ${i === firstMonth ? "border-l-2 border-[#FFB366]" : ""} ${
+                            i === cols.length - 1 ? "pr-4" : ""
+                          }`}
+                        >
+                          {c.render(t.summary, true)}
+                        </td>
+                      ))}
+                    </tr>
+                  )}
+                  {/* Khoảng trống ngăn cách với team kế tiếp (không kẻ ô, cùng màu nền trang) */}
+                  {grouped && showBrands && ti < shownTeams.length - 1 && (
+                    <tr aria-hidden className="weekly-team-gap">
+                      <td colSpan={cols.length + 1} />
+                    </tr>
+                  )}
                 </tbody>
               );
             })}
 
             <tfoot>
               <tr className={`${theme.total} font-bold`}>
-                <td className="sticky left-0 z-[1] bg-[#FFE0B2] py-3 pr-3 pl-4 text-left">{totalLabel}</td>
+                <td className="sticky left-0 z-[1] shadow-[inset_-2px_0_0_#000,6px_0_8px_-6px_rgba(0,0,0,0.25)] bg-[#FFE0B2] py-3 pr-3 pl-4 text-left">{totalLabel}</td>
                 {cols.map((c, i) => (
                   <td
                     key={c.key}
@@ -1559,12 +1352,24 @@ function StockBlock({
   days,
   weekStart,
   canEdit,
+  teamOfStore,
 }: {
   stock: WeeklyReport["stock"];
   days: number;
   weekStart: string;
   canEdit: boolean;
+  /** storeId → team (FBA TEAM 1…) — gom store theo team như bảng brand */
+  teamOfStore: Map<string, string>;
 }) {
+  // Mặc định đóng hết các team; bấm dòng team để mở danh sách store
+  const [openTeams, setOpenTeams] = useState<Set<string>>(() => new Set());
+  const toggleTeam = (team: string) =>
+    setOpenTeams((cur) => {
+      const next = new Set(cur);
+      if (next.has(team)) next.delete(team);
+      else next.add(team);
+      return next;
+    });
   // Số đã lưu trong phiên (không phải tải lại cả báo cáo)
   const [saved, setSaved] = useState<Record<string, Prepaid>>({});
   const prepaidOf = (s: WeeklyReport["stock"][number]): Prepaid =>
@@ -1601,9 +1406,14 @@ function StockBlock({
   const validPerWeek = valid.reduce((n, r) => n + r.perWeek, 0);
   const totalWeeks = validPerWeek > 0 ? validUnits / validPerWeek : null;
   const excluded = rows.length - valid.length;
-  // Người xem: gộp store không tồn, không bán thành 1 dòng. Kế toán: hiện hết để nhập trả trước.
-  const listed = canEdit ? rows : rows.filter((r) => r.state.tone != null);
-  const noData = canEdit ? [] : rows.filter((r) => r.state.tone == null).map((r) => r.s.label);
+  // Gom theo team (FBA TEAM 1, 2, 3…); store chưa gán team → "Khác"
+  type StockRow = (typeof rows)[number];
+  const byTeam = new Map<string, StockRow[]>();
+  for (const r of rows) {
+    const team = teamOfStore.get(r.s.storeId) ?? "Khác";
+    byTeam.set(team, [...(byTeam.get(team) ?? []), r]);
+  }
+  const teamGroups = [...byTeam.entries()].sort((a, b) => a[0].localeCompare(b[0], "en", { numeric: true }));
   const theme = useTheme();
   const th = thCls(theme);
   const ncol = 11;
@@ -1626,54 +1436,104 @@ function StockBlock({
               <th className={`${th} pr-4 !text-center`}>Trạng thái</th>
             </tr>
           </thead>
-          <tbody>
-            {listed.map(({ s, p, units, value, perWeek, weeksLeft, state }) => {
-              const share = div(value, totalValue);
-              return (
-                <tr key={s.storeId} className={rowCls(theme)}>
-                  <td className="py-2.5 pr-3 pl-4 font-semibold !text-slate-900">{s.label}</td>
-                  <td className="px-3 py-2 text-right font-medium">{int(s.units)}</td>
-                  <td className="px-3 py-2 text-right font-medium">{usd(s.value)}</td>
-                  <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
-                    {canEdit ? (
-                      <PrepaidInput value={p.units} integer label={`SL trả trước cho SUP — ${s.label}`} onSave={(v) => save(s, { units: v })} />
-                    ) : (
-                      <span className="font-medium">{p.units == null ? "" : int(p.units)}</span>
-                    )}
+          {teamGroups.map(([team, list], gi) => {
+            const open = openTeams.has(team);
+            const color = teamColor(team);
+            const g = (pick: (r: StockRow) => number) => list.reduce((n, r) => n + pick(r), 0);
+            const gValid = list.filter((r) => r.weeksLeft != null);
+            const gPerWeekValid = gValid.reduce((n, r) => n + r.perWeek, 0);
+            const gWeeks = gPerWeekValid > 0 ? gValid.reduce((n, r) => n + r.units, 0) / gPerWeekValid : null;
+            const gShare = div(g((r) => r.value), totalValue);
+            const alert = list.filter((r) => r.state.tone === "bad").length;
+            const bg = teamTint(color, 0.22);
+            return (
+              <tbody key={team}>
+                {open &&
+                  list.map(({ s, p, units, value, perWeek, weeksLeft, state }) => {
+                    const share = div(value, totalValue);
+                    return (
+                      <tr key={s.storeId} className={rowCls(theme)}>
+                        <td className="py-2.5 pr-3 pl-9 font-semibold !text-slate-900">{s.label}</td>
+                        <td className="px-3 py-2 text-right font-medium">{int(s.units)}</td>
+                        <td className="px-3 py-2 text-right font-medium">{usd(s.value)}</td>
+                        <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
+                          {canEdit ? (
+                            <PrepaidInput value={p.units} integer label={`SL trả trước cho SUP — ${s.label}`} onSave={(v) => save(s, { units: v })} />
+                          ) : (
+                            <span className="font-medium">{p.units == null ? "" : int(p.units)}</span>
+                          )}
+                        </td>
+                        <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
+                          {canEdit ? (
+                            <PrepaidInput value={p.value} integer={false} label={`Giá trị trả trước — ${s.label}`} onSave={(v) => save(s, { value: v })} />
+                          ) : (
+                            <span className="font-medium">{p.value == null ? "" : usd(p.value)}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold !text-slate-950">{int(units)}</td>
+                        <td className="px-3 py-2 text-right font-bold !text-slate-950">{usd(value)}</td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="ml-auto flex w-[96px] items-center gap-2">
+                            <div className="h-2 flex-1 rounded-full bg-slate-200">
+                              <div className="h-full rounded-full bg-orange-400" style={{ width: `${(share ?? 0) * 100}%` }} />
+                            </div>
+                            <span className="w-10 text-right font-medium !text-slate-800">{pct(share, 0)}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right font-medium">{int(perWeek)}</td>
+                        <td className="px-3 py-2 text-right font-bold">{weeksLeft == null ? "" : weeksLeft.toFixed(1)}</td>
+                        <td className="px-3 py-2 pr-4 text-center">
+                          {state.tone ? (
+                            <StatusChip tone={state.tone} label={state.label} title={state.title} />
+                          ) : (
+                            <span className="!text-[12px] !text-slate-950">{state.label}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                {/* Dòng team: tổng các store trong team, bấm để mở / đóng */}
+                <tr className="cursor-pointer border-t-2 border-t-slate-700" style={{ backgroundColor: bg }} onClick={() => toggleTeam(team)}>
+                  <td
+                    className="border-l-[6px] py-3 pr-3 pl-3 text-left !text-[14.5px] font-bold uppercase !tracking-wide !text-black"
+                    style={{ borderLeftColor: color, backgroundColor: bg }}
+                  >
+                    <button
+                      type="button"
+                      aria-expanded={open}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleTeam(team);
+                      }}
+                      title={open ? "Đóng danh sách store" : "Mở danh sách store"}
+                      className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded font-bold uppercase !text-black focus-visible:outline-2 focus-visible:outline-slate-900"
+                    >
+                      {open ? <CaretDownIcon size={12} weight="bold" /> : <CaretRightIcon size={12} weight="bold" />}
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                      {team}
+                    </button>
                   </td>
-                  <td className={`px-3 py-1.5 text-right ${PREPAID_TD}`}>
-                    {canEdit ? (
-                      <PrepaidInput value={p.value} integer={false} label={`Giá trị trả trước — ${s.label}`} onSave={(v) => save(s, { value: v })} />
-                    ) : (
-                      <span className="font-medium">{p.value == null ? "" : usd(p.value)}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-semibold !text-slate-950">{int(units)}</td>
-                  <td className="px-3 py-2 text-right font-bold !text-slate-950">{usd(value)}</td>
-                  <td className="px-3 py-2 text-right">
-                    <div className="ml-auto flex w-[96px] items-center gap-2">
-                      <div className="h-2 flex-1 rounded-full bg-slate-200">
-                        <div className="h-full rounded-full bg-orange-400" style={{ width: `${(share ?? 0) * 100}%` }} />
-                      </div>
-                      <span className="w-10 text-right font-medium !text-slate-800">{pct(share, 0)}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right font-medium">{int(perWeek)}</td>
-                  <td className="px-3 py-2 text-right font-bold">{weeksLeft == null ? "—" : weeksLeft.toFixed(1)}</td>
-                  <td className="px-3 py-2 pr-4 text-center">
-                    {state.tone ? <StatusChip tone={state.tone} label={state.label} title={state.title} /> : <span className="!text-[12px] !text-slate-950">{state.label}</span>}
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{int(g((r) => r.s.units))}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{usd(g((r) => r.s.value))}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{g((r) => r.p.units ?? 0) ? int(g((r) => r.p.units ?? 0)) : ""}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{g((r) => r.p.value ?? 0) ? usd(g((r) => r.p.value ?? 0)) : ""}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{int(g((r) => r.units))}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{usd(g((r) => r.value))}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{pct(gShare, 0)}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{int(g((r) => r.perWeek))}</td>
+                  <td className="px-3 py-3 text-right !text-[14px] font-bold !text-black" style={{ backgroundColor: bg }}>{gWeeks == null ? "" : gWeeks.toFixed(1)}</td>
+                  <td className="px-3 py-3 pr-4 text-center !text-[12.5px] font-semibold" style={{ backgroundColor: bg }}>
+                    {alert ? <span className="font-bold !text-rose-700">{alert} store cần xử lý</span> : ""}
                   </td>
                 </tr>
-              );
-            })}
-            {noData.length > 0 && (
-              <tr className="border-b border-slate-200/70 bg-slate-50 !text-slate-950">
-                <td colSpan={ncol} className="px-4 py-2.5 text-[13px]" title={noData.join(", ")}>
-                  <span className="font-semibold !text-slate-950">{noData.length} store chưa có dữ liệu tồn:</span> {noData.join(", ")}
-                </td>
-              </tr>
-            )}
-          </tbody>
+                {gi < teamGroups.length - 1 && (
+                  <tr aria-hidden className="weekly-team-gap">
+                    <td colSpan={ncol} />
+                  </tr>
+                )}
+              </tbody>
+            );
+          })}
           <tfoot>
             <tr className={`${theme.total} font-bold`}>
               <td className="py-2.5 pr-3 pl-4">TỔNG</td>
@@ -1704,10 +1564,12 @@ function StockBlock({
 /** Mục tiền (thu gọn): bấm tiêu đề để mở bảng dòng tiền + Payment theo store */
 function MoneySection({
   payout,
+  payoutMonth,
   cashflow,
   canEdit,
 }: {
   payout: NonNullable<WeeklyReport["payout"]>;
+  payoutMonth: WeeklyReport["payoutMonth"];
   cashflow: WeeklyCashflow | null;
   canEdit: boolean;
 }) {
@@ -1737,9 +1599,11 @@ function MoneySection({
               <CashflowBlock key={cashflow.weekStart} cashflow={cashflow} payment={payout.current} canEdit={canEdit} />
             </div>
           )}
-          <div className={cashflow ? "xl:col-span-4" : "xl:col-span-6"}>
-            <PayoutBlock payout={payout} />
-          </div>
+          {payoutMonth && (
+            <div className={cashflow ? "xl:col-span-4" : "xl:col-span-6"}>
+              <PayoutBlock payout={payoutMonth} />
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -1854,18 +1718,26 @@ function CashflowBlock({ cashflow, payment, canEdit }: { cashflow: WeeklyCashflo
   );
 }
 
-function PayoutBlock({ payout }: { payout: NonNullable<WeeklyReport["payout"]> }) {
+/** Payment theo tháng: lũy kế tháng này (mùng 1 → cuối tuần) so với cùng kỳ tháng trước; kèm cả tháng trước */
+function PayoutBlock({ payout }: { payout: NonNullable<WeeklyReport["payoutMonth"]> }) {
   const max = Math.max(1, ...payout.byStore.map((p) => Math.max(p.current, p.previous)));
-  const rows = [...payout.byStore].sort((a, b) => b.current - a.current);
+  const rows = [...payout.byStore].filter((p) => p.current || p.previous || p.previousFull).sort((a, b) => b.current - a.current);
   const theme = useTheme();
+  const dm = (iso: string) => `${Number(iso.slice(8, 10))}/${Number(iso.slice(5, 7))}`;
+  const r = payout.range;
+  const cur = `${dm(r.start)}–${dm(r.end)}`;
+  const prev = `${dm(r.prevStart)}–${dm(r.prevEnd)}`;
   return (
     <div className={`${tableCard(theme)} h-full`}>
       <div className="flex items-end justify-between gap-3 border-b border-[#D97300] bg-[#FF8C00] px-5 py-4 !text-black">
         <div>
-          <div className="text-sm font-bold !text-black">Payment — Amazon đã giải ngân</div>
+          <div className="text-sm font-bold !text-black">Payment tháng {Number(r.end.slice(5, 7))} — Amazon đã giải ngân ({cur})</div>
           <div className="text-[28px] font-bold leading-tight tabular-nums !text-black">{usd2(payout.current)}</div>
-          <div className="text-[13px] !text-black/80" title="Tổng Disbursement trạng thái Done có ngày nhận (Acknowledged) trong tuần; không phải doanh thu hay lợi nhuận của tuần">
-            Tiền về trong tuần · tuần trước {usd2(payout.previous)}
+          <div
+            className="text-[13px] !text-black/80"
+            title="Tổng Disbursement trạng thái Done có ngày nhận (Acknowledged) trong khoảng ngày; không phải doanh thu hay lợi nhuận"
+          >
+            Cùng kỳ tháng trước ({prev}) {usd2(payout.previous)} · cả tháng {Number(r.prevStart.slice(5, 7))} {usd2(payout.previousFull)}
           </div>
         </div>
         <WowPill value={wow(payout.current, payout.previous)} />
@@ -1873,15 +1745,18 @@ function PayoutBlock({ payout }: { payout: NonNullable<WeeklyReport["payout"]> }
       <ul className="divide-y divide-orange-100 px-5 py-1">
         {rows.map((p) => (
           <li key={p.storeName} className="grid grid-cols-[minmax(90px,140px)_1fr_auto] items-center gap-3 py-2 text-[13px]">
-            <span className="truncate font-semibold !text-slate-800" title={p.storeName}>
+            <span className="truncate font-semibold !text-slate-950" title={p.storeName}>
               {p.storeName}
             </span>
-            <div className="flex flex-col gap-1" title={`Tuần này ${usd2(p.current)} · tuần trước ${usd2(p.previous)}`}>
+            <div
+              className="flex flex-col gap-1"
+              title={`Tháng này (${cur}) ${usd2(p.current)} · cùng kỳ tháng trước (${prev}) ${usd2(p.previous)} · cả tháng trước ${usd2(p.previousFull)}`}
+            >
               <div className="h-2 rounded-full bg-orange-500" style={{ width: `${Math.max(1, (p.current / max) * 100)}%` }} />
               <div className="h-1 rounded-full bg-slate-300" style={{ width: `${Math.max(1, (p.previous / max) * 100)}%` }} />
             </div>
             <span className="flex items-center gap-2 tabular-nums">
-              <b className="font-semibold !text-slate-900">{usdK(p.current)}</b>
+              <b className="font-semibold !text-slate-950">{usdK(p.current)}</b>
               <WowPill value={wow(p.current, p.previous)} quiet />
             </span>
           </li>

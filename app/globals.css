@@ -596,3 +596,13 @@ table tbody tr {
 .ppc-frozen-boundary {
   box-shadow: inset -2px 0 0 0 rgb(203 213 225), 4px 0 6px -2px rgba(15, 23, 42, 0.08);
 }
+
+/* Báo cáo tuần → bảng Kinh doanh theo brand: khoảng trống ngăn cách giữa các team.
+   Đặc hiệu cao hơn kẻ ô đen của bảng ([&_td]:!border…) để bỏ viền và nền của dòng trống. */
+table tbody tr.weekly-team-gap > td {
+  height: 12px !important;
+  padding: 0 !important;
+  border-left-width: 0 !important;
+  border-right-width: 0 !important;
+  background: #f1f5f9 !important;
+}
