@@ -528,6 +528,11 @@ export function PpcDashboard({
   const [syncingAccounting, setSyncingAccounting] = useState(false);
   const [skuEconomicsList, setSkuEconomicsList] = useState<SkuEconomics[]>([]);
   const [skuRecGroups, setSkuRecGroups] = useState<SkuRecommendationGroup[]>([]);
+  // Tab Auto Bid của store có Bảng mã FBM (FASTPEACE): chỉ tải trang FBA / FBM / Khác đang chọn. Trang chọn lưu theo
+  // tài khoản (dùng chung khoá với Manual Bid); null = chưa đọc xong lựa chọn đã lưu.
+  const [autoBidChannel, setAutoBidChannel] = useState<"FBA" | "FBM" | "OTHER" | null>(null);
+  const [autoBidChannelCounts, setAutoBidChannelCounts] = useState<Partial<Record<"FBA" | "FBM" | "OTHER", number>> | null>(null);
+  const [autoBidHasChannels, setAutoBidHasChannels] = useState(false);
   const [skuRecAllRecs, setSkuRecAllRecs] = useState<PpcRecommendation[]>([]);
   const [loadedRecommendationWindowDays, setLoadedRecommendationWindowDays] = useState<number | null>(null);
   const [includePausedRecs, setIncludePausedRecs] = useState(false);
@@ -1328,8 +1333,12 @@ export function PpcDashboard({
     }
   }, [selectedDays, selectedStore]);
 
+  // Manual Bid cần thông tin SKU của cả store → không truyền trang; tab Auto Bid chỉ tải trang đang chọn.
+  const recChannel = activeTab === "recommendations" ? autoBidChannel : null;
+  const recChannelPending = activeTab === "recommendations" && autoBidChannel === null;
   const loadGroupedRecommendations = useCallback(async (force = false) => {
-    const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}:${includePausedRecs ? 1 : 0}`;
+    if (recChannelPending) return;
+    const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}:${includePausedRecs ? 1 : 0}:${recChannel || "ALL"}`;
     if (!force && lastLoadedRecKeyRef.current === currentKey) {
       return;
     }
@@ -1342,7 +1351,7 @@ export function PpcDashboard({
     setLoadingRecs(true);
     try {
       const res = await fetch(
-        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&summary=1&includePaused=${includePausedRecs ? "1" : "0"}${force ? "&refresh=1" : ""}`,
+        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&summary=1&includePaused=${includePausedRecs ? "1" : "0"}${recChannel ? `&channel=${recChannel}` : ""}${force ? "&refresh=1" : ""}`,
         { cache: "no-store", signal: controller.signal },
       );
       if (!res.ok) return;
@@ -1354,6 +1363,12 @@ export function PpcDashboard({
         lastLoadedRecKeyRef.current = currentKey;
         setLoadedRecommendationWindowDays(selectedDays);
         setSkuRecGroups(data.data.groups);
+        setAutoBidHasChannels(Boolean(data.data.hasChannels));
+        // Số SKU từng trang: chỉ biết trang đã tải (đếm SKU còn target chạy cần tính trang đó).
+        const loadedPage = data.data.channelPage as "FBA" | "FBM" | "OTHER" | null;
+        if (loadedPage && typeof data.data.pageCount === "number") {
+          setAutoBidChannelCounts((prev) => ({ ...(prev || {}), [loadedPage]: data.data.pageCount }));
+        }
         if (Array.isArray(data?.data?.allRecommendations) && data.data.allRecommendations.length > 0) {
           setSkuRecAllRecs(data.data.allRecommendations);
         }
@@ -1367,7 +1382,33 @@ export function PpcDashboard({
         setLoadingRecs(false);
       }
     }
-  }, [selectedStore, selectedSku, selectedDays, includePausedRecs]);
+  }, [selectedStore, selectedSku, selectedDays, includePausedRecs, recChannel, recChannelPending]);
+
+  // Đọc trang FBA / FBM / Khác đã lưu theo tài khoản (mặc định FBA) khi mở tab Auto Bid lần đầu.
+  useEffect(() => {
+    if (activeTab !== "recommendations" || autoBidChannel !== null) return;
+    let cancelled = false;
+    fetch("/api/settings/ui-preferences", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const c = d?.preferences?.manualBidChannel;
+        if (!cancelled) setAutoBidChannel(c === "FBM" || c === "OTHER" ? c : "FBA");
+      })
+      .catch(() => { if (!cancelled) setAutoBidChannel("FBA"); });
+    return () => { cancelled = true; };
+  }, [activeTab, autoBidChannel]);
+
+  const handleAutoBidChannelChange = useCallback((page: "FBA" | "FBM" | "OTHER") => {
+    if (page === autoBidChannel) return;
+    setAutoBidChannel(page);
+    setSkuRecGroups([]);
+    setSkuRecAllRecs([]);
+    fetch("/api/settings/ui-preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manualBidChannel: page }),
+    }).catch(() => undefined);
+  }, [autoBidChannel]);
 
   useEffect(() => {
     if (activeTab === "recommendations" || activeTab === "manual_bid") return;
@@ -1382,7 +1423,8 @@ export function PpcDashboard({
       return cached;
     }
     const res = await fetch(
-      `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}&includePaused=${includePausedRecs ? "1" : "0"}`,
+      // channel: server tự lấy trang FBA / FBM của chính SKU này, chỉ tính trang đó (store không chia trang thì bỏ qua).
+      `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}&includePaused=${includePausedRecs ? "1" : "0"}&channel=${autoBidChannel || "FBA"}`,
       { cache: "no-store" },
     );
     if (!res.ok) throw new Error(`Không thể tải recommendation cho SKU ${sku}`);
@@ -1392,7 +1434,7 @@ export function PpcDashboard({
     skuRecDetailsCacheRef.current.set(cacheKey, recommendations);
     setSkuRecAllRecs(recommendations);
     return recommendations;
-  }, [selectedStore, selectedDays, includePausedRecs]);
+  }, [selectedStore, selectedDays, includePausedRecs, autoBidChannel]);
 
   const loadActionQueueCount = useCallback(async (targetStore?: string) => {
     try {
@@ -1680,6 +1722,7 @@ export function PpcDashboard({
       sectionRequestsRef.current.clear();
       loadedSectionsRef.current.clear();
       lastLoadedRecKeyRef.current = "";
+      setAutoBidChannelCounts(null);
       setLoadingSection(null);
       setSearchTerms([]);
       setSearchTermsReady(false);
@@ -5508,8 +5551,11 @@ export function PpcDashboard({
               isActive={activeTab === "recommendations"}
               actor={actor}
               groups={skuRecGroups}
+              channelPage={autoBidHasChannels ? autoBidChannel : null}
+              channelCounts={autoBidHasChannels ? autoBidChannelCounts : null}
+              onChannelPageChange={handleAutoBidChannelChange}
               allRecommendations={skuRecAllRecs}
-              isLoading={loadingRecs}
+              isLoading={loadingRecs || recChannelPending}
               recommendationWindowDays={selectedDays}
               loadedRecommendationWindowDays={loadedRecommendationWindowDays}
               onRecommendationWindowChange={(days) => {
@@ -5517,7 +5563,11 @@ export function PpcDashboard({
                 setSelectedDays(days);
               }}
               includePausedCampaigns={includePausedRecs}
-              onIncludePausedCampaignsChange={setIncludePausedRecs}
+              onIncludePausedCampaignsChange={(value) => {
+                // Bỏ / thêm SKU không còn target chạy → số SKU từng trang đổi
+                setAutoBidChannelCounts(null);
+                setIncludePausedRecs(value);
+              }}
               onLoadSkuRecommendations={loadSkuRecommendationDetails}
               onApproveToQueue={handleApproveToQueue}
               onOpenActionQueue={() => setIsActionQueueOpen(true)}

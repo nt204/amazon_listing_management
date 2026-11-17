@@ -79,7 +79,8 @@ function parseOptions(raw: Record<string, unknown> | undefined): LaunchOptions {
     dailyBudget: Number(raw?.dailyBudget) || 5,
     biddingStrategy: strategy,
     userName: String(raw?.userName || "").trim(),
-    dateStr: String(raw?.dateStr || "").trim() || formatYYYYMMDD(),
+    // Ngày trong tên campaign luôn là hôm nay (giờ VN); bỏ qua ngày client gửi lên.
+    dateStr: formatYYYYMMDD(),
     suffix: String(raw?.suffix || "").trim(),
     fulfillment: raw?.fulfillment === "FBM" ? "FBM" : "FBA",
     skuOverrides: parseSkuOverrides(raw?.skuOverrides),

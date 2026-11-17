@@ -19,8 +19,6 @@ import {
 import {
   isAsinProductTarget,
   formatYYYYMMDD,
-  extractFileDateDDMMYY,
-  normalizeSaleKwDate,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 
@@ -234,9 +232,8 @@ export function PpcSearchTermLaunchPanel({
     setSkuOverrides({});
     setExpandedSkus(new Set());
     setUploadStatus(null);
-    const reportDate = selectedRows.map((r) => r.reportEndDate || r.reportDate).find(Boolean);
-    const parsed = reportDate ? extractFileDateDDMMYY(reportDate) : null;
-    setDateStr(parsed ? normalizeSaleKwDate(parsed) : formatYYYYMMDD());
+    // Ngày trong tên campaign luôn là hôm nay (giờ VN), không sửa được.
+    setDateStr(formatYYYYMMDD());
     setOpen(true);
   };
 
@@ -321,7 +318,7 @@ export function PpcSearchTermLaunchPanel({
     dailyBudget: settings.dailyBudget,
     biddingStrategy: settings.biddingStrategy,
     userName: userName.trim() || "Loan",
-    dateStr: dateStr.trim() || formatYYYYMMDD(),
+    dateStr,
     suffix: settings.suffix,
     fulfillment: settings.fulfillment,
     skuOverrides,
@@ -720,7 +717,13 @@ export function PpcSearchTermLaunchPanel({
                   </label>
                   <label>
                     <span className={labelCls}>Ngày</span>
-                    <input value={dateStr} onChange={(e) => setDateStr(e.target.value)} className={`${inputCls} w-[104px] font-mono`} />
+                    <input
+                      value={dateStr}
+                      readOnly
+                      tabIndex={-1}
+                      title="Ngày lên camp luôn là hôm nay"
+                      className={`${inputCls} w-[104px] font-mono cursor-not-allowed bg-slate-50 text-slate-500`}
+                    />
                   </label>
                   <label className="min-w-[110px] flex-1">
                     <span className={labelCls}>Đuôi tên</span>

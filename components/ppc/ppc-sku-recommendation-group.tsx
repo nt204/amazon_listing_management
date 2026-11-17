@@ -46,7 +46,15 @@ import { PpcOrganicRankCell, PpcSearchVolumeCell, PpcSponsoredRankCell } from ".
 import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
-import { MockupHoverZoom } from "./ppc-manual-bid-view";
+import { MockupHoverZoom, RangeRow } from "./ppc-manual-bid-view";
+import {
+  EMPTY_SKU_FILTER,
+  SKU_METRICS,
+  activeRanges,
+  skuMetric,
+  type MetricRange,
+  type SkuMetricKey,
+} from "@/lib/ppc/manual-bid";
 import {
   PpcAiReviewerModal,
   type AiReviewApplicationSnapshot,
@@ -55,6 +63,10 @@ import {
 interface PpcSkuRecommendationGroupProps {
   isActive: boolean;
   groups: SkuRecommendationGroup[];
+  /** Trang FBA / FBM / Khác (store có Bảng mã FBM): API chỉ tải trang đang chọn. */
+  channelPage?: "FBA" | "FBM" | "OTHER" | null;
+  channelCounts?: Partial<Record<"FBA" | "FBM" | "OTHER", number>> | null;
+  onChannelPageChange?: (page: "FBA" | "FBM" | "OTHER") => void;
   allRecommendations: PpcRecommendation[];
   isLoading: boolean;
   recommendationWindowDays: number;
@@ -240,6 +252,9 @@ function syncCampaignHeaderHeight(el: HTMLDivElement | null) {
 export function PpcSkuRecommendationGroupView({
   isActive,
   groups,
+  channelPage = null,
+  channelCounts = null,
+  onChannelPageChange,
   allRecommendations,
   isLoading,
   recommendationWindowDays,
@@ -268,6 +283,19 @@ export function PpcSkuRecommendationGroupView({
   const [selectedPic, setSelectedPic] = useState("ALL");
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
   const [selectedCampType, setSelectedCampType] = useState<"ALL" | "SP03" | "SB05" | "SB01">("ALL");
+  // Nút "Lọc": lọc SKU theo khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR (giống tab Manual Bid)
+  const [metricRanges, setMetricRanges] = useState<Partial<Record<SkuMetricKey, MetricRange>>>({});
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const rangeRef = useRef<HTMLDivElement>(null);
+  const parsedRanges = useMemo(() => activeRanges({ ...EMPTY_SKU_FILTER, ranges: metricRanges }), [metricRanges]);
+  useEffect(() => {
+    if (!rangeOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (rangeRef.current && !rangeRef.current.contains(e.target as Node)) setRangeOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [rangeOpen]);
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
@@ -614,22 +642,27 @@ export function PpcSkuRecommendationGroupView({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedSkuGroup]);
 
+  // Trang FBA / FBM / Khác giống tab Manual Bid (store có Bảng mã FBM, vd FASTPEACE): dashboard chỉ tải SKU
+  // của trang đang chọn (lưu theo tài khoản, dùng chung với Manual Bid) nên groups đã là SKU của trang đó.
+  const hasChannels = Boolean(channelPage && channelCounts && onChannelPageChange);
+  const pageGroups = groups;
+
   // Dynamic available Phôi list with counts
   const phôiOptions = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const g of groups) {
+    for (const g of pageGroups) {
       const p = g.productType || "Chưa xác định";
       counts.set(p, (counts.get(p) || 0) + 1);
     }
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ name, count }));
-  }, [groups]);
+  }, [pageGroups]);
 
   // Dynamic available Niche list with counts
   const nicheOptions = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const g of groups) {
+    for (const g of pageGroups) {
       const n = (g.niche || "").trim();
       if (n) {
         counts.set(n, (counts.get(n) || 0) + 1);
@@ -638,18 +671,18 @@ export function PpcSkuRecommendationGroupView({
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ name, count }));
-  }, [groups]);
+  }, [pageGroups]);
 
   const picOptions = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const g of groups) {
+    for (const g of pageGroups) {
       const pic = (g.picMkt || "").trim();
       if (pic) counts.set(pic, (counts.get(pic) || 0) + 1);
     }
     return Array.from(counts.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([name, count]) => ({ name, count }));
-  }, [groups]);
+  }, [pageGroups]);
 
   // Quick Filter Counts for badges
   const filterCounts = useMemo(() => {
@@ -662,7 +695,7 @@ export function PpcSkuRecommendationGroupView({
     let zeroSales = 0;
     let prefixError = 0;
 
-    for (const g of groups) {
+    for (const g of pageGroups) {
       if (g.increaseCount > 0) increase++;
       if (g.decreaseCount > 0) decrease++;
       if (g.pauseCount > 0) pause++;
@@ -681,7 +714,7 @@ export function PpcSkuRecommendationGroupView({
     }
 
     return {
-      all: groups.length,
+      all: pageGroups.length,
       increase,
       decrease,
       pause,
@@ -691,21 +724,21 @@ export function PpcSkuRecommendationGroupView({
       zeroSales,
       prefixError,
     };
-  }, [groups]);
+  }, [pageGroups]);
 
   // Campaign Type Counts for badges
   const campTypeCounts = useMemo(() => {
     let sp03 = 0;
     let sb05 = 0;
     let sb01 = 0;
-    for (const g of groups) {
+    for (const g of pageGroups) {
       const types = g.campaignTypes || [];
       if (types.includes("SP03")) sp03++;
       if (types.includes("SB05")) sb05++;
       if (types.includes("SB01")) sb01++;
     }
     return { sp03, sb05, sb01 };
-  }, [groups]);
+  }, [pageGroups]);
 
   // Handle Sort Toggle
   const handleSort = (field: SortField) => {
@@ -720,7 +753,7 @@ export function PpcSkuRecommendationGroupView({
   // Filtered & Sorted Level 1 Groups
   // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const filteredGroups = useMemo(() => {
-    const result = groups.filter((g) => {
+    const result = pageGroups.filter((g) => {
       // 1. Search term
       if (searchTerm) {
         const q = searchTerm.toLowerCase().trim();
@@ -791,6 +824,14 @@ export function PpcSkuRecommendationGroupView({
         }
       }
 
+      // 6. Nút "Lọc": khoảng số (chỉ số không tính được, vd ACOS khi chưa có sales → loại)
+      for (const r of parsedRanges) {
+        const v = skuMetric(g, r.key);
+        if (v == null) return false;
+        if (r.min != null && v < r.min) return false;
+        if (r.max != null && v > r.max) return false;
+      }
+
       return true;
     });
 
@@ -807,7 +848,7 @@ export function PpcSkuRecommendationGroupView({
       const numB = typeof valB === "number" ? valB : 0;
       return sortOrder === "asc" ? numA - numB : numB - numA;
     });
-  }, [groups, searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, sortField, sortOrder]);
+  }, [pageGroups, searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -818,7 +859,7 @@ export function PpcSkuRecommendationGroupView({
     // Filters and sorting describe a new result set; show it from the first page.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, sortField, sortOrder]);
+  }, [searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder, channelPage]);
 
   const selectedVisibleSkuCount = filteredGroups.reduce(
     (count, group) => count + (selectedSkus.has(group.sku) ? 1 : 0),
@@ -1216,18 +1257,6 @@ export function PpcSkuRecommendationGroupView({
     }
   };
 
-  // Aggregate stats for filtered groups
-  const filteredAggregates = useMemo(() => {
-    let spend = 0;
-    let sales = 0;
-    for (const g of filteredGroups) {
-      spend += g.spend;
-      sales += g.sales;
-    }
-    const acos = sales > 0 ? (spend / sales) * 100 : (spend > 0 ? 999 : 0);
-    return { spend, sales, acos };
-  }, [filteredGroups]);
-
   // Render Sort Header Helper
   const renderSortHeader = (label: string, field: SortField, align: "left" | "right" | "center" = "left") => {
     const isActive = sortField === field;
@@ -1263,7 +1292,8 @@ export function PpcSkuRecommendationGroupView({
     selectedNiche !== "ALL" ||
     selectedPic !== "ALL" ||
     quickFilter !== "ALL" ||
-    selectedCampType !== "ALL";
+    selectedCampType !== "ALL" ||
+    parsedRanges.length > 0;
 
   const isSwitchingWindow = isLoading
     && loadedRecommendationWindowDays !== null
@@ -1308,6 +1338,30 @@ export function PpcSkuRecommendationGroupView({
               )}
             </div>
 
+            {/* Trang FBA / FBM / Khác (giống tab Manual Bid) */}
+            {hasChannels && (
+              <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-2xs">
+                {([["FBA", "FBA"], ["FBM", "FBM"], ["OTHER", "Khác"]] as const)
+                  .filter(([k]) => k !== "OTHER" || channelCounts?.OTHER === undefined || channelCounts.OTHER > 0 || channelPage === "OTHER")
+                  .map(([k, label]) => {
+                    const on = channelPage === k;
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        disabled={isLoading && !on}
+                        onClick={() => onChannelPageChange?.(k)}
+                        className={`cursor-pointer rounded-md px-3 py-1 text-xs font-bold transition ${
+                          on ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"
+                        }`}
+                      >
+                        {label} <span className={on ? "font-semibold text-slate-300" : "font-semibold text-slate-400"}>{channelCounts?.[k] ?? ""}</span>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+
             {/* Dynamic Phôi Dropdown */}
             <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
               <Tag size={13} className="text-slate-400 shrink-0" />
@@ -1316,7 +1370,7 @@ export function PpcSkuRecommendationGroupView({
                 onChange={(e) => setSelectedPhôi(e.target.value)}
                 className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[120px]"
               >
-                <option value="ALL">Tất cả Phôi ({groups.length})</option>
+                <option value="ALL">Phôi ({pageGroups.length})</option>
                 {phôiOptions.map((p) => (
                   <option key={p.name} value={p.name}>
                     {p.name} ({p.count})
@@ -1333,7 +1387,7 @@ export function PpcSkuRecommendationGroupView({
                 onChange={(e) => setSelectedNiche(e.target.value)}
                 className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[120px]"
               >
-                <option value="ALL">Tất cả Niche ({groups.length})</option>
+                <option value="ALL">Niche ({pageGroups.length})</option>
                 {nicheOptions.map((n) => (
                   <option key={n.name} value={n.name}>
                     {n.name} ({n.count})
@@ -1350,13 +1404,62 @@ export function PpcSkuRecommendationGroupView({
                 onChange={(e) => setSelectedPic(e.target.value)}
                 className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[110px]"
               >
-                <option value="ALL">Tất cả PIC ({groups.length})</option>
+                <option value="ALL">PIC ({pageGroups.length})</option>
                 {picOptions.map((p) => (
                   <option key={p.name} value={p.name}>
                     {p.name} ({p.count})
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Lọc SKU theo khoảng số: Spend, Sales, ACOS, Click… (giống tab Manual Bid) */}
+            <div ref={rangeRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setRangeOpen((v) => !v)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                  rangeOpen || parsedRanges.length > 0
+                    ? "border-slate-800 bg-white text-slate-900"
+                    : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                Lọc
+                {parsedRanges.length > 0 && (
+                  <span className="rounded-full bg-slate-800 px-1.5 text-[10.5px] font-bold text-white">{parsedRanges.length}</span>
+                )}
+                <span className="text-[9px] text-slate-400">▼</span>
+              </button>
+              {rangeOpen && (
+                <div className="absolute left-0 top-9 z-40 w-80 space-y-1.5 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                  <div className="grid grid-cols-[1fr_76px_10px_76px] items-center gap-1 text-[10.5px] font-semibold text-slate-400">
+                    <span />
+                    <span className="text-center">từ</span>
+                    <span />
+                    <span className="text-center">đến</span>
+                  </div>
+                  {SKU_METRICS.map((m) => (
+                    <RangeRow
+                      key={m.key}
+                      label={m.label}
+                      unit={m.unit}
+                      value={metricRanges[m.key] || { min: "", max: "" }}
+                      onChange={(r) => setMetricRanges((prev) => ({ ...prev, [m.key]: r }))}
+                    />
+                  ))}
+                  {parsedRanges.length > 0 && (
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setMetricRanges({})}
+                        className="cursor-pointer text-[12px] font-semibold text-slate-400 hover:text-slate-700"
+                      >
+                        Xoá lọc
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Checkbox: Bao gồm Camp Paused */}
@@ -1387,6 +1490,7 @@ export function PpcSkuRecommendationGroupView({
                   setSelectedPic("ALL");
                   setQuickFilter("ALL");
                   setSelectedCampType("ALL");
+                  setMetricRanges({});
                 }}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition cursor-pointer shadow-2xs"
                 title="Đặt lại bộ lọc"
@@ -1406,16 +1510,6 @@ export function PpcSkuRecommendationGroupView({
 
           {/* Right: Aggregates & Action Button */}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <div className="flex items-center gap-2 whitespace-nowrap text-xs text-slate-600 font-medium bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200/90 shadow-2xs">
-              <span>
-                Spend: <strong className="text-slate-900 font-mono font-semibold">${filteredAggregates.spend.toFixed(0)}</strong>
-              </span>
-              <span className="text-slate-300">•</span>
-              <span>
-                Sales: <strong className="text-emerald-700 font-mono font-semibold">${filteredAggregates.sales.toFixed(0)}</strong>
-              </span>
-            </div>
-
             {recColumnPicker}
 
             {/* Nút Kết Quả Auto Bid */}

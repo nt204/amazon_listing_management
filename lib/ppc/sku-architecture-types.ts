@@ -247,6 +247,10 @@ export interface SkuRecommendationGroup {
   picMkt?: string | null;
   niche?: string | null;
   economics: SkuEconomics;
+  /** Số target đang chạy (target + ad group + campaign enabled) trong kỳ — tab Auto Bid ẩn SKU = 0 khi không tích Camp Paused. */
+  activeTargetCount?: number;
+  /** Kênh theo Bảng mã (FBA / FBM / "" = không có trong bảng mã) — chỉ có khi store chia trang FBA/FBM. */
+  channel?: "FBA" | "FBM" | "";
 }
 
 /**

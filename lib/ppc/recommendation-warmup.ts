@@ -7,10 +7,11 @@ import { getGroupedRecommendations, resolveStoreId } from "./sku-architecture-se
 import {
   groupedRecommendationsCacheKey,
   groupedRecommendationsRedisKey,
+  RECOMMENDATION_REDIS_TTL_SECONDS,
   setCachedGroupedRecommendations,
 } from "./recommendation-cache";
 
-const RECOMMENDATION_CACHE_TTL_SECONDS = 10 * 60;
+const RECOMMENDATION_CACHE_TTL_SECONDS = RECOMMENDATION_REDIS_TTL_SECONDS;
 
 export async function warmGroupedRecommendationWindows(
   scope: DataScope,

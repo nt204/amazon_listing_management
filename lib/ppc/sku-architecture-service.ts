@@ -1813,7 +1813,8 @@ export async function getCommonTargetRecommendations(
   storeId: string,
   targetRows: PpcPerformanceRow[],
   days = 30,
-): Promise<{ recommendations: PpcRecommendation[]; economics: SkuEconomics[] }> {
+  options: { skuFilter?: (sku: string) => boolean } = {},
+): Promise<{ recommendations: PpcRecommendation[]; economics: SkuEconomics[]; activeTargetsBySku: Map<string, number> }> {
   const economics = await getSkuEconomicsList(storeId, days);
   const econMap = new Map(economics.map((item) => [item.sku.toUpperCase(), item]));
   const ruleVersions = await getRuleVersions();
@@ -1825,25 +1826,44 @@ export async function getCommonTargetRecommendations(
     }
   }
 
-  const recommendations = targetRows
+  // skuFilter (trang FBA / FBM của tab Auto Bid): bỏ target của SKU kênh khác trước khi chạy rule —
+  // SKU xác định đúng như lúc gom nhóm (resolveRowSku).
+  const skuFilter = options.skuFilter;
+  const rows = skuFilter ? targetRows.filter((row) => skuFilter(resolveRowSku(row, econMap))) : targetRows;
+  // Số target đang chạy (target + ad group + campaign đều enabled) của từng SKU — tab Auto Bid mặc định ẩn SKU = 0.
+  const activeTargetsBySku = new Map<string, number>();
+  for (const row of rows) {
+    if (row.grain !== "TARGET" || row.isNegative) continue;
+    const on = (v?: string | null, emptyOk = false) => {
+      const s = (v || "").toLowerCase();
+      return s === "enabled" || (emptyOk && s === "");
+    };
+    if (!on(row.state) || !on(row.campaignState, true) || !on(row.adGroupState, true)) continue;
+    const sku = resolveRowSku(row, econMap);
+    activeTargetsBySku.set(sku, (activeTargetsBySku.get(sku) || 0) + 1);
+  }
+  const recommendations = rows
     .map((row) => evaluateRowWithRuleEngine(row, ruleMap, econMap))
     .filter((item): item is PpcRecommendation => item !== null);
 
-  return { recommendations, economics };
+  return { recommendations, economics, activeTargetsBySku };
 }
 
 export async function getGroupedRecommendations(
   storeId: string,
   targetRows: PpcPerformanceRow[],
   days = 30,
+  options: { skuFilter?: (sku: string) => boolean } = {},
 ): Promise<{
   groups: SkuRecommendationGroup[];
   allRecommendations: PpcRecommendation[];
   totalRecommendations: number;
   totalSkus: number;
 }> {
-  const common = await getCommonTargetRecommendations(storeId, targetRows, days);
-  const econList = common.economics;
+  const common = await getCommonTargetRecommendations(storeId, targetRows, days, options);
+  const econList = options.skuFilter
+    ? common.economics.filter((e) => options.skuFilter!(e.sku.toUpperCase()))
+    : common.economics;
   const econMap = new Map(econList.map((e) => [e.sku.toUpperCase(), e]));
   const allRecs = common.recommendations;
 
@@ -1989,6 +2009,7 @@ export async function getGroupedRecommendations(
   }
 
   groups.sort((a, b) => b.totalRecommendations - a.totalRecommendations || b.spend - a.spend);
+  for (const g of groups) g.activeTargetCount = common.activeTargetsBySku.get(g.sku.toUpperCase()) || 0;
 
   return {
     groups,

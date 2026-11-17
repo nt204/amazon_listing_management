@@ -9,6 +9,13 @@ interface CachedGroupedRecs {
 
 const groupedRecsCache = new Map<string, CachedGroupedRecs>();
 
+/**
+ * Đề xuất Auto Bid chỉ đổi khi có snapshot mới (crawler ~1 lần/ngày) hoặc sửa Cost Master / Max Bid / Bảng mã / rule —
+ * các chỗ đó đều xoá cache (invalidateGroupedRecommendationsCache, syncPpcReportsFromR2). Redis giữ 24 giờ để không
+ * phải tính lại ~7s mỗi 10 phút; bộ nhớ tiến trình vẫn 10 phút (bản đã giải mã ~vài chục MB, không tích luỹ lâu).
+ */
+export const RECOMMENDATION_REDIS_TTL_SECONDS = 24 * 60 * 60;
+
 export function groupedRecommendationsCacheKey(
   teamId: string,
   storeId: string,
@@ -25,7 +32,8 @@ export function groupedRecommendationsRedisKey(
   days: number,
   includePaused = false,
 ): string {
-  return `ppc:recommendations:${teamId}:${encodeURIComponent(storeName)}:${days}:${includePaused ? 1 : 0}`;
+  // v2: nhóm SKU có activeTargetCount (tab Auto Bid ẩn SKU không còn target chạy).
+  return `ppc:recommendations:${teamId}:${encodeURIComponent(storeName)}:${days}:${includePaused ? 1 : 0}:v2`;
 }
 
 export function getCachedGroupedRecommendations(cacheKey: string): Awaited<ReturnType<typeof getGroupedRecommendations>> | null {

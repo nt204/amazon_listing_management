@@ -11,7 +11,7 @@ import {
   getGroupedRecommendations,
   getSkuEconomicsList,
 } from "@/lib/ppc/sku-architecture-service";
-import { groupedRecommendationsRedisKey } from "@/lib/ppc/recommendation-cache";
+import { groupedRecommendationsRedisKey, RECOMMENDATION_REDIS_TTL_SECONDS } from "@/lib/ppc/recommendation-cache";
 import { reviewPpcRecommendationWithAi } from "@/lib/ppc/ai-review-service";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 import { getLatestAvailableAccountingDate, resolvePpcStore } from "./lark-agent-tools";
@@ -27,7 +27,7 @@ import {
 } from "./lark-conversation-memory";
 
 const LARK_APPROVER = "Lark Bot AI";
-const RECOMMENDATION_CACHE_TTL_SECONDS = 10 * 60;
+const RECOMMENDATION_CACHE_TTL_SECONDS = RECOMMENDATION_REDIS_TTL_SECONDS;
 const MAX_ITEMS_PER_CONFIRM = 50;
 const MIN_BID = 0.02;
 const MAX_BID = 20;

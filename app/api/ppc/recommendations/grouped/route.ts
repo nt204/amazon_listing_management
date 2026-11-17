@@ -9,13 +9,43 @@ import { getDatabaseClient } from "@/lib/db";
 import {
   groupedRecommendationsCacheKey,
   groupedRecommendationsRedisKey,
+  RECOMMENDATION_REDIS_TTL_SECONDS,
   getCachedGroupedRecommendations,
   setCachedGroupedRecommendations,
 } from "@/lib/ppc/recommendation-cache";
-import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
+import { getCachedOrFetch, getReadyRedisClient, invalidateCachePattern } from "@/lib/redis";
+import { loadSkuChannels } from "@/lib/ppc/sku-channels";
 
 export const runtime = "nodejs";
-const RECOMMENDATION_CACHE_TTL_SECONDS = 10 * 60;
+const RECOMMENDATION_CACHE_TTL_SECONDS = RECOMMENDATION_REDIS_TTL_SECONDS;
+
+type GroupedResult = Awaited<ReturnType<typeof getGroupedRecommendations>>;
+type ChannelPage = "FBA" | "FBM" | "OTHER";
+
+function parseChannelPage(value: string | null): ChannelPage | null {
+  const v = (value || "").trim().toUpperCase();
+  return v === "FBA" || v === "FBM" || v === "OTHER" ? v : null;
+}
+
+/** Lọc kết quả cả store xuống một trang FBA / FBM / Khác (khi cache cả store đã có sẵn). */
+function filterResultBySku(result: GroupedResult, keep: (sku: string) => boolean): GroupedResult {
+  const groups = result.groups.filter((g) => keep(g.sku.toUpperCase()));
+  const allRecommendations = result.allRecommendations.filter((r) => keep((r.sku || "UNKNOWN").toUpperCase()));
+  return { groups, allRecommendations, totalRecommendations: allRecommendations.length, totalSkus: groups.length };
+}
+
+/** Đọc cache cả store (bộ nhớ hoặc Redis) mà không tính lại. */
+async function peekFullResult(cacheKey: string, redisKey: string): Promise<GroupedResult | null> {
+  const memory = getCachedGroupedRecommendations(cacheKey);
+  if (memory) return memory;
+  try {
+    const redis = await getReadyRedisClient();
+    const raw = redis ? await redis.get(redisKey) : null;
+    return raw ? (JSON.parse(raw) as GroupedResult) : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(request: Request) {
   const started = performance.now();
@@ -37,22 +67,49 @@ export async function GET(request: Request) {
     }
 
     const storeId = await resolveStoreId(searchParams.get("storeId") || (storeName !== "ALL" ? storeName : null));
+    const normalizedSku = sku.trim().toUpperCase();
+
+    // Store có Bảng mã FBM (FASTPEACE): tab Auto Bid chỉ tính trang đang xem (channel=FBA|FBM|OTHER) —
+    // trang FBA ~10% target nên mở nhanh; bấm sang FBM mới tính FBM. Chi tiết 1 SKU tính theo trang của SKU đó.
+    // Không có channel (Manual Bid, bot Lark) → tính cả store như cũ.
+    const channelOf = storeName !== "ALL" ? await loadSkuChannels(storeId).catch(() => null) : null;
+    const hasChannels = Boolean(channelOf?.hasFbm);
+    const pageOf = (s: string): ChannelPage => {
+      const c = channelOf?.get(s) || "";
+      return c === "FBA" ? "FBA" : c === "FBM" ? "FBM" : "OTHER";
+    };
+    const requestedPage = parseChannelPage(searchParams.get("channel"));
+    const channelPage: ChannelPage | null = hasChannels && requestedPage
+      ? (normalizedSku !== "ALL" ? pageOf(normalizedSku) : requestedPage)
+      : null;
+    const inPage = (s: string) => channelPage !== null && pageOf(s) === channelPage;
 
     // Each attribution window must have an isolated cache entry. Reusing the
     // 30-day result for a 7-day request can produce unsafe bid decisions.
-    const cacheKey = groupedRecommendationsCacheKey(scope.teamId, storeId, storeName, days, includePaused);
-    const redisKey = groupedRecommendationsRedisKey(scope.teamId, storeName, days, includePaused);
+    const fullCacheKey = groupedRecommendationsCacheKey(scope.teamId, storeId, storeName, days, includePaused);
+    const fullRedisKey = groupedRecommendationsRedisKey(scope.teamId, storeName, days, includePaused);
+    const cacheKey = channelPage ? `${fullCacheKey}\0${channelPage}` : fullCacheKey;
+    const redisKey = channelPage ? `${fullRedisKey}:ch=${channelPage}` : fullRedisKey;
     if (refresh) {
-      await invalidateCachePattern(redisKey);
+      await invalidateCachePattern(fullRedisKey);
+      await invalidateCachePattern(`${fullRedisKey}:ch=*`);
     }
+
+    let result: GroupedResult;
+    let cacheStatus = "SHARED_OR_COMPUTE";
     const cached = refresh ? null : getCachedGroupedRecommendations(cacheKey);
-    const cacheStatus = cached ? "HIT_MEMORY" : "SHARED_OR_COMPUTE";
+    const fullCached = !cached && channelPage && !refresh ? await peekFullResult(fullCacheKey, fullRedisKey) : null;
 
-    let result: Awaited<ReturnType<typeof getGroupedRecommendations>>;
-
+    let computed = false;
     if (cached) {
       result = cached;
+      cacheStatus = "HIT_MEMORY";
+    } else if (fullCached) {
+      // Cache cả store đã có (vd vừa mở Manual Bid) → lọc ngay, không tính lại, không lưu thêm bản sao.
+      result = filterResultBySku(fullCached, inPage);
+      cacheStatus = "HIT_FULL_FILTERED";
     } else {
+      computed = true;
       result = await getCachedOrFetch(redisKey, RECOMMENDATION_CACHE_TTL_SECONDS, async () => {
         // Fetch the complete eligible set in one database pass. OFFSET batches
         // repeatedly scanned and sorted large snapshots, causing big stores to
@@ -62,12 +119,17 @@ export async function GET(request: Request) {
           { storeName, days, includePaused },
           { unbounded: true },
         );
-        return getGroupedRecommendations(storeId, targetRows, days);
+        return getGroupedRecommendations(storeId, targetRows, days, channelPage ? { skuFilter: inPage } : {});
       });
-      setCachedGroupedRecommendations(cacheKey, result);
+    }
+    if (computed) setCachedGroupedRecommendations(cacheKey, result);
+
+    // Tab Auto Bid (có channel): không tích "Camp Paused" thì ẩn SKU không còn target nào đang chạy.
+    if (channelPage && !includePaused) {
+      const activeSkus = new Set(result.groups.filter((g) => (g.activeTargetCount ?? 0) > 0).map((g) => g.sku.toUpperCase()));
+      result = filterResultBySku(result, (s) => activeSkus.has(s));
     }
 
-    const normalizedSku = sku.trim().toUpperCase();
     const skuRecommendations = result.allRecommendations.filter(
       (recommendation) => (recommendation.sku || "").toUpperCase() === normalizedSku,
     );
@@ -107,10 +169,23 @@ export async function GET(request: Request) {
         totalSkus: result.groups.some((group) => group.sku.toUpperCase() === normalizedSku) ? 1 : 0,
       };
 
+    // Trang FBA / FBM / Khác giống tab Manual Bid: kênh của từng SKU theo Bảng mã (FBM > FBA > "") + số SKU
+    // mỗi trang (theo danh sách SKU economics của store, dùng cache chung 1 giờ) cho nút chuyển trang.
+    const withChannels = hasChannels && channelOf
+      ? {
+        ...filteredResult,
+        hasChannels: true,
+        channelPage,
+        // Số SKU của trang vừa tải (trang khác chưa tải thì giao diện chưa có số).
+        pageCount: channelPage ? filteredResult.groups.length : null,
+        groups: filteredResult.groups.map((g) => ({ ...g, channel: channelOf.get(g.sku) })),
+      }
+      : { ...filteredResult, hasChannels: false, channelPage: null, pageCount: null };
+
     const responseData = {
       success: true,
       recommendationWindowDays: days,
-      data: summaryOnly ? { ...filteredResult, allRecommendations: [] } : filteredResult,
+      data: summaryOnly ? { ...withChannels, allRecommendations: [] } : withChannels,
     };
     const body = JSON.stringify(responseData);
     return compressedJson(request, body, {

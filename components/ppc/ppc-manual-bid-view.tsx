@@ -2218,7 +2218,8 @@ function Segmented<T extends string>({ value, onChange, options }: { value: T; o
   );
 }
 
-function RangeRow({ label, unit, value, onChange }: {
+/** Một dòng "từ – đến" của bộ lọc khoảng số (dùng chung với tab Đề xuất & Auto Bid). */
+export function RangeRow({ label, unit, value, onChange }: {
   label: string;
   unit: string;
   value: MetricRange;
