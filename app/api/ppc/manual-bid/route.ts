@@ -227,6 +227,9 @@ export async function GET(request: Request) {
           const asinRows = await sql<{ asin: string }[]>`
             SELECT upper(trim(asin)) AS asin FROM ppc_performance_facts p
             WHERE p.store_id = ${store.id} AND p.grain = 'PRODUCT' AND trim(p.asin) <> ''
+              -- ad_type đủ để dùng trọn index (store, start, end, ad_type, grain); thiếu nó Postgres lướt cả
+              -- snapshot (hàng triệu dòng) → trung bình 57 s trên production, có ad_type còn ~0,5 s (2026-11-17).
+              AND p.ad_type = ANY(ARRAY['SP', 'SB', 'SD'])
               AND lower(trim(p.sku)) = ${sku}
               AND (${snapFilter})
             ORDER BY p.snapshot_date DESC LIMIT 1
