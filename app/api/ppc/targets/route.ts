@@ -6,6 +6,8 @@ import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import { KEYWORD_GROUP_LIMIT, splitSkuSearch } from "@/lib/ppc/search-term-grouping";
 import { loadTargetsGroupedBySku, targetSkuMatch } from "@/lib/ppc/target-grouping";
 import { getCachedOrFetch } from "@/lib/redis";
+import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
+import { campaignStatusCacheSuffix, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import { decodeMetricRanges, encodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
@@ -32,8 +34,12 @@ export async function GET(request: Request) {
     const ranges = decodeMetricRanges(searchParams.get("ranges"));
 
     const sql = await getDatabaseClient();
+    // Kênh FBA / FBM (store chia kênh); null = cả store như cũ
+    const channelScope = await resolvePpcChannelScope(sql, storeName, searchParams.get("channel"));
+    // campaignStatus=ACTIVE: chỉ target đang enabled thuộc campaign đang enabled; không gửi / ALL → như cũ
+    const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
 
-    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}:${encodeMetricRanges(ranges)}`;
+    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}:${encodeMetricRanges(ranges)}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
     const result = await getCachedOrFetch(cacheKey, 60, async () => {
       // 1. Resolve Store ID if storeName is specified
       let storeId: string | null = null;
@@ -135,12 +141,17 @@ export async function GET(request: Request) {
       : (campaignName ? sql`AND lower(p.campaign_name) = lower(${campaignName})` : sql``);
     const adGroupFilter = adGroupName ? sql`AND lower(p.ad_group_name) = lower(${adGroupName})` : sql``;
     const skuFilter = sku !== "ALL" ? sql`AND lower(p.sku) = lower(${sku})` : sql``;
+    const channelFilter = sql`${channelScope
+      ? sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
+      : sql``} ${campaignStatus === "ACTIVE"
+      ? sql`AND lower(COALESCE(p.state, '')) = 'enabled' AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name" })}`
+      : sql``}`;
     const rangeFilter = metricRangeSql(sql, ranges, plainMetricColumns(sql, "p"));
 
     const keywordGroups = skuSearch
       ? await loadTargetsGroupedBySku({
         sql, teamId: scope.teamId, combinedSnaps,
-        rowFilters: sql`${campaignFilter} ${adGroupFilter} ${skuFilter}`,
+        rowFilters: sql`${campaignFilter} ${adGroupFilter} ${skuFilter} ${channelFilter}`,
         skuTokens, keywordText, days, page: 1, pageSize: KEYWORD_GROUP_LIMIT, sortBy: "spend", sortDir: "DESC",
       })
       : null;
@@ -172,6 +183,7 @@ export async function GET(request: Request) {
         ${campaignFilter}
         ${adGroupFilter}
         ${skuFilter}
+        ${channelFilter}
         ${rangeFilter}
     `;
 
@@ -238,6 +250,7 @@ export async function GET(request: Request) {
         ${campaignFilter}
         ${adGroupFilter}
         ${skuFilter}
+        ${channelFilter}
       GROUP BY upper(COALESCE(
         NULLIF(trim(p.sku), ''),
         substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
@@ -277,6 +290,7 @@ export async function GET(request: Request) {
           ${campaignFilter}
           ${adGroupFilter}
           ${skuFilter}
+          ${channelFilter}
         GROUP BY upper(COALESCE(
           NULLIF(trim(p.sku), ''),
           substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
@@ -394,6 +408,7 @@ export async function GET(request: Request) {
         ${campaignFilter}
         ${adGroupFilter}
         ${skuFilter}
+        ${channelFilter}
         ${rangeFilter}
       ORDER BY ${orderClause}
       LIMIT ${pageSize} OFFSET ${offset}

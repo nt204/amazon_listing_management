@@ -3,6 +3,7 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { getDatabaseClient } from "@/lib/db";
 import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql } from "@/lib/ppc/metric-range-sql";
+import { ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
 
 export const runtime = "nodejs";
 
@@ -70,6 +71,10 @@ export async function GET(request: Request) {
       storeId = storeRows[0].id;
     }
 
+    // Kênh FBA / FBM (store chia kênh). Không gửi tham số → như cũ (cả store).
+    const channelScope = storeId ? await resolvePpcChannelScope(sql, storeName, searchParams.get("channel")) : null;
+    const scopeFilter = sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`;
+
     const skuFilter = sku !== "ALL"
       ? sql`AND (
           upper(COALESCE(NULLIF(p.sku, ''), p.portfolio_name)) = upper(${sku})
@@ -84,7 +89,7 @@ export async function GET(request: Request) {
       FROM ppc_search_terms p
       JOIN ppc_stores s ON s.id = p.store_id
       WHERE s.team_id = ${scope.teamId}
-        ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+        ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
         ${skuFilter}
         AND p.report_granularity = 'DAILY'
     `;
@@ -121,7 +126,7 @@ export async function GET(request: Request) {
           FROM ppc_search_terms p
           JOIN ppc_stores s ON s.id = p.store_id
           WHERE s.team_id = ${scope.teamId}
-            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
             ${skuFilter}
             AND p.campaign_name = ${detailCampaign}
             AND p.report_granularity = 'DAILY'
@@ -197,7 +202,7 @@ export async function GET(request: Request) {
           FROM ppc_search_terms p
           JOIN ppc_stores s ON s.id = p.store_id
           WHERE s.team_id = ${scope.teamId}
-            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
             ${skuFilter}
             AND p.campaign_name = ${detailCampaign}
             AND p.report_granularity = 'DAILY'
@@ -216,7 +221,7 @@ export async function GET(request: Request) {
           FROM ppc_search_terms p
           JOIN ppc_stores s ON s.id = p.store_id
           WHERE s.team_id = ${scope.teamId}
-            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
             ${skuFilter}
             AND p.campaign_name = ${detailCampaign}
             AND p.report_granularity = 'DAILY'
@@ -297,7 +302,7 @@ export async function GET(request: Request) {
           FROM ppc_search_terms p
           JOIN ppc_stores s ON s.id = p.store_id
           WHERE s.team_id = ${scope.teamId}
-            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
             ${skuFilter}
             AND p.report_granularity = 'DAILY'
             AND p.report_date >= ${startDate}::date AND p.report_date <= ${endDate}::date
@@ -334,7 +339,7 @@ export async function GET(request: Request) {
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
         WHERE s.team_id = ${scope.teamId}
-          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
           ${skuFilter}
           ${searchFilter}
           AND p.report_granularity = 'DAILY'
@@ -396,7 +401,7 @@ export async function GET(request: Request) {
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
         WHERE s.team_id = ${scope.teamId}
-          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
           ${skuFilter}
           ${searchFilter}
           AND p.report_granularity = 'DAILY'
@@ -506,7 +511,7 @@ export async function GET(request: Request) {
       FROM ppc_search_terms p
       JOIN ppc_stores s ON s.id = p.store_id
       WHERE s.team_id = ${scope.teamId}
-        ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+        ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
         ${skuFilter}
         ${searchFilter}
         AND p.report_granularity = 'DAILY'
@@ -537,7 +542,7 @@ export async function GET(request: Request) {
       FROM ppc_search_terms p
       JOIN ppc_stores s ON s.id = p.store_id
       WHERE s.team_id = ${scope.teamId}
-        ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+        ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
         ${skuFilter}
         ${searchFilter}
         AND p.report_granularity = 'DAILY'
@@ -609,7 +614,7 @@ export async function GET(request: Request) {
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
         WHERE s.team_id = ${scope.teamId}
-          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
           ${skuFilter}
           ${searchFilter}
           AND p.report_granularity = 'DAILY'
@@ -628,7 +633,7 @@ export async function GET(request: Request) {
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
         WHERE s.team_id = ${scope.teamId}
-          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
           ${skuFilter}
           ${searchFilter}
           AND p.report_granularity = 'DAILY'

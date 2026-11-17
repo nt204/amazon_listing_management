@@ -2,6 +2,8 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
+import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
+import { campaignStatusCacheSuffix, parseCampaignStatus } from "@/lib/ppc/campaign-status-filter";
 
 export const runtime = "nodejs";
 
@@ -31,8 +33,12 @@ export async function GET(request: Request) {
     const endDate = /^\d{4}-\d{2}-\d{2}$/.test(endDateParam) ? endDateParam : undefined;
 
     const sql = await getDatabaseClient();
+    // Kênh FBA / FBM (store chia kênh); null = cả store như cũ
+    const channelScope = await resolvePpcChannelScope(sql, storeName, searchParams.get("channel"));
 
-    const cacheKey = `ppc:query:st-opt:${scope.teamId}:${request.url}`;
+    // Chỉ search term của campaign đang chạy (giao diện mặc định ACTIVE); không gửi = ALL như cũ
+    const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
+    const cacheKey = `ppc:query:st-opt:${scope.teamId}:${request.url}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
     const cachedData = await getCachedOrFetch(cacheKey, 60, async () => {
       let storeId: string | null = null;
       if (storeName !== "ALL") {
@@ -43,6 +49,24 @@ export async function GET(request: Request) {
         `;
         if (storeRows.length > 0) storeId = storeRows[0].id;
       }
+
+      // Campaign đang enabled (snapshot mới nhất của store) — chỉ khi lọc ACTIVE
+      const activeCampaignKeys = campaignStatus === "ACTIVE"
+        ? (await sql<{ k: string }[]>`
+            SELECT DISTINCT cs.store_id::text || '|' || lower(trim(cs.campaign_name)) AS k
+            FROM ppc_campaign_summary cs
+            JOIN (
+              -- cùng quy ước với ppcActiveCampaignWhere: snapshot mới nhất của store, kỳ dài nhất
+              SELECT DISTINCT ON (a.store_id) a.store_id, a.snapshot_id, a.coverage_days
+              FROM ppc_active_snapshots a
+              JOIN ppc_stores s ON s.id = a.store_id
+              WHERE s.team_id = ${scope.teamId}
+                ${storeId ? sql`AND a.store_id = ${storeId}` : sql``}
+              ORDER BY a.store_id, a.report_end_date DESC, a.coverage_days DESC
+            ) sa ON sa.store_id = cs.store_id AND sa.snapshot_id = cs.snapshot_id AND sa.coverage_days = cs.coverage_days
+            WHERE lower(COALESCE(cs.campaign_state, '')) = 'enabled'
+          `).map((r) => r.k)
+        : null;
 
       const anchorCte = sql`
         SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
@@ -68,12 +92,15 @@ export async function GET(request: Request) {
         ? sql`AND lower(c.campaign_name) = lower(${campaignName})`
         : sql``;
 
-      const skuFilter = sku !== "ALL"
+      const skuOnlyFilter = sku !== "ALL"
         ? sql`AND (
             lower(p.portfolio_name) = lower(${sku})
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )`
         : sql``;
+      const skuFilter = channelScope
+        ? sql`${skuOnlyFilter} AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
+        : skuOnlyFilter;
 
       const negatedFilter = hideAlreadyNegated
         ? sql`AND NOT c.is_already_negated`
@@ -156,6 +183,14 @@ export async function GET(request: Request) {
           GROUP BY p.campaign_name, p.customer_search_term
           HAVING ${thresholdCondition}
         ),
+        active_candidates AS (
+          -- Lọc campaign đang chạy sau khi gộp (vài trăm dòng). Danh sách campaign enabled lấy sẵn 1 lần
+          -- (activeCampaignKeys) để Postgres băm 1 lần — để nó tự lập kế hoạch thì ước lượng sai, chậm 3–20s.
+          SELECT * FROM grouped_candidates gc
+          WHERE ${activeCampaignKeys
+            ? sql`(gc.store_id::text || '|' || lower(trim(gc.campaign_name))) IN (SELECT unnest(${activeCampaignKeys}::text[]))`
+            : sql`TRUE`}
+        ),
         candidates_with_checks AS (
           SELECT
             gc.*,
@@ -174,7 +209,7 @@ export async function GET(request: Request) {
                 AND lower(trim(nr.keyword_text)) = lower(trim(gc.customer_search_term))
               LIMIT 1
             ))) AS is_already_negated
-          FROM grouped_candidates gc
+          FROM active_candidates gc
         )
       `;
 

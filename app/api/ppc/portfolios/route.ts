@@ -23,6 +23,7 @@ export async function GET(request: Request) {
     const sortDirection = p.get("sortDirection") === "asc" ? "asc" : "desc";
     const status = (["ALL", "ACTIVE", "PAUSED"].includes(p.get("status") || "") ? p.get("status") : "ACTIVE") as PpcPortfolioPageFilters["status"];
     const targetAcos = Number(p.get("targetAcos") || 30);
+    const channel = p.get("channel") || null;
 
     if (!Number.isInteger(page) || !Number.isInteger(pageSize) || !Number.isInteger(days) || !allowedSorts.has(sortField)) {
       throw new ApiError("Tham số phân trang hoặc sắp xếp Portfolio không hợp lệ.", 400);
@@ -36,6 +37,7 @@ export async function GET(request: Request) {
       sortDirection,
       page,
       pageSize,
+      channel,
       ranges: decodeMetricRanges(p.get("ranges")),
     };
     const snapshotId = await getActiveSnapshotId(scope, filters.storeName, filters.days);

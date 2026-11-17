@@ -88,6 +88,8 @@ interface Props {
   onOpenSkuTrend?: (data: { sku: string; storeName: string; mockupUrl?: string | null; dailyTrend: PpcSkuDailyTrendPoint[] }) => void;
   notify: (message: string, type?: "success" | "error") => void;
   onQueued: () => void;
+  /** Kênh chọn ở ô store ("STORE · FBA" / "STORE · FBM"); null = store không chia kênh. */
+  channelPage?: "FBA" | "FBM" | null;
 }
 
 const TIER_STYLE: Record<ManualBidTier, { dot: string; chip: string; chipOn: string; text: string }> = {
@@ -421,7 +423,7 @@ function ColumnFilterMenu({
 }
 
 export function PpcManualBidView({
-  isActive, selectedStore, selectedDays, actionQueue, skuGroups, skuTrends, onOpenSkuTrend, notify, onQueued,
+  isActive, selectedStore, selectedDays, actionQueue, skuGroups, skuTrends, onOpenSkuTrend, notify, onQueued, channelPage = null,
 }: Props) {
   // query = SKU người dùng bấm Xem; result.key cho biết dữ liệu đang hiển thị ứng với store/kỳ/SKU nào.
   const [query, setQuery] = useState<{ sku: string; nonce: number } | null>(null);
@@ -544,30 +546,8 @@ export function PpcManualBidView({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getTargets đọc store/kỳ/skuGroups mới nhất; chỉ chạy lại khi đổi yêu cầu
   }, [query, reqKey, isActive, selectedStore, selectedDays, result, needScope]);
 
-  // Trang FBA / FBM / Khác (store có bảng mã FBM). Mở tab vào trang đã chọn lần trước — lưu theo tài khoản;
-  // chỉ tải SKU của trang đang xem, trang khác bấm vào mới tải.
-  const [channel, setChannelState] = useState<ChannelPage | null>(null);
-  useEffect(() => {
-    if (!isActive || channel) return;
-    let cancelled = false;
-    fetch("/api/settings/ui-preferences", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        const c = d?.preferences?.manualBidChannel;
-        if (!cancelled) setChannelState(c === "FBM" || c === "OTHER" ? c : "FBA");
-      })
-      .catch(() => { if (!cancelled) setChannelState("FBA"); });
-    return () => { cancelled = true; };
-  }, [isActive, channel]);
-  const setChannel = (c: ChannelPage) => {
-    if (c === channel) return;
-    setChannelState(c);
-    fetch("/api/settings/ui-preferences", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ manualBidChannel: c }),
-    }).catch(() => undefined);
-  };
+  // Kênh FBA / FBM lấy từ ô chọn store (lưu theo tài khoản ở dashboard); store không chia kênh thì server bỏ qua.
+  const channel: ChannelPage = channelPage ?? "FBA";
 
   // Số liệu từng SKU tính từ target (tổng và riêng target active) của trang đang xem.
   // Đang gõ ô tìm SKU (store có trang FBA/FBM): tìm trong cả store, không chỉ trang đang xem.
@@ -630,12 +610,6 @@ export function PpcManualBidView({
     }).filter((r) => r.targets > 0);
   }, [summary, samePage, skuGroups, activeOnly]);
 
-  // Số SKU trên nút mỗi trang (lấy từ lần tải gần nhất, kể cả khi đang tải trang khác).
-  const channelPages = useMemo(() => {
-    if (!summary?.hasChannels || !summary.counts) return null;
-    const k = activeOnly ? "active" : "all";
-    return { FBA: summary.counts.FBA[k], FBM: summary.counts.FBM[k], OTHER: summary.counts.OTHER[k] };
-  }, [summary, activeOnly]);
   const pageRows = skuRows;
 
   const load = (code: string) => {
@@ -1385,9 +1359,6 @@ export function PpcManualBidView({
     return (
       <ManualBidSkuList
         rows={pageRows}
-        channel={channel ?? "FBA"}
-        channelPages={channelPages}
-        onChannelChange={setChannel}
         searchAll={fetchChannel === "ALL"}
         onSearchingChange={setSearchingAll}
         refreshing={skuRefreshing}
@@ -1531,29 +1502,10 @@ export function PpcManualBidView({
           </div>
         )}
 
-        {/* Active toggle góc phải */}
+        {/* "Gồm paused" góc phải (đồng bộ các tab PPC) */}
         {sku && (
           <div className="ml-auto flex items-center gap-2">
-            <div className="flex rounded border border-slate-300 bg-slate-100 p-0.5 text-xs">
-              <button
-                type="button"
-                onClick={() => setActiveOnly(true)}
-                className={`cursor-pointer rounded px-2 py-0.5 font-medium transition ${
-                  activeOnly ? "bg-white text-slate-900 font-bold shadow-xs" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Active
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveOnly(false)}
-                className={`cursor-pointer rounded px-2 py-0.5 font-medium transition ${
-                  !activeOnly ? "bg-white text-slate-900 font-bold shadow-xs" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Tất cả
-              </button>
-            </div>
+            <IncludePausedCheckbox checked={!activeOnly} onChange={(v) => setActiveOnly(!v)} />
           </div>
         )}
       </div>
@@ -2231,10 +2183,7 @@ export function RangeRow({ label, unit, value, onChange }: {
 const SKU_PAGE = 100;
 
 // Màn đầu: tất cả SKU của store, cùng nguồn số liệu với tab Đề xuất & Auto Bid. Bấm 1 dòng để chỉnh bid.
-function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, searchAll, onSearchingChange, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
-  channel: "FBA" | "FBM" | "OTHER";
-  channelPages: { FBA: number; FBM: number; OTHER: number } | null;
-  onChannelChange: (c: "FBA" | "FBM" | "OTHER") => void;
+function ManualBidSkuList({ rows, searchAll, onSearchingChange, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
   /** Đang tìm trong cả store (bỏ qua trang FBA/FBM). */
   searchAll: boolean;
   onSearchingChange: (searching: boolean) => void;
@@ -2416,40 +2365,8 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, search
           />
         </form>
 
-        {/* Kênh FBA / FBM / Khác + trạng thái dạng dropdown, tô màu riêng cho dễ nhìn */}
-        {channelPages && (
-          <select
-            value={channel}
-            onChange={(e) => {
-              if (search.trim()) setFilter({ search: "" });
-              onChannelChange(e.target.value as "FBA" | "FBM" | "OTHER");
-            }}
-            title="Kênh"
-            className={`h-9 cursor-pointer rounded-lg border px-2.5 text-[13px] font-bold outline-none focus:ring-2 focus:ring-indigo-200 ${
-              searchAll ? "border-slate-300 bg-slate-200 text-slate-600" : "border-indigo-600 bg-indigo-600 text-white"
-            }`}
-          >
-            {([["FBA", "FBA"], ["FBM", "FBM"], ["OTHER", "Khác"]] as const)
-              .filter(([k]) => k !== "OTHER" || channelPages.OTHER > 0 || channel === "OTHER")
-              .map(([k, label]) => (
-                <option key={k} value={k} className="bg-white text-slate-800">{label} ({channelPages[k]})</option>
-              ))}
-          </select>
-        )}
-
-        <select
-          value={activeOnly ? "active" : "all"}
-          onChange={(e) => { if ((e.target.value === "active") !== activeOnly) onToggleActive(); }}
-          title="Trạng thái target"
-          className={`h-9 cursor-pointer rounded-lg border px-2.5 text-[13px] font-bold outline-none focus:ring-2 ${
-            activeOnly
-              ? "border-emerald-600 bg-emerald-600 text-white focus:ring-emerald-200"
-              : "border-amber-500 bg-amber-500 text-white focus:ring-amber-200"
-          }`}
-        >
-          <option value="active" className="bg-white text-slate-800">Active</option>
-          <option value="all" className="bg-white text-slate-800">Tất cả</option>
-        </select>
+        {/* "Gồm paused" (đồng bộ các tab PPC): mặc định tắt = chỉ target / campaign đang chạy */}
+        <IncludePausedCheckbox checked={!activeOnly} onChange={() => onToggleActive()} className="h-9 text-[12px]" />
 
         <div ref={moreRef} className="relative">
           <button
@@ -2601,5 +2518,25 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, search
         {filtered.length > limit && <div ref={loadMoreRef}><LoadingBlock bare rows={2} /></div>}
       </div>
     </div>
+  );
+}
+
+/** Ô "Gồm paused" dùng chung kiểu với các tab PPC khác: mặc định tắt = chỉ đang chạy. */
+function IncludePausedCheckbox({ checked, onChange, className = "" }: { checked: boolean; onChange: (v: boolean) => void; className?: string }) {
+  return (
+    <label
+      className={`flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+        checked ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+      } ${className}`}
+      title="Mặc định chỉ lấy target / campaign đang chạy. Tích để xem cả paused."
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 accent-amber-500"
+      />
+      <span>Gồm paused</span>
+    </label>
   );
 }

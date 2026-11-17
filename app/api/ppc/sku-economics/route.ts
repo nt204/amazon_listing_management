@@ -9,6 +9,8 @@ import {
   setSkuMaxBidOverride,
   upsertSkuEconomics,
 } from "@/lib/ppc/sku-architecture-service";
+import { parsePpcChannel } from "@/lib/ppc/channel-filter";
+import { loadSkuChannels } from "@/lib/ppc/sku-channels";
 
 const mappingSchema = z.object({
   storeId: z.string().trim().min(1).optional(),
@@ -38,6 +40,14 @@ export async function GET(request: Request) {
     const days = Number(searchParams.get("days") || 30);
 
     const list = await getSkuEconomicsList(storeId, days);
+    // Kênh FBA / FBM (store có Bảng mã FBM): chỉ giữ SKU thuộc kênh theo Bảng mã; store không chia kênh → giữ nguyên.
+    const channel = parsePpcChannel(searchParams.get("channel"));
+    if (channel) {
+      const channels = await loadSkuChannels(storeId).catch(() => null);
+      if (channels?.hasFbm) {
+        return compressedJson(request, { success: true, data: list.filter((row) => channels.get(row.sku) === channel) });
+      }
+    }
     return compressedJson(request, { success: true, data: list });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách SKU Economics.", 500);

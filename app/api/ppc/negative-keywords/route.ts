@@ -1,6 +1,16 @@
 import { ApiError, authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
+import { parseCampaignStatus, ppcActiveCampaignWhere, type PpcCampaignStatusFilter } from "@/lib/ppc/campaign-status-filter";
+
+type Db = Awaited<ReturnType<typeof getDatabaseClient>>;
+
+/** ACTIVE: negative đang bật VÀ campaign của nó đang chạy. ALL (không gửi tham số): như cũ. */
+function activeNegativeWhere(sql: Db, status: PpcCampaignStatusFilter) {
+  if (status !== "ACTIVE") return sql``;
+  return sql`AND lower(COALESCE(nr.state, '')) = 'enabled'
+    AND ${ppcActiveCampaignWhere(sql, status, { storeIdCol: "nr.store_id", campaignCol: "nr.campaign_name" })}`;
+}
 
 export const runtime = "nodejs";
 
@@ -12,6 +22,7 @@ export async function GET(request: Request) {
     const storeName = searchParams.get("storeName")?.trim() || "";
     const adType = searchParams.get("adType")?.trim().toUpperCase() || "";
     const search = searchParams.get("search")?.trim().toLowerCase() || "";
+    const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
 
     const sql = await getDatabaseClient();
 
@@ -51,6 +62,7 @@ export async function GET(request: Request) {
         ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
         ${adType && adType !== "ALL" ? sql`AND nr.ad_type = ${adType}` : sql``}
         ${search ? sql`AND (LOWER(nr.keyword_text) LIKE ${"%" + search + "%"} OR LOWER(nr.campaign_name) LIKE ${"%" + search + "%"})` : sql``}
+        ${activeNegativeWhere(sql, campaignStatus)}
       ORDER BY nr.created_at DESC
       LIMIT 2000
     `;
@@ -96,7 +108,7 @@ export async function DELETE(request: Request) {
     // Support single id or ids from query or body
     let ids: string[] = [];
     let isAllFiltered = false;
-    let filters: { storeId?: string; storeName?: string; adType?: string; search?: string } = {};
+    let filters: { storeId?: string; storeName?: string; adType?: string; search?: string; campaignStatus?: string } = {};
     let excludedIds: string[] = [];
 
     const queryId = searchParams.get("id")?.trim();
@@ -130,6 +142,7 @@ export async function DELETE(request: Request) {
       const storeName = filters.storeName?.trim() || "";
       const adType = filters.adType?.trim().toUpperCase() || "";
       const search = filters.search?.trim().toLowerCase() || "";
+      const campaignStatus = parseCampaignStatus(filters.campaignStatus);
 
       if (storeId && storeId !== "ALL") {
         await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeId);
@@ -148,6 +161,7 @@ export async function DELETE(request: Request) {
             ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
             ${adType && adType !== "ALL" ? sql`AND nr.ad_type = ${adType}` : sql``}
             ${search ? sql`AND (LOWER(nr.keyword_text) LIKE ${"%" + search + "%"} OR LOWER(nr.campaign_name) LIKE ${"%" + search + "%"})` : sql``}
+            ${activeNegativeWhere(sql, campaignStatus)}
             ${excludedIds.length > 0 ? sql`AND nr.id != ALL(${excludedIds}::uuid[])` : sql``}
         ) AND team_id = ${actor.teamId}
         RETURNING id

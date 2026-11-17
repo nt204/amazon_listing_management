@@ -14,6 +14,8 @@ import type {
   PpcStore,
 } from "./types";
 import { resolveSkuForSearchTerm } from "./sku-extractor";
+import { ppcChannelWhere, resolvePpcChannelScope } from "./channel-filter";
+import { parseCampaignStatus, ppcActiveCampaignWhere } from "./campaign-status-filter";
 import { metricRangeSql, plainMetricColumns } from "./metric-range-sql";
 import type { ParsedMetricRange } from "./manual-bid";
 
@@ -351,12 +353,14 @@ export async function deletePpcStore(
 
 export async function listPpcSearchTerms(
   scope: DataScope,
-  filters: { storeName: string; sku: string; days: number; startDate?: string; endDate?: string },
+  filters: { storeName: string; sku: string; days: number; startDate?: string; endDate?: string; channel?: string | null; campaignStatus?: string | null },
   options: { limit?: number; offset?: number; projection?: "full" | "lightweight" } = {},
 ): Promise<PpcSearchTermRow[]> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
   const isLight = options.projection === "lightweight";
+  const channelScope = await resolvePpcChannelScope(sql, filters.storeName, filters.channel);
+  const campaignStatus = parseCampaignStatus(filters.campaignStatus);
 
   const rows = await sql<SearchTermDbRow[]>`
     WITH anchor AS (
@@ -416,6 +420,8 @@ export async function listPpcSearchTerms(
         OR lower(t.portfolio_name) = lower(${filters.sku})
         OR position(lower(${filters.sku}) in lower(t.campaign_name)) > 0
       )
+      AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "t.campaign_name", portfolioCol: "t.portfolio_name" })}
+      AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "t.store_id", campaignCol: "t.campaign_name" })}
       AND (
         (
           t.report_granularity = 'DAILY'
@@ -446,11 +452,20 @@ export async function listPpcPerformance(
     campaignId?: string;
     campaignName?: string;
     adGroupId?: string;
+    channel?: string | null;
+    /** ACTIVE: chỉ campaign đang enabled (grain TARGET: thêm target đang enabled); không gửi / ALL → như cũ. */
+    campaignStatus?: string | null;
   },
   options: { grain?: PpcPerformanceGrain; limit?: number; offset?: number } = {},
 ): Promise<PpcPerformanceRow[]> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
+  const channelScope = await resolvePpcChannelScope(sql, filters.storeName, filters.channel);
+  const campaignStatus = parseCampaignStatus(filters.campaignStatus);
+  const activeWhere = campaignStatus === "ACTIVE"
+    ? sql`${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name" })}
+        ${options.grain === "TARGET" ? sql`AND lower(COALESCE(p.state, '')) = 'enabled'` : sql``}`
+    : sql`TRUE`;
   // Check active snapshots first to avoid scanning millions of historical rows (30x faster)
   const activeSnapshots = await sql<Array<{ store_id: string; report_start_date: string; report_end_date: string }>>`
     SELECT a.store_id, a.report_start_date::text, a.report_end_date::text
@@ -504,6 +519,8 @@ export async function listPpcPerformance(
         AND (${!filters.campaignId} OR p.campaign_id = ${filters.campaignId || ""})
         AND (${!filters.campaignName} OR lower(p.campaign_name) = lower(${filters.campaignName || ""}))
         AND (${!filters.adGroupId} OR p.ad_group_id = ${filters.adGroupId || ""})
+        AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
+        AND ${activeWhere}
         AND (
           ${filters.sku === "ALL"}
           OR lower(p.sku) = lower(${filters.sku})
@@ -572,6 +589,8 @@ export async function listPpcPerformance(
         AND (${!filters.campaignId} OR p.campaign_id = ${filters.campaignId || ""})
         AND (${!filters.campaignName} OR lower(p.campaign_name) = lower(${filters.campaignName || ""}))
         AND (${!filters.adGroupId} OR p.ad_group_id = ${filters.adGroupId || ""})
+        AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
+        AND ${activeWhere}
         AND (
           ${filters.sku === "ALL"}
           OR lower(p.sku) = lower(${filters.sku})
@@ -742,6 +761,8 @@ export interface PpcCampaignPageFilters {
   sortDirection: "asc" | "desc";
   page: number;
   pageSize: number;
+  /** Kênh FBA / FBM (store chia kênh); bỏ trống = cả store. */
+  channel?: string | null;
   /** Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */
   ranges?: ParsedMetricRange[];
 }
@@ -763,6 +784,7 @@ export async function listPpcCampaignPage(
   const searchPattern = searchWords.length > 0 ? `%${searchWords.join("%")}%` : "%";
   const coverageDays = Math.max(1, Math.trunc(filters.days));
   const rangeFilter = metricRangeSql(sql, filters.ranges ?? [], plainMetricColumns(sql));
+  const channelScope = await resolvePpcChannelScope(sql, filters.storeName, filters.channel);
   const portfolioFilter = filters.portfolioName || "";
 
   const activeSnapRows = await sql<{ count: string | number }[]>`
@@ -814,6 +836,7 @@ export async function listPpcCampaignPage(
             AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
             AND cs.coverage_days = ${coverageDays}
             AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(cs.campaign_name)) > 0)
+            AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "cs.campaign_name", portfolioCol: "cs.portfolio_name" })}
             AND (${!portfolioFilter || portfolioFilter === "ALL"}
               OR (${portfolioFilter === "__NONE__"} AND (cs.portfolio_name IS NULL OR TRIM(cs.portfolio_name) = ''))
               OR cs.portfolio_name = ${portfolioFilter})
@@ -941,6 +964,7 @@ export async function listPpcCampaignPage(
             AND p.grain = 'CAMPAIGN'
             AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
             AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(p.campaign_name)) > 0)
+            AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
             AND (${!portfolioFilter || portfolioFilter === "ALL"}
               OR (${portfolioFilter === "__NONE__"} AND (p.portfolio_name IS NULL OR TRIM(p.portfolio_name) = ''))
               OR p.portfolio_name = ${portfolioFilter})
@@ -1061,6 +1085,7 @@ export async function listPpcCampaignPage(
             AND p.grain = 'CAMPAIGN'
             AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
             AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(p.campaign_name)) > 0)
+            AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
             AND (${!portfolioFilter || portfolioFilter === "ALL"}
               OR (${portfolioFilter === "__NONE__"} AND (p.portfolio_name IS NULL OR TRIM(p.portfolio_name) = ''))
               OR p.portfolio_name = ${portfolioFilter})
@@ -1168,7 +1193,9 @@ export interface PpcPortfolioPageFilters {
   sortDirection: "asc" | "desc";
   page: number;
   pageSize: number;
-  /** Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR (theo tổng của portfolio) */
+  /** Kênh FBA / FBM (store chia kênh); bỏ trống = cả store. */
+  channel?: string | null;
+  /** Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */
   ranges?: ParsedMetricRange[];
 }
 
@@ -1207,6 +1234,7 @@ export async function listPpcPortfolioPage(
   const searchPattern = searchWords.length > 0 ? `%${searchWords.join("%")}%` : "%";
   const coverageDays = Math.max(1, Math.trunc(filters.days));
   const rangeFilter = metricRangeSql(sql, filters.ranges ?? [], plainMetricColumns(sql));
+  const channelScope = await resolvePpcChannelScope(sql, filters.storeName, filters.channel);
 
   const activeSnapRows = await sql<{ count: string | number }[]>`
     SELECT count(*) as count
@@ -1270,6 +1298,7 @@ export async function listPpcPortfolioPage(
           AND (${filters.status === "ALL"}
             OR (${filters.status === "ACTIVE"} AND lower(COALESCE(cs.campaign_state, '')) = 'enabled')
             OR (${filters.status === "PAUSED"} AND lower(COALESCE(cs.campaign_state, '')) = 'paused'))
+          AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "cs.campaign_name", portfolioCol: "cs.portfolio_name" })}
         GROUP BY 1, 2
       ), filtered AS (
         SELECT * FROM base
@@ -1345,6 +1374,7 @@ export async function listPpcPortfolioPage(
           AND (${filters.status === "ALL"}
             OR (${filters.status === "ACTIVE"} AND lower(COALESCE(p.campaign_state, p.state, '')) = 'enabled')
             OR (${filters.status === "PAUSED"} AND lower(COALESCE(p.campaign_state, p.state, '')) = 'paused'))
+          AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
         GROUP BY 1, 2
       ), filtered AS (
         SELECT * FROM base
@@ -2753,7 +2783,7 @@ function canonicalCoverageDays(spanDays: number): number {
 
 export async function getPpcOverviewAggregates(
   scope: DataScope,
-  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string } = {},
+  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string; channel?: string | null } = {},
 ): Promise<PpcOverviewAggregates> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
@@ -2767,6 +2797,11 @@ export async function getPpcOverviewAggregates(
     ? canonicalCoverageDays(Math.round((customEnd - customStart) / 86_400_000) + 1)
     : null;
   const coverageDays = customCoverageDays || Math.max(1, Math.trunc(days));
+  // Kênh FBA / FBM: các bảng tổng theo store (snapshot / target breakdown) không có tên campaign
+  // → khi có kênh, tính từ ppc_campaign_summary / ppc_performance_facts và lọc theo kênh.
+  const channelScope = await resolvePpcChannelScope(sql, storeName, filters.channel);
+  const campChannel = ppcChannelWhere(sql, channelScope, { campaignCol: "cs.campaign_name", portfolioCol: "cs.portfolio_name" });
+  const skuChannel = ppcChannelWhere(sql, channelScope, { skuCol: "sk.sku" });
 
   // 1. Fast path: check if precomputed summary snapshots exist
   const activeSnapshots = await sql<Array<{
@@ -2818,8 +2853,30 @@ export async function getPpcOverviewAggregates(
         WHERE s.team_id = ${teamId}
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND sm.coverage_days = ${coverageDays}
+          AND ${!channelScope}
         GROUP BY sm.ad_type
-        ORDER BY sm.ad_type;
+        UNION ALL
+        SELECT
+          cs.ad_type,
+          COUNT(*) AS campaign_count,
+          SUM(cs.spend) AS spend,
+          SUM(cs.sales) AS sales,
+          SUM(cs.orders) AS orders,
+          SUM(cs.units) AS units,
+          SUM(cs.clicks) AS clicks,
+          SUM(cs.impressions) AS impressions,
+          MIN(a.report_start_date) AS max_report_start,
+          MAX(a.report_end_date) AS max_report_end
+        FROM ppc_campaign_summary cs
+        JOIN ppc_active_snapshots a ON a.store_id = cs.store_id AND a.snapshot_id = cs.snapshot_id AND a.coverage_days = cs.coverage_days
+        JOIN ppc_stores s ON s.id = cs.store_id
+        WHERE ${Boolean(channelScope)}
+          AND s.team_id = ${teamId}
+          AND lower(s.name) = lower(${storeName})
+          AND cs.coverage_days = ${coverageDays}
+          AND ${campChannel}
+        GROUP BY cs.ad_type
+        ORDER BY 1;
       `,
       // 1b. 7-Day KPI breakdown from Bulk Sheet CAMPAIGN grain
       sql<Array<{
@@ -2847,8 +2904,28 @@ export async function getPpcOverviewAggregates(
         WHERE s.team_id = ${teamId}
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND sm.coverage_days = 7
+          AND ${!channelScope}
         GROUP BY sm.ad_type
-        ORDER BY sm.ad_type;
+        UNION ALL
+        SELECT
+          cs.ad_type,
+          COUNT(*) AS campaign_count,
+          SUM(cs.spend) AS spend,
+          SUM(cs.sales) AS sales,
+          SUM(cs.orders) AS orders,
+          SUM(cs.units) AS units,
+          SUM(cs.clicks) AS clicks,
+          SUM(cs.impressions) AS impressions
+        FROM ppc_campaign_summary cs
+        JOIN ppc_active_snapshots a ON a.store_id = cs.store_id AND a.snapshot_id = cs.snapshot_id AND a.coverage_days = cs.coverage_days
+        JOIN ppc_stores s ON s.id = cs.store_id
+        WHERE ${Boolean(channelScope)}
+          AND s.team_id = ${teamId}
+          AND lower(s.name) = lower(${storeName})
+          AND cs.coverage_days = 7
+          AND ${campChannel}
+        GROUP BY cs.ad_type
+        ORDER BY 1;
       `,
       // 2. Top 7 Campaigns
       sql<PerformanceDbRow[]>`
@@ -2870,6 +2947,7 @@ export async function getPpcOverviewAggregates(
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND cs.coverage_days = ${coverageDays}
           AND (cs.spend > 0 OR cs.clicks > 0 OR cs.impressions > 0)
+          AND ${campChannel}
         ORDER BY cs.spend DESC
         LIMIT 500;
       `,
@@ -2900,6 +2978,7 @@ export async function getPpcOverviewAggregates(
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND sk.coverage_days = ${coverageDays}
           AND (${sku === "ALL"} OR lower(sk.sku) = lower(${sku}))
+          AND ${skuChannel}
         GROUP BY sk.sku, s.name
         ORDER BY spend DESC
         LIMIT 10;
@@ -2928,6 +3007,7 @@ export async function getPpcOverviewAggregates(
         WHERE s.team_id = ${teamId}
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND tb.coverage_days = ${coverageDays}
+          AND ${!channelScope}
         GROUP BY tb.target_type, tb.keyword_match_type
         ORDER BY spend DESC;
       `,
@@ -2940,6 +3020,7 @@ export async function getPpcOverviewAggregates(
         WHERE s.team_id = ${teamId}
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND sk.coverage_days = ${coverageDays}
+          AND ${skuChannel}
         ORDER BY sk.sku;
       `,
       // 6. Target Count directly from snapshot summary
@@ -2950,7 +3031,8 @@ export async function getPpcOverviewAggregates(
         JOIN ppc_stores s ON s.id = sm.store_id
         WHERE s.team_id = ${teamId}
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
-          AND sm.coverage_days = ${coverageDays};
+          AND sm.coverage_days = ${coverageDays}
+          AND ${!channelScope};
       `,
       // 7. Store Summaries directly from snapshot summary (no separate table needed!)
       sql<Array<{
@@ -2991,6 +3073,50 @@ export async function getPpcOverviewAggregates(
       `,
     ]);
 
+    // Có kênh: phân loại target + đếm target lấy thẳng từ facts TARGET của snapshot đang dùng (cùng công thức với
+    // refreshPpcSnapshotSummary), lọc theo kênh của campaign.
+    let channelTargetBreakdown: Array<(typeof targetBreakdownRows)[number]> | null = null;
+    let channelTargetCount = 0;
+    if (channelScope) {
+      const rows = await sql<Array<(typeof targetBreakdownRows)[number] & { target_count: string | number }>>`
+        SELECT
+          CASE
+            WHEN lower(p.target_expression) IN ('close-match', 'loose-match', 'substitutes', 'complements')
+                 OR lower(p.target_expression) LIKE '%auto targeting%' THEN 'Auto'
+            WHEN upper(p.match_type) = 'TARGETING'
+                 OR lower(p.target_expression) LIKE 'asin=%'
+                 OR lower(p.target_expression) LIKE 'asin-expanded=%'
+                 OR lower(p.target_expression) LIKE 'category=%' THEN 'Product Targeting'
+            ELSE 'Keyword'
+          END AS target_type,
+          CASE
+            WHEN upper(p.match_type) LIKE '%EXACT%' THEN 'Exact'
+            WHEN upper(p.match_type) LIKE '%PHRASE%' THEN 'Phrase'
+            WHEN upper(p.match_type) LIKE '%BROAD%' THEN 'Broad'
+            ELSE 'Unknown'
+          END AS keyword_match_type,
+          COALESCE(SUM(p.spend), 0) AS spend,
+          COALESCE(SUM(p.sales), 0) AS sales,
+          COALESCE(SUM(p.orders), 0) AS orders,
+          COALESCE(SUM(p.clicks), 0) AS clicks,
+          COALESCE(SUM(p.impressions), 0) AS impressions,
+          COUNT(*) AS target_count
+        FROM ppc_performance_facts p
+        JOIN ppc_stores s ON s.id = p.store_id
+        JOIN ppc_active_snapshots a ON a.store_id = p.store_id AND a.coverage_days = ${coverageDays}
+          AND a.report_start_date = p.report_start_date AND a.report_end_date = p.report_end_date
+        WHERE s.team_id = ${teamId}
+          AND lower(s.name) = lower(${storeName})
+          AND p.grain = 'TARGET' AND NOT p.is_negative
+          AND (p.spend > 0 OR p.clicks > 0 OR p.impressions > 0)
+          AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
+        GROUP BY 1, 2
+        ORDER BY spend DESC
+      `;
+      channelTargetBreakdown = Array.from(rows);
+      channelTargetCount = rows.reduce((sum, r) => sum + Number(r.target_count || 0), 0);
+    }
+
     let snapshotDates: { startDate: string; endDate: string } | null = null;
     const sampleKpi = kpiRows.find((r) => r.max_report_start && r.max_report_end);
     if (sampleKpi && sampleKpi.max_report_start && sampleKpi.max_report_end) {
@@ -3014,8 +3140,8 @@ export async function getPpcOverviewAggregates(
         impressions: Number(r.impressions || 0),
         campaignsCount: Number(r.campaigns_count || 0),
       })),
-      targetBreakdown: targetBreakdownRows,
-      targetCount: Number(targetCountRow[0]?.target_count || 0),
+      targetBreakdown: channelTargetBreakdown ?? targetBreakdownRows,
+      targetCount: channelScope ? channelTargetCount : Number(targetCountRow[0]?.target_count || 0),
       availableSkus: availableSkuRows.map((r) => r.sku),
       snapshotDates,
       storeSummaries: storeSummaryRows,
@@ -3023,7 +3149,7 @@ export async function getPpcOverviewAggregates(
   }
 
   // 2. Fallback: scan raw facts if no active snapshot summary exists
-  const targetCountKey = `${teamId}::${storeName}::${sku}::${days}`;
+  const targetCountKey = `${teamId}::${storeName}::${sku}::${days}::${channelScope?.channel || ""}`;
   const cachedTargetCount = targetCountCache.get(targetCountKey);
   const targetCountPromise: Promise<number> = cachedTargetCount && cachedTargetCount.expiresAt > Date.now()
     ? Promise.resolve(cachedTargetCount.count)
@@ -3048,6 +3174,7 @@ export async function getPpcOverviewAggregates(
           ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
           AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
         WHERE p.grain = 'TARGET'
+          AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
           AND NOT p.is_negative
           AND (p.spend > 0 OR p.clicks > 0 OR p.impressions > 0);
       `;
@@ -3099,6 +3226,7 @@ export async function getPpcOverviewAggregates(
         ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
         AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
       WHERE p.grain = 'CAMPAIGN'
+        AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
       GROUP BY p.ad_type;
     `,
 
@@ -3134,6 +3262,7 @@ export async function getPpcOverviewAggregates(
         AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
       WHERE s.team_id = ${teamId}
         AND p.grain = 'CAMPAIGN'
+        AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
         AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
       ORDER BY p.spend DESC, p.id
       LIMIT 7;
@@ -3179,6 +3308,7 @@ export async function getPpcOverviewAggregates(
         AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
       WHERE s.team_id = ${teamId}
         AND p.grain = 'PRODUCT' AND p.sku IS NOT NULL AND p.sku != ''
+        AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
         AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
       GROUP BY p.sku, s.name
       ORDER BY spend DESC
@@ -3234,6 +3364,7 @@ export async function getPpcOverviewAggregates(
         ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
         AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
       WHERE p.grain = 'TARGET' AND NOT p.is_negative
+        AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
         AND (p.spend > 0 OR p.clicks > 0 OR p.impressions > 0)
       GROUP BY 1, 2;
     `,
@@ -3259,6 +3390,7 @@ export async function getPpcOverviewAggregates(
         ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
         AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
       WHERE p.grain = 'PRODUCT' AND p.sku IS NOT NULL AND p.sku != ''
+        AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}
       ORDER BY p.sku;
     `,
 
@@ -3384,14 +3516,77 @@ type DailyTrendSqlRow = {
 
 export async function listPpcDailyTrendsFromDb(
   scope: DataScope,
-  filters: { storeName?: string; days?: number; startDate?: string; endDate?: string } = {},
+  filters: { storeName?: string; days?: number; startDate?: string; endDate?: string; channel?: string | null } = {},
 ): Promise<PpcDailyTrendPoint[]> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
   const storeName = filters.storeName || "ALL";
   const days = Math.max(1, filters.days || 30);
+  const channelScope = await resolvePpcChannelScope(sql, storeName, filters.channel);
 
-  let rows = await sql<DailyTrendSqlRow[]>`
+  // Có kênh FBA / FBM: ppc_daily_summary không có tên campaign → tính lại từ nguồn đã dựng nó
+  // (Bulk CAMPAIGN 1 ngày nếu store có, không thì Search Term DAILY), lọc theo kênh.
+  const channelDailyRows = async (source: "facts" | "search_terms") => sql<DailyTrendSqlRow[]>`
+    WITH anchor AS (
+      SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
+      FROM ppc_daily_summary p0
+      JOIN ppc_stores s0 ON s0.id = p0.store_id
+      WHERE s0.team_id = ${teamId}
+        AND lower(s0.name) = lower(${storeName})
+    ), src AS (
+      ${source === "facts"
+        ? sql`
+          SELECT p.report_end_date AS report_date, COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
+            p.spend, p.sales, p.orders, p.clicks, p.impressions
+          FROM ppc_performance_facts p
+          JOIN ppc_stores s ON s.id = p.store_id
+          WHERE s.team_id = ${teamId}
+            AND lower(s.name) = lower(${storeName})
+            AND p.grain = 'CAMPAIGN'
+            AND p.report_start_date = p.report_end_date
+            AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
+        : sql`
+          SELECT p.report_date, COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
+            p.spend, p.sales, p.orders, p.clicks, p.impressions
+          FROM ppc_search_terms p
+          JOIN ppc_stores s ON s.id = p.store_id
+          WHERE s.team_id = ${teamId}
+            AND lower(s.name) = lower(${storeName})
+            AND p.report_date IS NOT NULL
+            AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`}
+    )
+    SELECT
+      to_char(p.report_date, 'YYYY-MM-DD') AS date,
+      COALESCE(SUM(p.spend), 0) AS spend,
+      COALESCE(SUM(p.sales), 0) AS sales,
+      COALESCE(SUM(p.orders), 0) AS orders,
+      COALESCE(SUM(p.clicks), 0) AS clicks,
+      COALESCE(SUM(p.impressions), 0) AS impressions,
+      COALESCE(SUM(p.spend) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_spend,
+      COALESCE(SUM(p.sales) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_sales,
+      COALESCE(SUM(p.orders) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_orders,
+      COALESCE(SUM(p.clicks) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_clicks,
+      COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_impressions,
+      COALESCE(SUM(p.spend) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_spend,
+      COALESCE(SUM(p.sales) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_sales,
+      COALESCE(SUM(p.orders) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_orders,
+      COALESCE(SUM(p.clicks) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_clicks,
+      COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_impressions
+    FROM src p
+    CROSS JOIN anchor a
+    WHERE (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+      AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
+      AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
+    GROUP BY p.report_date
+    ORDER BY p.report_date ASC;
+  `;
+
+  let rows = channelScope
+    ? await (async () => {
+      const fromFacts = await channelDailyRows("facts");
+      return fromFacts.length > 0 ? fromFacts : channelDailyRows("search_terms");
+    })()
+    : await sql<DailyTrendSqlRow[]>`
     WITH anchor AS (
       SELECT COALESCE(
         MAX(p0.report_date),
@@ -3431,7 +3626,7 @@ export async function listPpcDailyTrendsFromDb(
     ORDER BY p.report_date ASC;
   `;
 
-  if (rows.length === 0 && !filters.startDate && !filters.endDate) {
+  if (!channelScope && rows.length === 0 && !filters.startDate && !filters.endDate) {
     await refreshPpcDailySummary(scope);
     rows = await sql<DailyTrendSqlRow[]>`
       WITH anchor AS (
@@ -3613,7 +3808,7 @@ export async function listPpcDailyCampaignsFromDb(
 
 export async function getPpcSearchTermSummaryFromDb(
   scope: DataScope,
-  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string; minClicksThreshold?: number; maxSpendThreshold?: number } = {},
+  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string; minClicksThreshold?: number; maxSpendThreshold?: number; channel?: string | null } = {},
 ): Promise<{
   summary: PpcSearchTermSummary;
   topProfitableAndBleeding: PpcSearchTermRow[];
@@ -3626,6 +3821,8 @@ export async function getPpcSearchTermSummaryFromDb(
   const days = Math.max(1, filters.days || 30);
   const minClicks = filters.minClicksThreshold ?? 10;
   const maxSpend = filters.maxSpendThreshold ?? 15.0;
+  const channelScope = await resolvePpcChannelScope(sql, storeName, filters.channel);
+  const channelWhere = ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" });
 
   const [summaryRows, topTermsRows, alertTermsRows] = await Promise.all([
     sql<Array<{
@@ -3667,6 +3864,7 @@ export async function getPpcSearchTermSummaryFromDb(
           OR position(lower(${sku}) in lower(p.campaign_name)) > 0
         )
         AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+        AND ${channelWhere}
         AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
         AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date));
     `,
@@ -3692,6 +3890,7 @@ export async function getPpcSearchTermSummaryFromDb(
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )
           AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+          AND ${channelWhere}
           AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
           AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
           AND p.orders >= 2 AND p.acos <= 30
@@ -3712,6 +3911,7 @@ export async function getPpcSearchTermSummaryFromDb(
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )
           AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+          AND ${channelWhere}
           AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
           AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
           AND p.clicks >= 9 AND p.orders = 0
@@ -3740,6 +3940,7 @@ export async function getPpcSearchTermSummaryFromDb(
           OR position(lower(${sku}) in lower(p.campaign_name)) > 0
         )
         AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+        AND ${channelWhere}
         AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
         AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
         AND (

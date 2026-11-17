@@ -1403,20 +1403,22 @@ export function PpcSkuRecommendationGroupView({
             {/* Lọc SKU theo khoảng số: Spend, Sales, ACOS, Click… (giống tab Manual Bid) */}
             <PpcMetricRangeFilter value={metricRanges} onChange={setMetricRanges} />
 
-            {/* Checkbox: Bao gồm Camp Paused */}
+            {/* Checkbox "Gồm paused" (đồng bộ các tab PPC): mặc định tắt = chỉ campaign đang chạy */}
             {onIncludePausedCampaignsChange && (
               <label
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs text-slate-700 font-semibold cursor-pointer select-none transition shadow-2xs"
-                title="Mặc định chỉ tải campaign enable. Tích chọn để tải thêm đề xuất cho các campaign đang paused."
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer select-none transition shadow-2xs ${
+                  includePausedCampaigns ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700"
+                }`}
+                title="Mặc định chỉ tải campaign đang chạy. Tích để tải thêm đề xuất cho các campaign đang paused."
               >
                 <input
                   type="checkbox"
                   checked={Boolean(includePausedCampaigns)}
                   disabled={isLoading}
                   onChange={(e) => onIncludePausedCampaignsChange(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-amber-500"
                 />
-                <span>Camp Paused</span>
+                <span>Gồm paused</span>
               </label>
             )}
 

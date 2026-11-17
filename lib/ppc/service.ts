@@ -425,6 +425,10 @@ export async function getPpcAnalyticsData(
     campaignName?: string;
     adGroupId?: string;
     projection?: "full" | "lightweight";
+    /** Kênh FBA / FBM (store chia kênh); bỏ trống = cả store. */
+    channel?: string | null;
+    /** ACTIVE: các section chi tiết chỉ tính campaign đang enabled (TARGET: thêm target enabled). Overview không áp. */
+    campaignStatus?: string | null;
   } = {},
   options: { grains?: PpcPerformanceGrain[]; includeRecommendations?: boolean; section?: string } = {},
 ) {
@@ -438,6 +442,9 @@ export async function getPpcAnalyticsData(
   const campaignId = filters.campaignId;
   const campaignName = filters.campaignName;
   const adGroupId = filters.adGroupId;
+  const channel = filters.channel || null;
+  // Chỉ áp cho section chi tiết (skus / targets / search_terms…); overview giữ số cả store như cũ
+  const campaignStatus = options.section && options.section.toLowerCase() !== "overview" ? (filters.campaignStatus || null) : null;
   const section = options.section?.toLowerCase();
   const isDetailSection = section && section !== "overview";
 
@@ -445,9 +452,9 @@ export async function getPpcAnalyticsData(
     const isAllStores = storeName === "ALL";
     const [stores, aggregates, dailyTrendsDb, searchTermData, syncLogs] = await Promise.all([
       listPpcStores(scope),
-      getPpcOverviewAggregates(scope, { storeName, sku, days, startDate, endDate }),
-      listPpcDailyTrendsFromDb(scope, { storeName, days: Math.max(days, 30), startDate, endDate }),
-      getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
+      getPpcOverviewAggregates(scope, { storeName, sku, days, startDate, endDate, channel }),
+      listPpcDailyTrendsFromDb(scope, { storeName, days: Math.max(days, 30), startDate, endDate, channel }),
+      getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate, channel }),
       listPpcSyncLogs(scope),
     ]);
 
@@ -814,7 +821,7 @@ export async function getPpcAnalyticsData(
   const requestedGrains = new Set<PpcPerformanceGrain>(effectiveGrains);
   const targetLimit = (campaignId || campaignName) ? 5_000 : 25_000;
   const performanceQuery = (grain: PpcPerformanceGrain, limit: number) => requestedGrains.has(grain)
-    ? listPpcPerformance(scope, { storeName, sku, days, campaignId, campaignName, adGroupId }, { grain, limit })
+    ? listPpcPerformance(scope, { storeName, sku, days, campaignId, campaignName, adGroupId, channel, campaignStatus }, { grain, limit })
     : Promise.resolve([] as PpcPerformanceRow[]);
 
   // Only query search terms if overview or search_terms section
@@ -826,7 +833,7 @@ export async function getPpcAnalyticsData(
     shouldFetchSearchTerms
       ? listPpcSearchTerms(
           scope,
-          { storeName, sku, days, startDate, endDate },
+          { storeName, sku, days, startDate, endDate, channel, campaignStatus },
           { projection: filters.projection || (isDetailSection && section === "search_terms" ? "lightweight" : "full") },
         )
       : Promise.resolve([] as PpcSearchTermRow[]),

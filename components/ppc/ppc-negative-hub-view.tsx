@@ -44,6 +44,8 @@ export interface NegativeRegistryItem {
 
 interface PpcNegativeHubViewProps {
   selectedStore: string;
+  /** ACTIVE (mặc định): danh sách đang lọc negative bật của campaign đang chạy — "xoá tất cả theo bộ lọc" cũng theo phạm vi này. */
+  campaignStatus?: "ACTIVE" | "ALL";
   items: NegativeRegistryItem[];
   summary: {
     totalNegatives: number;
@@ -57,6 +59,7 @@ interface PpcNegativeHubViewProps {
 
 export function PpcNegativeHubView({
   selectedStore,
+  campaignStatus = "ALL",
   items,
   summary,
   loading,
@@ -107,8 +110,9 @@ export function PpcNegativeHubView({
       storeName: selectedStore,
       adType: adTypeFilter,
       search: searchQuery.trim(),
+      campaignStatus,
     }),
-    [selectedStore, adTypeFilter, searchQuery]
+    [selectedStore, adTypeFilter, searchQuery, campaignStatus]
   );
 
   // Enterprise Bulk Selection Hook

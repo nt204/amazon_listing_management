@@ -7,6 +7,8 @@ import {
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import { getCachedOrFetch } from "@/lib/redis";
+import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
+import { campaignStatusCacheSuffix, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import type { MatchType, PpcAdType } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
@@ -37,8 +39,12 @@ export async function GET(request: Request) {
     const endDate = /^\d{4}-\d{2}-\d{2}$/.test(endDateParam) ? endDateParam : undefined;
 
     const sql = await getDatabaseClient();
+    // Kênh FBA / FBM (store chia kênh); null = cả store như cũ
+    const channelScope = await resolvePpcChannelScope(sql, storeName, searchParams.get("channel"));
 
-    const cacheKey = `ppc:query:sale-kw:${scope.teamId}:${request.url}`;
+    // Chỉ search term của campaign đang chạy (giao diện mặc định ACTIVE); không gửi = ALL như cũ
+    const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
+    const cacheKey = `ppc:query:sale-kw:${scope.teamId}:${request.url}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
     const cachedData = await getCachedOrFetch(cacheKey, 60, async () => {
       let storeId: string | null = null;
       if (storeName !== "ALL") {
@@ -100,6 +106,14 @@ export async function GET(request: Request) {
             ${storeId ? sql`AND s.store_id = ${storeId}` : sql``}
             AND s.days_window = ${days}
             ${sku !== "ALL" ? sql`AND upper(s.sku) = upper(${sku})` : sql``}
+            ${channelScope ? sql`AND ${ppcChannelWhere(sql, channelScope, { skuCol: "s.sku", campaignCol: "s.source_campaign_name" })}` : sql``}
+            ${campaignStatus === "ACTIVE" ? sql`AND EXISTS (
+              -- Có ít nhất 1 campaign nguồn đang chạy
+              SELECT 1 FROM unnest(
+                CASE WHEN cardinality(s.source_campaign_names) > 0 THEN s.source_campaign_names ELSE ARRAY[s.source_campaign_name] END
+              ) AS src(name)
+              WHERE ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "s.store_id", campaignCol: "src.name" })}
+            )` : sql``}
             AND ${orderOperator === ">=" ? sql`s.orders >= ${orderThreshold}` : sql`s.orders > ${orderThreshold}`}
         ),
         candidates_with_checks AS (
@@ -183,6 +197,8 @@ export async function GET(request: Request) {
               OR lower(p.portfolio_name) = lower(${sku})
               OR position(lower(${sku}) in lower(p.campaign_name)) > 0
             )
+            ${channelScope ? sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}` : sql``}
+            AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name" })}
             AND (
               lower(p.customer_search_term) NOT LIKE 'asin=%'
               AND lower(p.customer_search_term) NOT LIKE 'category=%'

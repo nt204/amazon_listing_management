@@ -24,6 +24,8 @@ interface Props {
   stores?: Array<{ id: string; name: string }>;
   targetAcos?: number;
   notify?: (msg: string, type?: "info" | "success" | "error") => void;
+  /** Kênh FBA / FBM chọn ở ô store (null = store không chia kênh). */
+  channel?: "FBA" | "FBM" | null;
 }
 
 type CompareType = "none" | "same_last_month" | "prev_period" | "custom";
@@ -160,6 +162,7 @@ function PpcStCampaignRollupViewInner({
   selectedSku,
   targetAcos = 30,
   notify,
+  channel = null,
 }: Props) {
   // Khoảng ngày chính (Kỳ hiện tại)
   const [primaryPeriod, setPrimaryPeriod] = useState<DateRange>({
@@ -257,6 +260,7 @@ function PpcStCampaignRollupViewInner({
         sortBy,
         sortDir,
       });
+      if (channel) params.set("channel", channel);
 
       if (searchQuery.trim()) {
         params.set("search", searchQuery.trim());
@@ -296,7 +300,7 @@ function PpcStCampaignRollupViewInner({
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [selectedStore, selectedSku, primaryPeriod, effectiveComparePeriod, page, pageSize, sortBy, sortDir, searchQuery, rangeParam, notify]);
+  }, [selectedStore, selectedSku, primaryPeriod, effectiveComparePeriod, page, pageSize, sortBy, sortDir, searchQuery, rangeParam, notify, channel]);
 
   useEffect(() => {
     void fetchData();
@@ -304,7 +308,7 @@ function PpcStCampaignRollupViewInner({
 
   // Drill-down search terms của campaign
   const toggleExpandCampaign = async (campaignName: string) => {
-    const detailKey = [selectedStore, selectedSku, primaryPeriod.startDate, primaryPeriod.endDate,
+    const detailKey = [selectedStore, channel || "", selectedSku, primaryPeriod.startDate, primaryPeriod.endDate,
       effectiveComparePeriod?.startDate || "", effectiveComparePeriod?.endDate || "", campaignName].join("::");
     const isCurrentlyExpanded = Boolean(expandedCampaigns[campaignName]);
     const nextState = !isCurrentlyExpanded;
@@ -324,6 +328,7 @@ function PpcStCampaignRollupViewInner({
           endDate: primaryPeriod.endDate,
           detailCampaign: campaignName,
         });
+        if (channel) params.set("channel", channel);
 
         if (effectiveComparePeriod) {
           params.set("compareStartDate", effectiveComparePeriod.startDate);

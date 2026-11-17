@@ -285,6 +285,33 @@ export function PpcDashboard({
   const [storeSummaries, setStoreSummaries] = useState<PpcStoreSummary[]>([]);
   const [selectedStore, setSelectedStore] = useState<string>(initialStore || "ALL");
   const [storePreferenceReady, setStorePreferenceReady] = useState(false);
+  // Store chia kênh (có Bảng mã FBM, vd FASTPEACE): ô chọn store tách "STORE · FBA" / "STORE · FBM", không có dòng gộp.
+  // Kênh đang chọn lưu theo tài khoản (ui-preferences.manualBidChannel — dùng chung với Auto Bid / Manual Bid trước đây).
+  const [channelStores, setChannelStores] = useState<Set<string> | null>(null);
+  const [storeChannel, setStoreChannel] = useState<"FBA" | "FBM" | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/ppc/stores", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled) return;
+        const list: Array<{ name: string; hasChannels?: boolean }> = Array.isArray(d?.data) ? d.data : [];
+        setChannelStores(new Set(list.filter((x) => x.hasChannels).map((x) => x.name.toUpperCase())));
+      })
+      .catch(() => { if (!cancelled) setChannelStores(new Set()); });
+    fetch("/api/settings/ui-preferences", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) setStoreChannel(d?.preferences?.manualBidChannel === "FBM" ? "FBM" : "FBA"); })
+      .catch(() => { if (!cancelled) setStoreChannel("FBA"); });
+    return () => { cancelled = true; };
+  }, []);
+  const storeHasChannels = Boolean(channelStores?.has(selectedStore.toUpperCase()));
+  /** Kênh áp dụng cho mọi tab (null = store không chia kênh / All Stores). */
+  const activeChannel: "FBA" | "FBM" | null = storeHasChannels ? (storeChannel ?? "FBA") : null;
+  /** Chưa biết store có chia kênh / kênh đã lưu → chờ, tránh tải cả store rồi tải lại. */
+  const channelPending = selectedStore !== "ALL" && (channelStores === null || (storeHasChannels && storeChannel === null));
+  const channelParam = activeChannel ? `&channel=${activeChannel}` : "";
+  const channelObj = useMemo((): Record<string, string> => (activeChannel ? { channel: activeChannel } : {}), [activeChannel]);
 
   useEffect(() => {
     let restoredStore = initialStore || "";
@@ -535,9 +562,6 @@ export function PpcDashboard({
   const [skuRecGroups, setSkuRecGroups] = useState<SkuRecommendationGroup[]>([]);
   // Tab Auto Bid của store có Bảng mã FBM (FASTPEACE): chỉ tải trang FBA / FBM / Khác đang chọn. Trang chọn lưu theo
   // tài khoản (dùng chung khoá với Manual Bid); null = chưa đọc xong lựa chọn đã lưu.
-  const [autoBidChannel, setAutoBidChannel] = useState<"FBA" | "FBM" | "OTHER" | null>(null);
-  const [autoBidChannelCounts, setAutoBidChannelCounts] = useState<Partial<Record<"FBA" | "FBM" | "OTHER", number>> | null>(null);
-  const [autoBidHasChannels, setAutoBidHasChannels] = useState(false);
   const [skuRecAllRecs, setSkuRecAllRecs] = useState<PpcRecommendation[]>([]);
   const [loadedRecommendationWindowDays, setLoadedRecommendationWindowDays] = useState<number | null>(null);
   const [includePausedRecs, setIncludePausedRecs] = useState(false);
@@ -579,6 +603,10 @@ export function PpcDashboard({
 
   // Filters & sorting for Search Terms
   const [searchTermQuery, setSearchTermQuery] = useState("");
+  // Target / Search Term / SKU: mặc định chỉ campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
+  const [termIncludePaused, setTermIncludePaused] = useState(false);
+  const [targetIncludePaused, setTargetIncludePaused] = useState(false);
+  const [skuIncludePaused, setSkuIncludePaused] = useState(false);
   const [matchTypeFilter, setMatchTypeFilter] = useState("ALL");
   const [searchTermCampaignFilter, setSearchTermCampaignFilter] = useState("ALL");
   const [termViewMode, setTermViewMode] = useState<"aggregated" | "daily">("aggregated");
@@ -853,6 +881,15 @@ export function PpcDashboard({
     setActiveTab(tabKey);
   }, [selectedStore]);
 
+  const handleStoreChannelChange = useCallback((channel: "FBA" | "FBM") => {
+    setStoreChannel(channel);
+    fetch("/api/settings/ui-preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manualBidChannel: channel }),
+    }).catch(() => undefined);
+  }, []);
+
   const handleStoreChange = useCallback((storeName: string) => {
     setSelectedStore(storeName);
     setSelectedSku("ALL");
@@ -894,7 +931,7 @@ export function PpcDashboard({
         ? `&startDate=${encodeURIComponent(customStartDate)}&endDate=${encodeURIComponent(customEndDate)}`
         : "";
       const res = await fetch(
-        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}${dateParams}${refresh ? "&refresh=1" : ""}`,
+        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}${dateParams}${channelParam}${refresh ? "&refresh=1" : ""}`,
         { cache: "no-store", signal: controller.signal }
       );
       if (!res.ok) {
@@ -962,7 +999,7 @@ export function PpcDashboard({
         setIsStoreSwitching(false);
       }
     }
-  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
+  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate, channelParam]);
 
   const loadSection = useCallback(async (section: string, options: { force?: boolean } = {}) => {
     if (!options.force && loadedSectionsRef.current.has(section)) return;
@@ -980,7 +1017,7 @@ export function PpcDashboard({
         ? `&campaignName=${encodeURIComponent(selectedCampaignForDrilldown)}`
         : "";
       const res = await fetch(
-        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}${campaignDrilldownParam}`,
+        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}${campaignDrilldownParam}${channelParam}`,
         { cache: "no-store", signal: controller.signal },
       );
       if (!res.ok) {
@@ -1012,7 +1049,20 @@ export function PpcDashboard({
         setLoadingSection((current) => current === section ? null : current);
       }
     }
-  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate, selectedCampaignForDrilldown]);
+  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate, selectedCampaignForDrilldown, channelParam, skuIncludePaused]);
+
+  // Bật / tắt "Gồm paused" ở tab SKU → tải lại bảng SKU (section skus đã tải theo trạng thái cũ)
+  const skuIncludePausedRef = useRef(skuIncludePaused);
+  useEffect(() => {
+    if (skuIncludePausedRef.current === skuIncludePaused) return;
+    skuIncludePausedRef.current = skuIncludePaused;
+    loadedSectionsRef.current.delete("skus");
+    if (activeTab === "skus" && selectedStore !== "ALL") {
+      void loadSection("skus", { force: true }).catch((error) => {
+        notify(error instanceof Error ? error.message : "Không thể tải bảng SKU", "error");
+      });
+    }
+  }, [skuIncludePaused, activeTab, selectedStore, loadSection]);
 
   const refreshData = useCallback(async () => {
     skuRecDetailsCacheRef.current.clear();
@@ -1043,14 +1093,14 @@ export function PpcDashboard({
   }, [activeTab, loadData, loadSection]);
 
   useEffect(() => {
-    if (activeTab !== "portfolios" || selectedStore === "ALL") return;
+    if (activeTab !== "portfolios" || selectedStore === "ALL" || channelPending) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoadingPortfolioPage(true);
       try {
         const params = new URLSearchParams({
           storeName: selectedStore, days: String(selectedDays),
-          query: portfolioQuery, status: portfolioActiveOnly ? "ACTIVE" : "ALL",
+          query: portfolioQuery, status: portfolioActiveOnly ? "ACTIVE" : "ALL", ...channelObj,
           sortField: portfolioSortField, sortDirection: portfolioSortDir,
           page: String(portfolioPage), pageSize: String(portfolioPageSize),
           targetAcos: String(targetAcos),
@@ -1075,10 +1125,10 @@ export function PpcDashboard({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [activeTab, selectedStore, selectedDays, portfolioQuery, portfolioActiveOnly, portfolioSortField, portfolioSortDir, portfolioPage, portfolioPageSize, targetAcos, portfolioRangeParam]);
+  }, [activeTab, selectedStore, selectedDays, portfolioQuery, portfolioActiveOnly, channelObj, channelPending, portfolioSortField, portfolioSortDir, portfolioPage, portfolioPageSize, targetAcos, portfolioRangeParam]);
 
   useEffect(() => {
-    if (activeTab !== "campaigns" || selectedStore === "ALL") return;
+    if (activeTab !== "campaigns" || selectedStore === "ALL" || channelPending) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoadingCampaignPage(true);
@@ -1090,6 +1140,7 @@ export function PpcDashboard({
           targetAcos: String(targetAcos), sortField: campaignSortField,
           sortDirection: campaignSortDir, page: String(campaignPage), pageSize: String(campaignPageSize),
           ...(selectedPortfolioForDrilldown ? { portfolioName: selectedPortfolioForDrilldown } : {}),
+          ...channelObj,
           ...(campaignRangeParam ? { ranges: campaignRangeParam } : {}),
         });
         const res = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store", signal: controller.signal });
@@ -1114,13 +1165,13 @@ export function PpcDashboard({
     };
   }, [activeTab, selectedStore, selectedSku, selectedDays, campaignQuery, campaignStatusFilter,
     campaignFormatFilter, campaignSpendFilter, campaignGroupFilter, targetAcos,
-    campaignSortField, campaignSortDir, campaignPage, campaignPageSize, selectedPortfolioForDrilldown, campaignRangeParam]);
+    campaignSortField, campaignSortDir, campaignPage, campaignPageSize, selectedPortfolioForDrilldown, channelObj, channelPending, campaignRangeParam]);
 
   // Server-side paginated fetch for Targets (50 rows/page, 300ms debounce, SQL summary aggregation)
   useEffect(() => {
-    if (activeTab !== "targets" || selectedStore === "ALL") return;
+    if (activeTab !== "targets" || selectedStore === "ALL" || channelPending) return;
 
-    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}:${targetRangeParam}`;
+    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${targetIncludePaused ? "all" : "active"}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}:${targetRangeParam}`;
 
     // If targets are already loaded with the exact same parameters, keep current view instantly without reloading spinner
     if (lastLoadedTargetsParamsRef.current === currentParamsKey && serverTargets.length > 0) {
@@ -1146,6 +1197,8 @@ export function PpcDashboard({
             ? { campaignId: selectedCampaignIdForDrilldown }
             : (selectedCampaignForDrilldown ? { campaignName: selectedCampaignForDrilldown } : {})),
           ...(selectedAdGroupForDrilldown ? { adGroupName: selectedAdGroupForDrilldown } : {}),
+          ...channelObj,
+          campaignStatus: targetIncludePaused ? "ALL" : "ACTIVE",
         });
         const res = await fetch(`/api/ppc/targets?${params}`, {
           cache: "no-store",
@@ -1185,6 +1238,11 @@ export function PpcDashboard({
       controller.abort();
     };
   }, [
+    activeChannel,
+    channelObj,
+    channelPending,
+    targetIncludePaused,
+    termIncludePaused,
     activeTab,
     selectedStore,
     selectedSku,
@@ -1216,7 +1274,8 @@ export function PpcDashboard({
     let active = true;
     const fetchBadgeCounts = async () => {
       try {
-        const storeParam = selectedStore && selectedStore !== "ALL" ? `&storeName=${encodeURIComponent(selectedStore)}` : "";
+        if (channelPending) return;
+        const storeParam = selectedStore && selectedStore !== "ALL" ? `&storeName=${encodeURIComponent(selectedStore)}${channelParam}` : "";
         const [optRes, saleRes] = await Promise.all([
           fetch(`/api/ppc/search-terms/optimization?days=${selectedDays}${storeParam}&pageSize=1`),
           fetch(`/api/ppc/search-terms/sale-keywords?days=${selectedDays}${storeParam}&pageSize=1`),
@@ -1241,12 +1300,12 @@ export function PpcDashboard({
     return () => {
       active = false;
     };
-  }, [selectedStore, selectedDays]);
+  }, [selectedStore, selectedDays, channelParam, channelPending]);
 
   useEffect(() => {
-    if (activeTab !== "search_terms" || selectedStore === "ALL") return;
+    if (activeTab !== "search_terms" || selectedStore === "ALL" || channelPending) return;
 
-    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}:${termRangeParam}`;
+    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${termIncludePaused ? "all" : "active"}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}:${termRangeParam}`;
 
     if (lastLoadedSearchTermsParamsRef.current === currentParamsKey && serverSearchTerms !== null) {
       return;
@@ -1286,6 +1345,8 @@ export function PpcDashboard({
           ...(termMaxOrders.trim() ? { maxOrders: termMaxOrders.trim() } : {}),
           ...(termMinAcos.trim() ? { minAcos: termMinAcos.trim() } : {}),
           ...(termMaxAcos.trim() ? { maxAcos: termMaxAcos.trim() } : {}),
+          ...channelObj,
+          campaignStatus: termIncludePaused ? "ALL" : "ACTIVE",
         });
         const res = await fetch(`/api/ppc/search-terms?${params}`, {
           cache: "no-store",
@@ -1320,6 +1381,11 @@ export function PpcDashboard({
       controller.abort();
     };
   }, [
+    activeChannel,
+    channelObj,
+    channelPending,
+    targetIncludePaused,
+    termIncludePaused,
     activeTab,
     selectedStore,
     selectedSku,
@@ -1367,6 +1433,7 @@ export function PpcDashboard({
         campaignName: target.campaignName || "",
         adGroupName: target.adGroupName || "",
         limit: "100",
+        ...channelObj,
       });
       const res = await fetch(`/api/ppc/targets/search-terms?${params}`);
       if (!res.ok) throw new Error("Không thể tải search terms con");
@@ -1386,7 +1453,7 @@ export function PpcDashboard({
         },
       }));
     }
-  }, [expandedTargetKey, expandedChildTerms, selectedStore]);
+  }, [expandedTargetKey, expandedChildTerms, selectedStore, channelObj]);
 
   const loadSkuEconomics = useCallback(async () => {
     if (!selectedStore || selectedStore === "ALL") {
@@ -1395,7 +1462,7 @@ export function PpcDashboard({
     }
     try {
       setLoadingSkuEcon(true);
-      const res = await fetch(`/api/ppc/sku-economics?days=${selectedDays}&storeId=${encodeURIComponent(selectedStore)}`, { cache: "no-store" });
+      const res = await fetch(`/api/ppc/sku-economics?days=${selectedDays}&storeId=${encodeURIComponent(selectedStore)}${channelParam}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (data?.data) {
@@ -1406,11 +1473,12 @@ export function PpcDashboard({
     } finally {
       setLoadingSkuEcon(false);
     }
-  }, [selectedDays, selectedStore]);
+  }, [selectedDays, selectedStore, channelParam]);
 
   // Manual Bid cần thông tin SKU của cả store → không truyền trang; tab Auto Bid chỉ tải trang đang chọn.
-  const recChannel = activeTab === "recommendations" ? autoBidChannel : null;
-  const recChannelPending = activeTab === "recommendations" && autoBidChannel === null;
+  // Auto Bid tải theo kênh đang chọn ở ô store (FBA / FBM); Manual Bid lấy thông tin SKU cả store.
+  const recChannel = activeTab === "recommendations" ? activeChannel : null;
+  const recChannelPending = activeTab === "recommendations" && channelPending;
   const loadGroupedRecommendations = useCallback(async (force = false) => {
     if (recChannelPending) return;
     const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}:${includePausedRecs ? 1 : 0}:${recChannel || "ALL"}`;
@@ -1438,12 +1506,6 @@ export function PpcDashboard({
         lastLoadedRecKeyRef.current = currentKey;
         setLoadedRecommendationWindowDays(selectedDays);
         setSkuRecGroups(data.data.groups);
-        setAutoBidHasChannels(Boolean(data.data.hasChannels));
-        // Số SKU từng trang: chỉ biết trang đã tải (đếm SKU còn target chạy cần tính trang đó).
-        const loadedPage = data.data.channelPage as "FBA" | "FBM" | "OTHER" | null;
-        if (loadedPage && typeof data.data.pageCount === "number") {
-          setAutoBidChannelCounts((prev) => ({ ...(prev || {}), [loadedPage]: data.data.pageCount }));
-        }
         if (Array.isArray(data?.data?.allRecommendations) && data.data.allRecommendations.length > 0) {
           setSkuRecAllRecs(data.data.allRecommendations);
         }
@@ -1459,31 +1521,6 @@ export function PpcDashboard({
     }
   }, [selectedStore, selectedSku, selectedDays, includePausedRecs, recChannel, recChannelPending]);
 
-  // Đọc trang FBA / FBM / Khác đã lưu theo tài khoản (mặc định FBA) khi mở tab Auto Bid lần đầu.
-  useEffect(() => {
-    if (activeTab !== "recommendations" || autoBidChannel !== null) return;
-    let cancelled = false;
-    fetch("/api/settings/ui-preferences", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        const c = d?.preferences?.manualBidChannel;
-        if (!cancelled) setAutoBidChannel(c === "FBM" || c === "OTHER" ? c : "FBA");
-      })
-      .catch(() => { if (!cancelled) setAutoBidChannel("FBA"); });
-    return () => { cancelled = true; };
-  }, [activeTab, autoBidChannel]);
-
-  const handleAutoBidChannelChange = useCallback((page: "FBA" | "FBM" | "OTHER") => {
-    if (page === autoBidChannel) return;
-    setAutoBidChannel(page);
-    setSkuRecGroups([]);
-    setSkuRecAllRecs([]);
-    fetch("/api/settings/ui-preferences", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ manualBidChannel: page }),
-    }).catch(() => undefined);
-  }, [autoBidChannel]);
 
   useEffect(() => {
     if (activeTab === "recommendations" || activeTab === "manual_bid") return;
@@ -1499,7 +1536,7 @@ export function PpcDashboard({
     }
     const res = await fetch(
       // channel: server tự lấy trang FBA / FBM của chính SKU này, chỉ tính trang đó (store không chia trang thì bỏ qua).
-      `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}&includePaused=${includePausedRecs ? "1" : "0"}&channel=${autoBidChannel || "FBA"}`,
+      `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}&includePaused=${includePausedRecs ? "1" : "0"}${channelParam}`,
       { cache: "no-store" },
     );
     if (!res.ok) throw new Error(`Không thể tải recommendation cho SKU ${sku}`);
@@ -1509,7 +1546,7 @@ export function PpcDashboard({
     skuRecDetailsCacheRef.current.set(cacheKey, recommendations);
     setSkuRecAllRecs(recommendations);
     return recommendations;
-  }, [selectedStore, selectedDays, includePausedRecs, autoBidChannel]);
+  }, [selectedStore, selectedDays, includePausedRecs, channelParam]);
 
   const loadActionQueueCount = useCallback(async (targetStore?: string) => {
     try {
@@ -1773,8 +1810,12 @@ export function PpcDashboard({
 
   // Coordinated effect: filter changes and tab switches without race conditions
   useEffect(() => {
+    // Chưa biết kênh của store (FBA / FBM) → chờ, tránh tải cả store rồi lại tải theo kênh
+    if (channelPending) return;
+    // Đổi kênh FBA ↔ FBM coi như đổi store: xoá dữ liệu cũ, tải lại
+    const storeKey = `${selectedStore}|${activeChannel ?? ""}`;
     const filtersChanged =
-      currentFiltersRef.current.store !== selectedStore ||
+      currentFiltersRef.current.store !== storeKey ||
       currentFiltersRef.current.sku !== selectedSku ||
       currentFiltersRef.current.days !== selectedDays ||
       currentFiltersRef.current.isCustomDate !== isCustomDate ||
@@ -1782,9 +1823,12 @@ export function PpcDashboard({
       currentFiltersRef.current.end !== customEndDate;
 
     if (filtersChanged) {
-      const storeChanged = currentFiltersRef.current.store !== selectedStore;
+      const prevStoreKey = currentFiltersRef.current.store;
+      const storeChanged = prevStoreKey !== storeKey;
+      // Lần tải đầu (ref còn tên store chưa kèm kênh) thì không báo "Đang chuyển sang…"
+      const isInitialChannelResolve = !prevStoreKey.includes("|") && prevStoreKey === selectedStore;
       currentFiltersRef.current = {
-        store: selectedStore,
+        store: storeKey,
         sku: selectedSku,
         days: selectedDays,
         isCustomDate,
@@ -1797,7 +1841,6 @@ export function PpcDashboard({
       sectionRequestsRef.current.clear();
       loadedSectionsRef.current.clear();
       lastLoadedRecKeyRef.current = "";
-      setAutoBidChannelCounts(null);
       setLoadingSection(null);
       setSearchTerms([]);
       setSearchTermsReady(false);
@@ -1807,13 +1850,16 @@ export function PpcDashboard({
       setSkuRecGroups([]);
       setSkuRecAllRecs([]);
       if (storeChanged) {
-        isStoreSwitchingRef.current = true;
-        setIsStoreSwitching(true);
+        const storeLabel = activeChannel ? `${selectedStore} · ${activeChannel}` : selectedStore;
+        if (!isInitialChannelResolve) {
+          isStoreSwitchingRef.current = true;
+          setIsStoreSwitching(true);
+          notify(
+            `Đang chuyển sang ${selectedStore === "ALL" ? "Tất cả Store" : `Store ${storeLabel}`}...`,
+            "info"
+          );
+        }
         setLoading(true);
-        notify(
-          `Đang chuyển sang ${selectedStore === "ALL" ? "Tất cả Store" : `Store ${selectedStore}`}...`,
-          "info"
-        );
         setSummary(null);
         setSummary7D(null);
         setDataHealth(null);
@@ -1873,6 +1919,8 @@ export function PpcDashboard({
     loadGroupedRecommendations,
     loadActionQueue,
     actionQueue.length,
+    channelPending,
+    activeChannel,
   ]);
 
   useEffect(() => {
@@ -2817,6 +2865,7 @@ export function PpcDashboard({
         groupFilter: campaignGroupFilter, targetAcos: String(targetAcos), sortField: campaignSortField,
         sortDirection: campaignSortDir, page: "1", pageSize: "20000", export: "1",
         ...(selectedPortfolioForDrilldown ? { portfolioName: selectedPortfolioForDrilldown } : {}),
+        ...channelObj,
         ...(campaignRangeParam ? { ranges: campaignRangeParam } : {}),
       });
       const exportResponse = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store" });
@@ -2846,7 +2895,7 @@ export function PpcDashboard({
     } else if (type === "portfolios") {
       const params = new URLSearchParams({
         storeName: selectedStore, days: String(selectedDays), query: portfolioQuery,
-        status: portfolioActiveOnly ? "ACTIVE" : "ALL",
+        status: portfolioActiveOnly ? "ACTIVE" : "ALL", ...channelObj,
         sortField: portfolioSortField, sortDirection: portfolioSortDir, page: "1", pageSize: "20000", export: "1",
         ...(portfolioRangeParam ? { ranges: portfolioRangeParam } : {}),
       });
@@ -2961,7 +3010,7 @@ export function PpcDashboard({
                 />
                 <span className="text-[10px] sm:text-[11px] font-extrabold text-emerald-700 uppercase tracking-wider hidden xs:inline">Store:</span>
                 <span className="font-black text-emerald-900 text-xs sm:text-sm tracking-tight truncate max-w-[100px] sm:max-w-[180px]">
-                  {selectedStore === "ALL" ? `All Stores (${stores.length})` : selectedStore}
+                  {selectedStore === "ALL" ? `All Stores (${stores.length})` : activeChannel ? `${selectedStore} · ${activeChannel}` : selectedStore}
                 </span>
                 <CaretDown
                   size={12}
@@ -3002,25 +3051,35 @@ export function PpcDashboard({
                       </span>
                     </button>
 
-                    {stores.map((s) => {
-                      const isSelected = selectedStore === s.name;
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => {
-                            handleStoreChange(s.name);
-                            setIsStoreDropdownOpen(false);
-                          }}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${isSelected
-                              ? "bg-emerald-600 text-white font-black shadow-xs"
-                              : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
-                            }`}
-                        >
-                          <span className="truncate">{s.name}</span>
-                          {isSelected && <Check size={14} weight="bold" className="shrink-0 ml-2" />}
-                        </button>
-                      );
+                    {stores.flatMap((s) => {
+                      // Store chia kênh: 2 dòng "STORE · FBA" / "STORE · FBM", không có dòng gộp
+                      const entries: Array<{ key: string; channel: "FBA" | "FBM" | null }> = channelStores?.has(s.name.toUpperCase())
+                        ? [{ key: `${s.id}:FBA`, channel: "FBA" }, { key: `${s.id}:FBM`, channel: "FBM" }]
+                        : [{ key: s.id, channel: null }];
+                      return entries.map(({ key, channel }) => {
+                        const isSelected = selectedStore === s.name && (channel === null || activeChannel === channel);
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => {
+                              if (channel) handleStoreChannelChange(channel);
+                              if (selectedStore !== s.name) handleStoreChange(s.name);
+                              setIsStoreDropdownOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${isSelected
+                                ? "bg-emerald-600 text-white font-black shadow-xs"
+                                : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
+                              }`}
+                          >
+                            <span className="truncate">
+                              {s.name}
+                              {channel && <span className={isSelected ? "text-emerald-100" : "text-slate-400"}> · {channel}</span>}
+                            </span>
+                            {isSelected && <Check size={14} weight="bold" className="shrink-0 ml-2" />}
+                          </button>
+                        );
+                      });
                     })}
                   </div>
                 </div>
@@ -3699,30 +3758,7 @@ export function PpcDashboard({
                 <span>Active</span>
               </label>
 
-              {/* Sort Dropdown */}
-              <select
-                value={`${portfolioSortField}_${portfolioSortDir}`}
-                onChange={(e) => {
-                  const parts = e.target.value.split("_");
-                  const d = parts.pop() as SortDirection;
-                  const f = parts.join("_") as any;
-                  setPortfolioSortField(f);
-                  setPortfolioSortDir(d);
-                  setPortfolioPage(1);
-                }}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:bg-white focus:border-indigo-600 cursor-pointer shrink-0"
-              >
-                <option value="spend_desc">Chi tiêu: Cao → Thấp</option>
-                <option value="spend_asc">Chi tiêu: Thấp → Cao</option>
-                <option value="sales_desc">Doanh số: Cao → Thấp</option>
-                <option value="orders_desc">Đơn hàng: Nhiều → Ít</option>
-                <option value="campaigns_desc">Số Campaign: Nhiều → Ít</option>
-                <option value="acos_desc">ACOS: Cao → Thấp</option>
-                <option value="acos_asc">ACOS: Thấp → Cao</option>
-                <option value="impressions_desc">Impression: Nhiều → Ít</option>
-                <option value="name_asc">Tên Portfolio: A → Z</option>
-              </select>
-
+              {/* Sắp xếp: bấm tiêu đề cột trong bảng (mặc định Spend cao → thấp) */}
               {/* Reset button if filter active */}
               {(portfolioQuery || !portfolioActiveOnly || portfolioSortField !== "spend" || portfolioSortDir !== "desc") && (
                 <button
@@ -4551,6 +4587,14 @@ export function PpcDashboard({
                 )}
               </div>
 
+              <IncludePausedToggle
+                checked={targetIncludePaused}
+                onChange={(v) => {
+                  setTargetIncludePaused(v);
+                  setTargetPage(1);
+                }}
+              />
+
               {/* Dropdown chọn nhanh chiến dịch để chỉ tìm kiếm trong chiến dịch đó */}
               <select
                 value={selectedCampaignForDrilldown || "ALL"}
@@ -5193,6 +5237,7 @@ export function PpcDashboard({
             </div>
 
             <div className="flex items-center gap-2.5 flex-wrap self-end sm:self-auto">
+              {/* TODO "Gồm paused" cho SKU: tạm ẩn — truy vấn section skus lọc campaign đang chạy chậm > 2 phút, cần tối ưu trước */}
               {/* Dropdown Niche */}
               <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 transition">
                 <Tag size={13} className="text-slate-400 shrink-0" />
@@ -5471,6 +5516,14 @@ export function PpcDashboard({
                   className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
                 />
               </div>
+
+              <IncludePausedToggle
+                checked={termIncludePaused}
+                onChange={(v) => {
+                  setTermIncludePaused(v);
+                  setTermPage(1);
+                }}
+              />
 
               {/* Match Type Filter */}
               <select
@@ -5948,6 +6001,7 @@ export function PpcDashboard({
       {mountedTabs.has("st_campaigns") && (
         <div className={activeTab === "st_campaigns" && !storeRequired ? "space-y-3" : "hidden"}>
           <PpcStCampaignRollupView
+            channel={activeChannel}
             selectedStore={selectedStore}
             selectedSku={selectedSku}
             stores={stores}
@@ -5982,6 +6036,7 @@ export function PpcDashboard({
           ) : (
             <PpcStOptimizationView
               isActive={activeTab === "st_optimization"}
+              channel={activeChannel}
               searchTerms={searchTerms}
               selectedStore={selectedStore}
               selectedSku={selectedSku}
@@ -6021,6 +6076,7 @@ export function PpcDashboard({
           ) : (
             <PpcSaleKwView
               isActive={activeTab === "sale_kw"}
+              channel={activeChannel}
               searchTerms={searchTerms}
               selectedStore={selectedStore}
               selectedSku={selectedSku}
@@ -6063,9 +6119,6 @@ export function PpcDashboard({
               isActive={activeTab === "recommendations"}
               actor={actor}
               groups={skuRecGroups}
-              channelPage={autoBidHasChannels ? autoBidChannel : null}
-              channelCounts={autoBidHasChannels ? autoBidChannelCounts : null}
-              onChannelPageChange={handleAutoBidChannelChange}
               allRecommendations={skuRecAllRecs}
               isLoading={loadingRecs || recChannelPending}
               recommendationWindowDays={selectedDays}
@@ -6076,8 +6129,6 @@ export function PpcDashboard({
               }}
               includePausedCampaigns={includePausedRecs}
               onIncludePausedCampaignsChange={(value) => {
-                // Bỏ / thêm SKU không còn target chạy → số SKU từng trang đổi
-                setAutoBidChannelCounts(null);
                 setIncludePausedRecs(value);
               }}
               onLoadSkuRecommendations={loadSkuRecommendationDetails}
@@ -6120,7 +6171,8 @@ export function PpcDashboard({
             </div>
           ) : (
             <PpcManualBidView
-              key={selectedStore}
+              key={`${selectedStore}|${activeChannel ?? ""}`}
+              channelPage={activeChannel}
               isActive={activeTab === "manual_bid"}
               selectedStore={selectedStore}
               selectedDays={selectedDays}
@@ -6375,5 +6427,25 @@ export function PpcDashboard({
       {searchTermFrozen.menu}
       {skuFrozen.menu}
     </div>
+  );
+}
+
+/** Ô "Gồm paused": mặc định tắt (chỉ campaign đang chạy). */
+function IncludePausedToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer select-none transition shrink-0 ${
+        checked ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+      }`}
+      title="Mặc định chỉ lấy campaign đang chạy (enabled). Tích để xem cả campaign đã paused."
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-amber-500"
+      />
+      <span>Gồm paused</span>
+    </label>
   );
 }

@@ -16,6 +16,15 @@ import {
 import { exportCampaignLaunchBulksheet } from "@/lib/ppc/campaign-launch-bulksheet";
 import { formatYYYYMMDD } from "@/lib/ppc/sku-extractor";
 
+/** "20261117" → giữ nguyên nếu là ngày thật; sai định dạng → null. */
+function parseLaunchDate(value: unknown): string | null {
+  const v = String(value ?? "").trim();
+  if (!/^\d{8}$/.test(v)) return null;
+  const y = Number(v.slice(0, 4)), m = Number(v.slice(4, 6)), d = Number(v.slice(6, 8));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return y >= 2020 && dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? v : null;
+}
+
 export const runtime = "nodejs";
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -79,8 +88,8 @@ function parseOptions(raw: Record<string, unknown> | undefined): LaunchOptions {
     dailyBudget: Number(raw?.dailyBudget) || 5,
     biddingStrategy: strategy,
     userName: String(raw?.userName || "").trim(),
-    // Ngày trong tên campaign luôn là hôm nay (giờ VN); bỏ qua ngày client gửi lên.
-    dateStr: formatYYYYMMDD(),
+    // Ngày trong tên campaign: người dùng sửa được (YYYYMMDD hợp lệ), trống / sai định dạng thì lấy hôm nay (giờ VN).
+    dateStr: parseLaunchDate(raw?.dateStr) || formatYYYYMMDD(),
     suffix: String(raw?.suffix || "").trim(),
     fulfillment: raw?.fulfillment === "FBM" ? "FBM" : "FBA",
     skuOverrides: parseSkuOverrides(raw?.skuOverrides),

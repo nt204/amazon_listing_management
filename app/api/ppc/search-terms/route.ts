@@ -3,6 +3,8 @@ import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
+import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
+import { campaignStatusCacheSuffix, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
@@ -54,8 +56,12 @@ export async function GET(request: Request) {
     const endDate = /^\d{4}-\d{2}-\d{2}$/.test(endDateParam) ? endDateParam : undefined;
 
     const sql = await getDatabaseClient();
+    // Kênh FBA / FBM (store chia kênh); null = cả store như cũ
+    const channelScope = await resolvePpcChannelScope(sql, storeName, searchParams.get("channel"));
+    // campaignStatus=ACTIVE: chỉ search term của campaign đang enabled; không gửi / ALL → như cũ
+    const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
 
-    const cacheKey = `ppc:query:search-terms-page:${scope.teamId}:${request.url}`;
+    const cacheKey = `ppc:query:search-terms-page:${scope.teamId}:${request.url}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
     const cachedData = await getCachedOrFetch(cacheKey, 60, async () => {
       let storeId: string | null = null;
       if (storeName !== "ALL") {
@@ -98,12 +104,19 @@ export async function GET(request: Request) {
         ? sql`AND lower(p.ad_group_name) = lower(${adGroupName})`
         : sql``;
 
-      const skuFilter = sku !== "ALL"
+      const skuOnlyFilter = sku !== "ALL"
         ? sql`AND (
             lower(p.portfolio_name) = lower(${sku})
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )`
         : sql``;
+      // Lọc kênh đi cùng skuFilter → áp cho cả tổng, trang, nhóm theo SKU (loadGroupedBySku nhận qua rowFilters)
+      // Lọc campaign đang chạy cũng đi cùng skuFilter (cùng phạm vi áp dụng như lọc kênh)
+      const skuFilter = sql`${skuOnlyFilter} ${channelScope
+        ? sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
+        : sql``} ${campaignStatus === "ACTIVE"
+        ? sql`AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name" })}`
+        : sql``}`;
 
       const clicksFilter = sql`
         ${minClicks !== null ? sql`AND p.clicks >= ${minClicks}` : sql``}

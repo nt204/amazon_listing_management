@@ -31,6 +31,7 @@ export async function GET(request: Request) {
       spendFilter: (["ALL", "HAS_SPEND", "ZERO_SPEND", "SPEND_GT_50", "SPEND_GT_100"].includes(p.get("spendFilter") || "") ? p.get("spendFilter") : "ALL") as PpcCampaignPageFilters["spendFilter"],
       groupFilter: (["ALL", "BLEEDING", "HIGH_ACOS", "GOOD"].includes(p.get("groupFilter") || "") ? p.get("groupFilter") : "ALL") as PpcCampaignPageFilters["groupFilter"],
       targetAcos: Number(p.get("targetAcos") || 30), sortField, sortDirection, page, pageSize,
+      channel: p.get("channel") || null,
       ranges: decodeMetricRanges(p.get("ranges")),
     };
     const snapshotId = await getActiveSnapshotId(scope, filters.storeName, filters.days);

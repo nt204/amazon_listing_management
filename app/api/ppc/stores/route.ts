@@ -7,6 +7,7 @@ import {
   listPpcStores,
   updatePpcStore,
 } from "@/lib/ppc/repository";
+import { storeHasChannels } from "@/lib/ppc/channel-filter";
 
 export const runtime = "nodejs";
 
@@ -27,9 +28,12 @@ export async function GET(request: Request) {
       WHERE team_id = ${scope.teamId} AND actor_id = ${actor.userId} AND receive_action_notifications = TRUE
     `;
     const allowedStoreIdSet = new Set(grants.map((g) => g.store_id));
-    const enrichedStores = stores.map((store) => ({
+    // hasChannels: store có Bảng mã FBM → ô chọn store tách "STORE · FBA" / "STORE · FBM"
+    const channelFlags = await Promise.all(stores.map((store) => storeHasChannels(sql, store.name).catch(() => false)));
+    const enrichedStores = stores.map((store, i) => ({
       ...store,
       canManageActions: allowedStoreIdSet.has(store.id),
+      hasChannels: channelFlags[i],
     }));
     return Response.json({ success: true, data: enrichedStores });
   } catch (error) {

@@ -232,7 +232,7 @@ export function PpcSearchTermLaunchPanel({
     setSkuOverrides({});
     setExpandedSkus(new Set());
     setUploadStatus(null);
-    // Ngày trong tên campaign luôn là hôm nay (giờ VN), không sửa được.
+    // Mỗi lần mở: ngày trong tên campaign mặc định là hôm nay (giờ VN), sửa được.
     setDateStr(formatYYYYMMDD());
     setOpen(true);
   };
@@ -719,10 +719,11 @@ export function PpcSearchTermLaunchPanel({
                     <span className={labelCls}>Ngày</span>
                     <input
                       value={dateStr}
-                      readOnly
-                      tabIndex={-1}
-                      title="Ngày lên camp luôn là hôm nay"
-                      className={`${inputCls} w-[104px] font-mono cursor-not-allowed bg-slate-50 text-slate-500`}
+                      onChange={(e) => setDateStr(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                      inputMode="numeric"
+                      placeholder="YYYYMMDD"
+                      title="Ngày trong tên campaign (YYYYMMDD), mặc định hôm nay"
+                      className={`${inputCls} w-[104px] font-mono ${/^\d{8}$/.test(dateStr) ? "" : "border-rose-400"}`}
                     />
                   </label>
                   <label className="min-w-[110px] flex-1">

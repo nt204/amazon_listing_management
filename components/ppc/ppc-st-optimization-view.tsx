@@ -50,6 +50,8 @@ export interface StOptimizationCandidate {
 
 interface PpcStOptimizationViewProps {
   isActive: boolean;
+  /** Kênh FBA / FBM chọn ở ô store (null = store không chia kênh). */
+  channel?: "FBA" | "FBM" | null;
   searchTerms: PpcSearchTermRow[];
   selectedStore: string;
   selectedSku: string;
@@ -63,6 +65,7 @@ interface PpcStOptimizationViewProps {
 
 export function PpcStOptimizationView({
   isActive,
+  channel = null,
   searchTerms,
   selectedStore,
   selectedSku,
@@ -111,6 +114,8 @@ export function PpcStOptimizationView({
   const [negatedLookupSet, setNegatedLookupSet] = useState<Set<string>>(new Set());
   const [loadingRegistry, setLoadingRegistry] = useState<boolean>(false);
   const [hideNegated, setHideNegated] = useState<boolean>(true);
+  // Mặc định chỉ lấy search term của campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
+  const [includePaused, setIncludePaused] = useState<boolean>(false);
 
   // 1. Threshold controls (User requirement: mặc định clicks > 20, có 1 ô nhỏ điều chỉnh ngưỡng click)
   const [clickThreshold, setClickThreshold] = useState<number>(20);
@@ -143,6 +148,8 @@ export function PpcStOptimizationView({
       if (selectedStore && selectedStore !== "ALL") {
         params.set("storeName", selectedStore);
       }
+      // Cùng phạm vi với danh sách ứng viên: mặc định negative đang bật của campaign đang chạy
+      params.set("campaignStatus", includePaused ? "ALL" : "ACTIVE");
       const res = await fetch(`/api/ppc/negative-keywords?${params.toString()}`, { signal });
       if (!res.ok) return;
       const json = await res.json();
@@ -166,7 +173,8 @@ export function PpcStOptimizationView({
     const controller = new AbortController();
     void fetchRegistry(controller.signal);
     return () => controller.abort();
-  }, [isActive, selectedStore]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchRegistry đọc store / includePaused mới nhất
+  }, [isActive, selectedStore, includePaused]);
 
   // Auto Upload AdsPower modal state
   const [isAutoUploadModalOpen, setIsAutoUploadModalOpen] = useState<boolean>(false);
@@ -369,6 +377,8 @@ export function PpcStOptimizationView({
           sortDir,
           campaignName: campaignFilter,
         });
+        if (channel) params.set("channel", channel);
+        params.set("campaignStatus", includePaused ? "ALL" : "ACTIVE");
         const res = await fetch(`/api/ppc/search-terms/optimization?${params}`, {
           cache: "no-store",
           signal: controller.signal,
@@ -399,11 +409,13 @@ export function PpcStOptimizationView({
     };
   }, [
     selectedStore,
+    channel,
     selectedSku,
     selectedDays,
     clickThreshold,
     clickOperator,
     hideNegated,
+    includePaused,
     page,
     pageSize,
     searchQuery,
@@ -513,6 +525,8 @@ export function PpcStOptimizationView({
       campaignName: campaignFilter,
       all: "1",
     });
+    if (channel) params.set("channel", channel);
+    params.set("campaignStatus", includePaused ? "ALL" : "ACTIVE");
     const res = await fetch(`/api/ppc/search-terms/optimization?${params}`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.success || !Array.isArray(json.data?.items)) {
@@ -862,6 +876,21 @@ export function PpcStOptimizationView({
           </button>
         </div>
 
+        <div className="flex items-center gap-2">
+          {/* Mặc định chỉ campaign đang chạy (ứng viên + Negative Hub); bật để xem cả campaign đã tắt */}
+          <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer select-none hover:bg-slate-100 transition shrink-0">
+            <input
+              type="checkbox"
+              checked={includePaused}
+              onChange={(e) => {
+                setIncludePaused(e.target.checked);
+                setPage(1);
+                setSelectedKeys(new Set());
+              }}
+              className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-indigo-600"
+            />
+            <span>Gồm paused</span>
+          </label>
         {subTab === "candidates" && (
           <div className="flex items-center gap-2">
             <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
@@ -884,6 +913,7 @@ export function PpcStOptimizationView({
             </label>
           </div>
         )}
+        </div>
       </div>
 
       {subTab === "candidates" ? (
@@ -1305,6 +1335,7 @@ export function PpcStOptimizationView({
       ) : (
         <PpcNegativeHubView
           selectedStore={selectedStore}
+          campaignStatus={includePaused ? "ALL" : "ACTIVE"}
           items={registryItems}
           summary={registrySummary}
           loading={loadingRegistry}
