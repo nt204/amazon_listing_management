@@ -3,6 +3,7 @@
 //   Phần trong [] là nhóm hàng của sheet: tháng đã qua thu gọn, chỉ còn tiêu đề + tổng + TB/Quantity.
 // - Dòng "Service Fees" (chỉ FBA): FEE = tổng Service Fees của tháng − Cost of Advertising (Ads đã nằm ở cột Ads Fee).
 // - Dòng "Phí chủ store" (FBA + FBM, từ tháng 9/2026): −(Revenue tháng × 0.5% nếu Revenue > $20,000, ngược lại 1.000.000đ ÷ 25.000).
+//   Store chạy cả FBA + FBM mà kế toán chia đôi mức tối thiểu cho 2 kênh (OWNER_FEE_SPLIT_STORES): 1.000.000đ ÷ 25.000 ÷ 2 = $20 mỗi kênh.
 // - Tổng tháng: Profit = Σ Profit ngày + FEE + Phí chủ store; Net Profit = Σ Net Profit ngày + FEE + Phí chủ store
 //   (sheet: K tổng = SUM(K ngày..K phí) + L phí, L tổng = SUM(L ngày..L phí) + K phí).
 // - Tổng tháng: cộng các cột tiền / SL, các tỷ lệ tính lại trên tổng (ROI = Profit ÷ Base Cost, TACoS = Ads ÷ Revenue,
@@ -47,11 +48,21 @@ const OWNER_FEE_RATE = 0.005;
 const OWNER_FEE_THRESHOLD = 20_000;
 /** Tối thiểu 1.000.000đ ÷ tỷ giá 25.000 (ô AE1 của sheet) */
 const OWNER_FEE_MIN = 1_000_000 / 25_000;
+/**
+ * Store mà file kế toán FBA và FBM đều ghi mức tối thiểu 1000000/25000/2 (chia đôi cho 2 kênh).
+ * FASTPEACE cũng có FBA + FBM nhưng sheet vẫn ghi đủ 1000000/25000 nên không nằm ở đây.
+ */
+const OWNER_FEE_SPLIT_STORES = new Set(["EVERPHANT", "EKASPEEK"]);
+
+/** Mức tối thiểu (USD) của store: $40, hoặc $20 với store chia đôi cho 2 kênh */
+export function ownerFeeMinOf(storeName?: string | null): number {
+  return storeName && OWNER_FEE_SPLIT_STORES.has(storeName.trim().toUpperCase()) ? OWNER_FEE_MIN / 2 : OWNER_FEE_MIN;
+}
 
 /** Phí chủ store của tháng (số âm); null = tháng chưa áp dụng */
-export function ownerFeeOf(month: string, revenue: number): number | null {
+export function ownerFeeOf(month: string, revenue: number, storeName?: string | null): number | null {
   if (month < OWNER_FEE_FROM) return null;
-  return -(revenue > OWNER_FEE_THRESHOLD ? revenue * OWNER_FEE_RATE : OWNER_FEE_MIN);
+  return -(revenue > OWNER_FEE_THRESHOLD ? revenue * OWNER_FEE_RATE : ownerFeeMinOf(storeName));
 }
 
 export interface MonthAgg {
@@ -91,7 +102,7 @@ export type DailyRow<T extends DailyLike> =
 /** "2026-01" → "THÁNG 1/2026" */
 export const monthLabel = (month: string) => `THÁNG ${Number(month.slice(5, 7))}/${month.slice(0, 4)}`;
 
-function aggregate(month: string, days: DailyLike[], fee: number | null): MonthAgg {
+function aggregate(month: string, days: DailyLike[], fee: number | null, storeName?: string | null): MonthAgg {
   const a: MonthAgg = {
     month,
     days: days.length,
@@ -129,7 +140,7 @@ function aggregate(month: string, days: DailyLike[], fee: number | null): MonthA
     a.quantity_ads += d.quantity_ads || 0;
     a.clicks += d.clicks || 0;
   }
-  a.ownerFee = ownerFeeOf(month, a.revenue);
+  a.ownerFee = ownerFeeOf(month, a.revenue, storeName);
   const fees = (fee ?? 0) + (a.ownerFee ?? 0);
   a.profit = a.dayProfit + fees;
   if (a.net_profit != null) a.net_profit += fees;
@@ -137,7 +148,12 @@ function aggregate(month: string, days: DailyLike[], fee: number | null): MonthA
 }
 
 /** Tổng từng tháng (theo thứ tháng tăng dần). withFee = kênh FBA (có dòng Service Fees). */
-export function monthAggregates(items: DailyLike[], fees: MonthFee[], withFee: boolean): MonthAgg[] {
+export function monthAggregates(
+  items: DailyLike[],
+  fees: MonthFee[],
+  withFee: boolean,
+  storeName?: string | null,
+): MonthAgg[] {
   const feeBy = new Map(fees.map((f) => [f.month, f.fee]));
   const byMonth = new Map<string, DailyLike[]>();
   for (const it of items) {
@@ -147,7 +163,7 @@ export function monthAggregates(items: DailyLike[], fees: MonthFee[], withFee: b
   }
   return [...byMonth.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([m, days]) => aggregate(m, days, withFee ? feeBy.get(m) ?? 0 : null));
+    .map(([m, days]) => aggregate(m, days, withFee ? feeBy.get(m) ?? 0 : null, storeName));
 }
 
 /**
@@ -182,7 +198,7 @@ export function buildMonthRows<T extends DailyLike>(
           month: m,
           label: "Phí chủ store",
           amount: agg.ownerFee,
-          hint: "Revenue tháng × 0.5% nếu Revenue > $20,000, ngược lại 1.000.000đ ÷ 25.000 = $40",
+          hint: "Revenue tháng × 0.5% nếu Revenue > $20,000, ngược lại 1.000.000đ ÷ 25.000 = $40 (EVERPHANT, EKASPEEK chia đôi cho FBA / FBM: $20)",
         });
     }
     rows.push({ kind: "total", key: `total-${m}`, agg });

@@ -522,7 +522,11 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
     [items, valueFilters, hasValueFilters],
   );
   const grouped = sortField === "date" && !debouncedSearch && !hasValueFilters;
-  const monthAggs = useMemo(() => monthAggregates(items, fbm ? [] : serviceFees, !fbm), [items, serviceFees, fbm]);
+  const selectedStoreName = stores.find((s) => s.id === selectedStoreId)?.name ?? null;
+  const monthAggs = useMemo(
+    () => monthAggregates(items, fbm ? [] : serviceFees, !fbm, selectedStoreName),
+    [items, serviceFees, fbm, selectedStoreName],
+  );
   // Như nhóm hàng của sheet: tháng đã qua thu gọn (chỉ tiêu đề + tổng + TB/Quantity), tháng hiện tại mở; bấm tiêu đề để đổi
   const currentMonth = financialMaxDate.slice(0, 7);
   const [monthOpen, setMonthOpen] = useState<Record<string, boolean>>({});
