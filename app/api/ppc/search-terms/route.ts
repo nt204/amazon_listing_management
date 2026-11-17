@@ -3,6 +3,7 @@ import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
+import { getActiveSnapshotId } from "@/lib/ppc/repository";
 import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
 import { campaignStatusCacheSuffix, getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
@@ -61,8 +62,10 @@ export async function GET(request: Request) {
     // campaignStatus=ACTIVE: chỉ search term của campaign đang enabled; không gửi / ALL → như cũ
     const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
 
-    const cacheKey = `ppc:query:search-terms-page:${scope.teamId}:${request.url}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
-    const cachedData = await getCachedOrFetch(cacheKey, 60, async () => {
+    // Khoá có snapshot đang dùng (đổi khi nạp báo cáo mới) → giữ 30 phút thay vì 60 s
+    const snapshotId = await getActiveSnapshotId(scope, storeName, days).catch(() => "no-snap");
+    const cacheKey = `ppc:query:search-terms-page:${scope.teamId}:${snapshotId}:${request.url}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
+    const cachedData = await getCachedOrFetch(cacheKey, 1800, async () => {
       let storeId: string | null = null;
       if (storeName !== "ALL") {
         const storeRows = await sql<{ id: string }[]>`

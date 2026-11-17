@@ -611,9 +611,6 @@ export function PpcDashboard({
 
   // Filters & sorting for Search Terms
   const [searchTermQuery, setSearchTermQuery] = useState("");
-  // Target / Search Term: mặc định chỉ campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
-  const [termIncludePaused, setTermIncludePaused] = useState(false);
-  const [targetIncludePaused, setTargetIncludePaused] = useState(false);
   const [matchTypeFilter, setMatchTypeFilter] = useState("ALL");
   const [searchTermCampaignFilter, setSearchTermCampaignFilter] = useState("ALL");
   const [termViewMode, setTermViewMode] = useState<"aggregated" | "daily">("aggregated");
@@ -1171,7 +1168,7 @@ export function PpcDashboard({
   useEffect(() => {
     if (activeTab !== "targets" || selectedStore === "ALL" || channelPending) return;
 
-    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${targetIncludePaused ? "all" : "active"}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}:${targetRangeParam}`;
+    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}:${targetRangeParam}`;
 
     // If targets are already loaded with the exact same parameters, keep current view instantly without reloading spinner
     if (lastLoadedTargetsParamsRef.current === currentParamsKey && serverTargets.length > 0) {
@@ -1198,7 +1195,6 @@ export function PpcDashboard({
             : (selectedCampaignForDrilldown ? { campaignName: selectedCampaignForDrilldown } : {})),
           ...(selectedAdGroupForDrilldown ? { adGroupName: selectedAdGroupForDrilldown } : {}),
           ...channelObj,
-          campaignStatus: targetIncludePaused ? "ALL" : "ACTIVE",
         });
         const res = await fetch(`/api/ppc/targets?${params}`, {
           cache: "no-store",
@@ -1241,8 +1237,6 @@ export function PpcDashboard({
     activeChannel,
     channelObj,
     channelPending,
-    targetIncludePaused,
-    termIncludePaused,
     activeTab,
     selectedStore,
     selectedSku,
@@ -1272,7 +1266,7 @@ export function PpcDashboard({
   useEffect(() => {
     if (activeTab !== "search_terms" || selectedStore === "ALL" || channelPending) return;
 
-    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${termIncludePaused ? "all" : "active"}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}:${termRangeParam}`;
+    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}:${termRangeParam}`;
 
     if (lastLoadedSearchTermsParamsRef.current === currentParamsKey && serverSearchTerms !== null) {
       return;
@@ -1313,7 +1307,6 @@ export function PpcDashboard({
           ...(termMinAcos.trim() ? { minAcos: termMinAcos.trim() } : {}),
           ...(termMaxAcos.trim() ? { maxAcos: termMaxAcos.trim() } : {}),
           ...channelObj,
-          campaignStatus: termIncludePaused ? "ALL" : "ACTIVE",
         });
         const res = await fetch(`/api/ppc/search-terms?${params}`, {
           cache: "no-store",
@@ -1351,8 +1344,6 @@ export function PpcDashboard({
     activeChannel,
     channelObj,
     channelPending,
-    targetIncludePaused,
-    termIncludePaused,
     activeTab,
     selectedStore,
     selectedSku,
@@ -3231,7 +3222,8 @@ export function PpcDashboard({
       </div>
 
 
-      {!standaloneTab && !loading && overviewSearchTerms.length === 0 && (!dataHealth || dataHealth.performanceRows === 0) && (
+      {/* Chỉ báo khi Overview đã tải xong mà thật sự trống (tab khác không tải Overview nên không có dataHealth) */}
+      {!standaloneTab && activeTab === "overview" && !loading && dataHealth !== null && overviewSearchTerms.length === 0 && dataHealth.performanceRows === 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
           <strong>Chưa có dữ liệu PPC trong {selectedDays} ngày gần nhất.</strong>{" "}
           Hãy nạp Bulk SP/SB và Search Term SP/SB hoặc đồng bộ từ R2. Hệ thống không tự chèn dữ liệu mẫu.
@@ -4579,13 +4571,6 @@ export function PpcDashboard({
                 )}
               </div>
 
-              <IncludePausedToggle
-                checked={targetIncludePaused}
-                onChange={(v) => {
-                  setTargetIncludePaused(v);
-                  setTargetPage(1);
-                }}
-              />
 
               {/* Dropdown chọn nhanh chiến dịch để chỉ tìm kiếm trong chiến dịch đó */}
               <select
@@ -5509,13 +5494,6 @@ export function PpcDashboard({
                 />
               </div>
 
-              <IncludePausedToggle
-                checked={termIncludePaused}
-                onChange={(v) => {
-                  setTermIncludePaused(v);
-                  setTermPage(1);
-                }}
-              />
 
               {/* Match Type Filter */}
               <select
@@ -6421,22 +6399,3 @@ export function PpcDashboard({
   );
 }
 
-/** Ô "Gồm paused": mặc định tắt (chỉ campaign đang chạy). */
-function IncludePausedToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer select-none transition shrink-0 ${
-        checked ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-      }`}
-      title="Mặc định chỉ lấy campaign đang chạy (enabled). Tích để xem cả campaign đã paused."
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-amber-500"
-      />
-      <span>Gồm paused</span>
-    </label>
-  );
-}

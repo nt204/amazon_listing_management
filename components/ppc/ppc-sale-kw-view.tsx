@@ -199,7 +199,6 @@ export function PpcSaleKwView({
   const registryRequestIdRef = useRef(0);
   const [hideLaunched, setHideLaunched] = useState<boolean>(true);
   // Mặc định chỉ lấy search term của campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
-  const [includePaused, setIncludePaused] = useState<boolean>(false);
 
   // 1. Threshold controls: Mặc định Order > 2
   const [orderThreshold, setOrderThreshold] = useState<number>(2);
@@ -580,7 +579,7 @@ export function PpcSaleKwView({
     if (!isActive || !selectedStore || selectedStore === "ALL") return;
     // Quay lại tab mà bộ lọc không đổi thì giữ kết quả cũ, không gửi lại truy vấn nặng
     const loadKey = JSON.stringify([selectedStore, channel, selectedSku, selectedDays, orderThreshold, orderOperator, hideLaunched,
-      includePaused, searchQuery, serverRefreshKey]);
+      searchQuery, serverRefreshKey]);
     if (candidatesLoadedKeyRef.current === loadKey) return;
     candidatesLoadedKeyRef.current = loadKey;
     let finished = false;
@@ -599,7 +598,6 @@ export function PpcSaleKwView({
           search: searchQuery.trim(),
         });
         if (channel) params.set("channel", channel);
-        params.set("campaignStatus", includePaused ? "ALL" : "ACTIVE");
         const res = await fetch(`/api/ppc/search-terms/sale-keywords?${params}`, {
           cache: "no-store",
           signal: controller.signal,
@@ -658,7 +656,6 @@ export function PpcSaleKwView({
     orderThreshold,
     orderOperator,
     hideLaunched,
-    includePaused,
     searchQuery,
     serverRefreshKey,
     isActive,
@@ -1011,7 +1008,6 @@ export function PpcSaleKwView({
       all: "1",
     });
     if (channel) params.set("channel", channel);
-    params.set("campaignStatus", includePaused ? "ALL" : "ACTIVE");
     const res = await fetch(`/api/ppc/search-terms/sale-keywords?${params}`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.success || !Array.isArray(json.data?.items)) {
@@ -1487,15 +1483,6 @@ export function PpcSaleKwView({
 
         {subTab === "candidates" && (
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer select-none hover:bg-slate-100 transition shrink-0">
-              <input
-                type="checkbox"
-                checked={includePaused}
-                onChange={(e) => setIncludePaused(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer accent-indigo-600"
-              />
-              <span>Gồm paused</span>
-            </label>
 
             <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
               <input

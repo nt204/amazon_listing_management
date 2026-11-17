@@ -6,6 +6,7 @@ import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import { KEYWORD_GROUP_LIMIT, splitSkuSearch } from "@/lib/ppc/search-term-grouping";
 import { loadTargetsGroupedBySku, targetSkuMatch } from "@/lib/ppc/target-grouping";
 import { getCachedOrFetch } from "@/lib/redis";
+import { getActiveSnapshotId } from "@/lib/ppc/repository";
 import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
 import { campaignStatusCacheSuffix, getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import { decodeMetricRanges, encodeMetricRanges } from "@/lib/ppc/manual-bid";
@@ -39,8 +40,11 @@ export async function GET(request: Request) {
     // campaignStatus=ACTIVE: chỉ target đang enabled thuộc campaign đang enabled; không gửi / ALL → như cũ
     const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
 
-    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}:${encodeMetricRanges(ranges)}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
-    const result = await getCachedOrFetch(cacheKey, 60, async () => {
+    // Khoá có snapshot đang dùng (chỉ đổi khi nạp báo cáo mới) → giữ 30 phút thay vì 60 s: mở lại / lật trang cùng bộ
+    // lọc không phải đọc lại ~1,1 triệu dòng TARGET (1–5 s production).
+    const snapshotId = await getActiveSnapshotId(scope, storeName, days).catch(() => "no-snap");
+    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${snapshotId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}:${encodeMetricRanges(ranges)}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
+    const result = await getCachedOrFetch(cacheKey, 1800, async () => {
       // 1. Resolve Store ID if storeName is specified
       let storeId: string | null = null;
       if (storeName !== "ALL") {
