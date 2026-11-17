@@ -14,6 +14,8 @@ import type {
   PpcStore,
 } from "./types";
 import { resolveSkuForSearchTerm } from "./sku-extractor";
+import { metricRangeSql, plainMetricColumns } from "./metric-range-sql";
+import type { ParsedMetricRange } from "./manual-bid";
 
 export type PpcSyncSource = "CLOUDFLARE_R2" | "MANUAL_UPLOAD" | "MOCK_DATA" | "ADSPOWER_DOWNLOAD" | "DATA_INGEST" | "SYSTEM";
 export type PpcSyncStatus = "SUCCESS" | "FAILED" | "SKIPPED" | "RUNNING";
@@ -740,6 +742,8 @@ export interface PpcCampaignPageFilters {
   sortDirection: "asc" | "desc";
   page: number;
   pageSize: number;
+  /** Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */
+  ranges?: ParsedMetricRange[];
 }
 
 export async function listPpcCampaignPage(
@@ -758,6 +762,7 @@ export async function listPpcCampaignPage(
   const searchWords = filters.query.trim().split(/\s+/).filter(Boolean);
   const searchPattern = searchWords.length > 0 ? `%${searchWords.join("%")}%` : "%";
   const coverageDays = Math.max(1, Math.trunc(filters.days));
+  const rangeFilter = metricRangeSql(sql, filters.ranges ?? [], plainMetricColumns(sql));
   const portfolioFilter = filters.portfolioName || "";
 
   const activeSnapRows = await sql<{ count: string | number }[]>`
@@ -857,6 +862,7 @@ export async function listPpcCampaignPage(
               OR (${filters.groupFilter === "BLEEDING"} AND orders = 0 AND spend >= 10)
               OR (${filters.groupFilter === "HIGH_ACOS"} AND orders > 0 AND calc_acos > ${filters.targetAcos})
               OR (${filters.groupFilter === "GOOD"} AND orders > 0 AND calc_acos <= ${filters.targetAcos} AND spend >= 5))
+            ${rangeFilter}
         ), totals AS (
           SELECT count(*) AS filtered_total, COALESCE(sum(spend),0) AS total_spend,
             COALESCE(sum(sales),0) AS total_sales, COALESCE(sum(orders),0) AS total_orders,
@@ -983,6 +989,7 @@ export async function listPpcCampaignPage(
           OR (${filters.groupFilter === "BLEEDING"} AND orders = 0 AND spend >= 10)
           OR (${filters.groupFilter === "HIGH_ACOS"} AND orders > 0 AND calc_acos > ${filters.targetAcos})
           OR (${filters.groupFilter === "GOOD"} AND orders > 0 AND calc_acos <= ${filters.targetAcos} AND spend >= 5))
+            ${rangeFilter}
     ), totals AS (
       SELECT count(*) AS filtered_total, COALESCE(sum(spend),0) AS total_spend,
         COALESCE(sum(sales),0) AS total_sales, COALESCE(sum(orders),0) AS total_orders,
@@ -1102,6 +1109,7 @@ export async function listPpcCampaignPage(
               OR (${filters.groupFilter === "BLEEDING"} AND orders = 0 AND spend >= 10)
               OR (${filters.groupFilter === "HIGH_ACOS"} AND orders > 0 AND calc_acos > ${filters.targetAcos})
               OR (${filters.groupFilter === "GOOD"} AND orders > 0 AND calc_acos <= ${filters.targetAcos} AND spend >= 5))
+            ${rangeFilter}
         ), totals AS (
           SELECT count(*) AS filtered_total, COALESCE(sum(spend),0) AS total_spend,
             COALESCE(sum(sales),0) AS total_sales, COALESCE(sum(orders),0) AS total_orders,
@@ -1160,6 +1168,8 @@ export interface PpcPortfolioPageFilters {
   sortDirection: "asc" | "desc";
   page: number;
   pageSize: number;
+  /** Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR (theo tổng của portfolio) */
+  ranges?: ParsedMetricRange[];
 }
 
 export interface PpcPortfolioPageResult {
@@ -1196,6 +1206,7 @@ export async function listPpcPortfolioPage(
   const searchWords = filters.query.trim().split(/\s+/).filter(Boolean);
   const searchPattern = searchWords.length > 0 ? `%${searchWords.join("%")}%` : "%";
   const coverageDays = Math.max(1, Math.trunc(filters.days));
+  const rangeFilter = metricRangeSql(sql, filters.ranges ?? [], plainMetricColumns(sql));
 
   const activeSnapRows = await sql<{ count: string | number }[]>`
     SELECT count(*) as count
@@ -1263,6 +1274,7 @@ export async function listPpcPortfolioPage(
       ), filtered AS (
         SELECT * FROM base
         WHERE (${!filters.query.trim()} OR portfolio_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern})
+          ${rangeFilter}
       ), totals AS (
         SELECT 
           count(*)::int AS filtered_total,
@@ -1337,6 +1349,7 @@ export async function listPpcPortfolioPage(
       ), filtered AS (
         SELECT * FROM base
         WHERE (${!filters.query.trim()} OR portfolio_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern})
+          ${rangeFilter}
       ), totals AS (
         SELECT 
           count(*)::int AS filtered_total,

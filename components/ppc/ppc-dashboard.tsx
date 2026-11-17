@@ -51,6 +51,8 @@ import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcFloatingActionQueue } from "./ppc-floating-action-queue";
 import { PpcManualBidView } from "./ppc-manual-bid-view";
+import { PpcMetricRangeFilter } from "./ppc-metric-range-filter";
+import { encodeMetricRanges, parseMetricRanges, passesMetricRanges, type MetricRanges } from "@/lib/ppc/manual-bid";
 import { PpcSettingsTab } from "./ppc-settings-tab";
 import { PpcFileManagerModal } from "./ppc-file-manager-modal";
 import { PpcNotificationPopover } from "./ppc-notification-popover";
@@ -589,6 +591,17 @@ export function PpcDashboard({
   const [termMaxOrders, setTermMaxOrders] = useState("");
   const [termMinAcos, setTermMinAcos] = useState("");
   const [termMaxAcos, setTermMaxAcos] = useState("");
+  // Nút "Lọc" (Spend / Sales / ACOS / Click / Order / CPC / CVR từ – đến) của từng tab
+  const [portfolioRanges, setPortfolioRanges] = useState<MetricRanges>({});
+  const [campaignRanges, setCampaignRanges] = useState<MetricRanges>({});
+  const [targetRanges, setTargetRanges] = useState<MetricRanges>({});
+  const [termRanges, setTermRanges] = useState<MetricRanges>({});
+  const [skuRanges, setSkuRanges] = useState<MetricRanges>({});
+  const portfolioRangeParam = useMemo(() => encodeMetricRanges(parseMetricRanges(portfolioRanges)), [portfolioRanges]);
+  const campaignRangeParam = useMemo(() => encodeMetricRanges(parseMetricRanges(campaignRanges)), [campaignRanges]);
+  const targetRangeParam = useMemo(() => encodeMetricRanges(parseMetricRanges(targetRanges)), [targetRanges]);
+  const termRangeParam = useMemo(() => encodeMetricRanges(parseMetricRanges(termRanges)), [termRanges]);
+  const parsedSkuRanges = useMemo(() => parseMetricRanges(skuRanges), [skuRanges]);
   const [termSortField, setTermSortField] = useState<SortField | "cpc">("spend");
   const [termSortDir, setTermSortDir] = useState<SortDirection>("desc");
   const [termPage, setTermPage] = useState(1);
@@ -1041,6 +1054,7 @@ export function PpcDashboard({
           sortField: portfolioSortField, sortDirection: portfolioSortDir,
           page: String(portfolioPage), pageSize: String(portfolioPageSize),
           targetAcos: String(targetAcos),
+          ...(portfolioRangeParam ? { ranges: portfolioRangeParam } : {}),
         });
         const res = await fetch(`/api/ppc/portfolios?${params}`, { cache: "no-store", signal: controller.signal });
         if (!res.ok) throw new Error(`Không thể tải Portfolio (HTTP ${res.status})`);
@@ -1061,7 +1075,7 @@ export function PpcDashboard({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [activeTab, selectedStore, selectedDays, portfolioQuery, portfolioActiveOnly, portfolioSortField, portfolioSortDir, portfolioPage, portfolioPageSize, targetAcos]);
+  }, [activeTab, selectedStore, selectedDays, portfolioQuery, portfolioActiveOnly, portfolioSortField, portfolioSortDir, portfolioPage, portfolioPageSize, targetAcos, portfolioRangeParam]);
 
   useEffect(() => {
     if (activeTab !== "campaigns" || selectedStore === "ALL") return;
@@ -1076,6 +1090,7 @@ export function PpcDashboard({
           targetAcos: String(targetAcos), sortField: campaignSortField,
           sortDirection: campaignSortDir, page: String(campaignPage), pageSize: String(campaignPageSize),
           ...(selectedPortfolioForDrilldown ? { portfolioName: selectedPortfolioForDrilldown } : {}),
+          ...(campaignRangeParam ? { ranges: campaignRangeParam } : {}),
         });
         const res = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store", signal: controller.signal });
         if (!res.ok) throw new Error(`Không thể tải Campaign (HTTP ${res.status})`);
@@ -1099,13 +1114,13 @@ export function PpcDashboard({
     };
   }, [activeTab, selectedStore, selectedSku, selectedDays, campaignQuery, campaignStatusFilter,
     campaignFormatFilter, campaignSpendFilter, campaignGroupFilter, targetAcos,
-    campaignSortField, campaignSortDir, campaignPage, campaignPageSize, selectedPortfolioForDrilldown]);
+    campaignSortField, campaignSortDir, campaignPage, campaignPageSize, selectedPortfolioForDrilldown, campaignRangeParam]);
 
   // Server-side paginated fetch for Targets (50 rows/page, 300ms debounce, SQL summary aggregation)
   useEffect(() => {
     if (activeTab !== "targets" || selectedStore === "ALL") return;
 
-    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}`;
+    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}:${targetRangeParam}`;
 
     // If targets are already loaded with the exact same parameters, keep current view instantly without reloading spinner
     if (lastLoadedTargetsParamsRef.current === currentParamsKey && serverTargets.length > 0) {
@@ -1125,6 +1140,7 @@ export function PpcDashboard({
           search: targetQuery,
           sortBy: targetSortField,
           sortDir: targetSortDir,
+          ...(targetRangeParam ? { ranges: targetRangeParam } : {}),
           // Prioritize exact campaignId lookup (1.6ms index) - only pass campaignName if id is missing
           ...(selectedCampaignIdForDrilldown
             ? { campaignId: selectedCampaignIdForDrilldown }
@@ -1182,6 +1198,7 @@ export function PpcDashboard({
     selectedCampaignForDrilldown,
     selectedAdGroupForDrilldown,
     targetRefreshKey,
+    targetRangeParam,
   ]);
 
   // Server-side paginated fetch for Search Terms (50 rows/page, accurate DB count)
@@ -1229,7 +1246,7 @@ export function PpcDashboard({
   useEffect(() => {
     if (activeTab !== "search_terms" || selectedStore === "ALL") return;
 
-    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}`;
+    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}:${termRangeParam}`;
 
     if (lastLoadedSearchTermsParamsRef.current === currentParamsKey && serverSearchTerms !== null) {
       return;
@@ -1242,7 +1259,8 @@ export function PpcDashboard({
       termMinOrders.trim() ||
       termMaxOrders.trim() ||
       termMinAcos.trim() ||
-      termMaxAcos.trim()
+      termMaxAcos.trim() ||
+      termRangeParam
     );
 
     const controller = new AbortController();
@@ -1258,6 +1276,7 @@ export function PpcDashboard({
           search: searchTermQuery.trim(),
           sortBy: termSortField,
           sortDir: termSortDir,
+          ...(termRangeParam ? { ranges: termRangeParam } : {}),
           ...(searchTermCampaignFilter !== "ALL" ? { campaignName: searchTermCampaignFilter } : {}),
           ...(matchTypeFilter !== "ALL" ? { matchType: matchTypeFilter } : {}),
           ...(termPerformanceFilter !== "ALL" ? { performanceFilter: termPerformanceFilter } : {}),
@@ -1319,6 +1338,7 @@ export function PpcDashboard({
     termMaxOrders,
     termMinAcos,
     termMaxAcos,
+    termRangeParam,
   ]);
 
   // On-demand child search terms loader for expanded Target row
@@ -2153,7 +2173,8 @@ export function PpcDashboard({
     termMinOrders.trim() !== "" ||
     termMaxOrders.trim() !== "" ||
     termMinAcos.trim() !== "" ||
-    termMaxAcos.trim() !== ""
+    termMaxAcos.trim() !== "" ||
+    termRangeParam !== ""
   );
 
   // Paginated Search Terms
@@ -2589,6 +2610,9 @@ export function PpcDashboard({
     if (skuPicFilter !== "ALL") {
       list = list.filter((s) => (s.picMkt || "").trim() === skuPicFilter);
     }
+    if (parsedSkuRanges.length) {
+      list = list.filter((s) => passesMetricRanges(s, parsedSkuRanges));
+    }
     if (skuQuery.trim()) {
       const tokens = skuQuery.toLowerCase().split(/\s+/).filter(Boolean);
       list = list.filter((s) => {
@@ -2602,7 +2626,7 @@ export function PpcDashboard({
       return skuSortDir === "asc" ? valA - valB : valB - valA;
     });
     return list;
-  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuPicFilter, skuQuery, skuSortField, skuSortDir]);
+  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuPicFilter, skuQuery, skuSortField, skuSortDir, parsedSkuRanges]);
 
   // Paginated SKUs
   const totalSkuPages = Math.max(1, Math.ceil(filteredSortedSkus.length / skuPageSize));
@@ -2793,6 +2817,7 @@ export function PpcDashboard({
         groupFilter: campaignGroupFilter, targetAcos: String(targetAcos), sortField: campaignSortField,
         sortDirection: campaignSortDir, page: "1", pageSize: "20000", export: "1",
         ...(selectedPortfolioForDrilldown ? { portfolioName: selectedPortfolioForDrilldown } : {}),
+        ...(campaignRangeParam ? { ranges: campaignRangeParam } : {}),
       });
       const exportResponse = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store" });
       if (!exportResponse.ok) {
@@ -2823,6 +2848,7 @@ export function PpcDashboard({
         storeName: selectedStore, days: String(selectedDays), query: portfolioQuery,
         status: portfolioActiveOnly ? "ACTIVE" : "ALL",
         sortField: portfolioSortField, sortDirection: portfolioSortDir, page: "1", pageSize: "20000", export: "1",
+        ...(portfolioRangeParam ? { ranges: portfolioRangeParam } : {}),
       });
       const exportResponse = await fetch(`/api/ppc/portfolios?${params}`, { cache: "no-store" });
       if (!exportResponse.ok) {
@@ -3650,6 +3676,15 @@ export function PpcDashboard({
                 )}
               </div>
 
+              {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
+              <PpcMetricRangeFilter
+                value={portfolioRanges}
+                onChange={(next) => {
+                  setPortfolioRanges(next);
+                  setPortfolioPage(1);
+                }}
+              />
+
               {/* Checkbox: Chỉ hiện Active (mặc định tích) */}
               <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer select-none hover:bg-slate-100 transition shrink-0">
                 <input
@@ -4109,6 +4144,15 @@ export function PpcDashboard({
                 <option value="SB01">SB01</option>
               </select>
 
+              {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
+              <PpcMetricRangeFilter
+                value={campaignRanges}
+                onChange={(next) => {
+                  setCampaignRanges(next);
+                  setCampaignPage(1);
+                }}
+              />
+
               {/* Sắp xếp: bấm tiêu đề cột trong bảng (mặc định Ngày campaign mới nhất) */}
               {/* Reset button if filter active */}
               {(campaignQuery ||
@@ -4532,6 +4576,15 @@ export function PpcDashboard({
                   </option>
                 ))}
               </select>
+
+              {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
+              <PpcMetricRangeFilter
+                value={targetRanges}
+                onChange={(next) => {
+                  setTargetRanges(next);
+                  setTargetPage(1);
+                }}
+              />
 
               {/* Reset Filters */}
               {(targetQuery || selectedCampaignForDrilldown) && (
@@ -5182,6 +5235,15 @@ export function PpcDashboard({
                 </select>
               </div>
 
+              {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
+              <PpcMetricRangeFilter
+                value={skuRanges}
+                onChange={(next) => {
+                  setSkuRanges(next);
+                  setSkuPage(1);
+                }}
+              />
+
               <label className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold cursor-pointer select-none bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 transition">
                 <input
                   type="checkbox"
@@ -5426,6 +5488,15 @@ export function PpcDashboard({
                 <option value="Auto">Auto</option>
                 <option value="Targeting">Targeting</option>
               </select>
+
+              {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
+              <PpcMetricRangeFilter
+                value={termRanges}
+                onChange={(next) => {
+                  setTermRanges(next);
+                  setTermPage(1);
+                }}
+              />
 
               {/* Range Filters: Clicks */}
               <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">

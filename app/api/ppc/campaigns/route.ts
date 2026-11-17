@@ -2,6 +2,7 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { campaignPerformanceFromFacts } from "@/lib/ppc/analytics";
 import { listPpcCampaignPage, getActiveSnapshotId, type PpcCampaignPageFilters } from "@/lib/ppc/repository";
 import { getCachedOrFetch } from "@/lib/redis";
+import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,7 @@ export async function GET(request: Request) {
       spendFilter: (["ALL", "HAS_SPEND", "ZERO_SPEND", "SPEND_GT_50", "SPEND_GT_100"].includes(p.get("spendFilter") || "") ? p.get("spendFilter") : "ALL") as PpcCampaignPageFilters["spendFilter"],
       groupFilter: (["ALL", "BLEEDING", "HIGH_ACOS", "GOOD"].includes(p.get("groupFilter") || "") ? p.get("groupFilter") : "ALL") as PpcCampaignPageFilters["groupFilter"],
       targetAcos: Number(p.get("targetAcos") || 30), sortField, sortDirection, page, pageSize,
+      ranges: decodeMetricRanges(p.get("ranges")),
     };
     const snapshotId = await getActiveSnapshotId(scope, filters.storeName, filters.days);
     const cacheKey = `ppc:campaign-page:${scope.teamId}:${snapshotId}:${Buffer.from(JSON.stringify(filters)).toString("base64url")}`;

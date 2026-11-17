@@ -15,6 +15,8 @@ import {
 } from "@phosphor-icons/react";
 import { PpcAmazonDatePicker, type DateRange } from "./ppc-amazon-date-picker";
 import { PpcCopyButton } from "./ppc-copy-button";
+import { PpcMetricRangeFilter } from "./ppc-metric-range-filter";
+import { encodeMetricRanges, parseMetricRanges, type MetricRanges } from "@/lib/ppc/manual-bid";
 
 interface Props {
   selectedStore: string;
@@ -180,6 +182,9 @@ function PpcStCampaignRollupViewInner({
 
   // Filters & Pagination
   const [searchQuery, setSearchQuery] = useState("");
+  // Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR theo tổng từng campaign của kỳ chính
+  const [metricRanges, setMetricRanges] = useState<MetricRanges>({});
+  const rangeParam = useMemo(() => encodeMetricRanges(parseMetricRanges(metricRanges)), [metricRanges]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [sortBy, setSortBy] = useState("spend");
@@ -257,6 +262,10 @@ function PpcStCampaignRollupViewInner({
         params.set("search", searchQuery.trim());
       }
 
+      if (rangeParam) {
+        params.set("ranges", rangeParam);
+      }
+
       if (effectiveComparePeriod) {
         params.set("compareStartDate", effectiveComparePeriod.startDate);
         params.set("compareEndDate", effectiveComparePeriod.endDate);
@@ -287,7 +296,7 @@ function PpcStCampaignRollupViewInner({
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [selectedStore, selectedSku, primaryPeriod, effectiveComparePeriod, page, pageSize, sortBy, sortDir, searchQuery, notify]);
+  }, [selectedStore, selectedSku, primaryPeriod, effectiveComparePeriod, page, pageSize, sortBy, sortDir, searchQuery, rangeParam, notify]);
 
   useEffect(() => {
     void fetchData();
@@ -465,6 +474,15 @@ function PpcStCampaignRollupViewInner({
               </button>
             )}
           </div>
+
+          {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
+          <PpcMetricRangeFilter
+            value={metricRanges}
+            onChange={(next) => {
+              setMetricRanges(next);
+              setPage(1);
+            }}
+          />
 
           {/* Cụm Bộ Lọc Ngày & So Sánh (Bên Phải) */}
           <div className="flex flex-wrap items-center gap-2 ml-auto">

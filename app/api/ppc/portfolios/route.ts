@@ -2,6 +2,7 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { portfolioPerformanceFromRows } from "@/lib/ppc/analytics";
 import { listPpcPortfolioPage, getActiveSnapshotId, type PpcPortfolioPageFilters } from "@/lib/ppc/repository";
 import { getCachedOrFetch } from "@/lib/redis";
+import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,7 @@ export async function GET(request: Request) {
       sortDirection,
       page,
       pageSize,
+      ranges: decodeMetricRanges(p.get("ranges")),
     };
     const snapshotId = await getActiveSnapshotId(scope, filters.storeName, filters.days);
     const cacheKey = `ppc:portfolio-page:${scope.teamId}:${snapshotId}:${Buffer.from(JSON.stringify(filters)).toString("base64url")}`;

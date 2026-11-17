@@ -103,8 +103,8 @@ export function skuMetric(g: SkuLike, key: SkuMetricKey): number | null {
   }
 }
 
-export function activeRanges(f: SkuListFilter): Array<{ key: SkuMetricKey; min: number | null; max: number | null }> {
-  const out: Array<{ key: SkuMetricKey; min: number | null; max: number | null }> = [];
+export function activeRanges(f: SkuListFilter): ParsedMetricRange[] {
+  const out: ParsedMetricRange[] = [];
   for (const m of SKU_METRICS) {
     const r = f.ranges?.[m.key];
     const min = r?.min ? parseFloat(r.min) : NaN;
@@ -112,6 +112,57 @@ export function activeRanges(f: SkuListFilter): Array<{ key: SkuMetricKey; min: 
     if (Number.isFinite(min) || Number.isFinite(max)) {
       out.push({ key: m.key, min: Number.isFinite(min) ? min : null, max: Number.isFinite(max) ? max : null });
     }
+  }
+  return out;
+}
+
+export type MetricRanges = Partial<Record<SkuMetricKey, MetricRange>>;
+export type ParsedMetricRange = { key: SkuMetricKey; min: number | null; max: number | null };
+
+/** Khoảng số đang nhập của nút "Lọc" (bỏ ô trống / không phải số) */
+export function parseMetricRanges(ranges: MetricRanges | null | undefined): ParsedMetricRange[] {
+  return activeRanges({ ...EMPTY_SKU_FILTER, ranges: ranges || {} });
+}
+
+/** Chỉ số của 1 dòng bất kỳ có spend / sales / clicks / orders; null khi không tính được */
+export function rowMetric(
+  row: { spend: number; sales: number; clicks: number; orders: number },
+  key: SkuMetricKey,
+): number | null {
+  return skuMetric({ sku: "", ...row }, key);
+}
+
+/** Dòng thỏa mọi khoảng của nút "Lọc" (chỉ số không tính được, vd ACOS khi chưa có sales → loại) */
+export function passesMetricRanges(
+  row: { spend: number; sales: number; clicks: number; orders: number },
+  ranges: ParsedMetricRange[],
+): boolean {
+  for (const r of ranges) {
+    const v = rowMetric(row, r.key);
+    if (v == null) return false;
+    if (r.min != null && v < r.min) return false;
+    if (r.max != null && v > r.max) return false;
+  }
+  return true;
+}
+
+/** Gửi lên API: "spend:10:50;acos::30" (ô trống để rỗng). "" khi không lọc. */
+export function encodeMetricRanges(ranges: ParsedMetricRange[]): string {
+  return ranges.map((r) => `${r.key}:${r.min ?? ""}:${r.max ?? ""}`).join(";");
+}
+
+/** Đọc tham số "ranges" của API; bỏ qua phần không hợp lệ */
+export function decodeMetricRanges(raw: string | null | undefined): ParsedMetricRange[] {
+  if (!raw) return [];
+  const keys = new Set<string>(SKU_METRICS.map((m) => m.key));
+  const out: ParsedMetricRange[] = [];
+  for (const part of raw.split(";").slice(0, SKU_METRICS.length)) {
+    const [key, minRaw = "", maxRaw = ""] = part.split(":");
+    if (!keys.has(key) || out.some((r) => r.key === key)) continue;
+    const min = minRaw.trim() === "" ? NaN : Number(minRaw);
+    const max = maxRaw.trim() === "" ? NaN : Number(maxRaw);
+    if (!Number.isFinite(min) && !Number.isFinite(max)) continue;
+    out.push({ key: key as SkuMetricKey, min: Number.isFinite(min) ? min : null, max: Number.isFinite(max) ? max : null });
   }
   return out;
 }

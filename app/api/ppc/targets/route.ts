@@ -6,6 +6,8 @@ import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import { KEYWORD_GROUP_LIMIT, splitSkuSearch } from "@/lib/ppc/search-term-grouping";
 import { loadTargetsGroupedBySku, targetSkuMatch } from "@/lib/ppc/target-grouping";
 import { getCachedOrFetch } from "@/lib/redis";
+import { decodeMetricRanges, encodeMetricRanges } from "@/lib/ppc/manual-bid";
+import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
@@ -26,10 +28,12 @@ export async function GET(request: Request) {
     const adGroupName = searchParams.get("adGroupName")?.trim() || "";
     const sortBy = searchParams.get("sortBy") || "spend";
     const sortDir = (searchParams.get("sortDir") || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    // Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR của từng target
+    const ranges = decodeMetricRanges(searchParams.get("ranges"));
 
     const sql = await getDatabaseClient();
 
-    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}`;
+    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}:${encodeMetricRanges(ranges)}`;
     const result = await getCachedOrFetch(cacheKey, 60, async () => {
       // 1. Resolve Store ID if storeName is specified
       let storeId: string | null = null;
@@ -131,6 +135,7 @@ export async function GET(request: Request) {
       : (campaignName ? sql`AND lower(p.campaign_name) = lower(${campaignName})` : sql``);
     const adGroupFilter = adGroupName ? sql`AND lower(p.ad_group_name) = lower(${adGroupName})` : sql``;
     const skuFilter = sku !== "ALL" ? sql`AND lower(p.sku) = lower(${sku})` : sql``;
+    const rangeFilter = metricRangeSql(sql, ranges, plainMetricColumns(sql, "p"));
 
     const keywordGroups = skuSearch
       ? await loadTargetsGroupedBySku({
@@ -167,6 +172,7 @@ export async function GET(request: Request) {
         ${campaignFilter}
         ${adGroupFilter}
         ${skuFilter}
+        ${rangeFilter}
     `;
 
     const rawSummary = summaryRows[0] || {
@@ -388,6 +394,7 @@ export async function GET(request: Request) {
         ${campaignFilter}
         ${adGroupFilter}
         ${skuFilter}
+        ${rangeFilter}
       ORDER BY ${orderClause}
       LIMIT ${pageSize} OFFSET ${offset}
     `;

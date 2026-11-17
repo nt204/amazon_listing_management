@@ -1,6 +1,8 @@
 // app/api/ppc/search-terms/campaign-rollup/route.ts
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
+import { metricRangeSql } from "@/lib/ppc/metric-range-sql";
 
 export const runtime = "nodejs";
 
@@ -287,9 +289,25 @@ export async function GET(request: Request) {
     }
 
     // 2. QUERY DANH SÁCH CAMPAIGNS ROLL-UP & SUMMARY
-    const searchFilter = search
-      ? sql`AND lower(p.campaign_name) LIKE ${`%${search}%`}`
+    // Nút "Lọc": giữ các campaign có tổng Spend / Sales / ACOS / Click / Order / CPC / CVR của kỳ chính nằm trong khoảng
+    const ranges = decodeMetricRanges(searchParams.get("ranges"));
+    const rangeCampaignFilter = ranges.length
+      ? sql`AND p.campaign_name IN (
+          SELECT p.campaign_name
+          FROM ppc_search_terms p
+          JOIN ppc_stores s ON s.id = p.store_id
+          WHERE s.team_id = ${scope.teamId}
+            ${storeId ? sql`AND p.store_id = ${storeId}` : sql``}
+            ${skuFilter}
+            AND p.report_granularity = 'DAILY'
+            AND p.report_date >= ${startDate}::date AND p.report_date <= ${endDate}::date
+          GROUP BY p.campaign_name
+          HAVING TRUE ${metricRangeSql(sql, ranges, {
+            spend: sql`SUM(p.spend)`, sales: sql`SUM(p.sales)`, clicks: sql`SUM(p.clicks)`, orders: sql`SUM(p.orders)`,
+          })}
+        )`
       : sql``;
+    const searchFilter = sql`${search ? sql`AND lower(p.campaign_name) LIKE ${`%${search}%`}` : sql``} ${rangeCampaignFilter}`;
 
     if (!hasCompare) {
       // --- CHẾ ĐỘ 1: XEM 1 KỲ (SINGLE PERIOD) ---

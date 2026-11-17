@@ -3,6 +3,8 @@ import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
+import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
+import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import { KEYWORD_GROUP_LIMIT, loadGroupedBySku, searchTermSkuMatch, splitSkuSearch } from "@/lib/ppc/search-term-grouping";
 import type { MatchType, PpcAdType } from "@/lib/ppc/types";
@@ -43,6 +45,8 @@ export async function GET(request: Request) {
 
     const matchType = searchParams.get("matchType")?.trim() || "";
     const performanceFilter = searchParams.get("performanceFilter")?.trim() || "";
+    // Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR (cache theo request.url nên đã gồm tham số này)
+    const ranges = decodeMetricRanges(searchParams.get("ranges"));
 
     const startDateParam = searchParams.get("startDate")?.trim() || "";
     const endDateParam = searchParams.get("endDate")?.trim() || "";
@@ -115,6 +119,8 @@ export async function GET(request: Request) {
         ${minAcos !== null ? sql`AND (CASE WHEN p.sales > 0 THEN (p.spend / p.sales) * 100 WHEN p.spend > 0 THEN 999 ELSE 0 END) >= ${minAcos}` : sql``}
         ${maxAcos !== null ? sql`AND (CASE WHEN p.sales > 0 THEN (p.spend / p.sales) * 100 WHEN p.spend > 0 THEN 999 ELSE 0 END) <= ${maxAcos}` : sql``}
       `;
+
+      const rangeFilter = metricRangeSql(sql, ranges, plainMetricColumns(sql, "p"));
 
       const matchTypeFilterClause = matchType && matchType !== "ALL"
         ? sql`AND lower(p.match_type) = lower(${matchType})`
@@ -201,6 +207,7 @@ export async function GET(request: Request) {
           ${clicksFilter}
           ${ordersFilter}
           ${acosFilter}
+          ${rangeFilter}
           ${matchTypeFilterClause}
           ${performanceFilterClause}
           AND (
@@ -352,6 +359,7 @@ export async function GET(request: Request) {
           ${clicksFilter}
           ${ordersFilter}
           ${acosFilter}
+          ${rangeFilter}
           ${matchTypeFilterClause}
           ${performanceFilterClause}
           AND (

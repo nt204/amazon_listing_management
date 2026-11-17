@@ -46,15 +46,9 @@ import { PpcOrganicRankCell, PpcSearchVolumeCell, PpcSponsoredRankCell } from ".
 import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
-import { MockupHoverZoom, RangeRow } from "./ppc-manual-bid-view";
-import {
-  EMPTY_SKU_FILTER,
-  SKU_METRICS,
-  activeRanges,
-  skuMetric,
-  type MetricRange,
-  type SkuMetricKey,
-} from "@/lib/ppc/manual-bid";
+import { MockupHoverZoom } from "./ppc-manual-bid-view";
+import { PpcMetricRangeFilter } from "./ppc-metric-range-filter";
+import { parseMetricRanges, skuMetric, type MetricRanges } from "@/lib/ppc/manual-bid";
 import {
   PpcAiReviewerModal,
   type AiReviewApplicationSnapshot,
@@ -284,18 +278,8 @@ export function PpcSkuRecommendationGroupView({
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
   const [selectedCampType, setSelectedCampType] = useState<"ALL" | "SP03" | "SB05" | "SB01">("ALL");
   // Nút "Lọc": lọc SKU theo khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR (giống tab Manual Bid)
-  const [metricRanges, setMetricRanges] = useState<Partial<Record<SkuMetricKey, MetricRange>>>({});
-  const [rangeOpen, setRangeOpen] = useState(false);
-  const rangeRef = useRef<HTMLDivElement>(null);
-  const parsedRanges = useMemo(() => activeRanges({ ...EMPTY_SKU_FILTER, ranges: metricRanges }), [metricRanges]);
-  useEffect(() => {
-    if (!rangeOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (rangeRef.current && !rangeRef.current.contains(e.target as Node)) setRangeOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [rangeOpen]);
+  const [metricRanges, setMetricRanges] = useState<MetricRanges>({});
+  const parsedRanges = useMemo(() => parseMetricRanges(metricRanges), [metricRanges]);
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
@@ -1417,53 +1401,7 @@ export function PpcSkuRecommendationGroupView({
             </div>
 
             {/* Lọc SKU theo khoảng số: Spend, Sales, ACOS, Click… (giống tab Manual Bid) */}
-            <div ref={rangeRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setRangeOpen((v) => !v)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer shadow-2xs ${
-                  rangeOpen || parsedRanges.length > 0
-                    ? "border-slate-800 bg-white text-slate-900"
-                    : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                Lọc
-                {parsedRanges.length > 0 && (
-                  <span className="rounded-full bg-slate-800 px-1.5 text-[10.5px] font-bold text-white">{parsedRanges.length}</span>
-                )}
-                <span className="text-[9px] text-slate-400">▼</span>
-              </button>
-              {rangeOpen && (
-                <div className="absolute left-0 top-9 z-40 w-80 space-y-1.5 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-                  <div className="grid grid-cols-[1fr_76px_10px_76px] items-center gap-1 text-[10.5px] font-semibold text-slate-400">
-                    <span />
-                    <span className="text-center">từ</span>
-                    <span />
-                    <span className="text-center">đến</span>
-                  </div>
-                  {SKU_METRICS.map((m) => (
-                    <RangeRow
-                      key={m.key}
-                      label={m.label}
-                      unit={m.unit}
-                      value={metricRanges[m.key] || { min: "", max: "" }}
-                      onChange={(r) => setMetricRanges((prev) => ({ ...prev, [m.key]: r }))}
-                    />
-                  ))}
-                  {parsedRanges.length > 0 && (
-                    <div className="flex justify-end pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setMetricRanges({})}
-                        className="cursor-pointer text-[12px] font-semibold text-slate-400 hover:text-slate-700"
-                      >
-                        Xoá lọc
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <PpcMetricRangeFilter value={metricRanges} onChange={setMetricRanges} />
 
             {/* Checkbox: Bao gồm Camp Paused */}
             {onIncludePausedCampaignsChange && (
