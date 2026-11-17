@@ -1278,7 +1278,7 @@ export function PpcDashboard({
         const storeParam = selectedStore && selectedStore !== "ALL" ? `&storeName=${encodeURIComponent(selectedStore)}${channelParam}` : "";
         const [optRes, saleRes] = await Promise.all([
           fetch(`/api/ppc/search-terms/optimization?days=${selectedDays}${storeParam}&pageSize=1`),
-          fetch(`/api/ppc/search-terms/sale-keywords?days=${selectedDays}${storeParam}&pageSize=1`),
+          fetch(`/api/ppc/search-terms/sale-keywords?days=${selectedDays}${storeParam}&countOnly=1`),
         ]);
         if (optRes.ok) {
           const optJson = await optRes.json();

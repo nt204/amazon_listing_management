@@ -504,6 +504,7 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
     const coverage = coverageFromAccountingFileName(fileName, "ads");
     assertRowsInsideCoverage(adsRows, coverage);
     const result = await batchUpsertAds(targetStore.id, adsRows, { snapshot: "dates", coverage });
+    void triggerDailyReportCheckAfterImport().catch(() => {});
     return {
       success: true,
       type: typeInfo.code,

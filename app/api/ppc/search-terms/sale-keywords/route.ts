@@ -328,6 +328,29 @@ export async function GET(request: Request) {
       const totalPages = Math.max(1, Math.ceil(total / pageSize));
       const offset = (page - 1) * pageSize;
 
+      if (countOnly) {
+        const totalSpendNum = Math.round(Number(s.total_spend || 0) * 100) / 100;
+        const totalClicksNum = Number(s.total_clicks || 0);
+        const avgCpc = totalClicksNum > 0 ? Math.round((totalSpendNum / totalClicksNum) * 100) / 100 : 0;
+        return {
+          items: [],
+          total,
+          page: 1,
+          pageSize: 1,
+          totalPages: 1,
+          summary: {
+            totalCount: total,
+            allCandidatesCount: Number(s.all_candidates_count || 0),
+            launchedCount: Number(s.launched_count || 0),
+            totalOrders: Number(s.total_orders || 0),
+            totalSales: Math.round(Number(s.total_sales || 0) * 100) / 100,
+            totalSpend: totalSpendNum,
+            totalClicks: totalClicksNum,
+            avgCpc,
+          },
+        };
+      }
+
       // Sorting
       let orderClause = sql`c.orders DESC, c.sales DESC`;
       if (sortBy === "sales") {

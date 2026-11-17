@@ -1,5 +1,7 @@
 import "server-only";
 
+import fs from "fs";
+import path from "path";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
 import { listFbaDaily, type FbaDailyItem } from "@/lib/accounting/fba-daily-db";
 import { listFbmDaily } from "@/lib/accounting/fbm-financials-db";
@@ -220,8 +222,92 @@ async function loadTeamLeads(teamId: string): Promise<Record<string, string>> {
 }
 
 /**
+ * Danh sách store active từ mac-crawler/stores.json (hoặc stores.json ở root).
+ * Chỉ các store enabled=true mới được tính vào tiêu chí đủ điều kiện gửi báo cáo Lark tự động.
+ */
+export function getCrawlerStores(): string[] {
+  try {
+    const candidates = [
+      path.join(process.cwd(), "mac-crawler", "stores.json"),
+      path.join(process.cwd(), "stores.json"),
+    ];
+    for (const filePath of candidates) {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, "utf-8");
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const names = list
+            .filter((item) => item && item.enabled !== false && typeof item.store_name === "string")
+            .map((item) => item.store_name.trim().toUpperCase());
+          if (names.length > 0) return names;
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[DailyReport] Lỗi khi đọc stores.json:", err);
+  }
+  return ["WARMSTOREY", "LIMIMA", "FASTPEACE", "BOZSPACER", "MALFIRST", "EVERPHANT"];
+}
+
+/**
+ * Kiểm tra xem toàn bộ các store trong stores.json đã có đủ số liệu (cả Orders và Ads) cho ngày targetDate chưa.
+ */
+export async function checkStoresCompletenessForDate(targetDate: string): Promise<{
+  allCompleted: boolean;
+  expectedStores: string[];
+  completedStores: string[];
+  missingStores: string[];
+}> {
+  const sql = await getDatabaseClient();
+  const expectedStores = getCrawlerStores();
+
+  const stores = await sql<Array<{ id: string; name: string }>>`
+    SELECT id, name FROM stores
+    WHERE UPPER(name) IN ${sql(expectedStores)}
+       OR (UPPER(name) = 'WARMSTOREY' AND 'HSOSTORE' IN ${sql(expectedStores)})
+  `;
+
+  const completedStores: string[] = [];
+  const missingStores: string[] = [];
+
+  for (const storeName of expectedStores) {
+    const store = stores.find((s) =>
+      s.name.toUpperCase() === storeName ||
+      (storeName === "HSOSTORE" && s.name.toUpperCase() === "WARMSTOREY") ||
+      (storeName === "WARMSTOREY" && s.name.toUpperCase() === "HSOSTORE")
+    );
+
+    if (!store) {
+      missingStores.push(storeName);
+      continue;
+    }
+
+    const [counts] = await sql<Array<{ order_count: number; ad_count: number }>>`
+      SELECT 
+        (SELECT COUNT(*)::int FROM accounting_orders WHERE store_id = ${store.id} AND date = ${targetDate}::date) AS order_count,
+        (SELECT COUNT(*)::int FROM accounting_ads WHERE store_id = ${store.id} AND date = ${targetDate}::date) AS ad_count
+    `;
+
+    const hasOrders = (counts?.order_count ?? 0) > 0;
+    const hasAds = (counts?.ad_count ?? 0) > 0;
+
+    if (hasOrders && hasAds) {
+      completedStores.push(storeName);
+    } else {
+      missingStores.push(storeName);
+    }
+  }
+
+  return {
+    allCompleted: missingStores.length === 0,
+    expectedStores,
+    completedStores,
+    missingStores,
+  };
+}
+
+/**
  * Ngày mới nhất (< hôm nay) có dữ liệu đơn hàng để lập báo cáo.
- * Không cần đợi 100% store hoàn tất: store chưa có số sẽ được ghi nhận là "thiếu dữ liệu".
  */
 export async function latestCompleteDate(): Promise<string | undefined> {
   const sql = await getDatabaseClient();
@@ -251,7 +337,6 @@ export async function reportDailyBusinessData(
   const isAutomatic = !options.force && !options.recipient && !options.dryRun;
 
   // 1. Không chỉ định ngày: ngày mới nhất có đơn hàng (< hôm nay).
-  //    Store chưa nạp dữ liệu không chặn báo cáo (sẽ ghi chú thiếu dữ liệu).
   const latestDate = options.targetDate?.trim() || (await latestCompleteDate());
   if (!latestDate) {
     return {
@@ -259,6 +344,20 @@ export async function reportDailyBusinessData(
       reportedDate: null,
       message: "Chưa có dữ liệu đơn hàng nào trước hôm nay để lập báo cáo.",
     };
+  }
+
+  // 1.1 Nếu là tự động gửi: YÊU CẦU BẮT BUỘC phải đủ 100% store trong stores.json mới gửi!
+  if (isAutomatic) {
+    const completeness = await checkStoresCompletenessForDate(latestDate);
+    if (!completeness.allCompleted) {
+      const msg = `Chưa đủ số lượng store trong stores.json cho ngày ${latestDate} (${completeness.completedStores.length}/${completeness.expectedStores.length} store đã xong). Đang chờ: ${completeness.missingStores.join(", ")}.`;
+      console.log(`[Auto Daily Report] ${msg}`);
+      return {
+        success: false,
+        reportedDate: latestDate,
+        message: msg,
+      };
+    }
   }
 
   // 2. Kiểm tra nhanh đã báo cáo ngày này (hoặc ngày mới hơn) chưa

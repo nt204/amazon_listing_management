@@ -164,19 +164,19 @@ function PpcStCampaignRollupViewInner({
   notify,
   channel = null,
 }: Props) {
-  // Khoảng ngày chính (Kỳ hiện tại)
-  const [primaryPeriod, setPrimaryPeriod] = useState<DateRange>({
-    startDate: "2026-09-07",
-    endDate: "2026-10-06",
+  // Khoảng ngày chính (Kỳ hiện tại) - mặc định 30 ngày gần nhất
+  const [primaryPeriod, setPrimaryPeriod] = useState<DateRange>(() => {
+    const today = formatDate(new Date());
+    return { startDate: shiftDate(today, -29), endDate: today };
   });
 
   // Loại so sánh: "none" | "same_last_month" | "prev_period" | "custom"
   const [compareType, setCompareType] = useState<CompareType>("same_last_month");
 
   // Dải ngày so sánh tùy chỉnh (chỉ dùng khi compareType === "custom")
-  const [customComparePeriod, setCustomComparePeriod] = useState<DateRange>({
-    startDate: "2026-08-07",
-    endDate: "2026-09-06",
+  const [customComparePeriod, setCustomComparePeriod] = useState<DateRange>(() => {
+    const today = formatDate(new Date());
+    return { startDate: shiftDate(today, -59), endDate: shiftDate(today, -30) };
   });
 
   // Dropdown mở menu chọn loại so sánh

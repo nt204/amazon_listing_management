@@ -3,7 +3,8 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { getDatabaseClient } from "@/lib/db";
 import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql } from "@/lib/ppc/metric-range-sql";
-import { ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
+import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
+import { getCachedOrFetch } from "@/lib/redis";
 
 export const runtime = "nodejs";
 
@@ -82,23 +83,25 @@ export async function GET(request: Request) {
         )`
       : sql``;
 
-    const availableRows = await sql<Array<{ min_date: string | null; max_date: string | null; available_days: number }>>`
-      SELECT MIN(p.report_date)::text AS min_date,
-             MAX(p.report_date)::text AS max_date,
-             COUNT(DISTINCT p.report_date)::integer AS available_days
-      FROM ppc_search_terms p
-      JOIN ppc_stores s ON s.id = p.store_id
-      WHERE s.team_id = ${scope.teamId}
-        ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
-        ${skuFilter}
-        AND p.report_granularity = 'DAILY'
-    `;
-    const availableRange = {
-      startDate: availableRows[0]?.min_date || null,
-      endDate: availableRows[0]?.max_date || null,
-      availableDays: Number(availableRows[0]?.available_days || 0),
-    };
-    if (metadataOnly) return Response.json({ success: true, data: { availableRange } });
+    const cacheKey = `ppc:query:campaign-rollup:${scope.teamId}:${request.url}${channelCacheSuffix(channelScope)}`;
+    const cachedData = await getCachedOrFetch(cacheKey, 60, async () => {
+      const availableRows = await sql<Array<{ min_date: string | null; max_date: string | null; available_days: number }>>`
+        SELECT MIN(p.report_date)::text AS min_date,
+               MAX(p.report_date)::text AS max_date,
+               COUNT(DISTINCT p.report_date)::integer AS available_days
+        FROM ppc_search_terms p
+        JOIN ppc_stores s ON s.id = p.store_id
+        WHERE s.team_id = ${scope.teamId}
+          ${storeId ? sql`AND p.store_id = ${storeId}` : sql``} ${scopeFilter}
+          ${skuFilter}
+          AND p.report_granularity = 'DAILY'
+      `;
+      const availableRange = {
+        startDate: availableRows[0]?.min_date || null,
+        endDate: availableRows[0]?.max_date || null,
+        availableDays: Number(availableRows[0]?.available_days || 0),
+      };
+      if (metadataOnly) return { success: true, data: { availableRange } };
 
     // 1. NẾU YÊU CẦU CHI TIẾT TỪ KHÓA CỦA 1 CAMPAIGN CỤ THỂ (DRILL-DOWN)
     if (detailCampaign) {
@@ -136,7 +139,7 @@ export async function GET(request: Request) {
           LIMIT 200
         `;
 
-        return Response.json({
+        return {
           success: true,
           data: {
             campaignName: detailCampaign,
@@ -172,7 +175,7 @@ export async function GET(request: Request) {
               };
             }),
           },
-        });
+        };
       }
 
       // Chi tiết Search Terms khi đang So sánh 2 kỳ
@@ -247,7 +250,7 @@ export async function GET(request: Request) {
         LIMIT 300
       `;
 
-      return Response.json({
+      return {
         success: true,
         data: {
           campaignName: detailCampaign,
@@ -290,7 +293,7 @@ export async function GET(request: Request) {
             };
           }),
         },
-      });
+      };
     }
 
     // 2. QUERY DANH SÁCH CAMPAIGNS ROLL-UP & SUMMARY
@@ -411,7 +414,7 @@ export async function GET(request: Request) {
         LIMIT ${pageSize} OFFSET ${offset}
       `;
 
-      return Response.json({
+      return {
         success: true,
         data: {
           mode: "single",
@@ -467,7 +470,7 @@ export async function GET(request: Request) {
           pageSize,
           totalPages,
         },
-      });
+      };
     }
 
     // --- CHẾ ĐỘ 2: SO SÁNH 2 KỲ (COMPARE PERIODS) ---
@@ -665,7 +668,7 @@ export async function GET(request: Request) {
     const p1TermsSum = Number(cSum?.p1_terms || 0);
     const p2TermsSum = Number(cSum?.p2_terms || 0);
 
-    return Response.json({
+    return {
       success: true,
       data: {
         mode: "compare",
@@ -792,8 +795,15 @@ export async function GET(request: Request) {
         pageSize,
         totalPages: totalComparePages,
       },
-    });
-  } catch (error) {
+    };
+  });
+
+  return Response.json(cachedData, {
+    headers: {
+      "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+    },
+  });
+} catch (error) {
     return routeErrorResponse(error, "Lỗi khi tổng hợp chiến dịch từ Search Terms");
   }
 }
