@@ -11,6 +11,9 @@ export const runtime = "nodejs";
 
 const METRICS_CACHE_TTL_MS = 300_000; // 5 phút lưu trong L1 Memory
 const REDIS_METRICS_TTL_SEC = 900; // 15 phút lưu trong Redis
+// Có kênh FBA / FBM: tính lại từ facts (Overview ~5 s production) thay vì đọc bảng tổng hợp. Khoá Redis có snapshotId
+// (chỉ đổi khi nạp báo cáo mới) nên giữ 12 h an toàn; refresh=1 vẫn xoá ngay.
+const REDIS_CHANNEL_METRICS_TTL_SEC = 12 * 60 * 60;
 const METRICS_CACHE_MAX_ENTRIES = 100;
 type MetricsData = Awaited<ReturnType<typeof getPpcAnalyticsData>>;
 type MetricsSection = "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "search_terms";
@@ -184,7 +187,7 @@ export async function GET(request: Request) {
       } else {
         data = await getCachedOrFetch<MetricsResponse>(
           redisKey,
-          REDIS_METRICS_TTL_SEC,
+          channel ? REDIS_CHANNEL_METRICS_TTL_SEC : REDIS_METRICS_TTL_SEC,
           async () => {
             let pending = metricsInFlight.get(cacheKey);
             if (!pending) {

@@ -3552,8 +3552,10 @@ export async function listPpcDailyTrendsFromDb(
             AND lower(s.name) = lower(${storeName})
             AND p.grain = 'CAMPAIGN'
             AND p.ad_type = ANY(ARRAY['SP', 'SB', 'SD', 'UNKNOWN'])
-            AND p.report_start_date BETWEEN ${fromDate}::date AND ${toDate}::date
-            AND p.report_start_date = p.report_end_date
+            -- Báo cáo 1 ngày: biểu thức (end - start + 1) khớp index ppc_performance_coverage_days_idx; lọc theo
+            -- start BETWEEN thì snapshot 30 ngày (bắt đầu trong khoảng) cũng khớp → đọc cả ~4 triệu dòng (14,7 s production).
+            AND (p.report_end_date - p.report_start_date + 1) = 1
+            AND p.report_end_date BETWEEN ${fromDate}::date AND ${toDate}::date
             AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
         : sql`
           SELECT p.report_date, COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
