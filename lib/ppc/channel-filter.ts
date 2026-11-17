@@ -25,28 +25,64 @@ export function parsePpcChannel(value: string | null | undefined): PpcChannel | 
 const FBM_RE = "(^|[^a-z])fbm([^a-z]|$)";
 const FBA_RE = "(^|[^a-z])fba([^a-z]|$)";
 
-const accountingIdCache = new Map<string, { id: string | null; expiresAt: number }>();
+interface CachedChannelData {
+  accountingStoreId: string | null;
+  fbmSkus: string[];
+  fbaSkus: string[];
+  expiresAt: number;
+}
+
+const channelDataCache = new Map<string, CachedChannelData>();
 const CACHE_MS = 10 * 60_000;
+
+async function getChannelStoreData(sql: Db, storeName: string): Promise<CachedChannelData> {
+  if (!storeName || storeName === "ALL") {
+    return { accountingStoreId: null, fbmSkus: [], fbaSkus: [], expiresAt: Date.now() + CACHE_MS };
+  }
+  const key = storeName.toUpperCase().trim();
+  const hit = channelDataCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit;
+
+  let accountingStoreId: string | null = null;
+  let fbmSkus: string[] = [];
+  let fbaSkus: string[] = [];
+
+  const acc = await getAccountingStoreForPpcStore(storeName).catch(() => null);
+  if (acc) {
+    const [fbmRows, fbaRows] = await Promise.all([
+      sql<{ sku: string }[]>`
+        SELECT DISTINCT upper(trim(sku)) AS sku
+        FROM accounting_sku_master_fbm
+        WHERE store_id = ${acc.accountingStoreId} AND deleted_at IS NULL AND trim(sku) <> ''
+      `,
+      sql<{ sku: string }[]>`
+        SELECT DISTINCT upper(trim(sku)) AS sku
+        FROM accounting_sku_master
+        WHERE store_id = ${acc.accountingStoreId} AND deleted_at IS NULL AND trim(sku) <> ''
+      `,
+    ]);
+
+    if (fbmRows.length > 0) {
+      accountingStoreId = acc.accountingStoreId;
+      fbmSkus = fbmRows.map((r) => r.sku);
+      fbaSkus = fbaRows.map((r) => r.sku);
+    }
+  }
+
+  const result: CachedChannelData = {
+    accountingStoreId,
+    fbmSkus,
+    fbaSkus,
+    expiresAt: Date.now() + CACHE_MS,
+  };
+  channelDataCache.set(key, result);
+  return result;
+}
 
 /** Id store Accounting (chứa Bảng mã) của store PPC; null nếu store không có Bảng mã FBM → không chia kênh. */
 export async function channelAccountingStoreId(sql: Db, storeName: string): Promise<string | null> {
-  if (!storeName || storeName === "ALL") return null;
-  const key = storeName.toUpperCase();
-  const hit = accountingIdCache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return hit.id;
-  let id: string | null = null;
-  const acc = await getAccountingStoreForPpcStore(storeName).catch(() => null);
-  if (acc) {
-    const rows = await sql<{ ok: boolean }[]>`
-      SELECT EXISTS (
-        SELECT 1 FROM accounting_sku_master_fbm
-        WHERE store_id = ${acc.accountingStoreId} AND deleted_at IS NULL AND trim(sku) <> ''
-      ) AS ok
-    `;
-    if (rows[0]?.ok) id = acc.accountingStoreId;
-  }
-  accountingIdCache.set(key, { id, expiresAt: Date.now() + CACHE_MS });
-  return id;
+  const data = await getChannelStoreData(sql, storeName);
+  return data.accountingStoreId;
 }
 
 /** Store nào chia kênh FBA / FBM (để ô chọn store hiện 2 dòng). */
@@ -57,6 +93,8 @@ export async function storeHasChannels(sql: Db, storeName: string): Promise<bool
 export interface PpcChannelScope {
   channel: PpcChannel;
   accountingStoreId: string;
+  fbmSkus: string[];
+  fbaSkus: string[];
 }
 
 /** Chuẩn hoá tham số kênh của 1 request: null nếu không lọc (không có channel, All Stores, store không chia kênh). */
@@ -67,14 +105,24 @@ export async function resolvePpcChannelScope(
 ): Promise<PpcChannelScope | null> {
   const channel = parsePpcChannel(channelParam);
   if (!channel || !storeName || storeName === "ALL") return null;
-  const accountingStoreId = await channelAccountingStoreId(sql, storeName);
-  return accountingStoreId ? { channel, accountingStoreId } : null;
+  const data = await getChannelStoreData(sql, storeName);
+  return data.accountingStoreId
+    ? {
+        channel,
+        accountingStoreId: data.accountingStoreId,
+        fbmSkus: data.fbmSkus,
+        fbaSkus: data.fbaSkus,
+      }
+    : null;
 }
 
 /**
  * Điều kiện SQL "dòng thuộc kênh đang chọn". `campaignCol` / `portfolioCol` / `skuCol` là tên cột cố định trong code
  * (không bao giờ lấy từ người dùng). Có `skuCol` (bảng theo SKU) thì xét SKU đó thay cho từ đầu tên campaign.
  * scope null → TRUE (không lọc).
+ *
+ * Tối ưu: Dùng mảng JavaScript fbmSkus / fbaSkus đã cache (ANY($1::text[])) thay vì subquery IN (SELECT ...)
+ * bên trong CASE WHEN, giúp Postgres hash và tránh quét lặp (correlated subquery) trên hàng triệu dòng facts.
  */
 export function ppcChannelWhere(
   sql: Db,
@@ -82,7 +130,6 @@ export function ppcChannelWhere(
   cols: { campaignCol?: string; portfolioCol?: string; skuCol?: string },
 ): postgres.Fragment {
   if (!scope) return sql`TRUE`;
-  const id = scope.accountingStoreId;
   const tok = cols.skuCol
     ? sql.unsafe(`upper(trim(${cols.skuCol}))`)
     : sql.unsafe(`upper(split_part(trim(${cols.campaignCol}), ' ', 1))`);
@@ -90,8 +137,8 @@ export function ppcChannelWhere(
   const port = cols.portfolioCol ? sql.unsafe(`COALESCE(${cols.portfolioCol}, '')`) : sql`''`;
   return sql`(
     CASE
-      WHEN ${tok} IN (SELECT upper(trim(m.sku)) FROM accounting_sku_master_fbm m WHERE m.store_id = ${id} AND m.deleted_at IS NULL) THEN 'FBM'
-      WHEN ${tok} IN (SELECT upper(trim(m.sku)) FROM accounting_sku_master m WHERE m.store_id = ${id} AND m.deleted_at IS NULL) THEN 'FBA'
+      WHEN ${tok} = ANY(${scope.fbmSkus}::text[]) THEN 'FBM'
+      WHEN ${tok} = ANY(${scope.fbaSkus}::text[]) THEN 'FBA'
       WHEN ${camp} ~* ${FBM_RE} THEN 'FBM'
       WHEN ${camp} ~* ${FBA_RE} THEN 'FBA'
       WHEN ${port} ~* ${FBM_RE} THEN 'FBM'

@@ -115,6 +115,7 @@ export async function GET(request: Request) {
         p.store_id = ${s.store_id}
         AND p.report_start_date = ${s.report_start_date}
         AND p.report_end_date = ${s.report_end_date}
+        AND p.ad_type = ANY(ARRAY['SP', 'SB', 'SD', 'UNKNOWN'])
       )`
     );
     const combinedSnaps = snapConditions.reduce((acc, curr) => sql`${acc} OR ${curr}`);

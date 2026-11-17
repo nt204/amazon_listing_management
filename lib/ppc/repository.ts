@@ -495,6 +495,7 @@ export async function listPpcPerformance(
           AND ls3.report_start_date = p3.report_start_date
           AND ls3.report_end_date = p3.report_end_date
         WHERE ${filters.sku !== "ALL"}
+          AND p3.grain = 'PRODUCT'
           AND lower(p3.sku) = lower(${filters.sku})
       )
       SELECT
@@ -523,12 +524,8 @@ export async function listPpcPerformance(
         AND ${activeWhere}
         AND (
           ${filters.sku === "ALL"}
-          OR lower(p.sku) = lower(${filters.sku})
-          OR EXISTS (
-            SELECT 1 FROM sku_campaigns sc
-            WHERE sc.store_id = p.store_id
-              AND sc.ad_type = p.ad_type
-              AND sc.campaign_id = p.campaign_id
+          OR (p.store_id, p.ad_type, p.campaign_id) IN (
+            SELECT sc.store_id, sc.ad_type, sc.campaign_id FROM sku_campaigns sc
           )
         )
         AND (
@@ -563,6 +560,7 @@ export async function listPpcPerformance(
           AND ls3.max_report_start = p3.report_start_date
           AND ls3.max_report_end = p3.report_end_date
         WHERE ${filters.sku !== "ALL"}
+          AND p3.grain = 'PRODUCT'
           AND lower(p3.sku) = lower(${filters.sku})
       )
       SELECT
@@ -593,12 +591,8 @@ export async function listPpcPerformance(
         AND ${activeWhere}
         AND (
           ${filters.sku === "ALL"}
-          OR lower(p.sku) = lower(${filters.sku})
-          OR EXISTS (
-            SELECT 1 FROM sku_campaigns sc
-            WHERE sc.store_id = p.store_id
-              AND sc.ad_type = p.ad_type
-              AND sc.campaign_id = p.campaign_id
+          OR (p.store_id, p.ad_type, p.campaign_id) IN (
+            SELECT sc.store_id, sc.ad_type, sc.campaign_id FROM sku_campaigns sc
           )
         )
         AND (p.report_end_date - p.report_start_date + 1)
