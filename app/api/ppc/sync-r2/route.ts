@@ -125,9 +125,9 @@ export async function POST(request: Request) {
           await completePpcIngestion(claimed.id, token, result);
           console.log(`[Auto Ingestion] ✅ Nạp thành công batch ${claimed.batch_id}: ${result.filesProcessed} files.`);
           try {
-            const { cleanupDuplicateR2Batches, cleanupOldZeroMetricFacts } = await import("@/lib/ppc/file-manager");
+            // Dọn facts nặng (0-metrics, thu gọn snapshot) chạy ban đêm trong ppc-ingestion-worker, không chạy ở đây.
+            const { cleanupDuplicateR2Batches } = await import("@/lib/ppc/file-manager");
             await cleanupDuplicateR2Batches();
-            await cleanupOldZeroMetricFacts();
           } catch {}
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
