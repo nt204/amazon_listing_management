@@ -241,6 +241,7 @@ export interface PpcCampaignPerformance {
   campaignId?: string;
   campaignName: string;
   storeName: string;
+  portfolioName?: string;
   adType?: PpcAdType;
   targetingType: "Auto" | "Manual";
   state?: string;
@@ -259,6 +260,25 @@ export interface PpcCampaignPerformance {
   roas: number;
   cpa: number;
   aov: number;
+  statusBadge: "EXCELLENT" | "GOOD" | "WARNING" | "CRITICAL";
+}
+
+export interface PpcPortfolioPerformance {
+  portfolioName: string;
+  storeName: string;
+  campaignsCount: number;
+  activeCampaignsCount: number;
+  pausedCampaignsCount: number;
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+  impressions: number;
+  cpc: number;
+  ctr: number;
+  cvr: number;
+  acos: number;
+  roas: number;
   statusBadge: "EXCELLENT" | "GOOD" | "WARNING" | "CRITICAL";
 }
 

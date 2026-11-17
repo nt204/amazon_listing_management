@@ -23,6 +23,7 @@ export async function GET(request: Request) {
     }
     const filters: PpcCampaignPageFilters = {
       storeName: p.get("storeName") || "ALL", sku: p.get("sku") || "ALL", days,
+      portfolioName: p.get("portfolioName") || undefined,
       query: (p.get("query") || "").slice(0, 200),
       status: (["ALL", "ACTIVE", "PAUSED"].includes(p.get("status") || "") ? p.get("status") : "ACTIVE") as PpcCampaignPageFilters["status"],
       adType: p.get("adType") || "ALL",

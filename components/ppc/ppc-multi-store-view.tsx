@@ -158,15 +158,12 @@ export function PpcMultiStoreView({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
-                  THỐNG KÊ TỪNG GIAN HÀNG
+                  THỐNG KÊ
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-black border border-indigo-200/60">
                   {sortedStores.length} Stores
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium">
-                So sánh chi tiêu, doanh thu và hiệu quả quảng cáo giữa các shop
-              </p>
             </div>
           </div>
 
@@ -269,9 +266,6 @@ export function PpcMultiStoreView({
                               <span className="font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">
                                 {store.name}
                               </span>
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-slate-900 text-white shadow-2xs">
-                                {store.marketplace || "US"}
-                              </span>
                             </div>
                             <div className="text-[11px] text-slate-500 font-semibold mt-0.5 flex items-center gap-1.5">
                               {store.totalCampaigns > 0 ? (
@@ -279,8 +273,6 @@ export function PpcMultiStoreView({
                               ) : (
                                 <span className="text-slate-400">0 camp</span>
                               )}
-                              <span>·</span>
-                              <span>Target: <strong className="text-slate-800">{store.targetAcos}%</strong></span>
                             </div>
                           </div>
                         </div>
@@ -411,9 +403,6 @@ export function PpcMultiStoreView({
                             <h4 className="text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
                               {store.name}
                             </h4>
-                            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200">
-                              {store.marketplace || "US"}
-                            </span>
                           </div>
                           <div className="text-[10px] text-slate-400 font-medium mt-0.5">
                             {store.totalCampaigns > 0 ? `${store.totalCampaigns.toLocaleString()} campaigns` : "Chưa có camp"}
@@ -461,10 +450,7 @@ export function PpcMultiStoreView({
                   </div>
 
                   {/* Footer Button */}
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-slate-400">
-                      Target: <strong className="text-slate-600">{store.targetAcos}%</strong>
-                    </span>
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-end">
                     <button
                       type="button"
                       onClick={(e) => {

@@ -254,7 +254,7 @@ export function usePpcSummarySort() {
 const SUMMARY_COLUMNS: { field: SummarySortField; label: string; className: string }[] = [
   { field: "sku", label: "SKU", className: "px-3 py-3" },
   { field: "keyword", label: "", className: "min-w-[240px] px-3 py-3" },
-  { field: "impressions", label: "Hiển thị", className: "px-3 py-3 text-right" },
+  { field: "impressions", label: "Impression", className: "px-3 py-3 text-right" },
   { field: "clicks", label: "Clicks", className: "px-3 py-3 text-right" },
   { field: "ctr", label: "CTR", className: "px-3 py-3 text-right" },
   { field: "spend", label: "Spend", className: "px-3 py-3 text-right" },

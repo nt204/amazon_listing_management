@@ -2,6 +2,7 @@
 -- Phí dịch vụ của store dùng cho cột Net Profit tab FBA / FBM theo ngày (như file kế toán):
 --   FBA: Net Profit = Profit − 20000 × service_rate ÷ 184 ngày (đã có cột service_rate)
 --   FBM: Net Profit = Profit − fbm_service_cost ÷ 184 ngày (cột mới)
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS service_rate NUMERIC;
 ALTER TABLE stores ADD COLUMN IF NOT EXISTS fbm_service_cost NUMERIC;
 
 -- Giá trị đang dùng trong file "FBA/FBM - FASTPEACE - KẾ TOÁN TỔNG HỢP 2026" (chỉ điền khi còn trống)

@@ -127,7 +127,7 @@ interface ListingWorkspaceProps {
 
 type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
 type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "manual_bid" | "phoi" | "rules";
-type PpcDashboardTab = "overview" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
+type PpcDashboardTab = "overview" | "portfolios" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
 type AccountingSection =
   | "overview"
   | "stores"
@@ -468,6 +468,27 @@ function WorkspaceSidebar({
 
                   {/* Sub-items under PPC Dashboard - giữ cố định mở luôn */}
                   <div className="ml-2 pl-2 border-l border-indigo-200/80 space-y-0.5 py-0.5">
+                    {/* Mục: Portfolio */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectPpcDashboardTab("portfolios");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
+                        ppcSection === "dashboard" && ppcDashboardTab === "portfolios"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "portfolios" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span className="truncate">Portfolio</span>
+                    </button>
+
                     {/* Mục: Campaign */}
                     <button
                       type="button"
@@ -1209,7 +1230,7 @@ export function ListingWorkspace({
       const effectiveView = urlView || savedView;
       const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban"];
       const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "manual_bid", "phoi", "rules"];
-      const validDashboardTabs: PpcDashboardTab[] = ["overview", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
+      const validDashboardTabs: PpcDashboardTab[] = ["overview", "portfolios", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
       const validAccountingSections: AccountingSection[] = [
         "overview",
         "stores",
@@ -1478,6 +1499,8 @@ export function ListingWorkspace({
                               ? "Amazon PPC - Đề Xuất & Auto Bid"
                               : ppcSection === "manual_bid"
                                 ? "Amazon PPC - Manual Bid"
+                              : ppcDashboardTab === "portfolios"
+                                ? "Amazon PPC - Portfolio"
                               : ppcDashboardTab === "campaigns"
                                 ? "Amazon PPC - Quản Lý Campaign"
                                 : ppcDashboardTab === "targets"

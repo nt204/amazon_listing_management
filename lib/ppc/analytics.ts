@@ -12,6 +12,7 @@ import type {
   PpcMatchTypeBreakdown,
   PpcMetricComparison,
   PpcPerformanceRow,
+  PpcPortfolioPerformance,
   PpcRecommendation,
   PpcSearchTermRow,
   PpcSearchTermSummary,
@@ -1191,6 +1192,7 @@ export function campaignPerformanceFromFacts(
       campaignId: row.campaignId,
       campaignName: row.campaignName || row.campaignId || "Unnamed Campaign",
       storeName: row.storeName || "Store",
+      portfolioName: row.portfolioName || "",
       adType: row.adType,
       targetingType,
       state: row.state || row.campaignState,
@@ -1205,6 +1207,64 @@ export function campaignPerformanceFromFacts(
   return options.preserveOrder
     ? campaigns
     : campaigns.sort((a, b) => b.spend - a.spend);
+}
+
+export function portfolioPerformanceFromRows(
+  rows: Array<{
+    portfolioName: string;
+    storeName: string;
+    campaignsCount: number | string;
+    activeCampaignsCount: number | string;
+    pausedCampaignsCount: number | string;
+    spend: number | string;
+    sales: number | string;
+    orders: number | string;
+    clicks: number | string;
+    impressions: number | string;
+  }>,
+  targetAcos = 30,
+): PpcPortfolioPerformance[] {
+  return rows.map((r) => {
+    const campaignsCount = Number(r.campaignsCount || 0);
+    const activeCampaignsCount = Number(r.activeCampaignsCount || 0);
+    const pausedCampaignsCount = Number(r.pausedCampaignsCount || 0);
+    const spend = Math.round(Number(r.spend || 0) * 100) / 100;
+    const sales = Math.round(Number(r.sales || 0) * 100) / 100;
+    const orders = Number(r.orders || 0);
+    const clicks = Number(r.clicks || 0);
+    const impressions = Number(r.impressions || 0);
+    const cpc = clicks > 0 ? Math.round((spend / clicks) * 100) / 100 : 0;
+    const ctr = impressions > 0 ? Math.round((clicks / impressions) * 10000) / 100 : 0;
+    const cvr = clicks > 0 ? Math.round((orders / clicks) * 10000) / 100 : 0;
+    const acos = sales > 0 ? Math.round((spend / sales) * 1000) / 10 : (spend > 0 ? 999 : 0);
+    const roas = spend > 0 ? Math.round((sales / spend) * 100) / 100 : 0;
+    const statusBadge: PpcPortfolioPerformance["statusBadge"] =
+      orders === 0 || acos > targetAcos * 2
+        ? "CRITICAL"
+        : acos > targetAcos
+          ? "WARNING"
+          : acos <= targetAcos * 0.75
+            ? "EXCELLENT"
+            : "GOOD";
+    return {
+      portfolioName: r.portfolioName,
+      storeName: r.storeName,
+      campaignsCount,
+      activeCampaignsCount,
+      pausedCampaignsCount,
+      spend,
+      sales,
+      orders,
+      clicks,
+      impressions,
+      cpc,
+      ctr,
+      cvr,
+      acos,
+      roas,
+      statusBadge,
+    };
+  });
 }
 
 export function adGroupPerformanceFromFacts(rows: PpcPerformanceRow[]): PpcAdGroupPerformance[] {

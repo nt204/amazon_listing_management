@@ -74,6 +74,7 @@ import type {
   PpcAlert,
   PpcAdTypeBreakdown,
   PpcCampaignPerformance,
+  PpcPortfolioPerformance,
   PpcAdGroupPerformance,
   PpcDataHealth,
   PpcKeywordMatchTypeBreakdown,
@@ -96,13 +97,13 @@ import { usePpcFrozenColumns } from "./use-ppc-frozen-columns";
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
-  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings";
+  initialTab?: "overview" | "portfolios" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
   initialStore?: string;
   actor?: RequestActor;
   navNonce?: number;
   standaloneTab?: "st_campaigns" | "st_optimization" | "sale_kw" | "recommendations" | "manual_bid" | "outcomes";
-  activeTabProp?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings";
+  activeTabProp?: "overview" | "portfolios" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings";
   onTabChange?: (tab: string) => void;
   onOpenMobileNav?: () => void;
   headerTitle?: string;
@@ -186,7 +187,7 @@ function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): strin
   return trimmed;
 }
 
-const STORE_SCOPED_TABS = new Set<string>(["campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns"]);
+const STORE_SCOPED_TABS = new Set<string>(["portfolios", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns"]);
 
 // Dòng tổng phía trên bảng: bỏ mã SKU khỏi nội dung tìm kiếm, chỉ hiện phần keyword (không có thì "Tất cả …")
 function querySummaryLabel(query: string, allLabel: string): string {
@@ -345,16 +346,17 @@ export function PpcDashboard({
   const sectionRequestIdRef = useRef(0);
   const sectionRequestsRef = useRef(new Map<string, { controller: AbortController; id: number }>());
 
-  // Drill-down hierarchy state: Campaign -> Ad Group -> Target/Keyword -> Search Terms
+  // Drill-down hierarchy state: Portfolio -> Campaign -> Ad Group -> Target/Keyword -> Search Terms
+  const [selectedPortfolioForDrilldown, setSelectedPortfolioForDrilldown] = useState<string | null>(null);
   const [selectedCampaignForDrilldown, setSelectedCampaignForDrilldown] = useState<string | null>(null);
   const [selectedCampaignIdForDrilldown, setSelectedCampaignIdForDrilldown] = useState<string | null>(null);
   const [selectedAdGroupForDrilldown, setSelectedAdGroupForDrilldown] = useState<string | null>(null);
   const [expandedTargetKey, setExpandedTargetKey] = useState<string | null>(null);
   const lastLoadedTargetsParamsRef = useRef<string>("");
 
-  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Campaigns -> ST Optimization -> Sale KW | SKU parallel view | Settings)
+  // Navigation tab for data slicing (Hierarchy: Overview -> Portfolios -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Campaigns -> ST Optimization -> Sale KW | SKU parallel view | Settings)
   const [activeTab, setActiveTabState] = useState<
-    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings"
+    "overview" | "portfolios" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "manual_bid" | "outcomes" | "settings"
   >(standaloneTab || activeTabProp || initialTab || "overview");
 
   const setActiveTab = useCallback((tab: any) => {
@@ -366,6 +368,7 @@ export function PpcDashboard({
     if (headerTitle) return headerTitle;
     const map: Record<string, string> = {
       overview: "Amazon PPC Dashboard & Analytics",
+      portfolios: "Amazon PPC - Portfolio",
       campaigns: "Amazon PPC - Quản Lý Campaign",
       targets: "Amazon PPC - Quản Lý Target & Keyword",
       search_terms: "Amazon PPC - Báo Cáo Search Terms",
@@ -398,7 +401,7 @@ export function PpcDashboard({
     if (standaloneTab || initialTab) return;
     try {
       const urlParam = new URLSearchParams(window.location.search).get("tab") as any;
-      const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns", "st_optimization", "sale_kw", "alerts", "recommendations", "manual_bid", "outcomes", "settings"];
+      const validTabs = ["overview", "portfolios", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns", "st_optimization", "sale_kw", "alerts", "recommendations", "manual_bid", "outcomes", "settings"];
       if (urlParam && validTabs.includes(urlParam)) {
         setActiveTab(urlParam);
         return;
@@ -591,6 +594,7 @@ export function PpcDashboard({
   const [termPage, setTermPage] = useState(1);
   const [termPageSize, setTermPageSize] = useState(25);
   // Khóa cột cho các bảng Campaign / Target / Search Term / SKU — lưu theo từng tài khoản
+  const portfolioFrozen = usePpcFrozenColumns("portfolios", actor, 1);
   const campaignFrozen = usePpcFrozenColumns("campaigns", actor, 1);
   const targetFrozen = usePpcFrozenColumns("targets", actor, 2);
   const searchTermFrozen = usePpcFrozenColumns("search_terms", actor, 2);
@@ -599,6 +603,20 @@ export function PpcDashboard({
   // Sắp xếp bảng tổng (SKU + keyword) phía trên tab Target / Search Term
   const targetSummarySort = usePpcSummarySort();
   const searchTermSummarySort = usePpcSummarySort();
+
+  // Portfolio state
+  const [portfolioPage, setPortfolioPage] = useState(1);
+  const [portfolioPageSize, setPortfolioPageSize] = useState(25);
+  const [loadingPortfolioPage, setLoadingPortfolioPage] = useState(false);
+  const [portfolioPerformance, setPortfolioPerformance] = useState<PpcPortfolioPerformance[]>([]);
+  const [portfolioServerMeta, setPortfolioServerMeta] = useState({
+    total: 0,
+    totals: { campaigns: 0, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 },
+  });
+  const [portfolioQuery, setPortfolioQuery] = useState("");
+  const [portfolioActiveOnly, setPortfolioActiveOnly] = useState(true);
+  const [portfolioSortField, setPortfolioSortField] = useState<"name" | "campaigns" | "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas">("spend");
+  const [portfolioSortDir, setPortfolioSortDir] = useState<SortDirection>("desc");
 
   const [campaignPage, setCampaignPage] = useState(1);
   const [campaignPageSize, setCampaignPageSize] = useState(25);
@@ -754,6 +772,7 @@ export function PpcDashboard({
   const [showStoreNotice, setShowStoreNotice] = useState(false);
   const [pendingFeatureTab, setPendingFeatureTab] = useState<
     | "overview"
+    | "portfolios"
     | "campaigns"
     | "ad_groups"
     | "targets"
@@ -791,6 +810,7 @@ export function PpcDashboard({
 
   const handleFeatureTabClick = useCallback((tabKey:
     | "overview"
+    | "portfolios"
     | "campaigns"
     | "ad_groups"
     | "targets"
@@ -1010,6 +1030,40 @@ export function PpcDashboard({
   }, [activeTab, loadData, loadSection]);
 
   useEffect(() => {
+    if (activeTab !== "portfolios" || selectedStore === "ALL") return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoadingPortfolioPage(true);
+      try {
+        const params = new URLSearchParams({
+          storeName: selectedStore, days: String(selectedDays),
+          query: portfolioQuery, status: portfolioActiveOnly ? "ACTIVE" : "ALL",
+          sortField: portfolioSortField, sortDirection: portfolioSortDir,
+          page: String(portfolioPage), pageSize: String(portfolioPageSize),
+          targetAcos: String(targetAcos),
+        });
+        const res = await fetch(`/api/ppc/portfolios?${params}`, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`Không thể tải Portfolio (HTTP ${res.status})`);
+        const data = await res.json();
+        setPortfolioPerformance(data.portfolios || []);
+        setPortfolioServerMeta({
+          total: Number(data.total || 0),
+          totals: data.totals || { campaigns: 0, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 },
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        notify(error instanceof Error ? error.message : "Không thể tải Portfolio", "error");
+      } finally {
+        if (!controller.signal.aborted) setLoadingPortfolioPage(false);
+      }
+    }, portfolioQuery ? 250 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeTab, selectedStore, selectedDays, portfolioQuery, portfolioActiveOnly, portfolioSortField, portfolioSortDir, portfolioPage, portfolioPageSize, targetAcos]);
+
+  useEffect(() => {
     if (activeTab !== "campaigns" || selectedStore === "ALL") return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
@@ -1021,6 +1075,7 @@ export function PpcDashboard({
           spendFilter: campaignSpendFilter, groupFilter: campaignGroupFilter,
           targetAcos: String(targetAcos), sortField: campaignSortField,
           sortDirection: campaignSortDir, page: String(campaignPage), pageSize: String(campaignPageSize),
+          ...(selectedPortfolioForDrilldown ? { portfolioName: selectedPortfolioForDrilldown } : {}),
         });
         const res = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store", signal: controller.signal });
         if (!res.ok) throw new Error(`Không thể tải Campaign (HTTP ${res.status})`);
@@ -1044,7 +1099,7 @@ export function PpcDashboard({
     };
   }, [activeTab, selectedStore, selectedSku, selectedDays, campaignQuery, campaignStatusFilter,
     campaignFormatFilter, campaignSpendFilter, campaignGroupFilter, targetAcos,
-    campaignSortField, campaignSortDir, campaignPage, campaignPageSize]);
+    campaignSortField, campaignSortDir, campaignPage, campaignPageSize, selectedPortfolioForDrilldown]);
 
   // Server-side paginated fetch for Targets (50 rows/page, 300ms debounce, SQL summary aggregation)
   useEffect(() => {
@@ -2165,6 +2220,21 @@ export function PpcDashboard({
     return map;
   }, [targetPerformance]);
 
+  // Aggregated totals for currently filtered portfolios
+  const filteredPortfolioTotals = useMemo(() => {
+    const { campaigns, spend, sales, orders, clicks, impressions } = portfolioServerMeta.totals;
+    const acos = sales > 0 ? (spend / sales) * 100 : 0;
+    const roas = spend > 0 ? sales / spend : 0;
+    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+    const cvr = clicks > 0 ? (orders / clicks) * 100 : 0;
+    const cpc = clicks > 0 ? spend / clicks : 0;
+    return { count: portfolioServerMeta.total, campaigns, spend, sales, orders, clicks, impressions, ctr, cvr, cpc, acos, roas };
+  }, [portfolioServerMeta]);
+
+  // Paginated Portfolios
+  const totalPortfolioPages = Math.max(1, Math.ceil(portfolioServerMeta.total / portfolioPageSize));
+  const paginatedPortfolios = portfolioPerformance;
+
   // Filtered & Sorted Campaigns (Default: Active only, sorted Newest to Oldest)
   const filteredSortedCampaigns = campaignPerformance;
 
@@ -2698,7 +2768,7 @@ export function PpcDashboard({
   };
 
   // CSV Exporter
-  const handleExportCsv = async (type: "search_terms" | "campaigns" | "skus") => {
+  const handleExportCsv = async (type: "search_terms" | "campaigns" | "skus" | "portfolios") => {
     let header = "";
     let rows: string[] = [];
     let filename = "";
@@ -2722,6 +2792,7 @@ export function PpcDashboard({
         status: campaignStatusFilter, adType: campaignFormatFilter, spendFilter: campaignSpendFilter,
         groupFilter: campaignGroupFilter, targetAcos: String(targetAcos), sortField: campaignSortField,
         sortDirection: campaignSortDir, page: "1", pageSize: "20000", export: "1",
+        ...(selectedPortfolioForDrilldown ? { portfolioName: selectedPortfolioForDrilldown } : {}),
       });
       const exportResponse = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store" });
       if (!exportResponse.ok) {
@@ -2747,6 +2818,26 @@ export function PpcDashboard({
         fileType: "Campaign File",
         extension: "csv",
       });
+    } else if (type === "portfolios") {
+      const params = new URLSearchParams({
+        storeName: selectedStore, days: String(selectedDays), query: portfolioQuery,
+        status: portfolioActiveOnly ? "ACTIVE" : "ALL",
+        sortField: portfolioSortField, sortDirection: portfolioSortDir, page: "1", pageSize: "20000", export: "1",
+      });
+      const exportResponse = await fetch(`/api/ppc/portfolios?${params}`, { cache: "no-store" });
+      if (!exportResponse.ok) {
+        notify("Không thể tải toàn bộ Portfolio để xuất CSV.", "error");
+        return;
+      }
+      const exportData = await exportResponse.json();
+      const exportPortfolios: PpcPortfolioPerformance[] = exportData.portfolios || [];
+      header = "Portfolio Name,Store,Campaigns,Spend ($),Sales ($),Orders,Clicks,CPC ($),CTR (%),CVR (%),ACOS (%)\n";
+      rows = exportPortfolios.map((p) => {
+        const portSafe = `"${(p.portfolioName === "__NONE__" ? "Chưa phân loại" : p.portfolioName).replace(/"/g, '""')}"`;
+        return `${portSafe},"${p.storeName}",${p.campaignsCount},${p.spend.toFixed(2)},${p.sales.toFixed(2)},${p.orders},${p.clicks},${p.cpc.toFixed(2)},${p.ctr.toFixed(2)},${p.cvr.toFixed(1)},${p.acos.toFixed(1)}`;
+      });
+      const cleanStore = (selectedStore && selectedStore !== "ALL" ? selectedStore : "ALL").replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
+      filename = `ppc-portfolios-${cleanStore}-${Date.now()}.csv`;
     } else {
       header = "SKU,Store,Tier,Impressions,Clicks,CTR (%),Spend ($),Sales ($),Orders,CVR (%),ACOS (%),ROAS\n";
       rows = filteredSortedSkus.map((s) => {
@@ -3349,7 +3440,7 @@ export function PpcDashboard({
       {!standaloneTab && activeTab === "overview" && selectedStore !== "ALL" && (
         <div className="space-y-3">
           {/* Quick High-Impact Table: Strong vs weak SKU performance */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Top 5 best-selling SKUs */}
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-2">
@@ -3375,11 +3466,11 @@ export function PpcDashboard({
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100">
-                      <th className="py-1.5">SKU</th>
-                      <th className="py-1.5 text-right">Spend</th>
-                      <th className="py-1.5 text-right">Orders</th>
-                      <th className="py-1.5 text-right">Sales</th>
-                      <th className="py-1.5 text-right">ACOS</th>
+                      <th className="py-2 pr-3 min-w-[120px]">SKU</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap min-w-[75px]">Spend</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap min-w-[60px]">Orders</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap min-w-[75px]">Sales</th>
+                      <th className="py-2 pl-3 text-right whitespace-nowrap min-w-[65px]">ACOS</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
@@ -3390,20 +3481,20 @@ export function PpcDashboard({
                         </td>
                       </tr>
                     ) : overviewTopSkus.map((sku) => (
-                      <tr key={`${sku.storeName || selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
-                        <td className="py-1.5 font-bold text-slate-800 max-w-[200px]">
+                      <tr key={`${sku.storeName || selectedStore}-${sku.sku}`} className="hover:bg-slate-50 transition-colors">
+                        <td className="py-2 pr-3 font-bold text-slate-800">
                           <div className="flex items-center gap-2 min-w-0">
                             {renderOverviewSkuThumb(sku.sku, sku.mockupUrl)}
-                            <span className="truncate" title={sku.sku}>{sku.sku}</span>
+                            <span className="truncate max-w-[130px] xl:max-w-[160px]" title={sku.sku}>{sku.sku}</span>
                           </div>
                         </td>
-                        <td className="py-1.5 text-right text-slate-700">${sku.spend.toFixed(2)}</td>
-                        <td className="py-1.5 text-right font-normal text-slate-800">{sku.orders}</td>
+                        <td className="py-2 px-3 text-right text-slate-700 font-mono whitespace-nowrap">${sku.spend.toFixed(2)}</td>
+                        <td className="py-2 px-3 text-right font-normal text-slate-800 whitespace-nowrap">{sku.orders}</td>
                         {/* Màu đặt trên span: CSS bảng chung ép màu chữ của td */}
-                        <td className="py-1.5 text-right font-normal"><span className="text-emerald-600">${sku.sales.toFixed(2)}</span></td>
-                        <td className="py-1.5 text-right">
+                        <td className="py-2 px-3 text-right font-normal whitespace-nowrap"><span className="text-emerald-600 font-mono font-bold">${sku.sales.toFixed(2)}</span></td>
+                        <td className="py-2 pl-3 text-right whitespace-nowrap">
                           <span
-                            className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            className="inline-block px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200"
                             title={`Mục tiêu ACOS ≤ ${targetAcos.toFixed(1)}%`}
                           >
                             {sku.acos.toFixed(1)}%
@@ -3441,27 +3532,27 @@ export function PpcDashboard({
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100">
-                      <th className="py-1.5">SKU</th>
-                      <th className="py-1.5 text-right">Spend</th>
-                      <th className="py-1.5 text-right">Orders</th>
-                      <th className="py-1.5 text-right">Sales</th>
-                      <th className="py-1.5 text-right">ACOS</th>
+                      <th className="py-2 pr-3 min-w-[120px]">SKU</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap min-w-[75px]">Spend</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap min-w-[60px]">Orders</th>
+                      <th className="py-2 px-3 text-right whitespace-nowrap min-w-[75px]">Sales</th>
+                      <th className="py-2 pl-3 text-right whitespace-nowrap min-w-[65px]">ACOS</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
                     {loadingOverviewWeakSkus ? (
                       Array.from({ length: 5 }).map((_, index) => (
                         <tr key={`attention-sku-skeleton-${index}`} aria-hidden="true">
-                          <td className="py-2 pr-4">
+                          <td className="py-2 pr-3">
                             <div className="flex items-center gap-2">
                               <div className="h-9 w-9 animate-pulse rounded-md bg-slate-100" />
                               <div className="h-3 w-28 animate-pulse rounded bg-slate-100" />
                             </div>
                           </td>
-                          <td className="py-2 pl-4"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
-                          <td className="py-2 pl-4"><div className="ml-auto h-3 w-8 animate-pulse rounded bg-slate-100" /></td>
-                          <td className="py-2 pl-4"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
-                          <td className="py-2 pl-4"><div className="ml-auto h-4 w-12 animate-pulse rounded bg-rose-50" /></td>
+                          <td className="py-2 px-3"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 px-3"><div className="ml-auto h-3 w-8 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 px-3"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 pl-3"><div className="ml-auto h-4 w-12 animate-pulse rounded bg-rose-50" /></td>
                         </tr>
                       ))
                     ) : overviewWeakSkus.length === 0 ? (
@@ -3471,19 +3562,19 @@ export function PpcDashboard({
                         </td>
                       </tr>
                     ) : overviewWeakSkus.map((sku) => (
-                      <tr key={`${selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
-                        <td className="py-1.5 font-bold text-slate-800 max-w-[200px]">
+                      <tr key={`${selectedStore}-${sku.sku}`} className="hover:bg-slate-50 transition-colors">
+                        <td className="py-2 pr-3 font-bold text-slate-800">
                           <div className="flex items-center gap-2 min-w-0">
                             {renderOverviewSkuThumb(sku.sku, skuMockupBySku.get(sku.sku))}
-                            <span className="truncate" title={sku.sku}>{sku.sku}</span>
+                            <span className="truncate max-w-[130px] xl:max-w-[160px]" title={sku.sku}>{sku.sku}</span>
                           </div>
                         </td>
-                        <td className="py-1.5 text-right font-normal"><span className="text-rose-700">${sku.spend.toFixed(2)}</span></td>
-                        <td className="py-1.5 text-right font-normal text-slate-800">{sku.orders}</td>
-                        <td className="py-1.5 text-right font-normal text-slate-700">${sku.sales.toFixed(2)}</td>
-                        <td className="py-1.5 text-right">
+                        <td className="py-2 px-3 text-right font-normal whitespace-nowrap"><span className="text-rose-700 font-mono font-bold">${sku.spend.toFixed(2)}</span></td>
+                        <td className="py-2 px-3 text-right font-normal text-slate-800 whitespace-nowrap">{sku.orders}</td>
+                        <td className="py-2 px-3 text-right font-normal text-slate-700 font-mono whitespace-nowrap">${sku.sales.toFixed(2)}</td>
+                        <td className="py-2 pl-3 text-right whitespace-nowrap">
                           <span
-                            className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200"
+                            className="inline-block px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200"
                             title={`Break-even ACoS: ${sku.breakEvenAcos.toFixed(1)}%`}
                           >
                             {sku.acos.toFixed(1)}%
@@ -3500,14 +3591,14 @@ export function PpcDashboard({
       )}
 
       {/* ========================================================================= */}
-      {/* VIEW 2: BREAKDOWN BY CAMPAIGN */}
+      {/* VIEW: BREAKDOWN BY PORTFOLIO */}
       {/* ========================================================================= */}
       {storeRequired && (
         <div className="p-8 text-center bg-amber-50/80 rounded-2xl border border-amber-200 space-y-3 my-4 shadow-2xs">
           <Storefront size={36} className="mx-auto text-amber-600" weight="duotone" />
           <h3 className="text-sm font-bold text-amber-950">Vui lòng chọn một Store cụ thể</h3>
           <p className="text-xs text-amber-800 max-w-lg mx-auto">
-            Bảng Campaign, Target, Search Term và SKU chỉ xem theo từng Store. Ở All Stores chỉ có trang Tổng quan.
+            Bảng Portfolio, Campaign, Target, Search Term và SKU chỉ xem theo từng Store. Ở All Stores chỉ có trang Tổng quan.
           </p>
           <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
             {stores.map((s) => (
@@ -3524,8 +3615,407 @@ export function PpcDashboard({
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* VIEW: BREAKDOWN BY PORTFOLIO */}
+      {/* ========================================================================= */}
+      {mountedTabs.has("portfolios") && (
+        <div id="ppc-portfolios-section" className={activeTab === "portfolios" && !storeRequired ? "space-y-3.5 scroll-mt-6" : "hidden"}>
+          {/* Portfolio Search & Filter Toolbar */}
+          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs text-xs">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 flex-1 min-w-0">
+              {/* Search input with clear button */}
+              <div className="relative min-w-[240px] flex-1">
+                <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={portfolioQuery}
+                  onChange={(e) => {
+                    setPortfolioQuery(e.target.value);
+                    setPortfolioPage(1);
+                  }}
+                  placeholder="Tìm tên portfolio..."
+                  className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
+                />
+                {portfolioQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPortfolioQuery("");
+                      setPortfolioPage(1);
+                    }}
+                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X size={13} weight="bold" />
+                  </button>
+                )}
+              </div>
+
+              {/* Checkbox: Chỉ hiện Active (mặc định tích) */}
+              <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer select-none hover:bg-slate-100 transition shrink-0">
+                <input
+                  type="checkbox"
+                  checked={portfolioActiveOnly}
+                  onChange={(e) => {
+                    setPortfolioActiveOnly(e.target.checked);
+                    setPortfolioPage(1);
+                  }}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                />
+                <span>Active</span>
+              </label>
+
+              {/* Sort Dropdown */}
+              <select
+                value={`${portfolioSortField}_${portfolioSortDir}`}
+                onChange={(e) => {
+                  const parts = e.target.value.split("_");
+                  const d = parts.pop() as SortDirection;
+                  const f = parts.join("_") as any;
+                  setPortfolioSortField(f);
+                  setPortfolioSortDir(d);
+                  setPortfolioPage(1);
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:bg-white focus:border-indigo-600 cursor-pointer shrink-0"
+              >
+                <option value="spend_desc">Chi tiêu: Cao → Thấp</option>
+                <option value="spend_asc">Chi tiêu: Thấp → Cao</option>
+                <option value="sales_desc">Doanh số: Cao → Thấp</option>
+                <option value="orders_desc">Đơn hàng: Nhiều → Ít</option>
+                <option value="campaigns_desc">Số Campaign: Nhiều → Ít</option>
+                <option value="acos_desc">ACOS: Cao → Thấp</option>
+                <option value="acos_asc">ACOS: Thấp → Cao</option>
+                <option value="impressions_desc">Impression: Nhiều → Ít</option>
+                <option value="name_asc">Tên Portfolio: A → Z</option>
+              </select>
+
+              {/* Reset button if filter active */}
+              {(portfolioQuery || !portfolioActiveOnly || portfolioSortField !== "spend" || portfolioSortDir !== "desc") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPortfolioQuery("");
+                    setPortfolioActiveOnly(true);
+                    setPortfolioSortField("spend");
+                    setPortfolioSortDir("desc");
+                    setPortfolioPage(1);
+                  }}
+                  className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                  title="Đặt lại bộ lọc về mặc định"
+                >
+                  <X size={13} weight="bold" /> Đặt lại
+                </button>
+              )}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {portfolioFrozen.columnPicker}
+              <button
+                type="button"
+                onClick={() => handleExportCsv("portfolios")}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Download size={14} /> Xuất CSV
+              </button>
+            </div>
+          </div>
+
+          {/* Live Metrics Strip for Filtered Portfolios (Tone Xanh - Trắng) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-2.5 rounded-xl bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-sky-50/60 border border-blue-100 shadow-2xs text-xs">
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Portfolios</div>
+              <div className="text-base font-black text-slate-900 mt-0.5">{filteredPortfolioTotals.count.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-500 font-medium">{filteredPortfolioTotals.campaigns.toLocaleString()} campaigns</div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Impressions</div>
+              <div className="text-base font-black text-slate-900 mt-0.5">{filteredPortfolioTotals.impressions.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                CTR {filteredPortfolioTotals.ctr.toFixed(2)}% · {filteredPortfolioTotals.clicks.toLocaleString()} clicks
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Spend</div>
+              <div className="text-base font-black text-rose-600 mt-0.5">${filteredPortfolioTotals.spend.toFixed(2)}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                CPC ${filteredPortfolioTotals.cpc.toFixed(2)}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Sales</div>
+              <div className="text-base font-black text-emerald-600 mt-0.5">${filteredPortfolioTotals.sales.toFixed(2)}</div>
+              <div className="text-[10px] text-slate-500 font-medium">{filteredPortfolioTotals.orders} orders</div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Orders</div>
+              <div className="text-base font-black text-indigo-700 mt-0.5">{filteredPortfolioTotals.orders}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                {filteredPortfolioTotals.cvr.toFixed(1)}% CVR
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Avg ACOS</div>
+              <div
+                className={`text-base font-black mt-0.5 ${filteredPortfolioTotals.acos <= targetAcos
+                  ? "text-emerald-600"
+                  : filteredPortfolioTotals.acos <= 50
+                    ? "text-amber-600"
+                    : "text-rose-600"
+                  }`}
+              >
+                {filteredPortfolioTotals.sales > 0 ? `${filteredPortfolioTotals.acos.toFixed(1)}%` : "N/A"}
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium">Target ≤ {targetAcos}%</div>
+            </div>
+          </div>
+
+          {/* Portfolios Data Table */}
+          <div className={`overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs transition-opacity ${loadingPortfolioPage ? "opacity-60" : "opacity-100"}`} aria-busy={loadingPortfolioPage}>
+            <table ref={portfolioFrozen.tableRef} className="w-full text-left text-xs text-slate-700">
+              <thead title="Chuột phải vào tiêu đề cột để khóa cột" className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+                <tr>
+                  <th className="py-3 px-3.5 min-w-[280px]">Portfolio Name</th>
+                  {selectedStore === "ALL" && <th className="py-3 px-3">Store</th>}
+                  <th
+                    className="py-3 px-3 cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("campaigns" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    Campaigns {portfolioSortField === "campaigns" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("impressions" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    Impression {portfolioSortField === "impressions" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("clicks" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    Clicks {portfolioSortField === "clicks" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("ctr" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    CTR (%) {portfolioSortField === "ctr" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("spend" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    Spend ($) {portfolioSortField === "spend" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("sales" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    Sales ($) {portfolioSortField === "sales" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("orders" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    Orders {portfolioSortField === "orders" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th className="py-3 px-3 text-right whitespace-nowrap">CPC</th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("cvr" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    CVR {portfolioSortField === "cvr" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("acos" as any, portfolioSortField, portfolioSortDir, setPortfolioSortField as any, setPortfolioSortDir, () => setPortfolioPage(1))
+                    }
+                  >
+                    ACOS (%) {portfolioSortField === "acos" && (portfolioSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(loading || isStoreSwitching || loadingPortfolioPage) ? (
+                  <tr>
+                    <td colSpan={selectedStore === "ALL" ? 12 : 11} className="py-12 text-center">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <CircleNotch size={26} className="animate-spin text-indigo-600" />
+                        <span className="font-bold text-sm text-slate-800">Đang tải danh sách Portfolio cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
+                        <span className="text-xs text-slate-400">Vui lòng đợi giây lát trong khi hệ thống đồng bộ dữ liệu</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : paginatedPortfolios.length === 0 ? (
+                  <tr>
+                    <td colSpan={selectedStore === "ALL" ? 12 : 11} className="py-12 text-center text-slate-400">
+                      <div className="flex flex-col items-center justify-center gap-1.5">
+                        <FolderSimple size={24} className="text-slate-300" />
+                        <span className="font-semibold text-slate-600">Không tìm thấy Portfolio phù hợp bộ lọc</span>
+                        <span className="text-xs text-slate-400 max-w-md">
+                          Thử xóa hoặc thay đổi từ khóa tìm kiếm.
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedPortfolios.map((p, i) => (
+                    <tr key={i} className="hover:bg-slate-50/80 transition group">
+                      {/* Portfolio Name: Clickable to view Campaigns directly */}
+                      <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px] acc-normal-weight">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPortfolioForDrilldown(p.portfolioName);
+                            setCampaignQuery("");
+                            setCampaignStatusFilter(portfolioActiveOnly ? "ACTIVE" : "ALL");
+                            setCampaignPage(1);
+                            setActiveTab("campaigns");
+                          }}
+                          className="text-left font-bold text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
+                          title="Nhấn vào tên Portfolio để xem các Campaign của Portfolio này"
+                        >
+                          {p.portfolioName === "__NONE__" ? "(Chưa phân loại / Không có Portfolio)" : p.portfolioName}
+                        </button>
+                      </td>
+
+                      {selectedStore === "ALL" && <td className="py-2.5 px-3 text-slate-500 font-normal whitespace-nowrap">{p.storeName}</td>}
+
+                      {/* Campaigns count */}
+                      <td className="py-2.5 px-3 whitespace-nowrap font-normal">
+                        <span className="px-2.5 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700">
+                          {p.campaignsCount}
+                        </span>
+                      </td>
+
+                      {/* Impressions */}
+                      <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono font-normal">
+                        {(p.impressions || 0).toLocaleString()}
+                      </td>
+
+                      {/* Clicks */}
+                      <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap font-mono font-normal">
+                        {(p.clicks || 0).toLocaleString()}
+                      </td>
+
+                      {/* CTR */}
+                      <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono font-normal">
+                        {p.ctr ? `${p.ctr.toFixed(2)}%` : "0.00%"}
+                      </td>
+
+                      {/* Spend ($) */}
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">
+                        ${p.spend.toFixed(2)}
+                      </td>
+
+                      {/* Sales ($) */}
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">
+                        ${p.sales.toFixed(2)}
+                      </td>
+
+                      {/* Orders */}
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">{p.orders}</td>
+
+                      {/* CPC */}
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-600 whitespace-nowrap">${p.cpc.toFixed(2)}</td>
+
+                      {/* CVR */}
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">{p.cvr.toFixed(1)}%</td>
+
+                      {/* ACOS (%) */}
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <span
+                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold ${p.acos <= Math.min(20, targetAcos)
+                            ? "bg-emerald-50 text-emerald-700"
+                            : p.acos <= targetAcos
+                              ? "bg-teal-50 text-teal-700"
+                              : p.acos <= 50
+                                ? "bg-amber-50 text-amber-700"
+                                : "bg-rose-50 text-rose-700"
+                            }`}
+                        >
+                          {p.acos > 500 ? "0 sales" : `${p.acos.toFixed(1)}%`}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination Controls */}
+          <PpcPagination
+            currentPage={portfolioPage}
+            totalPages={totalPortfolioPages}
+            pageSize={portfolioPageSize}
+            totalItems={portfolioServerMeta.total}
+            pageSizeOptions={[15, 25, 50, 100, 200]}
+            itemName="portfolio"
+            onPageChange={setPortfolioPage}
+            onPageSizeChange={(size) => {
+              setPortfolioPageSize(size);
+              setPortfolioPage(1);
+            }}
+          />
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* VIEW 2: BREAKDOWN BY CAMPAIGN */}
+      {/* ========================================================================= */}
       {mountedTabs.has("campaigns") && (
         <div id="ppc-campaigns-section" className={activeTab === "campaigns" && !storeRequired ? "space-y-3.5 scroll-mt-6" : "hidden"}>
+          {/* Active drilldown banner from Portfolio */}
+          {selectedPortfolioForDrilldown && (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs shadow-2xs">
+              <div className="flex flex-wrap items-center gap-2 text-indigo-900 font-semibold">
+                <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-black text-[11px]">
+                  📁 Đang xem Campaign của:
+                </span>
+                <span className="font-extrabold text-indigo-950 bg-white px-2.5 py-1 rounded-md border border-indigo-200 shadow-2xs">
+                  Portfolio: {selectedPortfolioForDrilldown === "__NONE__" ? "(Chưa phân loại / Không có Portfolio)" : selectedPortfolioForDrilldown}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPortfolioForDrilldown(null);
+                    setActiveTab("portfolios");
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-100 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer transition"
+                >
+                  ← Quay lại Portfolio
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPortfolioForDrilldown(null);
+                    setCampaignPage(1);
+                  }}
+                  className="px-2.5 py-1.5 text-slate-500 hover:text-slate-900 text-xs font-semibold cursor-pointer underline"
+                >
+                  ✕ Xem tất cả Campaign
+                </button>
+              </div>
+            </div>
+          )}
           {/* Campaign Search & Filter Toolbar (Single Clean Row) */}
           <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs text-xs">
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 flex-1 min-w-0">
@@ -3603,7 +4093,7 @@ export function PpcDashboard({
                 </button>
               </div>
 
-              {/* Format Filter */}
+              {/* Dạng chạy Filter */}
               <select
                 value={campaignFormatFilter}
                 onChange={(e) => {
@@ -3612,10 +4102,11 @@ export function PpcDashboard({
                 }}
                 className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:bg-white focus:border-indigo-600 cursor-pointer shrink-0 hidden sm:block"
               >
-                <option value="ALL">Định dạng (Tất cả)</option>
-                <option value="SP">Sponsored Products (SP)</option>
-                <option value="SB">Sponsored Brands (SB)</option>
-                <option value="SD">Sponsored Display (SD)</option>
+                <option value="ALL">Dạng chạy: All</option>
+                <option value="SP03">SP03</option>
+                <option value="SP04">SP04</option>
+                <option value="SB05">SB05</option>
+                <option value="SB01">SB01</option>
               </select>
 
               {/* Sort Dropdown */}
@@ -3635,7 +4126,7 @@ export function PpcDashboard({
                 <option value="sales_desc">Doanh số: Cao → Thấp</option>
                 <option value="orders_desc">Đơn hàng: Nhiều → Ít</option>
                 <option value="acos_desc">ACOS: Cao → Thấp</option>
-                <option value="impressions_desc">Hiển thị: Nhiều → Ít</option>
+                <option value="impressions_desc">Impression: Nhiều → Ít</option>
               </select>
 
               {/* Reset button if filter active */}
@@ -3756,7 +4247,7 @@ export function PpcDashboard({
                     }
                     title="Nhấn để sắp xếp theo lượt hiển thị (Impressions)"
                   >
-                    Hiển Thị {campaignSortField === "impressions" && (campaignSortDir === "asc" ? "↑" : "↓")}
+                    Impression {campaignSortField === "impressions" && (campaignSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
@@ -4749,7 +5240,7 @@ export function PpcDashboard({
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() => handleSort("impressions", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
                   >
-                    Hiển Thị {skuSortField === "impressions" && (skuSortDir === "asc" ? "↑" : "↓")}
+                    Impression {skuSortField === "impressions" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
@@ -5217,7 +5708,7 @@ export function PpcDashboard({
                     }
                     title="Nhấn để sắp xếp theo lượt hiển thị (Impressions)"
                   >
-                    Hiển Thị {termSortField === "impressions" && (termSortDir === "asc" ? "↑" : "↓")}
+                    Impression {termSortField === "impressions" && (termSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
                     className="py-3 px-2.5 text-right whitespace-nowrap"
@@ -5585,22 +6076,44 @@ export function PpcDashboard({
       )}
 
       {mountedTabs.has("manual_bid") && (
-        <div className={activeTab === "manual_bid" ? "" : "hidden"}>
-          <PpcManualBidView
-            key={selectedStore}
-            isActive={activeTab === "manual_bid"}
-            selectedStore={selectedStore}
-            selectedDays={selectedDays}
-            actionQueue={actionQueue}
-            skuGroups={skuRecGroups}
-            skuTrends={skuTrendBySku}
-            onOpenSkuTrend={setSelectedSkuTrendModal}
-            notify={notify}
-            onQueued={() => {
-              void loadActionQueue(selectedStore);
-              void loadActionQueueCount(selectedStore);
-            }}
-          />
+        <div className={activeTab === "manual_bid" ? (selectedStore === "ALL" || !selectedStore ? "rounded-2xl border border-slate-200 bg-white p-4 shadow-xs" : "") : "hidden"}>
+          {selectedStore === "ALL" || !selectedStore ? (
+            <div className="p-8 text-center bg-amber-50/80 rounded-2xl border border-amber-200 space-y-3 my-4 shadow-2xs">
+              <Storefront size={36} className="mx-auto text-amber-600" weight="duotone" />
+              <h3 className="text-sm font-bold text-amber-950">Vui lòng chọn một Store cụ thể</h3>
+              <p className="text-xs text-amber-800 max-w-lg mx-auto">
+                Manual Bid / Chỉnh giá thầu thủ công được tính toán và áp dụng riêng biệt cho từng Store.
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+                {stores.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleStoreChange(s.name)}
+                    className="px-3.5 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-100 hover:border-amber-400 transition cursor-pointer shadow-xs"
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <PpcManualBidView
+              key={selectedStore}
+              isActive={activeTab === "manual_bid"}
+              selectedStore={selectedStore}
+              selectedDays={selectedDays}
+              actionQueue={actionQueue}
+              skuGroups={skuRecGroups}
+              skuTrends={skuTrendBySku}
+              onOpenSkuTrend={setSelectedSkuTrendModal}
+              notify={notify}
+              onQueued={() => {
+                void loadActionQueue(selectedStore);
+                void loadActionQueueCount(selectedStore);
+              }}
+            />
+          )}
         </div>
       )}
 

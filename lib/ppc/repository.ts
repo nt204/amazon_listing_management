@@ -728,6 +728,7 @@ export async function listTargetRowsForRecommendations(
 export interface PpcCampaignPageFilters {
   storeName: string;
   sku: string;
+  portfolioName?: string;
   days: number;
   query: string;
   status: "ALL" | "ACTIVE" | "PAUSED";
@@ -757,6 +758,7 @@ export async function listPpcCampaignPage(
   const searchWords = filters.query.trim().split(/\s+/).filter(Boolean);
   const searchPattern = searchWords.length > 0 ? `%${searchWords.join("%")}%` : "%";
   const coverageDays = Math.max(1, Math.trunc(filters.days));
+  const portfolioFilter = filters.portfolioName || "";
 
   const activeSnapRows = await sql<{ count: string | number }[]>`
     SELECT count(*) as count
@@ -807,6 +809,9 @@ export async function listPpcCampaignPage(
             AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
             AND cs.coverage_days = ${coverageDays}
             AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(cs.campaign_name)) > 0)
+            AND (${!portfolioFilter || portfolioFilter === "ALL"}
+              OR (${portfolioFilter === "__NONE__"} AND (cs.portfolio_name IS NULL OR TRIM(cs.portfolio_name) = ''))
+              OR cs.portfolio_name = ${portfolioFilter})
         ), base AS (
           SELECT base_raw.*,
             COALESCE(
@@ -840,7 +845,9 @@ export async function listPpcCampaignPage(
             AND (${filters.status === "ALL"}
               OR (${filters.status === "ACTIVE"} AND lower(COALESCE(state, '')) = 'enabled')
               OR (${filters.status === "PAUSED"} AND lower(COALESCE(state, '')) = 'paused'))
-            AND (${filters.adType === "ALL"} OR upper(ad_type) = upper(${filters.adType}))
+            AND (${filters.adType === "ALL"}
+              OR (${["SP", "SB", "SD"].includes(filters.adType)} AND upper(ad_type) = upper(${filters.adType}))
+              OR (${!["SP", "SB", "SD", "ALL"].includes(filters.adType)} AND position(upper(${filters.adType}) in upper(campaign_name)) > 0))
             AND (${filters.spendFilter === "ALL"}
               OR (${filters.spendFilter === "HAS_SPEND"} AND spend > 0)
               OR (${filters.spendFilter === "ZERO_SPEND"} AND spend = 0)
@@ -928,6 +935,9 @@ export async function listPpcCampaignPage(
             AND p.grain = 'CAMPAIGN'
             AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
             AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(p.campaign_name)) > 0)
+            AND (${!portfolioFilter || portfolioFilter === "ALL"}
+              OR (${portfolioFilter === "__NONE__"} AND (p.portfolio_name IS NULL OR TRIM(p.portfolio_name) = ''))
+              OR p.portfolio_name = ${portfolioFilter})
         ), base AS (
           SELECT base_raw.*,
             COALESCE(
@@ -961,7 +971,9 @@ export async function listPpcCampaignPage(
         AND (${filters.status === "ALL"}
           OR (${filters.status === "ACTIVE"} AND lower(COALESCE(state, '')) = 'enabled')
           OR (${filters.status === "PAUSED"} AND lower(COALESCE(state, '')) = 'paused'))
-        AND (${filters.adType === "ALL"} OR upper(ad_type) = upper(${filters.adType}))
+        AND (${filters.adType === "ALL"}
+          OR (${["SP", "SB", "SD"].includes(filters.adType)} AND upper(ad_type) = upper(${filters.adType}))
+          OR (${!["SP", "SB", "SD", "ALL"].includes(filters.adType)} AND position(upper(${filters.adType}) in upper(campaign_name)) > 0))
         AND (${filters.spendFilter === "ALL"}
           OR (${filters.spendFilter === "HAS_SPEND"} AND spend > 0)
           OR (${filters.spendFilter === "ZERO_SPEND"} AND spend = 0)
@@ -1042,6 +1054,9 @@ export async function listPpcCampaignPage(
             AND p.grain = 'CAMPAIGN'
             AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
             AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(p.campaign_name)) > 0)
+            AND (${!portfolioFilter || portfolioFilter === "ALL"}
+              OR (${portfolioFilter === "__NONE__"} AND (p.portfolio_name IS NULL OR TRIM(p.portfolio_name) = ''))
+              OR p.portfolio_name = ${portfolioFilter})
         ), base AS (
           SELECT base_raw.*,
             COALESCE(
@@ -1075,7 +1090,9 @@ export async function listPpcCampaignPage(
             AND (${filters.status === "ALL"}
               OR (${filters.status === "ACTIVE"} AND lower(COALESCE(state, '')) = 'enabled')
               OR (${filters.status === "PAUSED"} AND lower(COALESCE(state, '')) = 'paused'))
-            AND (${filters.adType === "ALL"} OR upper(ad_type) = upper(${filters.adType}))
+            AND (${filters.adType === "ALL"}
+              OR (${["SP", "SB", "SD"].includes(filters.adType)} AND upper(ad_type) = upper(${filters.adType}))
+              OR (${!["SP", "SB", "SD", "ALL"].includes(filters.adType)} AND position(upper(${filters.adType}) in upper(campaign_name)) > 0))
             AND (${filters.spendFilter === "ALL"}
               OR (${filters.spendFilter === "HAS_SPEND"} AND spend > 0)
               OR (${filters.spendFilter === "ZERO_SPEND"} AND spend = 0)
@@ -1129,6 +1146,264 @@ export async function listPpcCampaignPage(
     totals: {
       spend: Number(first?.total_spend || 0), sales: Number(first?.total_sales || 0),
       orders: Number(first?.total_orders || 0), clicks: Number(first?.total_clicks || 0),
+      impressions: Number(first?.total_impressions || 0),
+    },
+  };
+}
+
+export interface PpcPortfolioPageFilters {
+  storeName: string;
+  days: number;
+  query: string;
+  status: "ALL" | "ACTIVE" | "PAUSED";
+  sortField: "name" | "campaigns" | "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas";
+  sortDirection: "asc" | "desc";
+  page: number;
+  pageSize: number;
+}
+
+export interface PpcPortfolioPageResult {
+  rows: Array<{
+    portfolioName: string;
+    storeName: string;
+    campaignsCount: number;
+    activeCampaignsCount: number;
+    pausedCampaignsCount: number;
+    spend: number;
+    sales: number;
+    orders: number;
+    clicks: number;
+    impressions: number;
+  }>;
+  total: number;
+  totals: {
+    campaigns: number;
+    spend: number;
+    sales: number;
+    orders: number;
+    clicks: number;
+    impressions: number;
+  };
+}
+
+export async function listPpcPortfolioPage(
+  scope: DataScope,
+  filters: PpcPortfolioPageFilters,
+): Promise<PpcPortfolioPageResult> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const offset = (filters.page - 1) * filters.pageSize;
+  const searchWords = filters.query.trim().split(/\s+/).filter(Boolean);
+  const searchPattern = searchWords.length > 0 ? `%${searchWords.join("%")}%` : "%";
+  const coverageDays = Math.max(1, Math.trunc(filters.days));
+
+  const activeSnapRows = await sql<{ count: string | number }[]>`
+    SELECT count(*) as count
+    FROM ppc_active_snapshots a
+    JOIN ppc_stores s ON s.id = a.store_id
+    WHERE s.team_id = ${teamId}
+      AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+      AND a.coverage_days = ${coverageDays}
+  `;
+  const useSummary = Number(activeSnapRows[0]?.count || 0) > 0;
+
+  type PortfolioDbRow = {
+    portfolio_name: string | null;
+    store_name: string;
+    campaigns_count: string | number;
+    active_campaigns_count: string | number;
+    paused_campaigns_count: string | number;
+    spend: string | number;
+    sales: string | number;
+    orders: string | number;
+    clicks: string | number;
+    impressions: string | number;
+    calc_ctr: string | number;
+    calc_cvr: string | number;
+    calc_acos: string | number;
+    calc_roas: string | number;
+    filtered_total: string | number;
+    total_campaigns: string | number;
+    total_spend: string | number;
+    total_sales: string | number;
+    total_orders: string | number;
+    total_clicks: string | number;
+    total_impressions: string | number;
+  };
+
+  let rows: PortfolioDbRow[];
+  if (useSummary) {
+    rows = await sql<PortfolioDbRow[]>`
+      WITH base AS (
+        SELECT 
+          COALESCE(NULLIF(TRIM(cs.portfolio_name), ''), '__NONE__') AS portfolio_name,
+          s.name AS store_name,
+          count(DISTINCT cs.campaign_id) AS campaigns_count,
+          count(DISTINCT cs.campaign_id) FILTER (WHERE lower(COALESCE(cs.campaign_state, '')) = 'enabled') AS active_campaigns_count,
+          count(DISTINCT cs.campaign_id) FILTER (WHERE lower(COALESCE(cs.campaign_state, '')) = 'paused') AS paused_campaigns_count,
+          COALESCE(sum(cs.spend), 0)::numeric(12,2) AS spend,
+          COALESCE(sum(cs.sales), 0)::numeric(12,2) AS sales,
+          COALESCE(sum(cs.orders), 0)::int AS orders,
+          COALESCE(sum(cs.clicks), 0)::int AS clicks,
+          COALESCE(sum(cs.impressions), 0)::int AS impressions,
+          CASE WHEN sum(cs.impressions) > 0 THEN sum(cs.clicks)::numeric / sum(cs.impressions) * 100 ELSE 0 END AS calc_ctr,
+          CASE WHEN sum(cs.clicks) > 0 THEN sum(cs.orders)::numeric / sum(cs.clicks) * 100 ELSE 0 END AS calc_cvr,
+          CASE WHEN sum(cs.sales) > 0 THEN sum(cs.spend)::numeric / sum(cs.sales) * 100 ELSE CASE WHEN sum(cs.spend) > 0 THEN 999 ELSE 0 END END AS calc_acos,
+          CASE WHEN sum(cs.spend) > 0 THEN sum(cs.sales)::numeric / sum(cs.spend) ELSE 0 END AS calc_roas
+        FROM ppc_campaign_summary cs
+        JOIN ppc_stores s ON s.id = cs.store_id
+        JOIN ppc_active_snapshots a ON a.store_id = cs.store_id AND a.snapshot_id = cs.snapshot_id AND a.coverage_days = cs.coverage_days
+        WHERE s.team_id = ${teamId}
+          AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+          AND cs.coverage_days = ${coverageDays}
+          AND (${filters.status === "ALL"}
+            OR (${filters.status === "ACTIVE"} AND lower(COALESCE(cs.campaign_state, '')) = 'enabled')
+            OR (${filters.status === "PAUSED"} AND lower(COALESCE(cs.campaign_state, '')) = 'paused'))
+        GROUP BY 1, 2
+      ), filtered AS (
+        SELECT * FROM base
+        WHERE (${!filters.query.trim()} OR portfolio_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern})
+      ), totals AS (
+        SELECT 
+          count(*)::int AS filtered_total,
+          COALESCE(sum(campaigns_count), 0)::int AS total_campaigns,
+          COALESCE(sum(spend), 0)::numeric(12,2) AS total_spend,
+          COALESCE(sum(sales), 0)::numeric(12,2) AS total_sales,
+          COALESCE(sum(orders), 0)::int AS total_orders,
+          COALESCE(sum(clicks), 0)::int AS total_clicks,
+          COALESCE(sum(impressions), 0)::int AS total_impressions
+        FROM filtered
+      )
+      SELECT f.*, t.filtered_total, t.total_campaigns, t.total_spend, t.total_sales, t.total_orders, t.total_clicks, t.total_impressions
+      FROM totals t
+      LEFT JOIN (
+        SELECT * FROM filtered
+        ORDER BY 
+          CASE WHEN ${filters.sortField} = 'name' AND ${filters.sortDirection} = 'asc' THEN portfolio_name END ASC,
+          CASE WHEN ${filters.sortField} = 'name' AND ${filters.sortDirection} = 'desc' THEN portfolio_name END DESC,
+          CASE WHEN ${filters.sortField} = 'campaigns' AND ${filters.sortDirection} = 'asc' THEN campaigns_count END ASC,
+          CASE WHEN ${filters.sortField} = 'campaigns' AND ${filters.sortDirection} = 'desc' THEN campaigns_count END DESC,
+          CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'asc' THEN spend END ASC,
+          CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'desc' THEN spend END DESC,
+          CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'asc' THEN sales END ASC,
+          CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'desc' THEN sales END DESC,
+          CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'asc' THEN orders END ASC,
+          CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'desc' THEN orders END DESC,
+          CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'asc' THEN clicks END ASC,
+          CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'desc' THEN clicks END DESC,
+          CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'asc' THEN impressions END ASC,
+          CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'desc' THEN impressions END DESC,
+          CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'asc' THEN calc_ctr END ASC,
+          CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'desc' THEN calc_ctr END DESC,
+          CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'asc' THEN calc_acos END ASC,
+          CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'desc' THEN calc_acos END DESC,
+          CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'asc' THEN calc_cvr END ASC,
+          CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'desc' THEN calc_cvr END DESC,
+          CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'asc' THEN calc_roas END ASC,
+          CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'desc' THEN calc_roas END DESC,
+          spend DESC, campaigns_count DESC, portfolio_name ASC
+        LIMIT ${filters.pageSize} OFFSET ${offset}
+      ) f ON true
+    `;
+  } else {
+    rows = await sql<PortfolioDbRow[]>`
+      WITH base AS (
+        SELECT 
+          COALESCE(NULLIF(TRIM(p.portfolio_name), ''), '__NONE__') AS portfolio_name,
+          s.name AS store_name,
+          count(DISTINCT p.campaign_id) AS campaigns_count,
+          count(DISTINCT p.campaign_id) FILTER (WHERE lower(COALESCE(p.campaign_state, p.state, '')) = 'enabled') AS active_campaigns_count,
+          count(DISTINCT p.campaign_id) FILTER (WHERE lower(COALESCE(p.campaign_state, p.state, '')) = 'paused') AS paused_campaigns_count,
+          COALESCE(sum(p.spend), 0)::numeric(12,2) AS spend,
+          COALESCE(sum(p.sales), 0)::numeric(12,2) AS sales,
+          COALESCE(sum(p.orders), 0)::int AS orders,
+          COALESCE(sum(p.clicks), 0)::int AS clicks,
+          COALESCE(sum(p.impressions), 0)::int AS impressions,
+          CASE WHEN sum(p.impressions) > 0 THEN sum(p.clicks)::numeric / sum(p.impressions) * 100 ELSE 0 END AS calc_ctr,
+          CASE WHEN sum(p.clicks) > 0 THEN sum(p.orders)::numeric / sum(p.clicks) * 100 ELSE 0 END AS calc_cvr,
+          CASE WHEN sum(p.sales) > 0 THEN sum(p.spend)::numeric / sum(p.sales) * 100 ELSE CASE WHEN sum(p.spend) > 0 THEN 999 ELSE 0 END END AS calc_acos,
+          CASE WHEN sum(p.spend) > 0 THEN sum(p.sales)::numeric / sum(p.spend) ELSE 0 END AS calc_roas
+        FROM ppc_performance_facts p
+        JOIN ppc_stores s ON s.id = p.store_id
+        JOIN ppc_active_snapshots a ON a.store_id = p.store_id AND a.report_start_date = p.report_start_date AND a.report_end_date = p.report_end_date
+        WHERE s.team_id = ${teamId}
+          AND a.coverage_days = ${coverageDays}
+          AND p.grain = 'CAMPAIGN'
+          AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+          AND (${filters.status === "ALL"}
+            OR (${filters.status === "ACTIVE"} AND lower(COALESCE(p.campaign_state, p.state, '')) = 'enabled')
+            OR (${filters.status === "PAUSED"} AND lower(COALESCE(p.campaign_state, p.state, '')) = 'paused'))
+        GROUP BY 1, 2
+      ), filtered AS (
+        SELECT * FROM base
+        WHERE (${!filters.query.trim()} OR portfolio_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern})
+      ), totals AS (
+        SELECT 
+          count(*)::int AS filtered_total,
+          COALESCE(sum(campaigns_count), 0)::int AS total_campaigns,
+          COALESCE(sum(spend), 0)::numeric(12,2) AS total_spend,
+          COALESCE(sum(sales), 0)::numeric(12,2) AS total_sales,
+          COALESCE(sum(orders), 0)::int AS total_orders,
+          COALESCE(sum(clicks), 0)::int AS total_clicks,
+          COALESCE(sum(impressions), 0)::int AS total_impressions
+        FROM filtered
+      )
+      SELECT f.*, t.filtered_total, t.total_campaigns, t.total_spend, t.total_sales, t.total_orders, t.total_clicks, t.total_impressions
+      FROM totals t
+      LEFT JOIN (
+        SELECT * FROM filtered
+        ORDER BY 
+          CASE WHEN ${filters.sortField} = 'name' AND ${filters.sortDirection} = 'asc' THEN portfolio_name END ASC,
+          CASE WHEN ${filters.sortField} = 'name' AND ${filters.sortDirection} = 'desc' THEN portfolio_name END DESC,
+          CASE WHEN ${filters.sortField} = 'campaigns' AND ${filters.sortDirection} = 'asc' THEN campaigns_count END ASC,
+          CASE WHEN ${filters.sortField} = 'campaigns' AND ${filters.sortDirection} = 'desc' THEN campaigns_count END DESC,
+          CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'asc' THEN spend END ASC,
+          CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'desc' THEN spend END DESC,
+          CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'asc' THEN sales END ASC,
+          CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'desc' THEN sales END DESC,
+          CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'asc' THEN orders END ASC,
+          CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'desc' THEN orders END DESC,
+          CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'asc' THEN clicks END ASC,
+          CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'desc' THEN clicks END DESC,
+          CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'asc' THEN impressions END ASC,
+          CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'desc' THEN impressions END DESC,
+          CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'asc' THEN calc_ctr END ASC,
+          CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'desc' THEN calc_ctr END DESC,
+          CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'asc' THEN calc_acos END ASC,
+          CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'desc' THEN calc_acos END DESC,
+          CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'asc' THEN calc_cvr END ASC,
+          CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'desc' THEN calc_cvr END DESC,
+          CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'asc' THEN calc_roas END ASC,
+          CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'desc' THEN calc_roas END DESC,
+          spend DESC, campaigns_count DESC, portfolio_name ASC
+        LIMIT ${filters.pageSize} OFFSET ${offset}
+      ) f ON true
+    `;
+  }
+
+  const first = rows[0];
+  const validRows = rows.filter((r) => r.portfolio_name !== null && r.portfolio_name !== undefined);
+
+  return {
+    rows: validRows.map((r) => ({
+      portfolioName: r.portfolio_name || "",
+      storeName: r.store_name,
+      campaignsCount: Number(r.campaigns_count || 0),
+      activeCampaignsCount: Number(r.active_campaigns_count || 0),
+      pausedCampaignsCount: Number(r.paused_campaigns_count || 0),
+      spend: Number(r.spend || 0),
+      sales: Number(r.sales || 0),
+      orders: Number(r.orders || 0),
+      clicks: Number(r.clicks || 0),
+      impressions: Number(r.impressions || 0),
+    })),
+    total: Number(first?.filtered_total || 0),
+    totals: {
+      campaigns: Number(first?.total_campaigns || 0),
+      spend: Number(first?.total_spend || 0),
+      sales: Number(first?.total_sales || 0),
+      orders: Number(first?.total_orders || 0),
+      clicks: Number(first?.total_clicks || 0),
       impressions: Number(first?.total_impressions || 0),
     },
   };
