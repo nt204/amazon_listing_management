@@ -7,7 +7,7 @@ import { KEYWORD_GROUP_LIMIT, splitSkuSearch } from "@/lib/ppc/search-term-group
 import { loadTargetsGroupedBySku, targetSkuMatch } from "@/lib/ppc/target-grouping";
 import { getCachedOrFetch } from "@/lib/redis";
 import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
-import { campaignStatusCacheSuffix, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
+import { campaignStatusCacheSuffix, getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import { decodeMetricRanges, encodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
@@ -143,10 +143,13 @@ export async function GET(request: Request) {
     const adGroupFilter = adGroupName ? sql`AND lower(p.ad_group_name) = lower(${adGroupName})` : sql``;
     const skuFilter = sku !== "ALL" ? sql`AND lower(p.sku) = lower(${sku})` : sql``;
     const targetStoreId = snaps[0]?.store_id || null;
+    const activeCampaigns = campaignStatus === "ACTIVE"
+      ? await getActiveCampaignNames(sql, targetStoreId)
+      : null;
     const channelFilter = sql`${channelScope
       ? sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
       : sql``} ${campaignStatus === "ACTIVE"
-      ? sql`AND lower(COALESCE(p.state, '')) = 'enabled' AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId: targetStoreId })}`
+      ? sql`AND lower(COALESCE(p.state, '')) = 'enabled' AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId: targetStoreId, activeCampaignNames: activeCampaigns })}`
       : sql``}`;
     const rangeFilter = metricRangeSql(sql, ranges, plainMetricColumns(sql, "p"));
 

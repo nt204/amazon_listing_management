@@ -4,7 +4,7 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
 import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/lib/ppc/channel-filter";
-import { campaignStatusCacheSuffix, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
+import { campaignStatusCacheSuffix, getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import { decodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
@@ -73,12 +73,25 @@ export async function GET(request: Request) {
         if (storeRows.length > 0) storeId = storeRows[0].id;
       }
 
+      let resolvedEndDate = endDate;
+      let resolvedStartDate = startDate;
+      if (!resolvedEndDate || !resolvedStartDate) {
+        const anchorRow = await sql<Array<{ max_date: string | null }>>`
+          SELECT COALESCE(MAX(p0.report_date)::text, (CURRENT_DATE - 1)::text) AS max_date
+          FROM ppc_search_terms p0
+          JOIN ppc_stores s0 ON s0.id = p0.store_id
+          WHERE s0.team_id = ${scope.teamId}
+            ${storeId ? sql`AND p0.store_id = ${storeId}` : sql``}
+        `;
+        const maxD = anchorRow[0]?.max_date || new Date().toISOString().slice(0, 10);
+        resolvedEndDate = resolvedEndDate || maxD;
+        const d = new Date(resolvedEndDate + "T00:00:00Z");
+        d.setUTCDate(d.getUTCDate() - (days - 1));
+        resolvedStartDate = resolvedStartDate || d.toISOString().slice(0, 10);
+      }
+
       const anchorCte = sql`
-        SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
-        FROM ppc_search_terms p0
-        JOIN ppc_stores s0 ON s0.id = p0.store_id
-        WHERE s0.team_id = ${scope.teamId}
-          ${storeId ? sql`AND p0.store_id = ${storeId}` : sql``}
+        SELECT ${resolvedEndDate}::date AS max_date
       `;
 
       // Ô tìm kiếm có mã SKU (vd "AOTT0625F01C" hoặc "AOTT0625F01C family christmas"): bảng dưới lọc theo SKU
@@ -112,10 +125,13 @@ export async function GET(request: Request) {
         : sql``;
       // Lọc kênh đi cùng skuFilter → áp cho cả tổng, trang, nhóm theo SKU (loadGroupedBySku nhận qua rowFilters)
       // Lọc campaign đang chạy cũng đi cùng skuFilter (cùng phạm vi áp dụng như lọc kênh)
+      const activeCampaigns = campaignStatus === "ACTIVE"
+        ? await getActiveCampaignNames(sql, storeId)
+        : null;
       const skuFilter = sql`${skuOnlyFilter} ${channelScope
         ? sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
         : sql``} ${campaignStatus === "ACTIVE"
-        ? sql`AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId })}`
+        ? sql`AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId, activeCampaignNames: activeCampaigns })}`
         : sql``}`;
 
       const clicksFilter = sql`
@@ -179,21 +195,23 @@ export async function GET(request: Request) {
           SELECT store_id, ad_type, COUNT(*) as cnt
           FROM ppc_search_terms
           WHERE report_granularity = 'DAILY'
+            ${storeId ? sql`AND store_id = ${storeId}` : sql``}
           GROUP BY store_id, ad_type
         ),
         latest_range AS (
           SELECT store_id, ad_type, MAX(report_end_date) as max_end_date
           FROM ppc_search_terms
           WHERE report_granularity = 'RANGE'
+            ${storeId ? sql`AND store_id = ${storeId}` : sql``}
           GROUP BY store_id, ad_type
         )
         SELECT
-          upper(COALESCE(
+          ${search ? sql`upper(COALESCE(
             NULLIF(trim(p.sku), ''),
             NULLIF(trim(p.portfolio_name), ''),
             substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
             'UNKNOWN_SKU'
-          )) AS sku,
+          ))` : sql`'ALL'::text`} AS sku,
           COUNT(*)::integer AS total_count,
           COALESCE(SUM(p.spend), 0)::numeric AS total_spend,
           COALESCE(SUM(p.sales), 0)::numeric AS total_sales,
@@ -208,7 +226,6 @@ export async function GET(request: Request) {
           COALESCE(SUM(p.impressions) FILTER (WHERE lower(trim(p.customer_search_term)) = lower(trim(${search}))), 0)::bigint AS exact_impressions
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
-        CROSS JOIN anchor a
         LEFT JOIN daily_counts dc ON dc.store_id = p.store_id AND dc.ad_type = p.ad_type
         LEFT JOIN latest_range lr ON lr.store_id = p.store_id AND lr.ad_type = p.ad_type
         WHERE s.team_id = ${scope.teamId}
@@ -226,9 +243,8 @@ export async function GET(request: Request) {
           AND (
             (
               p.report_granularity = 'DAILY'
-              AND (${!startDate} OR p.report_date >= ${startDate || "1970-01-01"}::date)
-              AND (${!endDate} OR p.report_date <= ${endDate || "2099-12-31"}::date)
-              AND (${Boolean(startDate || endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
+              AND p.report_date >= ${resolvedStartDate}::date
+              AND p.report_date <= ${resolvedEndDate}::date
             )
             OR
             (
@@ -237,12 +253,12 @@ export async function GET(request: Request) {
               AND p.report_end_date = lr.max_end_date
             )
           )
-        GROUP BY upper(COALESCE(
+        ${search ? sql`GROUP BY upper(COALESCE(
           NULLIF(trim(p.sku), ''),
           NULLIF(trim(p.portfolio_name), ''),
           substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
           'UNKNOWN_SKU'
-        ))
+        ))` : sql``}
       `;
 
       const rawSummary = summaryRows.reduce((totalRow, row) => ({
@@ -330,12 +346,14 @@ export async function GET(request: Request) {
           SELECT store_id, ad_type, COUNT(*) as cnt
           FROM ppc_search_terms
           WHERE report_granularity = 'DAILY'
+            ${storeId ? sql`AND store_id = ${storeId}` : sql``}
           GROUP BY store_id, ad_type
         ),
         latest_range AS (
           SELECT store_id, ad_type, MAX(report_end_date) as max_end_date
           FROM ppc_search_terms
           WHERE report_granularity = 'RANGE'
+            ${storeId ? sql`AND store_id = ${storeId}` : sql``}
           GROUP BY store_id, ad_type
         )
         SELECT
@@ -360,7 +378,6 @@ export async function GET(request: Request) {
           GREATEST(1, p.report_end_date - p.report_start_date + 1)::integer AS coverage_days
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
-        CROSS JOIN anchor a
         LEFT JOIN daily_counts dc ON dc.store_id = p.store_id AND dc.ad_type = p.ad_type
         LEFT JOIN latest_range lr ON lr.store_id = p.store_id AND lr.ad_type = p.ad_type
         WHERE s.team_id = ${scope.teamId}
@@ -378,9 +395,8 @@ export async function GET(request: Request) {
           AND (
             (
               p.report_granularity = 'DAILY'
-              AND (${!startDate} OR p.report_date >= ${startDate || "1970-01-01"}::date)
-              AND (${!endDate} OR p.report_date <= ${endDate || "2099-12-31"}::date)
-              AND (${Boolean(startDate || endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
+              AND p.report_date >= ${resolvedStartDate}::date
+              AND p.report_date <= ${resolvedEndDate}::date
             )
             OR
             (

@@ -1,15 +1,20 @@
 import { ApiError, authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
-import { parseCampaignStatus, ppcActiveCampaignWhere, type PpcCampaignStatusFilter } from "@/lib/ppc/campaign-status-filter";
+import { getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere, type PpcCampaignStatusFilter } from "@/lib/ppc/campaign-status-filter";
 
 type Db = Awaited<ReturnType<typeof getDatabaseClient>>;
 
 /** ACTIVE: negative đang bật VÀ campaign của nó đang chạy. ALL (không gửi tham số): như cũ. */
-function activeNegativeWhere(sql: Db, status: PpcCampaignStatusFilter, storeId?: string | null) {
+function activeNegativeWhere(
+  sql: Db,
+  status: PpcCampaignStatusFilter,
+  storeId?: string | null,
+  activeCampaignNames?: string[] | null,
+) {
   if (status !== "ACTIVE") return sql``;
   return sql`AND lower(COALESCE(nr.state, '')) = 'enabled'
-    AND ${ppcActiveCampaignWhere(sql, status, { storeIdCol: "nr.store_id", campaignCol: "nr.campaign_name", storeId })}`;
+    AND ${ppcActiveCampaignWhere(sql, status, { storeIdCol: "nr.store_id", campaignCol: "nr.campaign_name", storeId, activeCampaignNames })}`;
 }
 
 export const runtime = "nodejs";
@@ -31,6 +36,10 @@ export async function GET(request: Request) {
       const sRow = await sql<{ id: string }[]>`SELECT id FROM ppc_stores WHERE team_id = ${actor.teamId} AND lower(name) = lower(${storeName}) LIMIT 1`;
       if (sRow[0]) resolvedStoreId = sRow[0].id;
     }
+
+    const activeCampaigns = campaignStatus === "ACTIVE"
+      ? await getActiveCampaignNames(sql, resolvedStoreId)
+      : null;
 
     // Query negative keywords
     const rows = await sql<Array<{
@@ -68,7 +77,7 @@ export async function GET(request: Request) {
         ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
         ${adType && adType !== "ALL" ? sql`AND nr.ad_type = ${adType}` : sql``}
         ${search ? sql`AND (LOWER(nr.keyword_text) LIKE ${"%" + search + "%"} OR LOWER(nr.campaign_name) LIKE ${"%" + search + "%"})` : sql``}
-        ${activeNegativeWhere(sql, campaignStatus, resolvedStoreId)}
+        ${activeNegativeWhere(sql, campaignStatus, resolvedStoreId, activeCampaigns)}
       ORDER BY nr.created_at DESC
       LIMIT 2000
     `;

@@ -15,7 +15,7 @@ import type {
 } from "./types";
 import { resolveSkuForSearchTerm } from "./sku-extractor";
 import { ppcChannelWhere, resolvePpcChannelScope } from "./channel-filter";
-import { parseCampaignStatus, ppcActiveCampaignWhere } from "./campaign-status-filter";
+import { getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere } from "./campaign-status-filter";
 import { metricRangeSql, plainMetricColumns } from "./metric-range-sql";
 import type { ParsedMetricRange } from "./manual-bid";
 
@@ -472,8 +472,11 @@ export async function listPpcPerformance(
       AND a.coverage_days = ${filters.days}
   `;
   const repoStoreId = activeSnapshots.length === 1 ? activeSnapshots[0].store_id : null;
+  const activeCampaigns = campaignStatus === "ACTIVE"
+    ? await getActiveCampaignNames(sql, repoStoreId)
+    : null;
   const activeWhere = campaignStatus === "ACTIVE"
-    ? sql`${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId: repoStoreId })}
+    ? sql`${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId: repoStoreId, activeCampaignNames: activeCampaigns })}
         ${options.grain === "TARGET" ? sql`AND lower(COALESCE(p.state, '')) = 'enabled'` : sql``}`
     : sql`TRUE`;
 
