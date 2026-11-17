@@ -462,10 +462,6 @@ export async function listPpcPerformance(
   const teamId = (scope as any)?.teamId || "default";
   const channelScope = await resolvePpcChannelScope(sql, filters.storeName, filters.channel);
   const campaignStatus = parseCampaignStatus(filters.campaignStatus);
-  const activeWhere = campaignStatus === "ACTIVE"
-    ? sql`${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name" })}
-        ${options.grain === "TARGET" ? sql`AND lower(COALESCE(p.state, '')) = 'enabled'` : sql``}`
-    : sql`TRUE`;
   // Check active snapshots first to avoid scanning millions of historical rows (30x faster)
   const activeSnapshots = await sql<Array<{ store_id: string; report_start_date: string; report_end_date: string }>>`
     SELECT a.store_id, a.report_start_date::text, a.report_end_date::text
@@ -475,6 +471,11 @@ export async function listPpcPerformance(
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND a.coverage_days = ${filters.days}
   `;
+  const repoStoreId = activeSnapshots.length === 1 ? activeSnapshots[0].store_id : null;
+  const activeWhere = campaignStatus === "ACTIVE"
+    ? sql`${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId: repoStoreId })}
+        ${options.grain === "TARGET" ? sql`AND lower(COALESCE(p.state, '')) = 'enabled'` : sql``}`
+    : sql`TRUE`;
 
   let rows: PerformanceDbRow[];
 

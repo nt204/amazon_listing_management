@@ -24,23 +24,27 @@ export function parseCampaignStatus(value: string | null | undefined): PpcCampai
 export function ppcActiveCampaignWhere(
   sql: Db,
   status: PpcCampaignStatusFilter,
-  cols: { storeIdCol: string; campaignCol: string },
+  cols: { storeIdCol: string; campaignCol: string; storeId?: string | null },
 ): postgres.Fragment {
   if (status !== "ACTIVE") return sql`TRUE`;
   // Một giá trị ghép "store_id|tên campaign" (không dùng IN theo cặp cột): Postgres luôn băm được danh sách campaign
   // đang chạy (hashed SubPlan). Dạng cặp cột khiến planner chọn nested loop ở truy vấn lọc store theo tên → quá 2 phút.
   const key = sql.unsafe(`(${cols.storeIdCol}::text || '|' || lower(trim(${cols.campaignCol})))`);
+  const storeFilter = cols.storeId ? sql`AND cs_act.store_id = ${cols.storeId}::uuid` : sql``;
+  const snapStoreFilter = cols.storeId ? sql`WHERE store_id = ${cols.storeId}::uuid` : sql``;
   return sql`${key} IN (
     SELECT cs_act.store_id::text || '|' || lower(trim(cs_act.campaign_name))
     FROM ppc_campaign_summary cs_act
     JOIN (
       SELECT DISTINCT ON (store_id) store_id, snapshot_id, coverage_days
       FROM ppc_active_snapshots
+      ${snapStoreFilter}
       ORDER BY store_id, report_end_date DESC, coverage_days DESC
     ) snap_act ON snap_act.store_id = cs_act.store_id
       AND snap_act.snapshot_id = cs_act.snapshot_id
       AND snap_act.coverage_days = cs_act.coverage_days
     WHERE lower(COALESCE(cs_act.campaign_state, '')) = 'enabled'
+      ${storeFilter}
   )`;
 }
 

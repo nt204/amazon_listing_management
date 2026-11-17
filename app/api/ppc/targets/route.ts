@@ -142,10 +142,11 @@ export async function GET(request: Request) {
       : (campaignName ? sql`AND lower(p.campaign_name) = lower(${campaignName})` : sql``);
     const adGroupFilter = adGroupName ? sql`AND lower(p.ad_group_name) = lower(${adGroupName})` : sql``;
     const skuFilter = sku !== "ALL" ? sql`AND lower(p.sku) = lower(${sku})` : sql``;
+    const targetStoreId = snaps[0]?.store_id || null;
     const channelFilter = sql`${channelScope
       ? sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
       : sql``} ${campaignStatus === "ACTIVE"
-      ? sql`AND lower(COALESCE(p.state, '')) = 'enabled' AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name" })}`
+      ? sql`AND lower(COALESCE(p.state, '')) = 'enabled' AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId: targetStoreId })}`
       : sql``}`;
     const rangeFilter = metricRangeSql(sql, ranges, plainMetricColumns(sql, "p"));
 

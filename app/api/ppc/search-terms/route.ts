@@ -115,7 +115,7 @@ export async function GET(request: Request) {
       const skuFilter = sql`${skuOnlyFilter} ${channelScope
         ? sql`AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
         : sql``} ${campaignStatus === "ACTIVE"
-        ? sql`AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name" })}`
+        ? sql`AND ${ppcActiveCampaignWhere(sql, campaignStatus, { storeIdCol: "p.store_id", campaignCol: "p.campaign_name", storeId })}`
         : sql``}`;
 
       const clicksFilter = sql`

@@ -6,10 +6,10 @@ import { parseCampaignStatus, ppcActiveCampaignWhere, type PpcCampaignStatusFilt
 type Db = Awaited<ReturnType<typeof getDatabaseClient>>;
 
 /** ACTIVE: negative đang bật VÀ campaign của nó đang chạy. ALL (không gửi tham số): như cũ. */
-function activeNegativeWhere(sql: Db, status: PpcCampaignStatusFilter) {
+function activeNegativeWhere(sql: Db, status: PpcCampaignStatusFilter, storeId?: string | null) {
   if (status !== "ACTIVE") return sql``;
   return sql`AND lower(COALESCE(nr.state, '')) = 'enabled'
-    AND ${ppcActiveCampaignWhere(sql, status, { storeIdCol: "nr.store_id", campaignCol: "nr.campaign_name" })}`;
+    AND ${ppcActiveCampaignWhere(sql, status, { storeIdCol: "nr.store_id", campaignCol: "nr.campaign_name", storeId })}`;
 }
 
 export const runtime = "nodejs";
@@ -25,6 +25,12 @@ export async function GET(request: Request) {
     const campaignStatus = parseCampaignStatus(searchParams.get("campaignStatus"));
 
     const sql = await getDatabaseClient();
+
+    let resolvedStoreId: string | null = storeId && storeId !== "ALL" ? storeId : null;
+    if (!resolvedStoreId && storeName && storeName !== "ALL") {
+      const sRow = await sql<{ id: string }[]>`SELECT id FROM ppc_stores WHERE team_id = ${actor.teamId} AND lower(name) = lower(${storeName}) LIMIT 1`;
+      if (sRow[0]) resolvedStoreId = sRow[0].id;
+    }
 
     // Query negative keywords
     const rows = await sql<Array<{
@@ -62,7 +68,7 @@ export async function GET(request: Request) {
         ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
         ${adType && adType !== "ALL" ? sql`AND nr.ad_type = ${adType}` : sql``}
         ${search ? sql`AND (LOWER(nr.keyword_text) LIKE ${"%" + search + "%"} OR LOWER(nr.campaign_name) LIKE ${"%" + search + "%"})` : sql``}
-        ${activeNegativeWhere(sql, campaignStatus)}
+        ${activeNegativeWhere(sql, campaignStatus, resolvedStoreId)}
       ORDER BY nr.created_at DESC
       LIMIT 2000
     `;
@@ -161,7 +167,7 @@ export async function DELETE(request: Request) {
             ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
             ${adType && adType !== "ALL" ? sql`AND nr.ad_type = ${adType}` : sql``}
             ${search ? sql`AND (LOWER(nr.keyword_text) LIKE ${"%" + search + "%"} OR LOWER(nr.campaign_name) LIKE ${"%" + search + "%"})` : sql``}
-            ${activeNegativeWhere(sql, campaignStatus)}
+            ${activeNegativeWhere(sql, campaignStatus, storeId || null)}
             ${excludedIds.length > 0 ? sql`AND nr.id != ALL(${excludedIds}::uuid[])` : sql``}
         ) AND team_id = ${actor.teamId}
         RETURNING id

@@ -130,15 +130,34 @@ export function ppcChannelWhere(
   cols: { campaignCol?: string; portfolioCol?: string; skuCol?: string },
 ): postgres.Fragment {
   if (!scope) return sql`TRUE`;
+  const id = scope.accountingStoreId;
   const tok = cols.skuCol
     ? sql.unsafe(`upper(trim(${cols.skuCol}))`)
     : sql.unsafe(`upper(split_part(trim(${cols.campaignCol}), ' ', 1))`);
   const camp = cols.campaignCol ? sql.unsafe(`COALESCE(${cols.campaignCol}, '')`) : sql`''`;
   const port = cols.portfolioCol ? sql.unsafe(`COALESCE(${cols.portfolioCol}, '')`) : sql`''`;
+
+  // Ưu tiên mảng SKU đã cache (bộ nhớ Node.js) để tránh subquery quét lặp hàng triệu dòng facts;
+  // nếu chưa có mảng thì fallback sang subquery an toàn.
+  const hasFbmList = Array.isArray(scope.fbmSkus) && scope.fbmSkus.length > 0;
+  const hasFbaList = Array.isArray(scope.fbaSkus) && scope.fbaSkus.length > 0;
+  const fbmCond = hasFbmList
+    ? sql`${tok} = ANY(${scope.fbmSkus}::text[])`
+    : sql`${tok} IN (
+        SELECT upper(trim(m.sku)) FROM accounting_sku_master_fbm m
+        WHERE m.store_id = ${id} AND m.deleted_at IS NULL AND trim(m.sku) <> ''
+      )`;
+  const fbaCond = hasFbaList
+    ? sql`${tok} = ANY(${scope.fbaSkus}::text[])`
+    : sql`${tok} IN (
+        SELECT upper(trim(m.sku)) FROM accounting_sku_master m
+        WHERE m.store_id = ${id} AND m.deleted_at IS NULL AND trim(m.sku) <> ''
+      )`;
+
   return sql`(
     CASE
-      WHEN ${tok} = ANY(${scope.fbmSkus}::text[]) THEN 'FBM'
-      WHEN ${tok} = ANY(${scope.fbaSkus}::text[]) THEN 'FBA'
+      WHEN ${fbmCond} THEN 'FBM'
+      WHEN ${fbaCond} THEN 'FBA'
       WHEN ${camp} ~* ${FBM_RE} THEN 'FBM'
       WHEN ${camp} ~* ${FBA_RE} THEN 'FBA'
       WHEN ${port} ~* ${FBM_RE} THEN 'FBM'
