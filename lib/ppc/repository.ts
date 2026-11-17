@@ -3524,13 +3524,23 @@ export async function listPpcDailyTrendsFromDb(
 
   // Có kênh FBA / FBM: ppc_daily_summary không có tên campaign → tính lại từ nguồn đã dựng nó
   // (Bulk CAMPAIGN 1 ngày nếu store có, không thì Search Term DAILY), lọc theo kênh.
-  const channelDailyRows = async (source: "facts" | "search_terms") => sql<DailyTrendSqlRow[]>`
-    WITH anchor AS (
-      SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
+  // Khoảng ngày tính TRƯỚC rồi đưa vào điều kiện lọc của facts / search terms để Postgres dùng index theo ngày.
+  // Trước đây lọc ngày sau khi lấy (qua CTE anchor) → quét cả ~0,9 triệu dòng CAMPAIGN mọi snapshot: 66–89 s (2026-11-17).
+  const channelDailyRows = async (source: "facts" | "search_terms") => {
+    const [anchorRow] = await sql<{ max_date: string }[]>`
+      SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1)::text AS max_date
       FROM ppc_daily_summary p0
       JOIN ppc_stores s0 ON s0.id = p0.store_id
       WHERE s0.team_id = ${teamId}
         AND lower(s0.name) = lower(${storeName})
+    `;
+    const maxDate = anchorRow?.max_date || new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const toDate = filters.endDate || maxDate;
+    const fromDate = filters.startDate
+      || new Date(Date.parse(`${maxDate}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    return sql<DailyTrendSqlRow[]>`
+    WITH anchor AS (
+      SELECT ${maxDate}::date AS max_date
     ), src AS (
       ${source === "facts"
         ? sql`
@@ -3541,6 +3551,8 @@ export async function listPpcDailyTrendsFromDb(
           WHERE s.team_id = ${teamId}
             AND lower(s.name) = lower(${storeName})
             AND p.grain = 'CAMPAIGN'
+            AND p.ad_type = ANY(ARRAY['SP', 'SB', 'SD', 'UNKNOWN'])
+            AND p.report_start_date BETWEEN ${fromDate}::date AND ${toDate}::date
             AND p.report_start_date = p.report_end_date
             AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`
         : sql`
@@ -3550,7 +3562,7 @@ export async function listPpcDailyTrendsFromDb(
           JOIN ppc_stores s ON s.id = p.store_id
           WHERE s.team_id = ${teamId}
             AND lower(s.name) = lower(${storeName})
-            AND p.report_date IS NOT NULL
+            AND p.report_date BETWEEN ${fromDate}::date AND ${toDate}::date
             AND ${ppcChannelWhere(sql, channelScope, { campaignCol: "p.campaign_name", portfolioCol: "p.portfolio_name" })}`}
     )
     SELECT
@@ -3578,6 +3590,7 @@ export async function listPpcDailyTrendsFromDb(
     GROUP BY p.report_date
     ORDER BY p.report_date ASC;
   `;
+  };
 
   let rows = channelScope
     ? await (async () => {
