@@ -295,8 +295,11 @@ export function PpcDashboard({
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (cancelled) return;
-        const list: Array<{ name: string; hasChannels?: boolean }> = Array.isArray(d?.data) ? d.data : [];
+        const list: Array<PpcStore & { hasChannels?: boolean }> = Array.isArray(d?.data) ? d.data : [];
         setChannelStores(new Set(list.filter((x) => x.hasChannels).map((x) => x.name.toUpperCase())));
+        // Danh sách store / giờ sync lấy từ API nhẹ này: tab không phải Overview không cần tải cả /metrics overview
+        if (list.length > 0) setStores((prev) => (prev.length > 0 ? prev : list));
+        if (d?.lastSyncedAt) setLastSyncedAt((prev) => prev || d.lastSyncedAt);
       })
       .catch(() => { if (!cancelled) setChannelStores(new Set()); });
     fetch("/api/settings/ui-preferences", { cache: "no-store" })
@@ -369,6 +372,11 @@ export function PpcDashboard({
   const [alerts, setAlerts] = useState<PpcAlert[]>([]);
   const [targetAcos, setTargetAcos] = useState(30);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  // ACOS mục tiêu của store đang chọn lấy từ danh sách store (không phải chờ /metrics overview)
+  useEffect(() => {
+    const st = stores.find((x) => x.name.toLowerCase() === selectedStore.toLowerCase());
+    if (st?.targetAcos) setTargetAcos(st.targetAcos);
+  }, [stores, selectedStore]);
   const [detailCounts, setDetailCounts] = useState<PpcDetailCounts | null>(null);
   const [loadingSection, setLoadingSection] = useState<string | null>(null);
   const loadedSectionsRef = useRef(new Set<string>());
@@ -603,10 +611,9 @@ export function PpcDashboard({
 
   // Filters & sorting for Search Terms
   const [searchTermQuery, setSearchTermQuery] = useState("");
-  // Target / Search Term / SKU: mặc định chỉ campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
+  // Target / Search Term: mặc định chỉ campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
   const [termIncludePaused, setTermIncludePaused] = useState(false);
   const [targetIncludePaused, setTargetIncludePaused] = useState(false);
-  const [skuIncludePaused, setSkuIncludePaused] = useState(false);
   const [matchTypeFilter, setMatchTypeFilter] = useState("ALL");
   const [searchTermCampaignFilter, setSearchTermCampaignFilter] = useState("ALL");
   const [termViewMode, setTermViewMode] = useState<"aggregated" | "daily">("aggregated");
@@ -800,11 +807,14 @@ export function PpcDashboard({
   const metricsRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
   const metricsRequestIdRef = useRef(0);
 
-  // Notification helper
-  const notify = (message: string, type: "success" | "error" | "info" = "success") => {
+  // Notification helper — giữ cố định (useCallback): view con dùng notify trong deps, hàm mới mỗi render làm chúng
+  // tải lại liên tục (Đối Soát ST gọi campaign-rollup sau mỗi lần dashboard render, kể cả khi đang ẩn).
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notify = useCallback((message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 3500);
+  }, []);
 
   const storeSelectRef = useRef<HTMLButtonElement>(null);
   const storeDropdownContainerRef = useRef<HTMLDivElement>(null);
@@ -954,7 +964,8 @@ export function PpcDashboard({
         if (!loadedSectionsRef.current.has("skus") && activeTab === "overview") {
           setSkuPerformance(data.skuPerformance || []);
         }
-        setCampaignPerformance(data.campaignPerformance || []);
+        // Bảng tab Campaign đã có trang server (/api/ppc/campaigns) thì không ghi đè bằng top campaign của Overview
+        if (!campaignPageLoadedRef.current) setCampaignPerformance(data.campaignPerformance || []);
         setOverviewCampaigns(data.campaignPerformance || []);
         setAdGroupPerformance(data.adGroups || []);
         setTargetPerformance(data.targets || []);
@@ -1049,20 +1060,8 @@ export function PpcDashboard({
         setLoadingSection((current) => current === section ? null : current);
       }
     }
-  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate, selectedCampaignForDrilldown, channelParam, skuIncludePaused]);
+  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate, selectedCampaignForDrilldown, channelParam]);
 
-  // Bật / tắt "Gồm paused" ở tab SKU → tải lại bảng SKU (section skus đã tải theo trạng thái cũ)
-  const skuIncludePausedRef = useRef(skuIncludePaused);
-  useEffect(() => {
-    if (skuIncludePausedRef.current === skuIncludePaused) return;
-    skuIncludePausedRef.current = skuIncludePaused;
-    loadedSectionsRef.current.delete("skus");
-    if (activeTab === "skus" && selectedStore !== "ALL") {
-      void loadSection("skus", { force: true }).catch((error) => {
-        notify(error instanceof Error ? error.message : "Không thể tải bảng SKU", "error");
-      });
-    }
-  }, [skuIncludePaused, activeTab, selectedStore, loadSection]);
 
   const refreshData = useCallback(async () => {
     skuRecDetailsCacheRef.current.clear();
@@ -1146,6 +1145,7 @@ export function PpcDashboard({
         const res = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store", signal: controller.signal });
         if (!res.ok) throw new Error(`Không thể tải Campaign (HTTP ${res.status})`);
         const data = await res.json();
+        campaignPageLoadedRef.current = true;
         setCampaignPerformance(data.campaigns || []);
         setCampaignServerMeta({
           total: Number(data.total || 0), activeCount: Number(data.activeCount || 0),
@@ -1266,41 +1266,8 @@ export function PpcDashboard({
   const [serverSearchTermSummary, setServerSearchTermSummary] = useState<any>(null);
   const [loadingSearchTermsServer, setLoadingSearchTermsServer] = useState<boolean>(false);
   const lastLoadedSearchTermsParamsRef = useRef<string>("");
-  const [stOptimizationServerCount, setStOptimizationServerCount] = useState<number | null>(null);
-  const [saleKwServerCount, setSaleKwServerCount] = useState<number | null>(null);
 
-  // Pre-fetch accurate server badge counts for ST Optimization and Sale KW tabs
-  useEffect(() => {
-    let active = true;
-    const fetchBadgeCounts = async () => {
-      try {
-        if (channelPending) return;
-        const storeParam = selectedStore && selectedStore !== "ALL" ? `&storeName=${encodeURIComponent(selectedStore)}${channelParam}` : "";
-        const [optRes, saleRes] = await Promise.all([
-          fetch(`/api/ppc/search-terms/optimization?days=${selectedDays}${storeParam}&pageSize=1`),
-          fetch(`/api/ppc/search-terms/sale-keywords?days=${selectedDays}${storeParam}&countOnly=1`),
-        ]);
-        if (optRes.ok) {
-          const optJson = await optRes.json();
-          if (active && optJson.success && optJson.data) {
-            setStOptimizationServerCount(optJson.data.total ?? optJson.data.summary?.candidateCount ?? 0);
-          }
-        }
-        if (saleRes.ok) {
-          const saleJson = await saleRes.json();
-          if (active && saleJson.success && saleJson.data) {
-            setSaleKwServerCount(saleJson.data.total ?? 0);
-          }
-        }
-      } catch {
-        // silent fallback to local calculation
-      }
-    };
-    fetchBadgeCounts();
-    return () => {
-      active = false;
-    };
-  }, [selectedStore, selectedDays, channelParam, channelPending]);
+  // (Đã bỏ: tải trước số đếm Đối soát ST / Sale KW — 2 truy vấn nặng mỗi lần đổi store / kỳ / kênh nhưng số không hiển thị ở đâu.)
 
   useEffect(() => {
     if (activeTab !== "search_terms" || selectedStore === "ALL" || channelPending) return;
@@ -1476,9 +1443,10 @@ export function PpcDashboard({
   }, [selectedDays, selectedStore, channelParam]);
 
   // Manual Bid cần thông tin SKU của cả store → không truyền trang; tab Auto Bid chỉ tải trang đang chọn.
-  // Auto Bid tải theo kênh đang chọn ở ô store (FBA / FBM); Manual Bid lấy thông tin SKU cả store.
-  const recChannel = activeTab === "recommendations" ? activeChannel : null;
-  const recChannelPending = activeTab === "recommendations" && channelPending;
+  // Auto Bid và Manual Bid cùng tải theo kênh đang chọn (FBA / FBM) → dùng chung 1 cache đề xuất, chuyển qua lại
+  // giữa 2 tab không phải tính lại (trước đây Manual Bid tải cả store, khoá cache khác Auto Bid).
+  const recChannel = activeTab === "recommendations" || activeTab === "manual_bid" ? activeChannel : null;
+  const recChannelPending = (activeTab === "recommendations" || activeTab === "manual_bid") && channelPending;
   const loadGroupedRecommendations = useCallback(async (force = false) => {
     if (recChannelPending) return;
     const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}:${includePausedRecs ? 1 : 0}:${recChannel || "ALL"}`;
@@ -1671,12 +1639,19 @@ export function PpcDashboard({
     }
   }, [skuRecGroups.length, loadGroupedRecommendations]);
 
-  // Auto-sync accounting master data silently on store select (no manual button needed)
+  // Tự đồng bộ Bảng mã Accounting → giá vốn PPC: mỗi store tối đa 1 lần / ngày / trình duyệt (trước đây mỗi lần
+  // chọn store đều ghi lại toàn bộ SKU và xoá cache Auto Bid). Nút đồng bộ tay vẫn chạy ngay.
   const lastAutoSyncedStoreRef = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedStore || selectedStore === "ALL") return;
     if (lastAutoSyncedStoreRef.current === selectedStore) return;
     lastAutoSyncedStoreRef.current = selectedStore;
+    const syncKey = `nce_ppc_cost_sync:${selectedStore}`;
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      if (localStorage.getItem(syncKey) === today) return;
+      localStorage.setItem(syncKey, today);
+    } catch { /* không có localStorage thì vẫn đồng bộ */ }
     fetch("/api/ppc/sku-economics/sync-accounting", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1797,8 +1772,9 @@ export function PpcDashboard({
   // Initial mount: only load the lightweight queue count. Recommendations are
   // Mount & Store switch: load store-specific action queue count
   useEffect(() => {
+    if (!storePreferenceReady) return;
     void loadActionQueueCount(selectedStore);
-  }, [selectedStore, loadActionQueueCount]);
+  }, [selectedStore, loadActionQueueCount, storePreferenceReady]);
 
   // Lazy-load drawer data only when opened, filtered by active store
   useEffect(() => {
@@ -1808,8 +1784,13 @@ export function PpcDashboard({
     }
   }, [isActionQueueOpen, selectedStore, loadActionQueue, loadBulkHistory]);
 
+  const actionQueueLoadedForRef = useRef<string | null>(null);
+  const campaignPageLoadedRef = useRef(false);
+  const skuEconLoadedForRef = useRef<string | null>(null);
   // Coordinated effect: filter changes and tab switches without race conditions
   useEffect(() => {
+    // Chưa đọc xong store đã lưu (URL / localStorage) → selectedStore còn tạm là "ALL": chờ, không tải 2 lượt
+    if (!storePreferenceReady) return;
     // Chưa biết kênh của store (FBA / FBM) → chờ, tránh tải cả store rồi lại tải theo kênh
     if (channelPending) return;
     // Đổi kênh FBA ↔ FBM coi như đổi store: xoá dữ liệu cũ, tải lại
@@ -1851,7 +1832,7 @@ export function PpcDashboard({
       setSkuRecAllRecs([]);
       if (storeChanged) {
         const storeLabel = activeChannel ? `${selectedStore} · ${activeChannel}` : selectedStore;
-        if (!isInitialChannelResolve) {
+        if (!isInitialChannelResolve && activeTab === "overview") {
           isStoreSwitchingRef.current = true;
           setIsStoreSwitching(true);
           notify(
@@ -1859,11 +1840,12 @@ export function PpcDashboard({
             "info"
           );
         }
-        setLoading(true);
+        if (activeTab === "overview") setLoading(true);
         setSummary(null);
         setSummary7D(null);
         setDataHealth(null);
         setCampaignPerformance([]);
+        campaignPageLoadedRef.current = false;
         setAdGroupPerformance([]);
         setTargetPerformance([]);
         setSkuPerformance([]);
@@ -1871,21 +1853,24 @@ export function PpcDashboard({
         setOverviewSearchTerms([]);
         setOverviewCampaigns([]);
         setDetailCounts(null);
+        // Số đếm hàng đợi do effect riêng theo store tải; danh sách tải khi mở ngăn kéo / tab Auto Bid, Manual Bid
         setActionQueue([]);
-        setActionQueueCount(0);
-        void loadActionQueue(selectedStore);
-        void loadActionQueueCount(selectedStore);
+        actionQueueLoadedForRef.current = null;
       }
     }
 
-    if (filtersChanged || !loadedSectionsRef.current.has("overview")) {
+    // /metrics overview là truy vấn nặng nhất: chỉ tải khi đang xem Overview (tab khác lấy store / ACOS / giờ sync
+    // từ /api/ppc/stores). Trước đây mở tab nào cũng tải.
+    if (activeTab === "overview" && (filtersChanged || !loadedSectionsRef.current.has("overview"))) {
       const timer = window.setTimeout(() => void loadData(), 0);
-      if (activeTab === "overview") {
-        return () => {
-          window.clearTimeout(timer);
-          metricsRequestRef.current?.controller.abort();
-        };
-      }
+      return () => {
+        window.clearTimeout(timer);
+        metricsRequestRef.current?.controller.abort();
+      };
+    }
+    if (activeTab !== "overview") {
+      setLoading(false);
+      setIsStoreSwitching(false);
     }
 
     if (activeTab !== "overview" && ["ad_groups", "skus"].includes(activeTab) && selectedStore !== "ALL") {
@@ -1897,7 +1882,11 @@ export function PpcDashboard({
         });
       }
       if (activeTab === "skus") {
-        void loadSkuEconomics();
+        const econKey = `${selectedStore}|${selectedDays}`;
+        if (skuEconLoadedForRef.current !== econKey) {
+          skuEconLoadedForRef.current = econKey;
+          void loadSkuEconomics();
+        }
       }
     } else if (activeTab === "recommendations" || activeTab === "manual_bid") {
       // Bảng SKU đầy đủ (overview chỉ trả top 10) để có dailyTrend cho cột Trend (7D)
@@ -1905,8 +1894,11 @@ export function PpcDashboard({
         void loadSection("skus", { force: loadedSectionsRef.current.has("skus") }).catch(() => undefined);
       }
       void loadGroupedRecommendations();
-      void loadActionQueue(selectedStore);
-      void loadActionQueueCount(selectedStore);
+      // Danh sách hàng đợi (đánh dấu target đã duyệt) tải 1 lần mỗi store; số đếm do effect riêng tải
+      if (actionQueueLoadedForRef.current !== selectedStore) {
+        actionQueueLoadedForRef.current = selectedStore;
+        void loadActionQueue(selectedStore);
+      }
     }
   }, [
     activeTab,
@@ -1918,9 +1910,9 @@ export function PpcDashboard({
     loadSkuEconomics,
     loadGroupedRecommendations,
     loadActionQueue,
-    actionQueue.length,
     channelPending,
     activeChannel,
+    storePreferenceReady,
   ]);
 
   useEffect(() => {
@@ -6001,6 +5993,7 @@ export function PpcDashboard({
       {mountedTabs.has("st_campaigns") && (
         <div className={activeTab === "st_campaigns" && !storeRequired ? "space-y-3" : "hidden"}>
           <PpcStCampaignRollupView
+            isActive={activeTab === "st_campaigns"}
             channel={activeChannel}
             selectedStore={selectedStore}
             selectedSku={selectedSku}
@@ -6045,7 +6038,6 @@ export function PpcDashboard({
               notify={notify}
               onOpenActionQueue={() => setIsActionQueueOpen(true)}
               stores={stores}
-              onCandidateCountChange={(cnt) => setStOptimizationServerCount(cnt)}
             />
           )}
         </div>
@@ -6086,7 +6078,6 @@ export function PpcDashboard({
               onOpenActionQueue={() => setIsActionQueueOpen(true)}
               actor={actor}
               stores={stores}
-              onCandidateCountChange={(cnt) => setSaleKwServerCount(cnt)}
             />
           )}
         </div>

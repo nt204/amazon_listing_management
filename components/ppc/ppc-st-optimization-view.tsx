@@ -168,11 +168,20 @@ export function PpcStOptimizationView({
     }
   };
 
+  // Quay lại tab mà store / bộ lọc không đổi thì giữ danh sách cũ, không tải lại (trước đây mỗi lần vào tab đều tải)
+  const registryLoadedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isActive) return;
+    const loadKey = JSON.stringify([selectedStore, includePaused]);
+    if (registryLoadedKeyRef.current === loadKey) return;
+    registryLoadedKeyRef.current = loadKey;
+    let finished = false;
     const controller = new AbortController();
-    void fetchRegistry(controller.signal);
-    return () => controller.abort();
+    void Promise.resolve(fetchRegistry(controller.signal)).finally(() => { finished = true; });
+    return () => {
+      controller.abort();
+      if (!finished) registryLoadedKeyRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchRegistry đọc store / includePaused mới nhất
   }, [isActive, selectedStore, includePaused]);
 
@@ -357,8 +366,15 @@ export function PpcStOptimizationView({
   // Total count across all items
   const totalAvailableCount = serverTotal !== null ? serverTotal : filteredCandidates.length;
 
+  const candidatesLoadedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isActive) return;
+    // Quay lại tab mà bộ lọc không đổi thì giữ kết quả cũ, không gửi lại truy vấn nặng
+    const loadKey = JSON.stringify([selectedStore, channel, selectedSku, selectedDays, clickThreshold, clickOperator, hideNegated,
+      includePaused, page, pageSize, searchQuery, sortField, sortDir, campaignFilter]);
+    if (candidatesLoadedKeyRef.current === loadKey) return;
+    candidatesLoadedKeyRef.current = loadKey;
+    let finished = false;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       setServerLoading(true);
@@ -399,6 +415,7 @@ export function PpcStOptimizationView({
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("ST Optimization server fetch error:", err);
       } finally {
+        finished = true;
         if (!controller.signal.aborted) setServerLoading(false);
       }
     }, searchQuery ? 300 : 0);
@@ -406,6 +423,7 @@ export function PpcStOptimizationView({
     return () => {
       clearTimeout(timer);
       controller.abort();
+      if (!finished) candidatesLoadedKeyRef.current = null;
     };
   }, [
     selectedStore,

@@ -1448,6 +1448,19 @@ export async function getRuleVersions(): Promise<PpcRuleVersion[]> {
   }));
 }
 
+/** JSON không phụ thuộc thứ tự key (jsonb đọc lên có thể đổi thứ tự). */
+function stableJson(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "string") {
+    try { return stableJson(JSON.parse(value)); } catch { return JSON.stringify(value); }
+  }
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (typeof value === "object") {
+    return `{${Object.keys(value as object).sort().map((k) => `${JSON.stringify(k)}:${stableJson((value as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Promise<{
   success: boolean;
   storeName: string;
@@ -1539,6 +1552,21 @@ export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Pro
     const storedType = missing.length > 0 && existing?.cost_source !== "MAPPING_OVERRIDE" ? SKU_PREFIX_ERROR_PRODUCT_TYPE : pType;
 
     if (existing) {
+      // Không đổi gì thì không ghi: trước đây mỗi lần chọn store ghi lại toàn bộ (~3.900 SKU FASTPEACE) rồi xoá cache
+      // đề xuất của mọi store → Auto Bid luôn phải tính lại (audit 2026-11-17).
+      const num = (v: unknown) => Math.round(Number(v || 0) * 10000) / 10000;
+      const unchanged =
+        String(existing.product_type ?? "") === String(storedType ?? "")
+        && (!asin || String(existing.asin ?? "") === asin)
+        && num(existing.selling_price) === num(price.price)
+        && num(existing.base_cost) === num(costs.baseCost)
+        && num(existing.amazon_fee) === num(costs.amazonFee)
+        && num(existing.tax_rate) === num(taxRate)
+        && num(existing.profit_before_ads) === num(profitBeforeAds)
+        && num(existing.break_even_acos) === num(breakEvenAcos)
+        && num(existing.max_bid) === num(maxBid)
+        && stableJson(existing.cost_sources) === stableJson(costSources);
+      if (unchanged) continue;
       await sql`
         UPDATE sku_economics
         SET product_type = ${storedType},
@@ -1572,9 +1600,11 @@ export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Pro
     }
   }
 
-  // Invalidate Redis cache
-  await invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
-  invalidateGroupedRecommendationsCache(storeId);
+  // Chỉ xoá cache khi thật sự có SKU thay đổi
+  if (insertedCount + updatedCount > 0) {
+    await invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
+    invalidateGroupedRecommendationsCache(storeId);
+  }
 
   return {
     success: true,

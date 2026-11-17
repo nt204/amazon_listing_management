@@ -398,10 +398,17 @@ export function PpcSaleKwView({
     }
   }, [selectedStore]);
 
+  // Quay lại tab mà store không đổi thì giữ danh sách cũ, không tải lại
+  const registryLoadedForRef = useRef<typeof fetchRegistry | null>(null);
   useEffect(() => {
-    if (!isActive) return;
-    void fetchRegistry();
-    return () => registryListRequestRef.current?.controller.abort();
+    if (!isActive || registryLoadedForRef.current === fetchRegistry) return;
+    registryLoadedForRef.current = fetchRegistry;
+    let finished = false;
+    void Promise.resolve(fetchRegistry()).finally(() => { finished = true; });
+    return () => {
+      registryListRequestRef.current?.controller.abort();
+      if (!finished) registryLoadedForRef.current = null;
+    };
   }, [fetchRegistry, isActive]);
 
   // Aggregate search terms by (SKU, customerSearchTerm)
@@ -556,14 +563,27 @@ export function PpcSaleKwView({
   }, [candidateBase, isActive, loading, registryLookupRetry, selectedStore]);
 
   // Server-side candidates state (scans 100% of entire DB)
-  const [serverCandidates, setServerCandidates] = useState<SaleKwCandidate[] | null>(null);
+  // Kết quả server chưa gắn bid; bid tính lại tại chỗ khi đổi "Bid mặc định" / cách tính bid
+  // (trước đây 2 giá trị này nằm trong deps của fetch → gõ ô bid là gửi lại truy vấn nặng sau mỗi phím).
+  const [serverRawCandidates, setServerCandidates] = useState<SaleKwCandidate[] | null>(null);
+  const serverCandidates = useMemo(
+    () => serverRawCandidates?.map((c) => ({ ...c, bid: bidMode === "cpc" && c.cpc > 0 ? Math.max(0.1, c.cpc) : defaultBid })) ?? null,
+    [serverRawCandidates, bidMode, defaultBid],
+  );
   const [serverTotal, setServerTotal] = useState<number | null>(null);
   const [serverSummary, setServerSummary] = useState<any>(null);
   const [serverLoading, setServerLoading] = useState<boolean>(false);
   const [serverRefreshKey, setServerRefreshKey] = useState<number>(0);
 
+  const candidatesLoadedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isActive || !selectedStore || selectedStore === "ALL") return;
+    // Quay lại tab mà bộ lọc không đổi thì giữ kết quả cũ, không gửi lại truy vấn nặng
+    const loadKey = JSON.stringify([selectedStore, channel, selectedSku, selectedDays, orderThreshold, orderOperator, hideLaunched,
+      includePaused, searchQuery, serverRefreshKey]);
+    if (candidatesLoadedKeyRef.current === loadKey) return;
+    candidatesLoadedKeyRef.current = loadKey;
+    let finished = false;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       setServerLoading(true);
@@ -604,7 +624,7 @@ export function PpcSaleKwView({
               orders: Number(it.orders) || 0,
               cpc: Number(it.cpc) || 0,
               acos: Number(it.acos) || 0,
-              bid: bidMode === "cpc" && it.cpc > 0 ? Math.max(0.1, it.cpc) : defaultBid,
+              bid: 0,
               storeId: it.storeId,
               storeName: it.storeName || selectedStore,
               isAlreadyLaunched: Boolean(it.isAlreadyLaunched),
@@ -620,6 +640,7 @@ export function PpcSaleKwView({
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Sale KW server fetch error:", err);
       } finally {
+        finished = true;
         if (!controller.signal.aborted) setServerLoading(false);
       }
     }, searchQuery ? 300 : 0);
@@ -627,6 +648,7 @@ export function PpcSaleKwView({
     return () => {
       clearTimeout(timer);
       controller.abort();
+      if (!finished) candidatesLoadedKeyRef.current = null;
     };
   }, [
     selectedStore,
@@ -638,8 +660,6 @@ export function PpcSaleKwView({
     hideLaunched,
     includePaused,
     searchQuery,
-    defaultBid,
-    bidMode,
     serverRefreshKey,
     isActive,
   ]);

@@ -5,6 +5,7 @@ import {
   deletePpcStore,
   findPpcStoreByName,
   listPpcStores,
+  listPpcSyncLogs,
   updatePpcStore,
 } from "@/lib/ppc/repository";
 import { storeHasChannels } from "@/lib/ppc/channel-filter";
@@ -35,7 +36,9 @@ export async function GET(request: Request) {
       canManageActions: allowedStoreIdSet.has(store.id),
       hasChannels: channelFlags[i],
     }));
-    return Response.json({ success: true, data: enrichedStores });
+    // Giờ sync gần nhất cho header PPC (tab không phải Overview không tải /metrics overview nữa)
+    const [lastLog] = await listPpcSyncLogs(scope, 1).catch(() => []);
+    return Response.json({ success: true, data: enrichedStores, lastSyncedAt: lastLog?.time ?? null });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách store PPC.", 500);
   }

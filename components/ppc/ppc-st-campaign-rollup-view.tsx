@@ -26,6 +26,8 @@ interface Props {
   notify?: (msg: string, type?: "info" | "success" | "error") => void;
   /** Kênh FBA / FBM chọn ở ô store (null = store không chia kênh). */
   channel?: "FBA" | "FBM" | null;
+  /** Tab đang hiển thị: ẩn thì không tải (component vẫn mount khi đã mở 1 lần). */
+  isActive?: boolean;
 }
 
 type CompareType = "none" | "same_last_month" | "prev_period" | "custom";
@@ -163,7 +165,11 @@ function PpcStCampaignRollupViewInner({
   targetAcos = 30,
   notify,
   channel = null,
+  isActive = true,
 }: Props) {
+  // notify đi qua ref: không để hàm của component cha (mỗi lần render một hàm mới) làm fetchData đổi → tải lại liên tục
+  const notifyRef = useRef(notify);
+  useEffect(() => { notifyRef.current = notify; }, [notify]);
   // Khoảng ngày chính (Kỳ hiện tại) - mặc định 30 ngày gần nhất
   const [primaryPeriod, setPrimaryPeriod] = useState<DateRange>(() => {
     const today = formatDate(new Date());
@@ -296,15 +302,19 @@ function PpcStCampaignRollupViewInner({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Lỗi khi tải bảng chiến dịch từ Search Terms";
-      notify?.(msg, "error");
+      notifyRef.current?.(msg, "error");
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [selectedStore, selectedSku, primaryPeriod, effectiveComparePeriod, page, pageSize, sortBy, sortDir, searchQuery, rangeParam, notify, channel]);
+  }, [selectedStore, selectedSku, primaryPeriod, effectiveComparePeriod, page, pageSize, sortBy, sortDir, searchQuery, rangeParam, channel]);
 
+  // Chỉ tải khi tab đang mở; quay lại tab mà bộ lọc không đổi thì giữ bảng cũ, không tải lại
+  const loadedFetchRef = useRef<typeof fetchData | null>(null);
   useEffect(() => {
+    if (!isActive || loadedFetchRef.current === fetchData) return;
+    loadedFetchRef.current = fetchData;
     void fetchData();
-  }, [fetchData]);
+  }, [fetchData, isActive]);
 
   // Drill-down search terms của campaign
   const toggleExpandCampaign = async (campaignName: string) => {
