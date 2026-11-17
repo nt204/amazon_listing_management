@@ -4109,26 +4109,7 @@ export function PpcDashboard({
                 <option value="SB01">SB01</option>
               </select>
 
-              {/* Sort Dropdown */}
-              <select
-                value={`${campaignSortField}_${campaignSortDir}`}
-                onChange={(e) => {
-                  const [f, d] = e.target.value.split("_") as [SortField, SortDirection];
-                  setCampaignSortField(f);
-                  setCampaignSortDir(d);
-                  setCampaignPage(1);
-                }}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:bg-white focus:border-indigo-600 cursor-pointer shrink-0"
-              >
-                <option value="date_desc">Ngày campaign: Mới nhất</option>
-                <option value="date_asc">Ngày campaign: Cũ nhất</option>
-                <option value="spend_desc">Chi tiêu: Cao → Thấp</option>
-                <option value="sales_desc">Doanh số: Cao → Thấp</option>
-                <option value="orders_desc">Đơn hàng: Nhiều → Ít</option>
-                <option value="acos_desc">ACOS: Cao → Thấp</option>
-                <option value="impressions_desc">Impression: Nhiều → Ít</option>
-              </select>
-
+              {/* Sắp xếp: bấm tiêu đề cột trong bảng (mặc định Ngày campaign mới nhất) */}
               {/* Reset button if filter active */}
               {(campaignQuery ||
                 campaignStatusFilter !== "ACTIVE" ||
@@ -4159,13 +4140,6 @@ export function PpcDashboard({
 
             <div className="flex shrink-0 items-center gap-2">
               {campaignFrozen.columnPicker}
-              <button
-                type="button"
-                onClick={() => handleExportCsv("campaigns")}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <Download size={14} /> Xuất CSV
-              </button>
             </div>
           </div>
 
@@ -5436,24 +5410,6 @@ export function PpcDashboard({
                 />
               </div>
 
-              {/* Campaign Filter (tự động rút ngắn theo từ khóa đang tìm) */}
-              <select
-                value={searchTermCampaignFilter}
-                onChange={(e) => {
-                  setSearchTermCampaignFilter(e.target.value);
-                  setTermPage(1);
-                }}
-                className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer max-w-[220px] truncate"
-                title="Lọc theo Campaign (danh sách tự động rút ngắn theo từ khóa đang tìm)"
-              >
-                <option value="ALL">Tất cả Campaign ({searchTermCampaigns.length})</option>
-                {searchTermCampaigns.map((camp) => (
-                  <option key={camp} value={camp}>
-                    {camp}
-                  </option>
-                ))}
-              </select>
-
               {/* Match Type Filter */}
               <select
                 value={matchTypeFilter}
@@ -5847,12 +5803,6 @@ export function PpcDashboard({
                             <span className="min-w-0 flex-1 whitespace-normal break-words">{t.campaignName}</span>
                             <PpcCopyButton value={t.campaignName} label="campaign" />
                           </div>
-                          {t.adGroupName && t.adGroupName !== t.campaignName && (
-                            <div className="mt-1 flex items-start gap-1 text-[10px] text-slate-400">
-                              <span className="min-w-0 flex-1 whitespace-normal break-words">Nhóm: {t.adGroupName}</span>
-                              <PpcCopyButton value={t.adGroupName} label="ad group" />
-                            </div>
-                          )}
                         </td>
                         {/* Hiển thị - Viết thường */}
                         <td className="py-2.5 px-3 text-right font-normal text-slate-700">{(t.impressions || 0).toLocaleString()}</td>

@@ -1728,7 +1728,7 @@ export function PpcManualBidView({
 
           {/* Bảng target dạng lưới Excel với kéo dãn cột & đánh màu ACOS */}
           {refreshing && <ProgressBar />}
-          <div className={`overflow-x-auto border border-slate-300 bg-white shadow-xs transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
+          <div className={`overflow-auto max-h-[calc(100vh-120px)] border border-slate-300 bg-white shadow-xs transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
             <table
               className="border-collapse text-xs table-fixed w-full"
               style={{ minWidth: Object.values(shownColWidths).reduce((a, b) => a + b, 0) }}
@@ -1752,7 +1752,7 @@ export function PpcManualBidView({
                 <col style={{ width: colWidths.bid }} />
                 <col style={{ width: colWidths.newBid }} />
               </colgroup>
-              <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700 font-semibold border-b border-slate-300">
+              <thead className="sticky top-0 z-20 bg-slate-100 shadow-[0_1px_0_0_rgb(203,213,225)] text-slate-700 font-semibold border-b border-slate-300">
                 <tr>
                   <th className="relative border-r border-slate-300 px-1 py-1.5 text-center bg-slate-100 select-none">
                     <input
@@ -2199,25 +2199,6 @@ function readSaved(): { filter?: Partial<SkuListFilter>; sort?: { key: SkuSortKe
   }
 }
 
-function Segmented<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: Array<{ value: T; label: string }> }) {
-  return (
-    <div className="flex h-9 rounded-lg bg-slate-100 p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={`cursor-pointer rounded-md px-3 text-[12px] font-bold transition ${
-            value === o.value ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /** Một dòng "từ – đến" của bộ lọc khoảng số (dùng chung với tab Đề xuất & Auto Bid). */
 export function RangeRow({ label, unit, value, onChange }: {
   label: string;
@@ -2435,33 +2416,40 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, search
           />
         </form>
 
+        {/* Kênh FBA / FBM / Khác + trạng thái dạng dropdown, tô màu riêng cho dễ nhìn */}
         {channelPages && (
-          <div className="flex h-9 rounded-lg border border-slate-200 bg-white p-0.5">
+          <select
+            value={channel}
+            onChange={(e) => {
+              if (search.trim()) setFilter({ search: "" });
+              onChannelChange(e.target.value as "FBA" | "FBM" | "OTHER");
+            }}
+            title="Kênh"
+            className={`h-9 cursor-pointer rounded-lg border px-2.5 text-[13px] font-bold outline-none focus:ring-2 focus:ring-indigo-200 ${
+              searchAll ? "border-slate-300 bg-slate-200 text-slate-600" : "border-indigo-600 bg-indigo-600 text-white"
+            }`}
+          >
             {([["FBA", "FBA"], ["FBM", "FBM"], ["OTHER", "Khác"]] as const)
               .filter(([k]) => k !== "OTHER" || channelPages.OTHER > 0 || channel === "OTHER")
               .map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => {
-                    if (search.trim()) setFilter({ search: "" });
-                    onChannelChange(k);
-                  }}
-                  className={`cursor-pointer rounded-md px-3.5 text-[13px] font-bold transition ${
-                    channel === k && !searchAll ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"
-                  }`}
-                >
-                  {label} <span className={channel === k && !searchAll ? "font-semibold text-slate-300" : "font-semibold text-slate-400"}>{channelPages[k]}</span>
-                </button>
+                <option key={k} value={k} className="bg-white text-slate-800">{label} ({channelPages[k]})</option>
               ))}
-          </div>
+          </select>
         )}
 
-        <Segmented
+        <select
           value={activeOnly ? "active" : "all"}
-          onChange={(v) => { if ((v === "active") !== activeOnly) onToggleActive(); }}
-          options={[{ value: "active", label: "Active" }, { value: "all", label: "Tất cả" }]}
-        />
+          onChange={(e) => { if ((e.target.value === "active") !== activeOnly) onToggleActive(); }}
+          title="Trạng thái target"
+          className={`h-9 cursor-pointer rounded-lg border px-2.5 text-[13px] font-bold outline-none focus:ring-2 ${
+            activeOnly
+              ? "border-emerald-600 bg-emerald-600 text-white focus:ring-emerald-200"
+              : "border-amber-500 bg-amber-500 text-white focus:ring-amber-200"
+          }`}
+        >
+          <option value="active" className="bg-white text-slate-800">Active</option>
+          <option value="all" className="bg-white text-slate-800">Tất cả</option>
+        </select>
 
         <div ref={moreRef} className="relative">
           <button
@@ -2538,9 +2526,9 @@ function ManualBidSkuList({ rows, channel, channelPages, onChannelChange, search
       </div>
 
       {refreshing && <ProgressBar />}
-      <div className={`overflow-x-auto rounded-xl border border-slate-200 bg-white transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
+      <div className={`overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
         <table className="w-full min-w-[820px] border-collapse text-[13px]">
-          <thead className="text-[11px] font-semibold text-slate-400">
+          <thead className="sticky top-0 z-20 bg-white shadow-[0_1px_0_0_rgb(226,232,240)] text-[11px] font-semibold text-slate-400">
             <tr className="border-b border-slate-200">
               <th className="w-12 px-2 py-2.5" />
               {head("sku", "SKU", "left")}

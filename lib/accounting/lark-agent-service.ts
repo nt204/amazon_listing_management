@@ -291,7 +291,7 @@ const TOOLS_SCHEMA = [
       parameters: {
         type: "object",
         properties: {
-          storeQuery: { type: "string", description: "Tên store (VD: 'BOZSPACER', 'LIMIMA', 'WARMSTOREY', 'FASTPEACE', 'MALFIRST') hoặc để trống nếu muốn lấy tất cả." },
+          storeQuery: { type: "string", description: "Tên store (VD: 'BOZSPACER', 'LIMIMA', 'WARMSTOREY', 'FASTPEACE', 'MALFIRST', 'EVERPHANT') hoặc để trống nếu muốn lấy tất cả." },
           startDate: { type: "string", description: "Ngày bắt đầu (YYYY-MM-DD)." },
           endDate: { type: "string", description: "Ngày kết thúc (YYYY-MM-DD)." },
         },
@@ -995,6 +995,19 @@ Các thay đổi vẫn nằm trong hàng đợi Auto Bid trên web, có thể up
   };
 }
 
+/** Tên các store đang hoạt động, dùng cho lời nhắc của bot; lỗi DB thì trả danh sách dự phòng để bot vẫn chạy */
+async function listActiveStoreNamesText(): Promise<string> {
+  try {
+    const sql = await getDatabaseClient();
+    const rows = await sql<Array<{ name: string }>>`SELECT name FROM stores WHERE status = 'active' ORDER BY name`;
+    const names = [...new Set(rows.map((r) => r.name.trim()).filter(Boolean))];
+    if (names.length) return names.join(", ");
+  } catch (err) {
+    console.warn("[Lark Agent] Không lấy được danh sách store:", err instanceof Error ? err.message : err);
+  }
+  return "BOZSPACER, EVERPHANT, FASTPEACE, LIMIMA, MALFIRST, WARMSTOREY";
+}
+
 /**
  * Xử lý tin nhắn hỏi đáp Kế toán & Vận hành qua AI Agent (Gemini 3.8 Flash via CheapKey)
  */
@@ -1455,6 +1468,8 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
   const [ly, lm, ld] = latestDbDate.split("-");
   const latestDbDateVn = `${ld}/${lm}/${ly}`;
 
+  // Danh sách store lấy từ hệ thống (store mới như EVERPHANT tự có), người dùng bị giới hạn thì chỉ liệt kê store được cấp quyền
+  const storeNamesText = allowedStores ? allowedStores.map((store) => store.name).join(", ") : await listActiveStoreNamesText();
   const storePermissionPrompt = allowedStores
     ? `\nPHẠM VI STORE ĐƯỢC CẤP QUYỀN: ${allowedStores.map((store) => store.name).join(", ")}. Chỉ được dùng dữ liệu từ các store này. Nếu có nhiều store và người dùng chưa nêu store, phải hỏi lại họ chọn một store.\n`
     : "";
@@ -1462,7 +1477,7 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
 TỰ XƯNG & ĐỊNH DANH: Luôn xưng là "AI Agent" (Tuyệt đối KHÔNG bao giờ nhắc đến tên model hay công nghệ nền tảng).
 Hôm nay là: ${todayStr}.
 DỮ LIỆU KẾ TOÁN FBA MỚI NHẤT HIỆN CÓ TRONG HỆ THỐNG: ngày ${latestDbDate} (${latestDbDateVn}).
-Các store hiện có trong hệ thống: BOZSPACER, FASTPEACE, LIMIMA, MALFIRST, WARMSTOREY.
+Các store hiện có trong hệ thống: ${storeNamesText}.
 
 QUY TẮC CỐT LÕI VỀ MỐC THỜI GIAN & DỮ LIỆU SERVER:
 - Hệ thống luôn tự động kiểm tra ngày hiện tại và dữ liệu thực tế có trong database server.
@@ -1495,7 +1510,7 @@ QUY TẮC BẮT BUỘC:
      * NẾU CẢ CÂU HỎI VÀ LỊCH SỬ HỘI THOẠI CHƯA NHẮC ĐẾN STORE NÀO:
        + TUYỆT ĐỐI KHÔNG ĐƯỢC tự ý chọn bừa một store!
        + TUYỆT ĐỐI KHÔNG ĐƯỢC gom chung tất cả các store hoặc trả về danh sách tổng hợp!
-       + BẮT BUỘC PHẢI HỎI LẠI NGƯỜI DÙNG: "Bạn muốn kiểm tra cho store nào? Hệ thống hiện có: BOZSPACER, LIMIMA, FASTPEACE, MALFIRST, WARMSTOREY."
+       + BẮT BUỘC PHẢI HỎI LẠI NGƯỜI DÙNG: "Bạn muốn kiểm tra cho store nào? Hệ thống hiện có: ${storeNamesText}."
    - Khi người dùng hỏi so sánh / xếp hạng giữa các store (VD: "store nào bán tốt nhất", "store nào profit tốt nhất", "xếp hạng doanh thu"):
      * Gọi tool getDailyMetricsSummary mà KHÔNG truyền storeQuery (để trống storeQuery) để hệ thống tự động tổng hợp và trả về bảng xếp hạng chuẩn (rankingByProfit, rankingByNetProfit, rankingByRevenue, topStore).
      * BẮT BUỘC SẮP XẾP DANH SÁCH THEO THỨ TỰ TỪ CAO XUỐNG THẤP (GIẢM DẦN theo đúng chỉ số được hỏi).

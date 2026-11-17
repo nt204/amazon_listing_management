@@ -1363,11 +1363,12 @@ export function PpcSkuRecommendationGroupView({
             )}
 
             {/* Dynamic Phôi Dropdown */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
               <Tag size={13} className="text-slate-400 shrink-0" />
               <select
                 value={selectedPhôi}
                 onChange={(e) => setSelectedPhôi(e.target.value)}
+                style={{ outline: "none" }}
                 className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[120px]"
               >
                 <option value="ALL">Phôi ({pageGroups.length})</option>
@@ -1380,11 +1381,12 @@ export function PpcSkuRecommendationGroupView({
             </div>
 
             {/* Dynamic Niche Dropdown */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
               <Sparkle size={13} className="text-slate-400 shrink-0" />
               <select
                 value={selectedNiche}
                 onChange={(e) => setSelectedNiche(e.target.value)}
+                style={{ outline: "none" }}
                 className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[120px]"
               >
                 <option value="ALL">Niche ({pageGroups.length})</option>
@@ -1397,11 +1399,12 @@ export function PpcSkuRecommendationGroupView({
             </div>
 
             {/* PIC MKT Dropdown */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
               <UserCircle size={13} className="text-slate-400 shrink-0" />
               <select
                 value={selectedPic}
                 onChange={(e) => setSelectedPic(e.target.value)}
+                style={{ outline: "none" }}
                 className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[110px]"
               >
                 <option value="ALL">PIC ({pageGroups.length})</option>
@@ -1802,9 +1805,10 @@ export function PpcSkuRecommendationGroupView({
       )}
 
       {/* Level 1 Table: Grouped by SKU */}
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+      {/* Khung tự cuộn + thead sticky: lướt xuống vẫn thấy tên cột (giống bảng Campaign ở PPC Dashboard) */}
+      <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
         <table ref={setRecTable} className="w-full text-left text-xs">
-          <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-bold">
+          <thead className="sticky top-0 z-20 bg-slate-50 shadow-[0_1px_0_0_rgb(226,232,240)] text-slate-600 border-b border-slate-200 font-bold">
             <tr>
               <th className="w-10 py-3 pl-3 pr-1 text-center">
                 <input
