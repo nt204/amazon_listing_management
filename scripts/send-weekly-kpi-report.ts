@@ -772,7 +772,7 @@ async function main() {
     if (res.sent) {
       console.log(`✅ Đã gửi BÁO CÁO TUẦN VÀO LARK THÀNH CÔNG!`);
     } else {
-      console.error(`❌ Gửi Lark thất bại:`, res.reason, res.error);
+      console.error(`❌ Gửi Lark thất bại:`, res.reason);
       process.exit(1);
     }
   } else {
