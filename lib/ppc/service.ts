@@ -34,8 +34,7 @@ import {
   parseSearchTermCsv,
   parseSearchTermWorkbook,
 } from "./parser";
-import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
-import { invalidateCachePattern } from "@/lib/redis";
+import { invalidateGroupedRecommendationsCache, invalidateGroupedRecommendationsRedis } from "./recommendation-cache";
 import {
   getPpcOverviewAggregates,
   getPpcSearchTermSummaryFromDb,
@@ -1574,7 +1573,8 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     const totalBatchRows = processed.reduce((sum, item) => sum + item.rowCount, 0);
     console.log(`[R2 Sync] ✓ Đã lưu thành công snapshot ${storeName} (${totalBatchRows.toLocaleString()} dòng nguồn; ${(saved.searchTerms.inserted + saved.performance.inserted).toLocaleString()} mới, ${(saved.searchTerms.updated + saved.performance.updated).toLocaleString()} cập nhật).`);
     // Snapshot mới → đề xuất Auto Bid đang cache (Redis giữ tới 24 giờ) của store này phải tính lại.
-    await invalidateCachePattern(`ppc:recommendations:${(scope as any)?.teamId || "default"}:${encodeURIComponent(storeName)}:*`).catch(() => {});
+    // Báo luôn tiến trình web (qua Redis) để nó tính sẵn lại ở nền — người mở Auto Bid đầu tiên không phải chờ.
+    await invalidateGroupedRecommendationsRedis(storeName).catch(() => {});
     totalParsed += totalBatchRows;
     totalNew += saved.searchTerms.inserted + saved.performance.inserted;
     totalUpdated += saved.searchTerms.updated + saved.performance.updated;

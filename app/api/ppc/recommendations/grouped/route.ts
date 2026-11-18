@@ -3,6 +3,7 @@ import { compressedJson } from "@/lib/compressed-json";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listTargetRowsForRecommendations } from "@/lib/ppc/repository";
 import { getGroupedRecommendations, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
+import { awaitAutoBidPrewarm, loadFullStoreRecommendations } from "@/lib/ppc/auto-bid-prewarm";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import { getDatabaseClient } from "@/lib/db";
 
@@ -34,14 +35,25 @@ function filterResultBySku(result: GroupedResult, keep: (sku: string) => boolean
   return { groups, allRecommendations, totalRecommendations: allRecommendations.length, totalSkus: groups.length };
 }
 
-/** Đọc cache cả store (bộ nhớ hoặc Redis) mà không tính lại. */
+/**
+ * Đọc cache cả store (bộ nhớ hoặc Redis) mà không tính lại. Prewarm nền đang tính đúng khoá này thì đợi nó.
+ * Đọc từ Redis thì giữ luôn trong bộ nhớ: trang FBA / FBM lọc từ bản cả store, không phải giải mã JSON lớn mỗi lần.
+ */
 async function peekFullResult(cacheKey: string, redisKey: string): Promise<GroupedResult | null> {
   const memory = getCachedGroupedRecommendations(cacheKey);
   if (memory) return memory;
+  const warming = awaitAutoBidPrewarm(redisKey);
+  if (warming) {
+    const warmed = await warming.catch(() => null);
+    if (warmed) return warmed;
+  }
   try {
     const redis = await getReadyRedisClient();
     const raw = redis ? await redis.get(redisKey) : null;
-    return raw ? (JSON.parse(raw) as GroupedResult) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as GroupedResult;
+    setCachedGroupedRecommendations(cacheKey, parsed);
+    return parsed;
   } catch {
     return null;
   }
@@ -108,6 +120,11 @@ export async function GET(request: Request) {
       // Cache cả store đã có (vd vừa mở Manual Bid) → lọc ngay, không tính lại, không lưu thêm bản sao.
       result = filterResultBySku(fullCached, inPage);
       cacheStatus = "HIT_FULL_FILTERED";
+    } else if (!channelPage) {
+      // Cả store: cùng hàm / cùng khoá Redis với prewarm nền; prewarm đang tính thì đợi nó thay vì tính lần nữa.
+      computed = true;
+      result = (refresh ? null : await awaitAutoBidPrewarm(redisKey)?.catch(() => null))
+        ?? await loadFullStoreRecommendations(scope, { id: storeId, name: storeName }, days, includePaused);
     } else {
       computed = true;
       result = await getCachedOrFetch(redisKey, RECOMMENDATION_CACHE_TTL_SECONDS, async () => {

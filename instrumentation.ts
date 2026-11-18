@@ -12,5 +12,7 @@ export async function register() {
     const { startManualBidPrewarm } = await import("@/lib/ppc/manual-bid-attribution");
     const { getDatabaseClient } = await import("@/lib/db");
     startManualBidPrewarm(getDatabaseClient);
+    const { startAutoBidPrewarm } = await import("@/lib/ppc/auto-bid-prewarm");
+    startAutoBidPrewarm();
   }
 }
