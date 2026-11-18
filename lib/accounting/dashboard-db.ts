@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getLatestAvailableAccountingDate, listStores } from "@/lib/accounting/accounting-db";
+import { getLatestAvailableAccountingDate, getStoreLatestDates, listStores } from "@/lib/accounting/accounting-db";
 import { listFbaDaily, type FbaDailyItem } from "@/lib/accounting/fba-daily-db";
 import {
   DASHBOARD_CACHE_PREFIX,
@@ -105,6 +105,8 @@ export interface DashboardTopProducts {
 
 export interface AccountingDashboardData {
   latestDate: string;
+  /** Store đang chọn chưa có số đến latestDate (through = ngày mới nhất đã có, null = chưa có dữ liệu) */
+  dataLag?: { stores: { name: string; through: string | null }[] } | null;
   period: { startDate: string; endDate: string };
   previousPeriod: { startDate: string; endDate: string } | null;
   stores: { id: string; name: string; marketplace: string }[];
@@ -189,6 +191,16 @@ const emptyPoint = (key: string): DashboardSeriesPoint => ({
 });
 
 export { invalidateAccountingDashboardCache };
+
+/**
+ * Ngày cuối của Dashboard = ngày mới nhất của store nhanh nhất (store chậm không kéo cả trang lùi lại;
+ * các store thiếu số được ghi chú ở cuối trang qua dataLag).
+ */
+async function getDashboardLatestDate(): Promise<string> {
+  const storeLatest = await getStoreLatestDates().catch(() => new Map<string, string>());
+  const values = Array.from(storeLatest.values());
+  return values.length ? values.reduce((a, b) => (a > b ? a : b)) : getLatestAvailableAccountingDate();
+}
 
 /** Dữ liệu kết thúc trước cửa sổ "gần đây" → dùng phiên bản dữ liệu cũ (crawler ghi dữ liệu mới không làm nguội). */
 function rangeStamp(cache: DashboardCacheScope, endDate: string): string {
@@ -379,7 +391,7 @@ export async function getAccountingDashboard(options: {
 }): Promise<AccountingDashboardData> {
   const [allStores, latestDate, cache] = await Promise.all([
     listStores(),
-    getLatestAvailableAccountingDate(),
+    getDashboardLatestDate(),
     getDashboardCacheScope(Boolean(options.fresh)),
   ]);
   const requested = new Set((options.storeIds ?? []).filter(Boolean));
@@ -465,8 +477,15 @@ export async function getAccountingDashboard(options: {
     return { ...p, compare: compareMonths.get(cmpKey) ?? emptyPoint(cmpKey) };
   });
 
+  // Store đang chọn chưa có số đến latestDate (ghi chú ở cuối trang)
+  const storeLatest = await getStoreLatestDates().catch(() => new Map<string, string>());
+  const lagging = stores
+    .map((s) => ({ name: s.name, through: storeLatest.get(s.id) ?? null }))
+    .filter((s) => !s.through || s.through < latestDate);
+
   return {
     latestDate,
+    dataLag: lagging.length ? { stores: lagging } : null,
     period: periods.current,
     previousPeriod: periods.previous,
     stores: stores.map((s) => ({ id: s.id, name: s.name, marketplace: s.marketplace })),
@@ -594,7 +613,7 @@ export async function getDashboardTopProducts(options: {
 }): Promise<DashboardTopProducts> {
   const [allStores, latestDate, cache] = await Promise.all([
     listStores(),
-    getLatestAvailableAccountingDate(),
+    getDashboardLatestDate(),
     getDashboardCacheScope(),
   ]);
   const requested = new Set((options.storeIds ?? []).filter(Boolean));
@@ -808,7 +827,7 @@ export async function getDashboardSkuGroup(options: {
 }): Promise<DashboardSkuGroupData> {
   const [allStores, latestDate, cache] = await Promise.all([
     listStores(),
-    getLatestAvailableAccountingDate(),
+    getDashboardLatestDate(),
     getDashboardCacheScope(),
   ]);
   const requested = new Set((options.storeIds ?? []).filter(Boolean));

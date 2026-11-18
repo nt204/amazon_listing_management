@@ -143,6 +143,13 @@ function TacosCell({ t }: { t: { tacos: number; revenue: number } }) {
   return <span className={t.tacos > BAD_TACOS ? BAD_TEXT : ""}>{pct(t.tacos)}</span>;
 }
 
+/** Cộng n ngày cho chuỗi YYYY-MM-DD */
+function addDays(d: string, n: number): string {
+  const t = new Date(`${d}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+
 // Định dạng ngày kiểu Việt: 1/10, 1/10/2026, T10
 function shortDate(d: string): string {
   const [, m, day] = d.split("-");
@@ -1885,11 +1892,14 @@ export function AccountingDashboardView() {
                 <span>
                   Showing {shortDate(data.period.startDate)} – {longDate(data.period.endDate)}
                 </span>
-                {dataClamped && (
-                  <span className="rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-amber-200">
-                    Latest data: {shortDate(data.latestDate)}
-                  </span>
-                )}
+                <span
+                  className={`rounded-full px-2 py-0.5 font-medium ring-1 ${
+                    dataClamped ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-slate-100 text-slate-600 ring-slate-200"
+                  }`}
+                  title="Ngày mới nhất đã có đủ đơn hàng và ads"
+                >
+                  Cập nhật đến {shortDate(data.latestDate)}
+                </span>
               </p>
             )}
           </div>
@@ -2276,6 +2286,21 @@ export function AccountingDashboardView() {
               reloadKey={reloadKey}
               delay={210}
             />
+
+            {data.dataLag && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-[13px] text-amber-800 ring-1 ring-amber-200">
+                <b>Store chưa có dữ liệu đến {shortDate(data.latestDate)}:</b>{" "}
+                {data.dataLag.stores
+                  .map((s) =>
+                    s.through
+                      ? `${s.name} (mới có đến ${shortDate(s.through)}, thiếu ${shortDate(addDays(s.through, 1))}${
+                          addDays(s.through, 1) < data.latestDate ? `–${shortDate(data.latestDate)}` : ""
+                        })`
+                      : `${s.name} (chưa có dữ liệu)`,
+                  )
+                  .join(", ")}
+              </p>
+            )}
           </div>
         ) : null}
       </div>

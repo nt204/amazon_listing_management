@@ -282,3 +282,20 @@ export async function getLatestAvailableAccountingDate(storeId?: string): Promis
   return date.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
 }
 
+let cachedStoreLatest: { data: Map<string, string>; expiresAt: number } | null = null;
+
+/** Ngày mới nhất đã có cả orders + ads của từng store (cùng quy tắc getLatestAvailableAccountingDate). */
+export async function getStoreLatestDates(): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (cachedStoreLatest && cachedStoreLatest.expiresAt > now) return cachedStoreLatest.data;
+  const sql = await getDatabaseClient();
+  const rows = await sql<Array<{ store_id: string; latest: string | null }>>`
+    SELECT o.store_id::text AS store_id, LEAST(o.max_date, COALESCE(a.max_date, o.max_date))::text AS latest
+    FROM (SELECT store_id, MAX(date) AS max_date FROM accounting_orders GROUP BY store_id) o
+    LEFT JOIN (SELECT store_id, MAX(date) AS max_date FROM accounting_ads GROUP BY store_id) a ON a.store_id = o.store_id
+  `;
+  const data = new Map(rows.filter((r) => r.latest).map((r) => [r.store_id, r.latest!.slice(0, 10)]));
+  cachedStoreLatest = { data, expiresAt: now + 60_000 };
+  return data;
+}
+
