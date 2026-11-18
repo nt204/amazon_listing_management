@@ -1,3 +1,4 @@
+import { getDatabaseClient } from "@/lib/db";
 import { getWeeklyReport, type WeeklyBrandRow, type WeeklyReport, type WeeklyMetrics } from "@/lib/accounting/weekly-report";
 import { daysInMonthOf, weekSegmentOf, previousWeekSegment, type WeekSegment } from "@/lib/accounting/weekly-report-periods";
 import { kpiRatio, kpiTone } from "@/lib/accounting/kpi-progress";
@@ -31,6 +32,19 @@ interface GroupSummary {
   targetedRows: number;
   revenue: MetricProgress | null;
   profit: MetricProgress | null;
+}
+
+interface SkuWarning {
+  sku: string;
+  spend: number;
+  revenue: number;
+  tacos: number;
+  estLoss: number;
+}
+
+interface ServiceFeeItem {
+  name: string;
+  amount: number;
 }
 
 const ZERO: WeeklyMetrics = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
@@ -140,9 +154,6 @@ function fmtWow(cur: number, prev: number, isGoodWhenUp = true): string {
 export function getPreviousCompletedSaturday(fromIso?: string): string {
   const d = fromIso ? new Date(`${fromIso}T00:00:00Z`) : new Date();
   const day = d.getUTCDay(); // 0: Sun, 1: Mon, ..., 6: Sat
-  // Nếu hôm nay là Thứ 2 (1) -> Thứ 7 trước đó là 2 ngày trước (-2)
-  // Nếu hôm nay là CN (0) -> Thứ 7 trước đó là 1 ngày trước (-1)
-  // Nếu hôm nay là Thứ 7 (6) -> Thứ 7 tuần trước là 7 ngày trước (-7)
   const daysToSubtract = day === 6 ? 7 : day + 1;
   const targetTime = d.getTime() - daysToSubtract * 86_400_000;
   const targetDate = new Date(targetTime);
@@ -164,6 +175,257 @@ function col(name: string, displayName: string, align: "left" | "right" = "right
     horizontal_align: align,
     width: "auto",
   };
+}
+
+// Cấu hình Teams & Store khớp chuẩn hệ thống
+const TEAMS_CONFIG = [
+  {
+    name: "Team 1",
+    teamTag: "FBA TEAM 1",
+    lead: "Quỳnh",
+    stores: [
+      { name: "BOZSPACER", label: "Bozspacer", channel: "FBA" },
+      { name: "WARMSTOREY", label: "Warmstorey", channel: "FBA" },
+    ],
+  },
+  {
+    name: "Team 2",
+    teamTag: "FBA TEAM 2",
+    lead: "Trường",
+    stores: [
+      { name: "LIMIMA", label: "Limima", channel: "FBA" },
+      { name: "FASTPEACE", label: "Fastpeace-FBA", channel: "FBA" },
+      { name: "EVERPHANT", label: "Everphant-FBA", channel: "FBA" },
+    ],
+  },
+  {
+    name: "Team 3",
+    teamTag: "FBA TEAM 3",
+    lead: "Loan",
+    stores: [
+      { name: "MALFIRST", label: "Malfirst", channel: "FBA" },
+      { name: "EKASPEEK", label: "Ekaspeek-FBA", channel: "FBA" },
+    ],
+  },
+  {
+    name: "Team FBM",
+    teamTag: "FBM",
+    lead: "Đức",
+    stores: [
+      { name: "FASTPEACE", label: "Fastpeace-FBM", channel: "FBM" },
+      { name: "EVERPHANT", label: "Everphant-FBM", channel: "FBM" },
+      { name: "EKASPEEK", label: "Ekaspeek-FBM", channel: "FBM" },
+    ],
+  },
+];
+
+// Query top SKU lỗ trong tuần
+async function loadTopWarningSkusWeek(startDate: string, endDate: string): Promise<Map<string, SkuWarning[]>> {
+  const sql = await getDatabaseClient();
+  const result = new Map<string, SkuWarning[]>();
+  try {
+    const rows = await sql<Array<{
+      store_id: string;
+      channel: string;
+      sku: string;
+      revenue: number;
+      spend: number;
+      tacos: number;
+      est_loss: number;
+    }>>`
+      WITH orders_agg AS (
+        SELECT
+          o.store_id,
+          CASE WHEN o.fulfillment_channel = 'Merchant' THEN 'FBM' ELSE 'FBA' END AS channel,
+          UPPER(TRIM(o.sku)) AS sku,
+          SUM(COALESCE(o.item_price, 0) + COALESCE(o.shipping_price, 0) - COALESCE(o.item_promotion_discount, 0) - COALESCE(o.ship_promotion_discount, 0))::float AS revenue
+        FROM accounting_orders o
+        WHERE o.date BETWEEN ${startDate}::date AND ${endDate}::date
+          AND COALESCE(TRIM(o.sku), '') <> ''
+          AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+        GROUP BY o.store_id, 2, 3
+      ),
+      ads_agg AS (
+        SELECT
+          a.store_id,
+          CASE WHEN UPPER(TRIM(a.loai)) = 'FBM' OR a.loai = '' THEN 'FBM' ELSE 'FBA' END AS channel,
+          UPPER(TRIM(COALESCE(NULLIF(a.sku, ''), a.portfolio))) AS sku,
+          SUM(COALESCE(a.spend, 0))::float AS spend
+        FROM accounting_ads a
+        WHERE a.date BETWEEN ${startDate}::date AND ${endDate}::date
+        GROUP BY a.store_id, 2, 3
+      ),
+      joined AS (
+        SELECT
+          COALESCE(o.store_id, a.store_id) AS store_id,
+          COALESCE(o.channel, a.channel) AS channel,
+          COALESCE(o.sku, a.sku) AS sku,
+          COALESCE(o.revenue, 0)::float AS revenue,
+          COALESCE(a.spend, 0)::float AS spend,
+          CASE
+            WHEN COALESCE(o.revenue, 0) > 0 THEN (COALESCE(a.spend, 0) / o.revenue) * 100
+            ELSE 999
+          END AS tacos,
+          ((COALESCE(o.revenue, 0) * 0.45) - COALESCE(a.spend, 0))::float AS est_loss
+        FROM orders_agg o
+        FULL OUTER JOIN ads_agg a
+          ON o.store_id = a.store_id
+         AND o.channel = a.channel
+         AND o.sku = a.sku
+      )
+      SELECT store_id, channel, sku, revenue, spend, tacos, est_loss
+      FROM joined
+      WHERE est_loss < -50
+        AND tacos > 50
+        AND spend >= 50
+      ORDER BY est_loss ASC
+      LIMIT 10
+    `;
+    for (const r of rows) {
+      const key = `${r.store_id}|${r.channel}`;
+      if (!result.has(key)) result.set(key, []);
+      result.get(key)!.push({
+        sku: r.sku,
+        spend: r.spend,
+        revenue: r.revenue,
+        tacos: r.tacos,
+        estLoss: r.est_loss,
+      });
+    }
+  } catch (err) {
+    console.error("[WarningSKU] Lỗi query SKU tuần:", err);
+  }
+  return result;
+}
+
+// Query khoản phí Service Fee trừ >= $1,000 trong tuần (đã loại phí ads)
+async function loadLargeServiceFeesWeek(startDate: string, endDate: string): Promise<Map<string, ServiceFeeItem[]>> {
+  const sql = await getDatabaseClient();
+  const result = new Map<string, ServiceFeeItem[]>();
+  try {
+    const rows = await sql<Array<{
+      store_id: string;
+      product_details: string;
+      total_amount: number;
+    }>>`
+      SELECT
+        sf.store_id,
+        COALESCE(NULLIF(TRIM(sf.product_details), ''), 'Service Fee') AS product_details,
+        SUM(ABS(sf.total))::float AS total_amount
+      FROM accounting_service_fees sf
+      WHERE sf.date BETWEEN ${startDate}::date AND ${endDate}::date
+        AND sf.total < 0
+        AND LOWER(COALESCE(sf.product_details, '')) NOT LIKE '%advertising%'
+        AND LOWER(COALESCE(sf.product_details, '')) NOT LIKE '%cost of ads%'
+      GROUP BY sf.store_id, 2
+      HAVING SUM(ABS(sf.total)) >= 1000
+      ORDER BY total_amount DESC
+    `;
+    for (const r of rows) {
+      if (!result.has(r.store_id)) result.set(r.store_id, []);
+      result.get(r.store_id)!.push({
+        name: r.product_details,
+        amount: -r.total_amount,
+      });
+    }
+  } catch (err) {
+    console.error("[ServiceFee] Lỗi query service fee tuần:", err);
+  }
+  return result;
+}
+
+// Sinh nhận xét chi tiết cho từng store ở phạm vi tuần
+function generateWeeklyStoreComment(
+  cur: WeeklyMetrics,
+  prev: WeeklyMetrics,
+  displayName: string,
+  warningSkus: SkuWarning[] = [],
+  serviceFees: ServiceFeeItem[] = []
+): string {
+  // 0. Nếu không có dữ liệu
+  if (cur.revenue === 0 && cur.quantity === 0 && cur.profit === 0) {
+    return `🔹 **${displayName}:** Không có dữ liệu.`;
+  }
+
+  const dRevPct = prev.revenue > 0 ? ((cur.revenue - prev.revenue) / prev.revenue) * 100 : 0;
+  const dProfitPct = prev.profit !== 0 ? ((cur.profit - prev.profit) / Math.abs(prev.profit)) * 100 : 0;
+  const curTacos = cur.revenue > 0 ? (cur.adsFee / cur.revenue) * 100 : 0;
+  const prevTacos = prev.revenue > 0 ? (prev.adsFee / prev.revenue) * 100 : 0;
+  const dTacos = curTacos - prevTacos;
+  const dAdsFeePct = prev.adsFee > 0 ? ((cur.adsFee - prev.adsFee) / prev.adsFee) * 100 : 0;
+  const curMargin = cur.revenue > 0 ? (cur.profit / cur.revenue) * 100 : 0;
+
+  let warningSkuText = "";
+  if (warningSkus.length > 0) {
+    const skuLines = warningSkus.map((s) => {
+      const tacosStr = s.tacos > 100 ? ">100%" : `${s.tacos.toFixed(1)}%`;
+      return `  ❗ **SKU lỗ:** \`${s.sku}\` (Profit -${fmtUsd(Math.abs(s.estLoss))}, TACoS ${tacosStr}, Spend ${fmtUsd(s.spend)}, Rev ${fmtUsd(s.revenue)})`;
+    });
+    warningSkuText = `\n${skuLines.join("\n")}`;
+  }
+
+  let serviceFeeText = "";
+  if (serviceFees.length > 0) {
+    const feeLines = serviceFees.map((f) => `  ❗ **Service Fee:** ${f.name} ${fmtUsd(f.amount, 2)}`);
+    serviceFeeText = `\n${feeLines.join("\n")}`;
+  }
+
+  const fullWarningText = `${serviceFeeText}${warningSkuText}`;
+
+  // 1. Profit sụt giảm sâu (<= -20%)
+  if (dProfitPct <= -20) {
+    const causes: string[] = [];
+    if (dTacos >= 3 || curTacos >= 25) {
+      const spendClause = dAdsFeePct >= 10 ? ` do Spend +${dAdsFeePct.toFixed(0)}%` : "";
+      causes.push(`TACoS tăng lên ${curTacos.toFixed(1)}% (+${dTacos.toFixed(1)}đ)${spendClause}`);
+    }
+    if (dRevPct <= -15) {
+      causes.push(`Units sụt giảm ${dRevPct.toFixed(1)}%`);
+    }
+    const revNote = Math.abs(dRevPct) < 10 ? "Revenue đi ngang" : `Revenue ${dRevPct > 0 ? "+" : ""}${dRevPct.toFixed(1)}%`;
+    const causeStr = causes.length > 0 ? `, do ${causes.join(" và ")}` : "";
+    return `🔹 **${displayName}:** Profit sụt ${dProfitPct.toFixed(1)}% (${revNote})${causeStr}.${fullWarningText}`;
+  }
+
+  // 2. Margin mỏng (<= 10%) dù revenue tăng mạnh
+  if (curMargin <= 10 && dRevPct >= 20) {
+    const issues: string[] = [];
+    if (dTacos >= 3 || curTacos >= 25) {
+      const spendClause = dAdsFeePct > 0 ? `Spend +${dAdsFeePct.toFixed(0)}% ` : "";
+      issues.push(`${spendClause}kéo TACoS lên ${curTacos.toFixed(1)}% (+${dTacos.toFixed(1)}đ so với tuần trước ${prevTacos.toFixed(1)}%)`);
+    }
+    const issueStr = issues.length > 0 ? ` do ${issues.join(" và ")}` : "";
+    return `🔹 **${displayName}:** Revenue tăng +${dRevPct.toFixed(1)}% nhờ Units tăng mạnh, nhưng Margin mỏng chỉ còn ${curMargin.toFixed(1)}%${issueStr}.${fullWarningText}`;
+  }
+
+  // 3. Profit tăng mạnh (>= 20%)
+  if (dProfitPct >= 20) {
+    // 3a. Tăng trưởng organic sạch (Spend giữ nguyên/giảm, TACoS giảm)
+    if (dTacos <= -2 && curTacos <= 20) {
+      const spendNote = dAdsFeePct <= -5 ? `Spend ${dAdsFeePct.toFixed(0)}%` : "Spend giữ nguyên";
+      return `🔹 **${displayName}:** Profit +${dProfitPct.toFixed(1)}%, Revenue +${dRevPct.toFixed(1)}% nhờ đơn Organic tăng vọt trong khi ${spendNote}, kéo TACoS giảm về ${curTacos.toFixed(1)}% (${dTacos.toFixed(1)}đ).${fullWarningText}`;
+    }
+
+    // 3b. Scale mạnh đơn hàng nhưng TACoS cao
+    if (curTacos >= 30) {
+      const spendNote = dAdsFeePct >= 5 ? `Spend +${dAdsFeePct.toFixed(0)}%` : (dAdsFeePct <= -5 ? `Spend ${dAdsFeePct.toFixed(0)}%` : "Spend đi ngang");
+      const tacosNote = dTacos >= 2
+        ? `TACoS tăng lên ${curTacos.toFixed(1)}% (+${dTacos.toFixed(1)}đ) do ${spendNote}`
+        : `TACoS ở mức cao ${curTacos.toFixed(1)}% (${spendNote})`;
+      return `🔹 **${displayName}:** Profit tăng +${dProfitPct.toFixed(1)}% nhờ Units tăng mạnh (+${dRevPct.toFixed(1)}%); tuy nhiên ${tacosNote}.${fullWarningText}`;
+    }
+
+    // 3c. Tăng trưởng tốt nói chung
+    return `🔹 **${displayName}:** Revenue +${dRevPct.toFixed(1)}%, Profit +${dProfitPct.toFixed(1)}% so với tuần trước nhờ Units tăng trưởng tốt.${fullWarningText}`;
+  }
+
+  // 4. Biến động TACoS riêng lẻ
+  if (dTacos >= 3) {
+    const spendNote = dAdsFeePct >= 5 ? ` (Spend +${dAdsFeePct.toFixed(0)}%)` : "";
+    return `🔹 **${displayName}:** TACoS tăng lên ${curTacos.toFixed(1)}% (+${dTacos.toFixed(1)}đ)${spendNote}.${fullWarningText}`;
+  }
+
+  return `🔹 **${displayName}:** Nhìn chung ổn định.${fullWarningText}`;
 }
 
 export async function generateWeeklyKpiReport(targetDate?: string) {
@@ -199,9 +461,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const tacosWinCur = div(totalWin.cur.adsFee, revWinCur) ?? 0;
   const tacosWinPrev = div(totalWin.prev.adsFee, revWinPrev) ?? 0;
 
-  // Tiến độ như card Báo cáo tuần:
-  // Tuần: Lũy kế đến hết tuần so với Target lũy kế (Target tháng * endDay / dim)
-  // Tháng: Lũy kế đến hết tuần so với Target cả tháng
   const fullRevTarget = totalWin.revenue?.month.full ?? 0;
   const targetRevToWeek = (fullRevTarget * endDay) / dim;
   const revPaceToWeek = targetRevToWeek > 0 ? revWinMtd / targetRevToWeek : null;
@@ -212,115 +471,15 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const proPaceToWeek = targetProToWeek > 0 ? proWinMtd / targetProToWeek : null;
   const proPaceMonth = fullProTarget > 0 ? proWinMtd / fullProTarget : null;
 
-  // 2. Dữ liệu SKU ALL (Win + Test) - Bảng Kinh doanh theo Team & Brand
+  // 2. Dữ liệu SKU ALL (Win + Test)
   const allBrands = brands.map((b) => brandOfGroup(b, "all"));
   const totalAll = summarize(allBrands, ctx);
 
-  // Gom theo Team
-  const teamOrder = ["FBM", "FBA TEAM 1", "FBA TEAM 2", "FBA TEAM 3"];
-  const byTeam = new Map<string, WeeklyBrandRow[]>();
-  for (const b of allBrands) {
-    if (!byTeam.has(b.team)) byTeam.set(b.team, []);
-    byTeam.get(b.team)!.push(b);
-  }
-
-  // Bảng Team
-  const teamTableRows: any[] = [];
-  for (const tName of teamOrder) {
-    const list = byTeam.get(tName);
-    if (!list) continue;
-    const s = summarize(list, ctx);
-    const rev = s.cur.revenue;
-    const prevRev = s.prev.revenue;
-    const profit = s.cur.profit;
-    const prevProfit = s.prev.profit;
-    const mtdProfit = s.mtd.profit;
-    const targetProfitMonth = list.reduce((acc, b) => acc + (b.target?.profit ?? 0), 0);
-    const targetProfitToDate = (targetProfitMonth * endDay) / dim;
-    const paceMonth = targetProfitMonth > 0 ? mtdProfit / targetProfitMonth : null;
-
-    teamTableRows.push({
-      team: `**${tName}**`,
-      revenue: fmtUsd(rev),
-      wowRev: fmtWow(rev, prevRev, true),
-      units: fmtInt(s.cur.quantity),
-      spend: fmtUsd(s.cur.adsFee),
-      profit: profit >= 0 ? fmtUsd(profit) : red(fmtUsd(profit)),
-      wowProfit: fmtWow(profit, prevProfit, true),
-      tacos: fmtPct(div(s.cur.adsFee, rev)),
-      margin: fmtPct(div(profit, rev)),
-      roi: fmtPct(div(profit, s.cur.basecost)),
-      mtdProfit: mtdProfit >= 0 ? fmtUsd(mtdProfit) : red(fmtUsd(mtdProfit)),
-      targetProfit: targetProfitMonth > 0 ? fmtUsd(targetProfitMonth) : "—",
-      pace: paceMonth != null ? fmtPct(paceMonth) : "—",
-    });
-  }
-
-  // Dòng TỔNG cho Team table
-  const totRev = totalAll.cur.revenue;
-  const totPrevRev = totalAll.prev.revenue;
-  const totProfit = totalAll.cur.profit;
-  const totPrevProfit = totalAll.prev.profit;
-  const totMtdProfit = totalAll.mtd.profit;
-  const totTargetProfit = allBrands.reduce((acc, b) => acc + (b.target?.profit ?? 0), 0);
-  const totPaceMonth = totTargetProfit > 0 ? totMtdProfit / totTargetProfit : null;
-
-  teamTableRows.push({
-    team: `**TỔNG**`,
-    revenue: `**${fmtUsd(totRev)}**`,
-    wowRev: fmtWow(totRev, totPrevRev, true),
-    units: `**${fmtInt(totalAll.cur.quantity)}**`,
-    spend: `**${fmtUsd(totalAll.cur.adsFee)}**`,
-    profit: `**${fmtUsd(totProfit)}**`,
-    wowProfit: fmtWow(totProfit, totPrevProfit, true),
-    tacos: `**${fmtPct(div(totalAll.cur.adsFee, totRev))}**`,
-    margin: `**${fmtPct(div(totProfit, totRev))}**`,
-    roi: `**${fmtPct(div(totProfit, totalAll.cur.basecost))}**`,
-    mtdProfit: `**${fmtUsd(totMtdProfit)}**`,
-    targetProfit: totTargetProfit > 0 ? `**${fmtUsd(totTargetProfit)}**` : "—",
-    pace: totPaceMonth != null ? `**${fmtPct(totPaceMonth)}**` : "—",
-  });
-
-  // Bảng Brand chi tiết
-  const brandTableRows: any[] = [];
-  for (const b of allBrands) {
-    const rev = b.current.revenue;
-    const prevRev = b.previous.revenue;
-    const profit = b.current.profit;
-    const prevProfit = b.previous.profit;
-    const mtdProfit = b.mtd.profit;
-    const brandName = b.label.replace(/-FBA$/i, "");
-
-    brandTableRows.push({
-      brand: brandName,
-      revenue: fmtUsd(rev),
-      wowRev: fmtWow(rev, prevRev, true),
-      units: fmtInt(b.current.quantity),
-      spend: fmtUsd(b.current.adsFee),
-      profit: profit >= 0 ? fmtUsd(profit) : red(fmtUsd(profit)),
-      wowProfit: fmtWow(profit, prevProfit, true),
-      margin: fmtPct(div(profit, rev)),
-      tacos: fmtPct(div(b.current.adsFee, rev)),
-      mtdProfit: fmtUsd(mtdProfit),
-    });
-  }
-
-  // Tồn kho cảnh báo (> 30 tuần Ứ vốn, hoặc < 4 tuần Sắp hết)
-  const stockAlerts: string[] = [];
-  for (const s of report.stock) {
-    const sold = s.soldInPeriod;
-    const totalUnits = s.units + (s.prepaidUnits || 0);
-    if (totalUnits > 0 && sold > 0) {
-      const weeksLeft = totalUnits / sold;
-      if (weeksLeft > 30) {
-        stockAlerts.push(`• **${s.label}:** Tồn kho **${weeksLeft.toFixed(0)} tuần** (${fmtInt(totalUnits)} pcs) — <font color='red'>Ứ vốn</font>`);
-      } else if (weeksLeft < 4) {
-        stockAlerts.push(`• **${s.label}:** Tồn kho chỉ còn **${weeksLeft.toFixed(1)} tuần** (${fmtInt(totalUnits)} pcs) — <font color='orange'>Sắp hết hàng</font>`);
-      }
-    } else if (totalUnits <= 0 && sold > 0) {
-      stockAlerts.push(`• **${s.label}:** <font color='red'>Hết hàng</font> (Bán ${fmtInt(sold)} pcs nhưng tồn kho 0)`);
-    }
-  }
+  // Load SKU lỗ & Service Fees trong tuần
+  const [warningSkusMap, serviceFeesMap] = await Promise.all([
+    loadTopWarningSkusWeek(week.startDate, week.endDate),
+    loadLargeServiceFeesWeek(week.startDate, week.endDate),
+  ]);
 
   // --- DỰNG LARK CARD ---
   const elements: any[] = [];
@@ -336,94 +495,109 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     `  ↳ *Tiến độ:* Tuần đạt **${proPaceToWeek ? fmtPct(proPaceToWeek, 0) : "—"}** (Target ${fmtUsd(targetProToWeek)}) • Tháng đạt **${proPaceMonth ? fmtPct(proPaceMonth, 0) : "—"}** (Target ${fmtUsd(fullProTarget)})`,
     `📊 **Biên LN:** **${fmtPct(marginWinCur)}** (${marginWinCur >= marginWinPrev ? green(`▲ +${revDiffPpt} điểm %`) : red(`▼ ${revDiffPpt} điểm %`)}, tuần trước ${fmtPct(marginWinPrev)})`,
     `🎯 **TACoS:** **${fmtPct(tacosWinCur)}** (${tacosWinCur <= tacosWinPrev ? green(`▼ ${tacosDiffPpt} điểm %`) : red(`▲ +${tacosDiffPpt} điểm %`)}, tuần trước ${fmtPct(tacosWinPrev)})`,
-    `*(Tổng toàn bộ gồm cả SKU Test: Revenue **${fmtUsd(totRev)}**, Profit **${fmtUsd(totProfit)}**)*`,
+    `*(Tổng toàn bộ gồm cả SKU Test: Revenue **${fmtUsd(totalAll.cur.revenue)}**, Profit **${fmtUsd(totalAll.cur.profit)}**)*`,
   ].join("\n");
 
-  elements.push(
-    {
-      tag: "markdown",
-      content: `### 📌 TỔNG QUAN HIỆU QUẢ KINH DOANH\n${kpiSummaryMd}`,
-    }
-  );
+  elements.push({
+    tag: "markdown",
+    content: `### 📌 TỔNG QUAN HIỆU QUẢ KINH DOANH\n${kpiSummaryMd}`,
+  });
 
-  // 2. Thẻ Đánh giá tuần (từ kế toán/admin nếu có)
+  // 2. Thẻ Đánh giá tuần (ĐÃ BỎ chú thích Cập nhật bởi Admin)
   if (report.note?.text?.trim()) {
-    const updatedInfo = report.note.updatedBy ? ` *(Cập nhật bởi ${report.note.updatedBy})*` : "";
     elements.push(
       { tag: "hr" },
       {
         tag: "markdown",
-        content: `### 📝 ĐÁNH GIÁ TUẦN\n> ${report.note.text.trim()}${updatedInfo}`,
+        content: `### 📝 ĐÁNH GIÁ TUẦN\n> ${report.note.text.trim()}`,
       }
     );
   }
 
-  // 3. Bảng Kinh doanh theo Team (Bảng chính trong screenshot)
-  elements.push(
-    { tag: "hr" },
-    {
-      tag: "markdown",
-      content: `### 🏢 KINH DOANH THEO TEAM (SKU ALL)`,
-    },
-    {
-      tag: "table",
-      page_size: 6,
-      row_height: "low",
-      header_style: TABLE_HEADER,
-      columns: [
-        col("team", "Team", "left"),
-        col("revenue", "Revenue"),
-        col("wowRev", "% WoW Rev"),
-        col("units", "Units"),
-        col("spend", "Spend"),
-        col("profit", "Profit"),
-        col("wowProfit", "% WoW Profit"),
-        col("tacos", "TACoS"),
-        col("margin", "Biên LN"),
-        col("roi", "ROI"),
-        col("mtdProfit", "Profit LK"),
-        col("targetProfit", "Target Tháng"),
-        col("pace", "% Đạt"),
-      ],
-      rows: teamTableRows,
-    }
-  );
+  // 3. TÁCH RIÊNG TỪNG TEAM & STORE (như báo cáo ngày nhưng ở phạm vi tuần)
+  for (const team of TEAMS_CONFIG) {
+    const teamStoreRows: any[] = [];
+    const teamComments: string[] = [];
+    let teamCurTotal = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
+    let teamPrevTotal = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
 
-  // 4. Bảng Chi tiết theo Brand/Store
-  elements.push(
-    { tag: "hr" },
-    {
-      tag: "markdown",
-      content: `### 🏪 CHI TIẾT THEO STORE / BRAND`,
-    },
-    {
-      tag: "table",
-      page_size: 12,
-      row_height: "low",
-      header_style: TABLE_HEADER,
-      columns: [
-        col("brand", "Brand / Store", "left"),
-        col("revenue", "Revenue"),
-        col("wowRev", "WoW Rev"),
-        col("units", "Units"),
-        col("spend", "Spend"),
-        col("profit", "Profit"),
-        col("wowProfit", "WoW Profit"),
-        col("tacos", "TACoS"),
-        col("margin", "Biên LN"),
-        col("mtdProfit", "Profit LK"),
-      ],
-      rows: brandTableRows,
-    }
-  );
+    for (const stDef of team.stores) {
+      const b = allBrands.find(
+        (x) => x.storeName.toUpperCase() === stDef.name && x.channel.toUpperCase() === stDef.channel
+      );
+      const cur = b?.current || ZERO;
+      const prev = b?.previous || ZERO;
+      const mtd = b?.mtd || ZERO;
 
-  // 5. Cảnh báo Tồn kho
-  if (stockAlerts.length > 0) {
+      teamCurTotal = add(teamCurTotal, cur);
+      teamPrevTotal = add(teamPrevTotal, prev);
+
+      const hasData = cur.revenue > 0 || cur.quantity > 0 || cur.profit !== 0;
+      const margin = cur.revenue > 0 ? (cur.profit / cur.revenue) * 100 : 0;
+      const tacos = cur.revenue > 0 ? (cur.adsFee / cur.revenue) * 100 : 0;
+      const roi = cur.basecost > 0 ? (cur.profit / cur.basecost) * 100 : 0;
+
+      const displayName = stDef.label;
+
+      teamStoreRows.push({
+        channel: hasData ? displayName : `${displayName} (—)`,
+        revenue: hasData ? fmtUsd(cur.revenue) : "—",
+        units: hasData ? fmtInt(cur.quantity) : "—",
+        spend: hasData ? fmtUsd(cur.adsFee) : "—",
+        profit: hasData ? (cur.profit >= 0 ? fmtUsd(cur.profit) : red(fmtUsd(cur.profit))) : "—",
+        margin: hasData ? fmtPct(margin / 100) : "—",
+        tacos: hasData ? fmtPct(tacos / 100) : "—",
+        roi: hasData ? fmtPct(roi / 100) : "—",
+      });
+
+      // Nhận xét store
+      const storeWarnings = b ? warningSkusMap.get(`${b.storeId}|${stDef.channel}`) || [] : [];
+      const rawStoreFees = b ? serviceFeesMap.get(b.storeId) || [] : [];
+      // Phí FBA Storage Fee chỉ gắn vào kênh FBA, không gắn vào FBM
+      const storeFees = rawStoreFees.filter((f) => {
+        const isFbaFee = f.name.toLowerCase().includes("fba") || f.name.toLowerCase().includes("storage");
+        if (stDef.channel.toLowerCase() === "fbm") return !isFbaFee;
+        return true;
+      });
+      const comment = generateWeeklyStoreComment(cur, prev, displayName, storeWarnings, storeFees);
+      if (comment) teamComments.push(comment);
+    }
+
+    // Nhận xét Team
+    const teamRevDiffPct = teamPrevTotal.revenue > 0 ? ((teamCurTotal.revenue - teamPrevTotal.revenue) / teamPrevTotal.revenue) * 100 : 0;
+    const teamProDiffPct = teamPrevTotal.profit !== 0 ? ((teamCurTotal.profit - teamPrevTotal.profit) / Math.abs(teamPrevTotal.profit)) * 100 : 0;
+    const teamRevStr = teamRevDiffPct >= 0 ? `+${teamRevDiffPct.toFixed(1)}%` : `${teamRevDiffPct.toFixed(1)}%`;
+    const teamProStr = teamProDiffPct >= 0 ? `+${teamProDiffPct.toFixed(1)}%` : `${teamProDiffPct.toFixed(1)}%`;
+    const teamSummaryLine = `📌 **Nhận xét ${team.name}:** Revenue ${teamRevStr}, Profit ${teamProStr} so với tuần trước.`;
+
+    const commentBlockContent = teamComments.length > 0 ? `${teamSummaryLine}\n${teamComments.join("\n")}` : teamSummaryLine;
+
     elements.push(
       { tag: "hr" },
       {
         tag: "markdown",
-        content: `### 📦 TỒN KHO CẦN LƯU Ý\n${stockAlerts.join("\n")}`,
+        content: `**${team.name.toUpperCase()} (${team.lead.toUpperCase()})**`,
+      },
+      {
+        tag: "table",
+        page_size: Math.min(teamStoreRows.length, 10),
+        row_height: "low",
+        header_style: TABLE_HEADER,
+        columns: [
+          col("channel", "Kênh", "left"),
+          col("revenue", "Revenue"),
+          col("units", "Units"),
+          col("spend", "Spend"),
+          col("profit", "Profit"),
+          col("margin", "Margin"),
+          col("tacos", "TACoS"),
+          col("roi", "ROI"),
+        ],
+        rows: teamStoreRows,
+      },
+      {
+        tag: "markdown",
+        content: commentBlockContent,
       }
     );
   }
