@@ -38,6 +38,8 @@ import {
 } from "@/lib/accounting/kpi-calc";
 import { AccountingTopProgressBar, AnimatedTabPill } from "./accounting-skeleton";
 import { KpiDashboardView, type KpiStorePart } from "./kpi-dashboard-view";
+import { KpiPlanView } from "./kpi-plan-view";
+import { halfLabel, halfOf } from "@/lib/accounting/kpi-plan-calc";
 
 // Mục "KPI kinh doanh" — theo file "<STORE> - KẾ HOẠCH KINH DOANH 2026":
 // Tổng quan tháng (BÁO CÁO THÁNG) · SKU phát triển (CHI TIẾT SKU) · SKU test (CHI TIẾT SKU TEST).
@@ -93,7 +95,7 @@ export interface KpiData {
   generatedAt: string;
 }
 
-type Mode = "dashboard" | "overview" | "dev" | "test";
+type Mode = "dashboard" | "overview" | "dev" | "test" | "plan";
 type TargetSlot = "cur" | "next";
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2421,7 +2423,7 @@ export function KpiView() {
     if (typeof window === "undefined") return "overview";
     try {
       const saved = window.sessionStorage.getItem("acc_kpi_mode");
-      return saved === "dev" || saved === "test" || saved === "dashboard" ? saved : "overview";
+      return saved === "dev" || saved === "test" || saved === "dashboard" || saved === "plan" ? saved : "overview";
     } catch {
       return "overview";
     }
@@ -2680,6 +2682,15 @@ export function KpiView() {
           aggregate={isAll}
         />
       );
+    else if (viewMode === "plan")
+      body = (
+        <KpiPlanView
+          storeIds={isAll ? stores.map((s) => s.id) : [selectedStoreId]}
+          initialPeriod={period}
+          canEdit={canEdit}
+          aggregate={isAll}
+        />
+      );
     else body = <SkuTable data={data} skus={visibleSkus} canEdit={canEdit} onSaveTarget={saveTarget} onSavePrice={savePrice} onOpen={setOpenSku} />;
   }
 
@@ -2738,9 +2749,11 @@ export function KpiView() {
                 { key: "overview", label: "Tổng quan tháng" },
                 { key: "dev", label: `SKU phát triển${data ? ` (${counts.dev})` : ""}` },
                 { key: "test", label: `SKU test${data ? ` (${counts.test})` : ""}` },
+                // Kỳ I = T1–T6, Kỳ II = T7–T12 — theo tháng báo cáo đang chọn
+                { key: "plan", label: `Plan (${halfLabel(halfOf(period).year, halfOf(period).half)})` },
               ] as const
             )
-              .filter((o) => !isAll || o.key === "dashboard" || o.key === "overview")
+              .filter((o) => !isAll || o.key === "dashboard" || o.key === "overview" || o.key === "plan")
               .map((o) => {
               const isActive = viewMode === o.key;
               return (
@@ -2813,7 +2826,7 @@ export function KpiView() {
         <AccountingTopProgressBar loading={loading} variant="indigo" />
         {loading && !data && <div className="p-6 text-center text-xs text-slate-500">Đang tải KPI...</div>}
         {!loading && !data && !error && <div className="p-6 text-center text-xs text-slate-500">Chọn store để xem KPI.</div>}
-        {data && <div className={`flex-1 ${viewMode === "overview" || viewMode === "dashboard" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
+        {data && <div className={`flex-1 ${viewMode === "overview" || viewMode === "dashboard" || viewMode === "plan" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
       </div>
 
       {openSkuRow && data && (

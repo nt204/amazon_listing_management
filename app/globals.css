@@ -113,6 +113,12 @@ body {
   border-bottom: 2px solid #000;
 }
 
+/* KPI Plan: 1 vạch đen dày ngăn cụm tháng (viền phải ô Result cuối mỗi tháng) — đè luật viền đen ở trên */
+.acc-month-end,
+.acc-black-grid table .acc-month-end {
+  border-right: 2px solid #000 !important;
+}
+
 /* PPC (acc-grid-soft): đường kẻ thường nhạt hơn cho dễ nhìn (bảng PPC nhiều cột, nhiều dòng);
    đường ngăn tiêu đề với giá trị vẫn đậm đen. */
 .acc-black-grid.acc-grid-soft table th,
