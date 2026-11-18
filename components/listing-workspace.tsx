@@ -864,7 +864,7 @@ function WorkspaceSidebar({
                       onClose?.();
                     }}
                     icon={ChartLineUpIcon}
-                    label="KQKD SKU"
+                    label="SKU Testing"
                   />
 
                   {/* 7. KPI kinh doanh — KPI tháng của team (Tổng quan, SKU phát triển, SKU test) */}
@@ -1528,7 +1528,7 @@ export function ListingWorkspace({
                                 accountingSection === "ads"
                                 ? "Accounting - Financials (Tài Chính)"
                                 : accountingSection === "kqkd"
-                                  ? "Accounting - KQKD SKU Testing"
+                                  ? "Accounting - SKU Testing"
                                 : accountingSection === "kpi"
                                   ? "Accounting - KPI kinh doanh"
                                 : accountingSection === "reports" ||

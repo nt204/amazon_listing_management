@@ -135,7 +135,7 @@ export function resolveContextualReconciliationLinks(
     return buttons;
   }
   if (toolsUsed.includes("getSkuProfit")) {
-    add("💵 Mở KQKD SKU", "https://ncehub.net/?view=accounting&section=kqkd");
+    add("💵 Mở SKU Testing", "https://ncehub.net/?view=accounting&section=kqkd");
     return buttons;
   }
   if (toolsUsed.includes("getListingJobsStatus")) {

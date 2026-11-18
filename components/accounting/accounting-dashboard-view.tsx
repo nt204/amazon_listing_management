@@ -128,6 +128,21 @@ function ratioOrDash(v: number, base: number): string {
   return base > 0 ? pct(v) : "—";
 }
 
+// Ngưỡng cảnh báo đỏ ở bảng Team / Stores Performance: Margin < 15%, TACOS > 30%
+const BAD_MARGIN = 0.15;
+const BAD_TACOS = 0.3;
+const BAD_TEXT = "!text-rose-600";
+/** Margin (đỏ khi < 15%); không có doanh thu → "—". */
+function MarginCell({ t, cls = "" }: { t: { margin: number; revenue: number }; cls?: string }) {
+  if (t.revenue <= 0) return <span className="text-slate-400">—</span>;
+  return <span className={t.margin < BAD_MARGIN ? BAD_TEXT : cls}>{pct(t.margin)}</span>;
+}
+/** TACOS (đỏ khi > 30%); không có doanh thu → "—". */
+function TacosCell({ t }: { t: { tacos: number; revenue: number } }) {
+  if (t.revenue <= 0) return <span className="text-slate-400">—</span>;
+  return <span className={t.tacos > BAD_TACOS ? BAD_TEXT : ""}>{pct(t.tacos)}</span>;
+}
+
 // Định dạng ngày kiểu Việt: 1/10, 1/10/2026, T10
 function shortDate(d: string): string {
   const [, m, day] = d.split("-");
@@ -909,11 +924,11 @@ type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos"
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
   { key: "revenue", label: "Revenue" },
+  { key: "units", label: "Units" },
+  { key: "profit", label: "Profit" },
   { key: "margin", label: "Margin" },
   { key: "tacos", label: "TACOS" },
   { key: "acos", label: "ACOS" },
-  { key: "units", label: "Units" },
-  { key: "profit", label: "Profit" },
   { key: "stockUnits", label: "Tồn" },
   { key: "stock", label: "Giá trị tồn" },
 ];
@@ -967,18 +982,18 @@ function ChannelBadge({ channel, label = channel }: { channel: StoreChannel; lab
 /** Tên kênh theo Team của store như ở Store Management: "FBA 3" thay vì "FBA". */
 type ChannelLabelOf = (storeId: string, channel: StoreChannel) => string;
 
-/** Các ô số liệu (Revenue → Profit) dùng chung cho dòng store và dòng kênh FBA / FBM. */
+/** Các ô số liệu (Revenue · Units · Profit · Margin · TACOS · ACOS) dùng chung cho dòng store, kênh FBA / FBM và team. */
 function StoreMetricCells({
   t,
   sub = false,
-  hideRatios = false,
+  hideAcos = false,
   stockValue,
   stockUnits,
 }: {
   t: DashboardTotals;
   sub?: boolean;
-  /** Bỏ 3 cột Margin / TACOS / ACOS (bảng Team Performance). */
-  hideRatios?: boolean;
+  /** Bỏ cột ACOS (bảng Team Performance). */
+  hideAcos?: boolean;
   /** Có thì thêm cột Tồn + Giá trị tồn sau Profit (null = kênh FBM không có tồn → "—"). */
   stockValue?: number | null;
   /** Tồn (FBA + AWD) tại ngày cuối kỳ */
@@ -988,19 +1003,17 @@ function StoreMetricCells({
   return (
     <>
       <td className={cell}>{money(t.revenue)}</td>
-      {!hideRatios && (
-        <>
-          <td className={cell}>
-            {t.revenue <= 0 ? <span className="text-slate-400">—</span> : <span className={sub ? "" : "text-slate-900"}>{pct(t.margin)}</span>}
-          </td>
-          <td className={cell}>{ratioOrDash(t.tacos, t.revenue)}</td>
-          <td className={cell}>{ratioOrDash(t.acos, t.revenueAds)}</td>
-        </>
-      )}
       <td className={cell}>{int.format(t.quantity)}</td>
-      <td className={`${cell} pr-4`}>
+      <td className={cell}>
         <span className={`${sub ? "font-semibold" : "font-bold"} ${profitTone(t.profit)}`}>{money(t.profit)}</span>
       </td>
+      <td className={cell}>
+        <MarginCell t={t} cls={sub ? "" : "text-slate-900"} />
+      </td>
+      <td className={hideAcos ? `${cell} pr-4` : cell}>
+        <TacosCell t={t} />
+      </td>
+      {!hideAcos && <td className={`${cell} pr-4`}>{ratioOrDash(t.acos, t.revenueAds)}</td>}
       {stockValue !== undefined && (
         <>
           <td className={cell}>{stockUnits == null ? <span className="text-slate-400">—</span> : int.format(stockUnits)}</td>
@@ -1193,7 +1206,9 @@ function StoresPerformance({
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-xs tabular-nums text-slate-500">
                     <span>Rev {money(c.revenue)}</span>
-                    <span>TACOS {ratioOrDash(c.tacos, c.revenue)}</span>
+                    <span>
+                      TACOS <TacosCell t={c} />
+                    </span>
                     <span>ACOS {ratioOrDash(c.acos, c.revenueAds)}</span>
                     <span>{int.format(c.quantity)} units</span>
                     {row.stockUnits != null && <span>Tồn {int.format(row.stockUnits)}</span>}
@@ -1204,12 +1219,8 @@ function StoresPerformance({
                   <div className={`text-[15px] font-bold tabular-nums ${profitTone(c.profit)}`}>
                     {money(c.profit)}
                   </div>
-                  <div className="mt-1 text-[13px]">
-                    {c.revenue <= 0 ? (
-                      <span className="text-slate-400">—</span>
-                    ) : (
-                      <span className="tabular-nums text-slate-900">{pct(c.margin)}</span>
-                    )}
+                  <div className="mt-1 text-[13px] tabular-nums">
+                    <MarginCell t={c} cls="text-slate-900" />
                   </div>
                 </div>
               </button>
@@ -1304,11 +1315,11 @@ function StoresPerformance({
               >
                 <td className="rounded-l-lg py-2.5 pl-4 pr-3">Total</td>
                 <td className="px-3 py-2.5 text-right">{money(total.revenue)}</td>
-                <td className="px-3 py-2.5 text-right">{ratioOrDash(total.margin, total.revenue)}</td>
-                <td className="px-3 py-2.5 text-right">{ratioOrDash(total.tacos, total.revenue)}</td>
-                <td className="px-3 py-2.5 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
                 <td className="px-3 py-2.5 text-right">{int.format(total.quantity)}</td>
-                <td className="px-3 py-2.5 pr-4 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                <td className="px-3 py-2.5 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                <td className="px-3 py-2.5 text-right"><MarginCell t={total} /></td>
+                <td className="px-3 py-2.5 text-right"><TacosCell t={total} /></td>
+                <td className="px-3 py-2.5 pr-4 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
                 <td className="px-3 py-2.5 text-right">{totalStockUnits == null ? "—" : int.format(totalStockUnits)}</td>
                 <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right">{totalStock == null ? "—" : money(totalStock)}</td>
               </tr>
@@ -1417,7 +1428,9 @@ function TeamPerformance({
                 <th className={`${th} rounded-l-lg pl-4 !text-left`}>Team</th>
                 <th className={th}>Revenue</th>
                 <th className={th}>Units</th>
-                <th className={`${th} rounded-r-lg pr-4`}>Profit</th>
+                <th className={th}>Profit</th>
+                <th className={th}>Margin</th>
+                <th className={`${th} rounded-r-lg pr-4`}>TACOS</th>
               </tr>
             </thead>
             <tbody>
@@ -1433,7 +1446,7 @@ function TeamPerformance({
                     <td className="border-b border-slate-100 py-2.5 pl-4 pr-3">
                       <ChannelBadge channel={row.channel} label={row.team} />
                     </td>
-                    <StoreMetricCells t={row.totals} hideRatios />
+                    <StoreMetricCells t={row.totals} hideAcos />
                   </tr>
                 );
               })}
@@ -1448,7 +1461,9 @@ function TeamPerformance({
                   <td className="rounded-l-lg py-2.5 pl-4 pr-3">Total</td>
                   <td className="px-3 py-2.5 text-right">{money(total.revenue)}</td>
                   <td className="px-3 py-2.5 text-right">{int.format(total.quantity)}</td>
-                  <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                  <td className="px-3 py-2.5 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                  <td className="px-3 py-2.5 text-right"><MarginCell t={total} /></td>
+                  <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right"><TacosCell t={total} /></td>
                 </tr>
               </tfoot>
             )}
@@ -1469,9 +1484,9 @@ function DashboardSkeleton() {
           <div key={i} className="h-[104px] animate-pulse rounded-2xl border border-slate-200/70 bg-white" />
         ))}
       </div>
-      <div className="grid gap-4 @min-[900px]:grid-cols-3">
+      <div className="grid gap-4 @min-[900px]:grid-cols-5">
+        <div className="h-[380px] animate-pulse rounded-2xl border border-slate-200/70 bg-white @min-[900px]:col-span-3" />
         <div className="h-[380px] animate-pulse rounded-2xl border border-slate-200/70 bg-white @min-[900px]:col-span-2" />
-        <div className="h-[380px] animate-pulse rounded-2xl border border-slate-200/70 bg-white" />
       </div>
     </div>
   );
@@ -2207,9 +2222,9 @@ export function AccountingDashboardView() {
               ))}
             </div>
 
-            {/* Row 2: biểu đồ Revenue & Profit (2 cột) + Team Performance (1 cột) */}
-            <div className="grid gap-4 @min-[900px]:grid-cols-3">
-              <div className="min-w-0 @min-[900px]:col-span-2">
+            {/* Row 2: biểu đồ Revenue & Profit (3/5) + Team Performance (2/5, đủ chỗ cho Margin / TACOS) */}
+            <div className="grid gap-4 @min-[900px]:grid-cols-5">
+              <div className="min-w-0 @min-[900px]:col-span-3">
                 <TrendChart
                   data={buckets}
                   compareEmpty={compareEmpty}
@@ -2224,7 +2239,7 @@ export function AccountingDashboardView() {
                   delay={120}
                 />
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 @min-[900px]:col-span-2">
                 <TeamPerformance
                   data={data}
                   channelLabel={channelLabel}

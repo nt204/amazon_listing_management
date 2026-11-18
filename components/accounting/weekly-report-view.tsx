@@ -990,13 +990,14 @@ function TileRow({ label, d, until }: { label: string; d: TileRowData; until: st
 // 4. BRAND — 1 bảng (SKU All / Win / Test, gom theo team)
 // ---------------------------------------------------------------------------
 
-type SortKey = "revenue" | "dRevenue" | "profit" | "dProfit" | "margin" | "tacos" | "pace";
+type SortKey = "revenue" | "dRevenue" | "profit" | "dProfit" | "margin" | "roi" | "tacos" | "pace";
 const SORT_VALUE: Record<SortKey, (s: GroupSummary) => number | null> = {
   revenue: (s) => s.cur.revenue,
   dRevenue: (s) => wow(s.cur.revenue, s.prev.revenue),
   profit: (s) => s.cur.profit,
   dProfit: (s) => wow(s.cur.profit, s.prev.profit),
   margin: (s) => div(s.cur.profit, s.cur.revenue),
+  roi: (s) => div(s.cur.profit, s.cur.basecost),
   tacos: (s) => div(s.cur.adsFee, s.cur.revenue),
   pace: (s) => s.profit?.month.ratio ?? null,
 };
@@ -1035,7 +1036,7 @@ const BAD_TACOS = 0.3;
 const BAD_MARGIN = 0.15;
 const BAD = "!text-rose-600";
 
-// Kết quả tuần: Revenue · % WoW Revenue · Quantity · Ads Fee · Profit · % WoW Profit · TACoS · Biên LN; Tiến độ tháng: 4 cột
+// Kết quả tuần: Revenue · % WoW Revenue · Quantity · Ads Fee · Profit · % WoW Profit · TACoS · Biên LN · ROI; Tiến độ tháng: 4 cột
 const BRAND_COLS: Col[] = [
   { key: "rev", label: "Revenue\ntuần này", sort: "revenue", render: (s) => money(s.cur.revenue) },
   {
@@ -1084,6 +1085,13 @@ const BRAND_COLS: Col[] = [
       const v = ratiosOf(s.cur).margin;
       return <span className={v != null && v < BAD_MARGIN ? "!text-rose-600" : ""}>{pct(v)}</span>;
     },
+  },
+  {
+    key: "roi",
+    label: "ROI",
+    sort: "roi",
+    title: "Profit tuần này ÷ Base Cost tuần này",
+    render: (s) => pct(ratiosOf(s.cur).roi),
   },
   {
     key: "mtd",

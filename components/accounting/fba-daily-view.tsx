@@ -378,6 +378,11 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
         leftOffset += typeof c.width === "number" ? c.width : 110;
       }
 
+      // Cột khoá phải rộng đúng bằng độ rộng dùng để tính "left"; để bảng tự giãn thì các cột khoá
+      // lệch nhau (hở khe giữa Tuần và Date) và cột Date đè lên Revenue khi cuộn ngang.
+      const self = frozenVisible.find((c) => c.id === colId);
+      const width = typeof self?.width === "number" ? self.width : 110;
+
       return {
         isFrozen: true,
         isBoundary: isLast,
@@ -385,6 +390,9 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           position: "sticky" as const,
           left: `${leftOffset}px`,
           zIndex: isHeader ? 30 : 20,
+          width,
+          minWidth: width,
+          maxWidth: width,
         },
         className: isLast
           ? (isHeader
