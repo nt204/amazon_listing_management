@@ -530,7 +530,7 @@ export function PpcNegativeHubView({
                             {item.level === "CAMPAIGN" ? "Campaign Level" : "Ad Group Level"}
                           </span>
                           <span className="text-[9px] text-indigo-600 font-semibold block">
-                            {item.source === "AUTO_UPLOAD" ? "⚡ Auto Upload" : "Amazon Bulksheet"}
+                            {item.source === "AUTO_UPLOAD" ? "⚡ Auto Upload" : item.source === "NEGATIVE_LIST" ? "📋 Negative List" : "Amazon Bulksheet"}
                           </span>
                         </div>
                       </td>

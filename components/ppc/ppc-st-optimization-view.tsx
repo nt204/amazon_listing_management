@@ -19,10 +19,12 @@ import {
   Info,
   WarningCircle,
   ShieldCheck,
+  ListBullets,
 } from "@phosphor-icons/react";
 import type { PpcSearchTermRow, MatchType, PpcAdType } from "@/lib/ppc/types";
 import { PpcPagination } from "./ppc-pagination";
 import { PpcNegativeHubView, type NegativeRegistryItem } from "./ppc-negative-hub-view";
+import { PpcNegativeListView } from "./ppc-negative-list-view";
 import { PpcCopyButton } from "./ppc-copy-button";
 import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
 
@@ -77,11 +79,12 @@ export function PpcStOptimizationView({
   onCandidateCountChange,
 }: PpcStOptimizationViewProps) {
   // 0. Sub-tab state (Tab 1: Candidates, Tab 2: Negative Hub)
-  const [subTab, setSubTab] = useState<"candidates" | "registry">(() => {
+  const [subTab, setSubTab] = useState<"candidates" | "negative_list" | "registry">(() => {
     if (typeof window !== "undefined") {
       const p = new URLSearchParams(window.location.search);
       const st = p.get("subtab");
       if (st === "registry" || st === "hub") return "registry";
+      if (st === "negative_list") return "negative_list";
     }
     return "candidates";
   });
@@ -92,6 +95,8 @@ export function PpcStOptimizationView({
     const st = p.get("subtab");
     if (st === "registry" || st === "hub") {
       setSubTab("registry");
+    } else if (st === "negative_list") {
+      setSubTab("negative_list");
     } else if (st === "candidates") {
       setSubTab("candidates");
     }
@@ -114,6 +119,7 @@ export function PpcStOptimizationView({
   const [negatedLookupSet, setNegatedLookupSet] = useState<Set<string>>(new Set());
   const [loadingRegistry, setLoadingRegistry] = useState<boolean>(false);
   const [hideNegated, setHideNegated] = useState<boolean>(true);
+  const [negativeListCount, setNegativeListCount] = useState<number>(0);
   // Mặc định chỉ lấy search term của campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
 
   // 1. Threshold controls (User requirement: mặc định clicks > 20, có 1 ô nhỏ điều chỉnh ngưỡng click)
@@ -870,6 +876,26 @@ export function PpcStOptimizationView({
 
           <button
             type="button"
+            onClick={() => setSubTab("negative_list")}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
+              subTab === "negative_list"
+                ? "bg-orange-600 text-white shadow-xs"
+                : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <ListBullets size={15} weight="bold" />
+            <span>Negative List</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                subTab === "negative_list" ? "bg-orange-700 text-white" : "bg-slate-100 text-slate-700"
+              }`}
+            >
+              {negativeListCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setSubTab("registry")}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
               subTab === "registry"
@@ -1331,6 +1357,15 @@ export function PpcStOptimizationView({
         }}
       />
         </>
+      ) : subTab === "negative_list" ? (
+        <PpcNegativeListView
+          // Đổi store → dựng lại view, bỏ kết quả tra campaign của store cũ
+          key={selectedStore}
+          selectedStore={selectedStore}
+          notify={notify}
+          onQueued={() => fetchRegistry()}
+          onKeywordCountChange={setNegativeListCount}
+        />
       ) : (
         <PpcNegativeHubView
           selectedStore={selectedStore}

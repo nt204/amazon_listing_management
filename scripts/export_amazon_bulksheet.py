@@ -105,7 +105,9 @@ def export_bulksheet(recommendations, output_path=None):
             else:
                 entity = "Negative Product Targeting" if is_product_target else "Negative Keyword"
             operation = "Create"
-            match_type = "negativeExact"
+            # Negative List cho phép Negative Phrase; mặc định (ST phủ định) vẫn là Negative Exact
+            neg_match = str(rec.get("negativeMatchType") or "").strip()
+            match_type = "negativePhrase" if neg_match == "negativePhrase" else "negativeExact"
             state = "enabled"
             bid_val = ""
         elif rec_type in ("UPDATE_BUDGET", "BUDGET_UPDATE"):
