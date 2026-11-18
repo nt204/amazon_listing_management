@@ -462,7 +462,7 @@ async function main() {
       process.exit(1);
     }
     console.log(`Đang gửi báo cáo tuần ${week.label} vào Lark webhook...`);
-    const ok = await sendLarkWebhookNotification(webhookUrl, card);
+    const ok = await sendLarkWebhookNotification(webhookUrl, { card });
     if (ok) {
       console.log(`✅ Đã gửi BÁO CÁO TUẦN VÀO LARK THÀNH CÔNG!`);
     } else {
