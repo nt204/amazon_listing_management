@@ -68,7 +68,7 @@ async function registerNegatives(
         SELECT ${p.teamId}, ${p.store.id}, ${p.store.name}, x.ad_type, x.campaign_id, x.campaign_name,
                x.ad_group_id, x.ad_group_name, x.keyword_text, ${p.matchType}, 'CAMPAIGN',
                ${p.state}, 'NEGATIVE_LIST', ${p.jobId}, 0, 0, x.reason, NOW(), NOW()
-        FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb) AS x(
+        FROM jsonb_to_recordset(${JSON.stringify(chunk)}::text::jsonb) AS x(
           ad_type text, campaign_id text, campaign_name text, ad_group_id text,
           ad_group_name text, keyword_text text, reason text
         )

@@ -88,11 +88,11 @@ export async function loadSkuCampaignStats(
     orders: string;
   }>>`
     WITH snap AS (
-      SELECT * FROM jsonb_to_recordset(${JSON.stringify(snaps.map(({ store_id, report_start_date, report_end_date }) => ({ store_id, report_start_date, report_end_date })))}::jsonb)
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(snaps.map(({ store_id, report_start_date, report_end_date }) => ({ store_id, report_start_date, report_end_date })))}::text::jsonb)
         AS x(store_id uuid, report_start_date date, report_end_date date)
     ),
     camps AS (
-      SELECT * FROM jsonb_to_recordset(${JSON.stringify(pairs)}::jsonb) AS x("storeId" uuid, "campaignId" text)
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(pairs)}::text::jsonb) AS x("storeId" uuid, "campaignId" text)
     )
     SELECT p.grain, p.campaign_id, p.campaign_name, p.campaign_state,
            p.target_id, p.target_expression, p.match_type, p.state, p.bid,
