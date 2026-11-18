@@ -98,6 +98,7 @@ export interface SkuWinItem {
   return_count: number;
   return_rate: number;
   shipped_qty: number;
+  available_now: number;
 
   revenue_target: number | null;
   unit_target: number | null;
@@ -116,6 +117,7 @@ export interface SkuWinStats {
   totalSkus: number;
   totalRevenue: number;
   totalQuantity: number;
+  totalAvailableNow?: number;
   totalAdsFee: number;
   totalBasecost: number;
   totalAmazonFee: number;
@@ -1185,6 +1187,11 @@ export function SkuTestView() {
                               {formatInteger(stats.totalQuantity)}
                             </span>
                           )}
+                          {col.id === "available_now" && (
+                            <span className="font-bold text-slate-950 tabular-nums">
+                              {formatInteger(stats.totalAvailableNow ?? 0)}
+                            </span>
+                          )}
                           {col.id === "ads_fee" && (
                             <span className="font-bold text-slate-950 tabular-nums">
                               {formatCurrency(stats.totalAdsFee)}
@@ -1452,6 +1459,13 @@ export function SkuTestView() {
                               {col.id === "quantity" && (
                                 <span className="font-normal text-slate-900 tabular-nums">
                                   {formatInteger(item.quantity)}
+                                </span>
+                              )}
+
+                              {/* Available now — tồn FBA hiện tại */}
+                              {col.id === "available_now" && (
+                                <span className={`tabular-nums ${item.available_now > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                                  {formatInteger(item.available_now)}
                                 </span>
                               )}
 

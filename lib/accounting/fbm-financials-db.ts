@@ -582,6 +582,7 @@ export async function listFbmSkuFixed(
         return_count: a.return_count,
         return_rate: a.quantity > 0 ? a.return_count / a.quantity : 0,
         shipped_qty: 0,
+        available_now: 0, // FBM không có tồn FBA
         revenue_target: num(r.revenue_target),
         unit_target: num(r.unit_target),
         spend_target: num(r.spend_target),
@@ -603,6 +604,7 @@ export async function listFbmSkuFixed(
     totalSkus: items.length,
     totalRevenue,
     totalQuantity: sum("quantity"),
+    totalAvailableNow: 0,
     totalAdsFee,
     totalBasecost,
     totalAmazonFee: sum("amazon_fee"),

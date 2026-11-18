@@ -111,8 +111,12 @@ export async function GET(request: Request) {
     r2.getCell(19).numFmt = "0.00%";
     r2.getCell(24).value = result.stats.totalRevenueAds;
     r2.getCell(24).numFmt = "$#,##0.00";
+    if (!fbm) {
+      r2.getCell(36).value = result.stats.totalAvailableNow;
+      r2.getCell(36).numFmt = "#,##0";
+    }
 
-    for (let c = 1; c <= 35; c++) {
+    for (let c = 1; c <= 36; c++) {
       const cell = r2.getCell(c);
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
       cell.font = { bold: true };
@@ -155,6 +159,7 @@ export async function GET(request: Request) {
       "Tacos (So sánh)",
       "Profit (So sánh)",
       "Tăng trưởng so với kỳ trước",
+      "Available now",
     ];
 
     const r3 = ws.getRow(3);
@@ -211,6 +216,7 @@ export async function GET(request: Request) {
         item.compare_tacos ?? "",
         item.compare_profit ?? "",
         item.growth != null ? item.growth : "",
+        fbm ? "" : item.available_now,
       ]);
 
       const isEven = index % 2 === 0;
@@ -240,6 +246,7 @@ export async function GET(request: Request) {
       row.getCell(25).numFmt = "#,##0";
       row.getCell(26).numFmt = "0.00%";
       row.getCell(27).numFmt = "#,##0";
+      row.getCell(36).numFmt = "#,##0";
 
       // Color coding for profit
       if (item.profit > 0) {
@@ -248,7 +255,7 @@ export async function GET(request: Request) {
         row.getCell(13).font = { color: { argb: "FFDC2626" }, bold: true };
       }
 
-      for (let c = 1; c <= 35; c++) {
+      for (let c = 1; c <= 36; c++) {
         const cell = row.getCell(c);
         if (!cell.fill || !("fgColor" in cell.fill)) {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
@@ -297,6 +304,7 @@ export async function GET(request: Request) {
       { width: 12 }, // Compare Tacos
       { width: 14 }, // Compare Profit
       { width: 16 }, // Growth
+      { width: 13 }, // Available now
     ];
 
     const buffer = await workbook.xlsx.writeBuffer();

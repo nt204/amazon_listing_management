@@ -305,6 +305,7 @@ export const DEFAULT_SKU_WIN_COLUMNS: ColumnConfig[] = [
   { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 115 },
   { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 100 },
   { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 80 },
+  { id: "available_now", label: "Available now", defaultLabel: "Available now", visible: true, align: "right", width: 90 },
   { id: "ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 90 },
   { id: "basecost", label: "Basecost", defaultLabel: "Basecost", visible: true, align: "right", width: 90 },
   { id: "amazon_fee", label: "Amazon Fee", defaultLabel: "Amazon Fee", visible: true, align: "right", width: 95 },

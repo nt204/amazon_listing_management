@@ -43,6 +43,8 @@ export interface SkuWinItem {
   return_count: number;
   return_rate: number;
   shipped_qty: number;
+  /** Tồn FBA hiện tại (Available now) — cột Tồn FBA của Bảng mã, cập nhật từ Inventory Ledger */
+  available_now: number;
 
   // Target Goals
   revenue_target: number | null;
@@ -63,6 +65,7 @@ export interface SkuWinStats {
   totalSkus: number;
   totalRevenue: number;
   totalQuantity: number;
+  totalAvailableNow: number;
   totalAdsFee: number;
   totalBasecost: number;
   totalAmazonFee: number;
@@ -330,7 +333,8 @@ export async function listSkuWin(
       COALESCE(r.return_count, 0)::numeric as return_count,
       COALESCE(ato.all_time_qty, 0)::numeric as all_time_quantity,
       COALESCE(a.total_ad_sales, 0)::numeric as revenue_ads,
-      COALESCE(ib.shipped_qty, 0)::numeric as shipped_qty
+      COALESCE(ib.shipped_qty, 0)::numeric as shipped_qty,
+      COALESCE(sm.ton_kho_fba, 0)::numeric as available_now
       ${hasCompareFilter ? sql`,
       COALESCE(oc.compare_rev, 0)::numeric as compare_revenue,
       COALESCE(oc.compare_order_count, 0)::numeric as compare_order_count,
@@ -462,6 +466,7 @@ export async function listSkuWin(
       return_count: returnCount,
       return_rate: returnRate,
       shipped_qty: shippedQty,
+      available_now: Number(r.available_now || 0),
       revenue_target: revenueTarget,
       unit_target: unitTarget,
       spend_target: spendTarget,
@@ -488,6 +493,7 @@ export async function listSkuWin(
   // 5. Calculate overall Stats for all filtered items
   let totalRevenue = 0;
   let totalQuantity = 0;
+  let totalAvailableNow = 0;
   let totalAdsFee = 0;
   let totalBasecost = 0;
   let totalAmazonFee = 0;
@@ -502,6 +508,7 @@ export async function listSkuWin(
   for (const item of filteredItems) {
     totalRevenue += item.revenue;
     totalQuantity += item.quantity;
+    totalAvailableNow += item.available_now;
     totalAdsFee += item.ads_fee;
     totalBasecost += item.basecost;
     totalAmazonFee += item.amazon_fee;
@@ -518,6 +525,7 @@ export async function listSkuWin(
     totalSkus: filteredItems.length,
     totalRevenue,
     totalQuantity,
+    totalAvailableNow,
     totalAdsFee,
     totalBasecost,
     totalAmazonFee,
