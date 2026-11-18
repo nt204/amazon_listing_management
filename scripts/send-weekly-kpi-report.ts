@@ -152,15 +152,17 @@ export function getPreviousCompletedSaturday(fromIso?: string): string {
 
 const TABLE_HEADER = {
   background_style: "grey",
-  text_align: "right",
+  bold: true,
+  lines: 1,
 };
 
-function col(name: string, displayName: string, align: "left" | "right" | "center" = "right") {
+function col(name: string, displayName: string, align: "left" | "right" = "right") {
   return {
     name,
     display_name: displayName,
-    data_type: "text",
-    align,
+    data_type: "lark_md",
+    horizontal_align: align,
+    width: "auto",
   };
 }
 
@@ -428,6 +430,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
 
   const card = {
     schema: "2.0",
+    config: { width_mode: "fill" },
     header: {
       template: "orange",
       title: {
@@ -462,11 +465,11 @@ async function main() {
       process.exit(1);
     }
     console.log(`Đang gửi báo cáo tuần ${week.label} vào Lark webhook...`);
-    const ok = await sendLarkWebhookNotification(webhookUrl, { card });
-    if (ok) {
+    const res = await sendLarkWebhookNotification(webhookUrl, { card });
+    if (res.sent) {
       console.log(`✅ Đã gửi BÁO CÁO TUẦN VÀO LARK THÀNH CÔNG!`);
     } else {
-      console.error(`❌ Gửi Lark thất bại!`);
+      console.error(`❌ Gửi Lark thất bại:`, res.reason, res.error);
       process.exit(1);
     }
   } else {
