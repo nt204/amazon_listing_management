@@ -75,7 +75,7 @@ export type KpiStorePart = { id: string; name: string; team: string; data: KpiDa
 const STORE_COLORS = ["#5b9ce6", "#f28a5e", "#4fb8b1", "#8a7ae0", "#ffc247", "#3fd39a", "#f39cc0", "#e06a8a", "#6bbf59", "#c08a5b"];
 
 type Pair = { actual: number; target: number | null };
-type StoreRow = { name: string; color: string; revenue: Pair; quantity: Pair; testRevenue: Pair; testQuantity: Pair };
+type StoreRow = { name: string; color: string; revenue: Pair; quantity: Pair; testRevenue: Pair; testQuantity: Pair; prevRevenue: number };
 type TeamRow = { name: string; stores: StoreRow[]; revenue: Pair; quantity: Pair };
 type Highlight = { store: string; color: string; items: { metric: string; ratio: number }[] };
 
@@ -103,6 +103,7 @@ function buildAllStores(parts: KpiStorePart[]) {
       quantity: { actual: r.quantity.cur ?? 0, target: r.quantity.tCur ?? null },
       testRevenue: { actual: r.revenue.curTest ?? 0, target: r.revenue.tCurTest ?? null },
       testQuantity: { actual: r.quantity.curTest ?? 0, target: r.quantity.tCurTest ?? null },
+      prevRevenue: r.revenue.prev ?? 0,
     };
   });
   const teamNames = [...new Set(stores.map((s) => s.team))].sort((a, b) => (a === "Khác" ? 1 : b === "Khác" ? -1 : a.localeCompare(b, undefined, { numeric: true })));
@@ -127,7 +128,13 @@ function buildAllStores(parts: KpiStorePart[]) {
       if (items.length) highlights.push({ store: st.name, color: st.color, items });
     }
   }
-  return { teams, highlights, storeCount: stores.length };
+  // TỔNG FBA = cộng SKU WIN mọi store (như "TỔNG FBA" của Báo cáo Tổng quan)
+  const total = {
+    revenue: sumPair(stores.map((s) => s.revenue)),
+    quantity: sumPair(stores.map((s) => s.quantity)),
+    prevRevenue: stores.reduce((a, s) => a + s.prevRevenue, 0),
+  };
+  return { teams, highlights, total, storeCount: stores.length };
 }
 
 function TonePct({ p }: { p: Pair }) {
@@ -156,8 +163,118 @@ function StoreStat({ label, p, fmt, color }: { label: string; p: Pair; fmt: Fmt;
   );
 }
 
-function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
-  const { teams, highlights } = useMemo(() => buildAllStores(parts), [parts]);
+/** Dải tổng kênh (TỔNG FBA / TỔNG FBM) như mẫu Báo cáo Tổng quan: 1 hàng số thực tế / mục tiêu + % đạt, dòng so tháng trước — không vẽ thanh */
+function TotalBox({ title, note, revenue, quantity, prevRevenue, prevLabel }: { title: string; note?: string; revenue: Pair; quantity: Pair; prevRevenue: number; prevLabel: string }) {
+  const metric = (label: string, p: Pair, fmt: Fmt) => (
+    <div className="flex items-baseline">
+      <span className="mr-2 text-[15px] font-extrabold text-slate-800">{label}</span>
+      <span className="font-mono text-lg font-black tabular-nums text-slate-950">
+        {fmtBy(p.actual, fmt)}
+        {p.target != null && <> / {fmtBy(p.target, fmt)}</>}
+      </span>
+      {p.target != null && (() => {
+        const tone = kpiTone(achievement(p.actual, p.target));
+        return <b className={`ml-2 rounded-full px-2.5 py-0.5 text-[13px] font-extrabold text-white ${tone ? TONE_PILL[tone] : "bg-slate-400"}`}>{fmtPct(achievement(p.actual, p.target))}</b>;
+      })()}
+    </div>
+  );
+  const mom = growth(revenue.actual, prevRevenue);
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-[12px] border border-slate-200 bg-slate-100 px-5 py-4">
+      <div className="text-[22px] font-black uppercase text-slate-950">
+        {title}
+        {note && <span className="ml-1.5 text-[15px] font-bold normal-case text-slate-600">({note})</span>}
+      </div>
+      <div className="flex flex-wrap gap-x-8 gap-y-2">
+        {metric("Doanh thu", revenue, "usd")}
+        {metric("Lượng bán", quantity, "int")}
+      </div>
+      {mom != null && Number.isFinite(mom) && (
+        <div className="basis-full text-sm font-medium text-slate-400">
+          So với {prevLabel}: doanh thu{" "}
+          <span className={`font-mono font-semibold tabular-nums ${mom >= 0 ? "text-emerald-500/80" : "text-rose-500/80"}`}>
+            {mom >= 0 ? "▲+" : "▼"}
+            {(mom * 100).toFixed(1)}%
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type FbmStore = { storeId: string; storeName: string; revenue: number; quantity: number; prevRevenue: number; prevQuantity: number; target: { revenue: number; quantity: number } | null };
+
+/** All store: "Hiệu quả kinh doanh FBM" — toàn bộ FBM của store (như BÁO CÁO TUẦN), mục tiêu nạp từ file FBM */
+function FbmSection({ period, prevLabel }: { period: string; prevLabel: string }) {
+  const [stores, setStores] = useState<FbmStore[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/accounting/financials/kpi/fbm-summary?period=${period}`)
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || "Không tải được KPI FBM.");
+        if (active) setStores(json.stores ?? []);
+      })
+      .catch((err) => active && setError(err instanceof Error ? err.message : "Không tải được KPI FBM."));
+    return () => {
+      active = false;
+    };
+  }, [period]);
+
+  const total = useMemo(() => {
+    if (!stores) return null;
+    const withT = stores.filter((s) => s.target);
+    const allT = stores.length > 0 && withT.length === stores.length;
+    const sum = (f: (s: FbmStore) => number) => stores.reduce((a, s) => a + f(s), 0);
+    const tSum = (f: (t: NonNullable<FbmStore["target"]>) => number) => (allT ? withT.reduce((a, s) => a + f(s.target!), 0) : null);
+    return {
+      revenue: { actual: sum((s) => s.revenue), target: tSum((t) => t.revenue) },
+      quantity: { actual: sum((s) => s.quantity), target: tSum((t) => t.quantity) },
+      prevRevenue: sum((s) => s.prevRevenue),
+      note: allT
+        ? undefined
+        : withT.length
+          ? `tổng thực tế — chỉ ${withT.map((s) => s.storeName).join(", ")} có mục tiêu`
+          : "tổng thực tế — chưa store nào có mục tiêu",
+    };
+  }, [stores]);
+
+  return (
+    <section className="mb-7">
+      <h3 className="mb-3 text-[22px] font-extrabold text-slate-900">Hiệu quả kinh doanh FBM</h3>
+      {error ? (
+        <div className="rounded-[10px] border border-dashed border-rose-300 bg-white px-4 py-3 text-sm font-semibold text-rose-600">{error}</div>
+      ) : !stores ? (
+        <div className="text-sm font-semibold text-slate-500">Đang tải số liệu FBM...</div>
+      ) : !stores.length ? (
+        <div className="rounded-[10px] border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-500">Chưa có số liệu FBM tháng này.</div>
+      ) : (
+        <>
+          <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
+            {stores.map((st, i) => {
+              const color = STORE_COLORS[i % STORE_COLORS.length];
+              return (
+                <div key={st.storeId} className="rounded-xl border border-slate-200 bg-white px-4 pb-3 pt-3.5 shadow-2xs">
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <span className="h-3 w-3 flex-none rounded-full" style={{ background: color }} />
+                    <span className="text-lg font-extrabold text-slate-900">{st.storeName}</span>
+                  </div>
+                  <StoreStat label="Doanh thu" p={{ actual: st.revenue, target: st.target?.revenue ?? null }} fmt="usd" color={color} />
+                  <StoreStat label="Lượng bán" p={{ actual: st.quantity, target: st.target?.quantity ?? null }} fmt="int" color={color} />
+                </div>
+              );
+            })}
+          </div>
+          {total && <TotalBox title="Tổng FBM" note={total.note} revenue={total.revenue} quantity={total.quantity} prevRevenue={total.prevRevenue} prevLabel={prevLabel} />}
+        </>
+      )}
+    </section>
+  );
+}
+
+function AllStoresSections({ parts, period, prevLabel }: { parts: KpiStorePart[]; period: string; prevLabel: string }) {
+  const { teams, highlights, total } = useMemo(() => buildAllStores(parts), [parts]);
   return (
     <>
       <section className="mb-7">
@@ -218,7 +335,10 @@ function AllStoresSections({ parts }: { parts: KpiStorePart[] }) {
             </div>
           ))}
         </div>
+        <TotalBox title="Tổng FBA" revenue={total.revenue} quantity={total.quantity} prevRevenue={total.prevRevenue} prevLabel={prevLabel} />
       </section>
+
+      <FbmSection period={period} prevLabel={prevLabel} />
     </>
   );
 }
@@ -491,7 +611,7 @@ export function KpiDashboardView({ data, storeId, storeParts }: { data: KpiData;
           <BigCard label="Lượng bán" actual={r.quantity.curTotal ?? null} target={k.tTotal?.quantity ?? null} fmt="int" mom={growth(r.quantity.curTotal, k.prevTotal.quantity)} momLabel={prevLabel} hideBar={isAll} />
         </div>
 
-        {storeParts && storeParts.length > 0 && <AllStoresSections parts={storeParts} />}
+        {storeParts && storeParts.length > 0 && <AllStoresSections parts={storeParts} period={periods.cur} prevLabel={prevLabel} />}
 
         {isAll && storeParts && <RndByTeam parts={storeParts} period={periods.cur} />}
 
