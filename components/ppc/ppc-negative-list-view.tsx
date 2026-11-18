@@ -65,6 +65,8 @@ interface PpcNegativeListViewProps {
   selectedStore: string;
   notify: (message: string, type?: "success" | "error") => void;
   onQueued?: () => void;
+  /** Mở ngăn Action Queue (phần "Kết quả thực thi") để theo dõi job vừa xếp hàng. */
+  onOpenActionQueue?: () => void;
   onKeywordCountChange?: (count: number) => void;
 }
 
@@ -85,7 +87,7 @@ function parseKeywords(text: string): string[] {
 
 const fmtMoney = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function PpcNegativeListView({ selectedStore, notify, onQueued, onKeywordCountChange }: PpcNegativeListViewProps) {
+export function PpcNegativeListView({ selectedStore, notify, onQueued, onOpenActionQueue, onKeywordCountChange }: PpcNegativeListViewProps) {
   const [picks, setPicks] = useState<AsinPick[]>([]);
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<AsinPick[]>([]);
@@ -423,6 +425,11 @@ export function PpcNegativeListView({ selectedStore, notify, onQueued, onKeyword
       });
       notify(`Đã xếp hàng Auto Upload ${json.actionCount} dòng phủ định lên Mac mini!`, "success");
       onQueued?.();
+      // Chuyển sang ngăn Action Queue → "Kết quả thực thi" để theo dõi tiến độ (giống Auto Upload Negative KW / Sale KW).
+      if (onOpenActionQueue) {
+        setIsModalOpen(false);
+        onOpenActionQueue();
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Lỗi khi xếp hàng Negative List.");
     } finally {

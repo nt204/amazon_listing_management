@@ -125,6 +125,14 @@ export function getLogActionTypeMeta(fileName?: string, skus?: string[]) {
     };
   }
 
+  // Negative List (Upload_<store>_NegList_…) — kiểm tra trước vì tên file cũng có chữ "Negative"
+  if (lower.includes("_neglist_")) {
+    return {
+      label: "Negative List",
+      className: "bg-rose-50 border-rose-200 text-rose-700",
+    };
+  }
+
   if (
     lower.includes("negative") ||
     lower.includes("st_neg") ||

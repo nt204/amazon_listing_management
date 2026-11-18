@@ -74,8 +74,10 @@ async function registerNegatives(
         )
         ON CONFLICT (store_id, campaign_name, keyword_text, match_type) DO UPDATE SET
           updated_at = NOW(),
-          state = EXCLUDED.state,
-          source_job_id = EXCLUDED.source_job_id,
+          source = EXCLUDED.source,
+          -- Đã bật trên Amazon thì giữ: job mới lỗi sẽ xoá theo source_job_id, không được xoá mất phủ định đang chạy
+          state = CASE WHEN ppc_negative_registry.state = 'enabled' THEN 'enabled' ELSE EXCLUDED.state END,
+          source_job_id = CASE WHEN ppc_negative_registry.state = 'enabled' THEN ppc_negative_registry.source_job_id ELSE EXCLUDED.source_job_id END,
           reason = EXCLUDED.reason
       `;
     }

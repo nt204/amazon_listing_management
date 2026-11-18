@@ -1364,6 +1364,7 @@ export function PpcStOptimizationView({
           selectedStore={selectedStore}
           notify={notify}
           onQueued={() => fetchRegistry()}
+          onOpenActionQueue={onOpenActionQueue}
           onKeywordCountChange={setNegativeListCount}
         />
       ) : (

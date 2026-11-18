@@ -530,8 +530,17 @@ export function PpcNegativeHubView({
                             {item.level === "CAMPAIGN" ? "Campaign Level" : "Ad Group Level"}
                           </span>
                           <span className="text-[9px] text-indigo-600 font-semibold block">
-                            {item.source === "AUTO_UPLOAD" ? "⚡ Auto Upload" : item.source === "NEGATIVE_LIST" ? "📋 Negative List" : "Amazon Bulksheet"}
+                            {item.source === "AUTO_UPLOAD"
+                              ? "Auto Upload Negative KW"
+                              : item.source === "NEGATIVE_LIST"
+                                ? "Negative List"
+                                : item.source === "MANUAL_EXPORT"
+                                  ? "Xuất Bulk tay"
+                                  : "Amazon Bulksheet"}
                           </span>
+                          {item.state?.toLowerCase() === "pending" && (
+                            <span className="text-[9px] text-amber-700 font-semibold block">Chờ upload</span>
+                          )}
                         </div>
                       </td>
 
