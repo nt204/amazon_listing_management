@@ -47,8 +47,18 @@ process.stdout.write(target.toISOString().slice(0, 10));
 ')"
 fi
 
+# Python có psycopg2 (Mac mini: /usr/bin/python3 không có, bản Homebrew mới có)
+PYTHON=""
+for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 python3 /usr/bin/python3; do
+  if "$cand" -c "import psycopg2" >/dev/null 2>&1; then PYTHON="$cand"; break; fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "[Catch-up] ❌ Không tìm thấy python3 có psycopg2 → không kiểm tra được store thiếu."
+  exit 1
+fi
+
 # Store thiếu đơn (orders) hoặc Ads của ngày RUN_DATE — đọc nhẹ theo store_id + date (có index)
-MISSING="$(STORES_FILE="$SCRIPT_DIR/stores.json" RUN_DATE="$RUN_DATE" python3 - <<'PY'
+MISSING="$(STORES_FILE="$SCRIPT_DIR/stores.json" RUN_DATE="$RUN_DATE" "$PYTHON" - <<'PY'
 import json, os, sys
 import psycopg2
 
