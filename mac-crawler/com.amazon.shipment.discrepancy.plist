@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.amazon.shipment.discrepancy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/ad/mac-crawler/run_shipment_discrepancy_daily.sh</string>
+    </array>
+
+    <!-- Chạy tự động lúc 02:00 sáng mỗi ngày -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ad/Library/Logs/mac-shipment-discrepancy.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ad/Library/Logs/mac-shipment-discrepancy.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ad/mac-crawler</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/ad</string>
+    </dict>
+</dict>
+</plist>
