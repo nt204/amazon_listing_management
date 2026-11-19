@@ -95,7 +95,7 @@ function normalizeKeywordList(raw: string): string[] {
 
 function Section({ step, title, right, children, className = "", bodyClassName = "" }: { step?: number; title: string; right?: React.ReactNode; children: React.ReactNode; className?: string; bodyClassName?: string }) {
   return (
-    <section className={`${cardCls} ${className}`}>
+    <section id={step !== undefined ? `nc-step-${step}` : undefined} className={`${cardCls} ${className}`}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
         <h2 className="flex items-center gap-2.5 text-[15px] font-extrabold text-slate-900">
           {step !== undefined && (
@@ -392,6 +392,7 @@ export function PpcNewCampView() {
   const [flasin, setFlasin] = useState({ run: false, dailyBudget: "5", bid: "0.21" });
 
   const [busy, setBusy] = useState(false);
+  const [showIssues, setShowIssues] = useState(false);
   const [notices, setNotices] = useState<Notice[]>([]);
   // Thông tin SB điền bổ sung cho SKU thiếu (theo SKU viết hoa); chỉ dùng cho file lần này.
   const [sbOverrides, setSbOverrides] = useState<SbOverrides>({});
@@ -787,8 +788,66 @@ export function PpcNewCampView() {
       : {},
   });
 
+  type Issue = { step: string; text: string };
+  const issues: Issue[] = (() => {
+    const list: Issue[] = [];
+    if (!selected.length) list.push({ step: "1", text: "Chưa chọn SKU" });
+    if (!(match.sp03.run || match.sb01.run || match.sb05.run || sp04.run || flasin.run)) list.push({ step: "3", text: "Chưa chọn loại chạy" });
+    for (const g of MATCH_GROUPS) {
+      const m = match[g.key];
+      if (!m.run) continue;
+      if (!m.exact && !m.phrase && !m.broad) list.push({ step: "3", text: `${g.label}: chưa chọn match type (Exact / Phrase / Broad)` });
+      if (!(Number(m.dailyBudget) > 0)) list.push({ step: "3", text: `${g.label}: chưa nhập budget / ngày` });
+    }
+    if (sp04.run && !(Number(sp04.dailyBudget) > 0)) list.push({ step: "3", text: "SP04 Auto: chưa nhập budget / ngày" });
+    if (flasin.run) {
+      if (!(Number(flasin.dailyBudget) > 0)) list.push({ step: "3", text: "FL Asin: chưa nhập budget / ngày" });
+      if (!(Number(flasin.bid) > 0)) list.push({ step: "3", text: "FL Asin: chưa nhập bid" });
+      if (!asinFile) list.push({ step: "3", text: "FL Asin: chưa chọn file ASIN Crawl" });
+    }
+    if (kwCampaignSelected) {
+      const nameMissing = (n: KwName) => [n.user, n.niche, n.phoi, n.set].some((v) => !v.trim());
+      if (kwMode === "none") list.push({ step: "4", text: "Chưa có file keyword (SP03 / SB01 / SB05 cần keyword)" });
+      if (kwMode === "upload" && nameMissing(uploadNameValue)) list.push({ step: "4", text: "Điền đủ 4 ô lưu kho keyword (Người lên camp, Ngách, Phôi, Bộ keyword)" });
+      if (kwMode === "create") {
+        const badBids = kwParts.reduce((n, p) => n + p.bids.filter((b) => !(Number.parseFloat(b.trim()) >= 0.02)).length, 0);
+        if (badBids) list.push({ step: "4", text: `Còn ${badBids} keyword chưa có bid (tối thiểu 0.02)` });
+        if (nameMissing(createNameValue)) list.push({ step: "4", text: "Điền đủ 4 ô lưu kho keyword (Người lên camp, Ngách, Phôi, Bộ keyword)" });
+      }
+    }
+    if (sbBlocking.length) list.push({ step: "sb", text: `${sbBlocking.length} SKU thiếu thông tin SB (ô đỏ ở mục "Thông tin SB còn thiếu")` });
+    if (dupNames.size) list.push({ step: "5", text: `Tên camp bị trùng: ${[...dupNames].slice(0, 2).join(", ")}` });
+    if (existingCount) list.push({ step: "5", text: `${existingCount} camp đã có trên Amazon — sửa tên hoặc thêm đuôi tên` });
+    return list;
+  })();
+
+  // Cuộn tới bước còn thiếu và nháy viền đỏ (không cần class CSS riêng)
+  const goToStep = (step: string) => {
+    const el = document.getElementById(`nc-step-${step}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.animate(
+      [
+        { boxShadow: "0 0 0 0 rgba(225, 29, 72, 0)" },
+        { boxShadow: "0 0 0 6px rgba(225, 29, 72, 0.45)" },
+        { boxShadow: "0 0 0 0 rgba(225, 29, 72, 0)" },
+      ],
+      { duration: 1400, iterations: 2 },
+    );
+  };
+
   const submit = async (mode: "download" | "upload" = "download", confirmed = false) => {
     setNotices([]);
+    if (issues.length) {
+      setShowIssues(true);
+      if (kwMode === "create") {
+        const bad = new Set<string>();
+        kwParts.forEach((p, pi) => p.bids.forEach((b, i) => { if (!(Number.parseFloat(b.trim()) >= 0.02)) bad.add(`${pi}:${i}`); }));
+        setBidErrors(bad);
+      }
+      goToStep(issues[0].step);
+      return;
+    }
     if (selected.length === 0) return setNotices([{ kind: "error", text: "Vui lòng chọn ít nhất một SKU." }]);
     if (kwCampaignSelected && kwMode === "none") {
       return setNotices([{ kind: "error", text: "Bạn đã chọn chạy campaign Keyword (SP03, SB01, SB05) nhưng chưa chọn file Keyword." }]);
@@ -1559,7 +1618,7 @@ export function PpcNewCampView() {
       </Section>
 
       {sbActive && selected.length > 0 && (
-        <div ref={sbPanelRef}>
+        <div ref={sbPanelRef} id="nc-step-sb">
           <Section
             className={sbBlocking.length ? "border-rose-300" : ""}
             title="Thông tin SB còn thiếu"
@@ -1752,6 +1811,24 @@ export function PpcNewCampView() {
       )}
 
       <div className="sticky bottom-0 z-10 -mx-3 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_12px_-6px_rgba(15,23,42,0.12)] backdrop-blur sm:-mx-4 md:-mx-6">
+        {showIssues && issues.length > 0 && (
+          <div className="mx-auto mb-3 max-w-[1600px] rounded-xl border border-rose-300 bg-rose-50 px-4 py-3">
+            <div className="mb-1.5 flex items-center gap-2">
+              <WarningCircle size={18} weight="fill" className="text-rose-600" />
+              <span className="text-sm font-black text-rose-900">Còn {issues.length} mục cần điền trước khi tạo file</span>
+              <button type="button" onClick={() => setShowIssues(false)} className="ml-auto rounded-md p-1 text-rose-400 hover:bg-rose-100 hover:text-rose-700 cursor-pointer"><X size={14} weight="bold" /></button>
+            </div>
+            <ul className="grid gap-1 sm:grid-cols-2">
+              {issues.map((it, i) => (
+                <li key={i} className="flex items-center gap-2 text-[13px] font-semibold text-rose-900">
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded bg-rose-600 px-1 text-[11px] font-black text-white">{it.step === "sb" ? "SB" : it.step}</span>
+                  <span className="min-w-0">{it.text}</span>
+                  <button type="button" onClick={() => goToStep(it.step)} className="shrink-0 rounded-md border border-rose-300 bg-white px-2 py-0.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100 cursor-pointer">Đi tới</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-800">{selected.length} SKU</span>
