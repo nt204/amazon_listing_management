@@ -466,7 +466,10 @@ export function PpcNewCampView() {
   const isFbm = selected.length > 0 && loaiHinh === "FBM";
   const effectiveTrangThai = isFbm && trangThai === "Auto" ? "Test" : trangThai;
   const winCount = selected.filter((sku) => isWinStatus(skuByUpper.get(sku.toUpperCase())?.status)).length;
-  const trangThaiLabel = effectiveTrangThai === "Auto" ? (selected.length ? `${winCount} Win · ${selected.length - winCount} Test` : "Tự động") : effectiveTrangThai;
+  // FBA, chưa chọn tay: nút sáng theo Bảng mã — toàn Win → Win, toàn Test → Test, lẫn lộn → "Theo SKU"
+  const statusMixed = !isFbm && winCount > 0 && winCount < selected.length;
+  const shownTrangThai = trangThai !== "Auto" ? trangThai : isFbm ? "Test" : statusMixed ? "Auto" : selected.length && winCount === selected.length ? "Win" : "Test";
+  const trangThaiLabel = effectiveTrangThai === "Auto" ? (selected.length ? (statusMixed ? `${winCount} Win · ${selected.length - winCount} Test` : shownTrangThai) : "Test/Win") : effectiveTrangThai;
 
   const filteredSkus = useMemo(() => {
     const q = skuSearch.trim().toLowerCase();
@@ -1051,7 +1054,7 @@ export function PpcNewCampView() {
                     Đã chọn <span className="ml-1 rounded-full bg-indigo-600 px-2 py-0.5 text-[11px] font-black text-white">{selected.length}</span>
                   </span>
                   {selected.length > 0 && (
-                    <button type="button" onClick={() => { setSelected([]); setActiveSku(null); }} className="text-xs font-bold text-rose-600 hover:underline cursor-pointer">Xóa hết</button>
+                    <button type="button" onClick={() => { setSelected([]); setActiveSku(null); setTrangThai("Auto"); }} className="text-xs font-bold text-rose-600 hover:underline cursor-pointer">Xóa hết</button>
                   )}
                 </div>
                 <div className="min-h-[12rem] [flex:1_1_0px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/70 p-2 thin-scrollbar">
@@ -1076,7 +1079,7 @@ export function PpcNewCampView() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => { setSelected((prev) => prev.filter((x) => x !== sku)); if (activeSku === sku) setActiveSku(null); }}
+                            onClick={() => { setSelected((prev) => prev.filter((x) => x !== sku)); if (activeSku === sku) setActiveSku(null); if (selected.length === 1) setTrangThai("Auto"); }}
                             className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 cursor-pointer"
                             title="Bỏ SKU"
                           >
@@ -1135,8 +1138,8 @@ export function PpcNewCampView() {
               <div>
                 <span className={labelCls}>Trạng thái</span>
                 <Segmented
-                  value={effectiveTrangThai}
-                  options={isFbm ? [{ value: "Test", label: "Test" }, { value: "Win", label: "Win" }] : [{ value: "Auto", label: "Tự động" }, { value: "Test", label: "Test" }, { value: "Win", label: "Win" }]}
+                  value={shownTrangThai}
+                  options={statusMixed ? [{ value: "Auto", label: "Theo SKU" }, { value: "Test", label: "Test" }, { value: "Win", label: "Win" }] : [{ value: "Test", label: "Test" }, { value: "Win", label: "Win" }]}
                   onChange={setTrangThai}
                 />
               </div>
