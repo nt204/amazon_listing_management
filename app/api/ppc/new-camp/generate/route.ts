@@ -191,19 +191,26 @@ export async function POST(request: Request) {
     form.advanced = parseAdvanced(rawOptions.advanced);
     if (form.selectedSkus.length === 0) throw new ApiError("Vui lòng chọn ít nhất một SKU.", 400);
 
-    // Upload: kiểm tra store / quyền / R2 trước mọi bước (không lưu kho, không tạo file nếu không upload được)
-    let uploadStore: { id: string; name: string } | null = null;
+    // Upload: SKU thuộc store nào trong Bảng mã thì upload vào store PPC cùng tên. Kiểm tra store / quyền / R2
+    // trước mọi bước (không lưu kho, không tạo file nếu không upload được).
+    const uploadStoreOf = new Map<string, { id: string; name: string }>(); // SKU (viết hoa) → store PPC
     if (output === "upload" && !preview) {
-      const storeId = str(formData.get("storeId")).trim();
-      if (!/^[0-9a-f-]{36}$/i.test(storeId)) throw new ApiError("Chọn store để upload.", 400);
-      const sql = await getDatabaseClient();
-      const storeRows = await sql<{ id: string; name: string }[]>`
-        SELECT id, name FROM ppc_stores WHERE id = ${storeId} AND team_id = ${actor.teamId} LIMIT 1
-      `;
-      uploadStore = storeRows[0] ?? null;
-      if (!uploadStore) throw new ApiError("Chọn store để upload.", 400);
-      await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, uploadStore.id);
       if (objectStorageDriver() !== "r2") throw new ApiError("Upload tự động cần OBJECT_STORAGE_DRIVER=r2 (chỉ có trên server).", 400);
+      const sql = await getDatabaseClient();
+      const ppcStores = await sql<{ id: string; name: string }[]>`SELECT id, name FROM ppc_stores WHERE team_id = ${actor.teamId}`;
+      const ppcByName = new Map(ppcStores.map((st) => [st.name.trim().toUpperCase(), st]));
+      const skuStore = new Map((await listNewCampSkus(form.loaiHinh)).map((x) => [x.sku.toUpperCase(), (x.storeName || "").trim()]));
+      const noStore: string[] = [];
+      for (const sku of form.selectedSkus) {
+        const storeName = skuStore.get(sku.toUpperCase()) || "";
+        const st = ppcByName.get(storeName.toUpperCase());
+        if (st) uploadStoreOf.set(sku.toUpperCase(), st);
+        else noStore.push(`${sku}${storeName ? ` (store ${storeName} chưa có trong PPC)` : " (không có store trong Bảng mã)"}`);
+      }
+      if (noStore.length) throw new ApiError(`Không xác định được store để upload:\n${noStore.slice(0, 10).join("\n")}`, 400);
+      for (const st of new Map([...uploadStoreOf.values()].map((x) => [x.id, x])).values()) {
+        await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, st.id);
+      }
     }
 
     // --- File keyword: 3 cách như tool cũ ---
@@ -376,54 +383,63 @@ export async function POST(request: Request) {
       );
     }
 
-    // Upload thẳng lên Amazon: mỗi file 1 job, Mac mini lấy job và upload qua AdsPower
-    if (uploadStore) {
-      const store = uploadStore;
+    // Upload thẳng lên Amazon: tách theo store của SKU, mỗi store sinh file riêng, mỗi file 1 job (Mac mini + AdsPower)
+    if (uploadStoreOf.size) {
       const sql = await getDatabaseClient();
-
-      const cleanStore = store.name.replace(/[^A-Za-z0-9._-]+/g, "_");
-      const prefixOf: Array<[string, string]> = [["SP03 KW", "SP03|"], ["SB01 CK KW", "SB01|"], ["SB05 VIDEO", "SB05|"], ["SP04 Auto", "SP04|"], ["FL Asin", "FL|"]];
-      const jobs: Array<{ id: string; fileName: string; campaigns: number }> = [];
-      for (const f of files) {
-        const keyPrefix = prefixOf.find(([p]) => f.fileName.startsWith(p))?.[1] ?? "";
-        const camps = plan
-          .map((c, i) => ({ ...c, finalName: finalNames[i] }))
-          .filter((c) => keyPrefix && c.key.startsWith(keyPrefix));
-        const buffer = await writeGeneratedXlsx(f);
-        const jobId = crypto.randomUUID();
-        const fileName = `NewCamp_${cleanStore}_${f.fileName.replace(/[^A-Za-z0-9._ -]+/g, "_")}`;
-        const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
-        const r2Key = `${r2KeyPrefix()}/ppc-bulk-upload/${cleanStore}/${jobId}/${fileName}`;
-        await putStoredObject({
-          key: r2Key,
-          bytes: buffer,
-          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          sha256,
-          metadata: { purpose: "amazon-ads-bulk-upload", store: cleanStore, job: jobId },
-        });
-        const actionsPayload = camps.map((c, i) => ({
-          id: `newcamp-${jobId.slice(0, 8)}-${i}`,
-          sku: c.sku,
-          campaignName: c.finalName,
-          adType: c.label,
-          actionType: "CREATE_CAMPAIGN",
-          status: "PENDING",
-        }));
-        const skus = [...new Set(camps.map((c) => c.sku))];
-        await sql`
-          INSERT INTO ppc_auto_upload_logs (
-            id, team_id, store_id, file_name, action_count, skus, status, stage,
-            file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at, created_by
-          ) VALUES (
-            ${jobId}, ${actor.teamId}, ${store.id}, ${fileName}, ${camps.length},
-            ${sql.json(skus)}, 'PENDING', 'FILE_READY',
-            'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW(), ${actor.userId}
-          )
-        `;
-        jobs.push({ id: jobId, fileName, campaigns: camps.length });
+      const groups = new Map<string, { store: { id: string; name: string }; skus: string[] }>();
+      for (const sku of form.selectedSkus) {
+        const st = uploadStoreOf.get(sku.toUpperCase());
+        if (!st) continue;
+        if (!groups.has(st.id)) groups.set(st.id, { store: st, skus: [] });
+        groups.get(st.id)!.skus.push(sku);
       }
-      rememberUploadedCampaigns(actor.teamId, store.name, finalNames);
-      return withUploadHeaders(Response.json({ success: true, store: store.name, jobs }, { status: 202 }));
+      const finalByKey = new Map(plan.map((c, i) => [c.key, finalNames[i]]));
+      const prefixOf: Array<[string, string]> = [["SP03 KW", "SP03|"], ["SB01 CK KW", "SB01|"], ["SB05 VIDEO", "SB05|"], ["SP04 Auto", "SP04|"], ["FL Asin", "FL|"]];
+      const jobs: Array<{ id: string; fileName: string; campaigns: number; store: string }> = [];
+      for (const { store, skus } of groups.values()) {
+        const formG = { ...form, selectedSkus: skus };
+        const filesG = generateAllFiles(formG, infos, keywordParts, asins);
+        const planG = planCampaigns(formG, infos, keywordParts, asins.length);
+        applyNameEdits(filesG, planG, nameEdits);
+        const cleanStore = store.name.replace(/[^A-Za-z0-9._-]+/g, "_");
+        for (const f of filesG) {
+          const keyPrefix = prefixOf.find(([pfx]) => f.fileName.startsWith(pfx))?.[1] ?? "";
+          const camps = planG.filter((c) => keyPrefix && c.key.startsWith(keyPrefix)).map((c) => ({ ...c, finalName: finalByKey.get(c.key) || c.name }));
+          const buffer = await writeGeneratedXlsx(f);
+          const jobId = crypto.randomUUID();
+          const fileName = `NewCamp_${cleanStore}_${f.fileName.replace(/[^A-Za-z0-9._ -]+/g, "_")}`;
+          const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+          const r2Key = `${r2KeyPrefix()}/ppc-bulk-upload/${cleanStore}/${jobId}/${fileName}`;
+          await putStoredObject({
+            key: r2Key,
+            bytes: buffer,
+            contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            sha256,
+            metadata: { purpose: "amazon-ads-bulk-upload", store: cleanStore, job: jobId },
+          });
+          const actionsPayload = camps.map((c, i) => ({
+            id: `newcamp-${jobId.slice(0, 8)}-${i}`,
+            sku: c.sku,
+            campaignName: c.finalName,
+            adType: c.label,
+            actionType: "CREATE_CAMPAIGN",
+            status: "PENDING",
+          }));
+          await sql`
+            INSERT INTO ppc_auto_upload_logs (
+              id, team_id, store_id, file_name, action_count, skus, status, stage,
+              file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at, created_by
+            ) VALUES (
+              ${jobId}, ${actor.teamId}, ${store.id}, ${fileName}, ${camps.length},
+              ${sql.json([...new Set(camps.map((c) => c.sku))])}, 'PENDING', 'FILE_READY',
+              'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW(), ${actor.userId}
+            )
+          `;
+          jobs.push({ id: jobId, fileName, campaigns: camps.length, store: store.name });
+        }
+        rememberUploadedCampaigns(actor.teamId, store.name, planG.map((c) => finalByKey.get(c.key) || c.name));
+      }
+      return withUploadHeaders(Response.json({ success: true, stores: [...groups.values()].map((g) => g.store.name), jobs }, { status: 202 }));
     }
 
     // Trả từng file Excel riêng (không nén zip); output=zip vẫn giữ để tương thích

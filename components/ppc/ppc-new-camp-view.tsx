@@ -406,10 +406,9 @@ export function PpcNewCampView() {
   const [preview, setPreview] = useState<{ campaigns: PlannedCampaign[]; kwMissing: boolean; existing: Record<string, { store: string; state: string }> } | null>(null);
   // Upload thẳng lên Amazon (Mac mini + AdsPower)
   const [ppcStores, setPpcStores] = useState<Array<{ id: string; name: string; canManageActions?: boolean }>>([]);
-  const [uploadStoreId, setUploadStoreId] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [uploadJobs, setUploadJobs] = useState<{ store: string; jobs: Array<{ id: string; fileName: string; campaigns: number; status: string; progress: number; error?: string }> } | null>(null);
+  const [uploadJobs, setUploadJobs] = useState<{ stores: string[]; jobs: Array<{ id: string; fileName: string; campaigns: number; store: string; status: string; progress: number; error?: string }> } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [nameEdits, setNameEdits] = useState<Record<string, string>>({});
   const sbPanelRef = useRef<HTMLDivElement>(null);
@@ -680,16 +679,18 @@ export function PpcNewCampView() {
       cancelled = true;
     };
   }, []);
-  // Store mặc định: store của SKU đã chọn trong Bảng mã
-  const guessedStoreId = useMemo(() => {
+  // Store upload = store của SKU trong Bảng mã (khớp store PPC cùng tên); nhiều store thì server tự tách
+  const uploadGroups = useMemo(() => {
+    const groups = new Map<string, number>();
+    const noStore: string[] = [];
     for (const sku of selected) {
-      const name = skuByUpper.get(sku.toUpperCase())?.storeName?.trim().toUpperCase();
-      const hit = name ? ppcStores.find((st) => st.name.trim().toUpperCase() === name) : undefined;
-      if (hit) return hit.id;
+      const name = skuByUpper.get(sku.toUpperCase())?.storeName?.trim() || "";
+      const hit = name ? ppcStores.find((st) => st.name.trim().toUpperCase() === name.toUpperCase()) : undefined;
+      if (hit) groups.set(hit.name, (groups.get(hit.name) ?? 0) + 1);
+      else noStore.push(`${sku}${name ? ` (${name} chưa có trong PPC)` : ""}`);
     }
-    return "";
+    return { stores: [...groups.entries()].map(([name, skus]) => ({ name, skus })), noStore };
   }, [selected, skuByUpper, ppcStores]);
-  const effectiveStoreId = uploadStoreId || guessedStoreId;
 
   // Theo dõi job upload tới khi xong
   const pendingJobIds = (uploadJobs?.jobs ?? []).filter((j) => !["SUCCESS", "PARTIAL_SUCCESS", "FAILED", "RESULT_TIMEOUT", "CANCELLED"].includes(j.status)).map((j) => j.id).join(",");
@@ -716,7 +717,6 @@ export function PpcNewCampView() {
   // Tóm tắt trước khi upload: số camp / budget theo dạng chạy, thông tin SB, cảnh báo store & Brand Entity
   const confirmSummary = useMemo(() => {
     const camps = preview?.campaigns ?? [];
-    const store = ppcStores.find((st) => st.id === effectiveStoreId);
     const budgetOf: Record<string, string> = {
       SP03: match.sp03.dailyBudget, SB01: match.sb01.dailyBudget, SB05: match.sb05.dailyBudget, SP04: sp04.dailyBudget, FL: flasin.dailyBudget,
     };
@@ -736,20 +736,13 @@ export function PpcNewCampView() {
         return { sku, brandEntityId: v("brandEntityId"), brand: v("brand"), video: v("videoMediaIds"), logo: v("brandLogoAssetId") };
       })
       : [];
-    const otherStore = selected
-      .map((sku) => ({ sku, store: skuByUpper.get(sku.toUpperCase())?.storeName?.trim() || "" }))
-      .filter((x) => store && x.store && x.store.toUpperCase() !== store.name.trim().toUpperCase());
-    const entities = [...new Set(sbSkus.map((x) => x.brandEntityId).filter(Boolean))];
     return {
-      store,
       runs,
       totalCampaigns: camps.length,
       totalBudget: runs.reduce((n, r) => n + r.total, 0),
       sbSkus,
-      otherStore,
-      entities,
     };
-  }, [preview, ppcStores, effectiveStoreId, match, sp04.dailyBudget, flasin.dailyBudget, sbActive, selected, skuByUpper, sbOverrides]);
+  }, [preview, match, sp04.dailyBudget, flasin.dailyBudget, sbActive, selected, skuByUpper, sbOverrides]);
 
   const dupNames = useMemo(() => {
     const seen = new Set<string>();
@@ -814,13 +807,11 @@ export function PpcNewCampView() {
     if (existingCount > 0) {
       return setNotices([{ kind: "error", text: `${existingCount} camp đã có trên Amazon (ô đỏ ở bước 5). Sửa tên hoặc thêm đuôi tên rồi tạo lại.` }]);
     }
-    const uploadStore = ppcStores.find((st) => st.id === effectiveStoreId);
-    if (mode === "upload" && !uploadStore) return setNotices([{ kind: "error", text: "Chọn store để upload lên Amazon." }]);
-    const fd = new FormData();
-    if (mode === "upload") {
-      fd.append("output", "upload");
-      fd.append("storeId", uploadStore!.id);
+    if (mode === "upload" && uploadGroups.noStore.length) {
+      return setNotices([{ kind: "error", text: `Không xác định được store để upload:\n${uploadGroups.noStore.slice(0, 10).join("\n")}` }]);
     }
+    const fd = new FormData();
+    if (mode === "upload") fd.append("output", "upload");
     fd.append("options", JSON.stringify(buildOptions(true)));
     if (asinFile) fd.append("asin_file", asinFile);
     fd.append("kwMode", kwMode);
@@ -868,8 +859,8 @@ export function PpcNewCampView() {
         return;
       }
       if (mode === "upload") {
-        const json = (await res.json()) as { store: string; jobs: Array<{ id: string; fileName: string; campaigns: number }> };
-        setUploadJobs({ store: json.store, jobs: json.jobs.map((j) => ({ ...j, status: "PENDING", progress: 25 })) });
+        const json = (await res.json()) as { stores: string[]; jobs: Array<{ id: string; fileName: string; campaigns: number; store: string }> };
+        setUploadJobs({ stores: json.stores, jobs: json.jobs.map((j) => ({ ...j, status: "PENDING", progress: 25 })) });
         setNotices(uploadNotice ? [uploadNotice] : []);
         resetKeyword();
         return;
@@ -954,7 +945,7 @@ export function PpcNewCampView() {
         <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
-              <CloudArrowUp size={18} weight="bold" className="text-indigo-600" /> Upload lên Amazon · {uploadJobs.store}
+              <CloudArrowUp size={18} weight="bold" className="text-indigo-600" /> Upload lên Amazon · {uploadJobs.stores.join(", ")}
             </span>
             <button type="button" onClick={() => setUploadJobs(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"><X size={14} weight="bold" /></button>
           </div>
@@ -968,6 +959,7 @@ export function PpcNewCampView() {
                 <div key={j.id} className="rounded-lg border border-slate-200 px-3 py-2">
                   <div className="flex items-center gap-3 text-sm">
                     <FileXls size={18} weight="fill" className="shrink-0 text-emerald-600" />
+                    <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-700">{j.store}</span>
                     <span className="min-w-0 flex-1 truncate font-semibold text-slate-800">{j.fileName}</span>
                     <span className="text-xs font-semibold text-slate-500">{j.campaigns} camp</span>
                     <span className={`rounded-md px-2 py-0.5 text-[11px] font-black ${done ? "bg-emerald-600 text-white" : warn ? "bg-amber-500 text-white" : fail ? "bg-rose-600 text-white" : "bg-indigo-100 text-indigo-800"}`}>{label}</span>
@@ -986,40 +978,10 @@ export function PpcNewCampView() {
       )}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {/* ===== Cột trái: cấu hình + SKU (khung SKU giãn cho bằng cột phải) ===== */}
+        {/* ===== Cột trái: Chọn SKU (giãn cho bằng cột phải) + Cấu hình chung ===== */}
         <div className="flex flex-col gap-4">
-          <Section step={1} title="Cấu hình chung">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div>
-                <span className={labelCls}>Loại hình</span>
-                <div className="flex gap-1 rounded-xl bg-slate-100 p-1" title="Tự theo SKU đã chọn">
-                  {(["FBA", "FBM"] as const).map((c) => (
-                    <span
-                      key={c}
-                      className={`flex-1 rounded-lg py-2 text-center text-sm font-bold ${selected.length && loaiHinh === c ? "bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200" : "text-slate-400"}`}
-                    >
-                      {c}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <span className={labelCls}>Trạng thái</span>
-                <Segmented
-                  value={effectiveTrangThai}
-                  options={isFbm ? [{ value: "Test", label: "Test" }, { value: "Win", label: "Win" }] : [{ value: "Auto", label: "Tự động" }, { value: "Test", label: "Test" }, { value: "Win", label: "Win" }]}
-                  onChange={setTrangThai}
-                />
-              </div>
-              <label className="block">
-                <span className={labelCls}>Ngày lên camp</span>
-                <input type="date" className={`${inputCls} py-[7px]`} value={ngay} onChange={(e) => setNgay(e.target.value)} required />
-              </label>
-            </div>
-          </Section>
-
           <Section
-            step={2}
+            step={1}
             title="Chọn SKU"
             className="flex flex-1 flex-col"
             bodyClassName="flex flex-1 flex-col"
@@ -1152,6 +1114,36 @@ export function PpcNewCampView() {
                 </dl>
               </div>
             )}
+          </Section>
+
+          <Section step={2} title="Cấu hình chung">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div>
+                <span className={labelCls}>Loại hình</span>
+                <div className="flex gap-1 rounded-xl bg-slate-100 p-1" title="Tự theo SKU đã chọn">
+                  {(["FBA", "FBM"] as const).map((c) => (
+                    <span
+                      key={c}
+                      className={`flex-1 rounded-lg py-2 text-center text-sm font-bold ${selected.length && loaiHinh === c ? "bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200" : "text-slate-400"}`}
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className={labelCls}>Trạng thái</span>
+                <Segmented
+                  value={effectiveTrangThai}
+                  options={isFbm ? [{ value: "Test", label: "Test" }, { value: "Win", label: "Win" }] : [{ value: "Auto", label: "Tự động" }, { value: "Test", label: "Test" }, { value: "Win", label: "Win" }]}
+                  onChange={setTrangThai}
+                />
+              </div>
+              <label className="block">
+                <span className={labelCls}>Ngày lên camp</span>
+                <input type="date" className={`${inputCls} py-[7px]`} value={ngay} onChange={(e) => setNgay(e.target.value)} required />
+              </label>
+            </div>
           </Section>
         </div>
 
@@ -1655,14 +1647,14 @@ export function PpcNewCampView() {
             <div className="space-y-5 px-6 py-5">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
-                  ["Store", confirmSummary.store?.name ?? "—"],
+                  ["Store", uploadGroups.stores.map((g) => (uploadGroups.stores.length > 1 ? `${g.name} (${g.skus})` : g.name)).join(", ") || "—"],
                   ["SKU", String(selected.length)],
                   ["Loại hình", `${loaiHinh} · ${trangThaiLabel}`],
                   ["Ngày lên camp", ngay.split("-").reverse().join("/")],
                 ].map(([k, v]) => (
                   <div key={k} className="rounded-xl bg-slate-50 px-3 py-2.5">
                     <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{k}</div>
-                    <div className="mt-0.5 truncate text-[15px] font-black text-slate-900">{v}</div>
+                    <div className="mt-0.5 break-words text-[15px] font-black leading-snug text-slate-900">{v}</div>
                   </div>
                 ))}
               </div>
@@ -1726,17 +1718,15 @@ export function PpcNewCampView() {
                 </div>
               )}
 
-              {(confirmSummary.otherStore.length > 0 || confirmSummary.entities.length > 1) && (
-                <div className="space-y-1.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] font-semibold text-amber-900">
-                  <p className="flex items-center gap-1.5 font-black"><WarningCircle size={16} weight="fill" /> Kiểm tra lại</p>
-                  {confirmSummary.otherStore.length > 0 && (
-                    <p>
-                      SKU thuộc store khác trong Bảng mã:{" "}
-                      {confirmSummary.otherStore.slice(0, 6).map((x) => `${x.sku} (${x.store})`).join(", ")}
-                      {confirmSummary.otherStore.length > 6 ? "…" : ""}
-                    </p>
-                  )}
-                  {confirmSummary.entities.length > 1 && <p>Các SKU dùng {confirmSummary.entities.length} Brand Entity ID khác nhau — camp SB chỉ chạy được với brand của store đang upload.</p>}
+              {uploadGroups.stores.length > 1 && (
+                <p className="rounded-xl bg-indigo-50 px-4 py-2.5 text-[13px] font-semibold text-indigo-900">
+                  SKU thuộc {uploadGroups.stores.length} store — tự tách file và upload vào đúng store của từng SKU.
+                </p>
+              )}
+              {uploadGroups.noStore.length > 0 && (
+                <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-[13px] font-semibold text-rose-900">
+                  <p className="flex items-center gap-1.5 font-black"><WarningCircle size={16} weight="fill" /> Không xác định được store</p>
+                  <p>{uploadGroups.noStore.slice(0, 8).join(", ")}</p>
                 </div>
               )}
             </div>
@@ -1746,7 +1736,7 @@ export function PpcNewCampView() {
               <button
                 type="button"
                 onClick={() => void submit("upload", true)}
-                disabled={uploadBusy}
+                disabled={uploadBusy || uploadGroups.noStore.length > 0}
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-black text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
               >
                 {uploadBusy ? <CircleNotch size={16} className="animate-spin" /> : <CloudArrowUp size={16} weight="bold" />}
@@ -1769,21 +1759,16 @@ export function PpcNewCampView() {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
-          <div className="w-40">
-            <select
-              className={`${inputCls} py-[9px] font-bold`}
-              value={effectiveStoreId}
-              onChange={(e) => setUploadStoreId(e.target.value)}
-              title="Store để upload lên Amazon"
-            >
-              <option value="">Chọn store…</option>
-              {ppcStores.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
-            </select>
-          </div>
+          {uploadGroups.stores.length > 0 && (
+            <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-sm font-bold text-slate-800" title="Store lấy theo SKU trong Bảng mã">
+              {uploadGroups.stores.map((g) => g.name).join(" · ")}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => void submit("upload")}
-            disabled={busy || uploadBusy || !effectiveStoreId}
+            disabled={busy || uploadBusy || selected.length === 0 || uploadGroups.noStore.length > 0}
+            title={uploadGroups.noStore.length ? `Không xác định được store: ${uploadGroups.noStore.slice(0, 3).join(", ")}` : undefined}
             className="flex items-center justify-center gap-2 rounded-xl border-2 border-indigo-600 bg-white px-5 py-[10px] text-sm font-black text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
           >
             {uploadBusy ? <CircleNotch size={18} className="animate-spin" /> : <CloudArrowUp size={18} weight="bold" />}
