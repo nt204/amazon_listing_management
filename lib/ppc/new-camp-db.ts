@@ -2,6 +2,7 @@
 // và kho file keyword (thay SQLite kw_files).
 import { getDatabaseClient } from "@/lib/db";
 import type { NewCampSkuInfo } from "./new-camp-generator";
+import { BRAND_ENTITY_PATTERN, storeKey } from "./new-camp-fields";
 
 type SkuRow = {
   sku: string;
@@ -25,8 +26,58 @@ type SkuRow = {
  * Danh sách SKU theo loại hình: FBA = BẢNG MÃ (accounting_sku_master), FBM = BẢNG MÃ FBM.
  * SKU trùng (nhiều store / nhiều ASIN) lấy dòng điền đủ thông tin nhất, như tool cũ gộp các sheet.
  */
+// ---------------------------------------------------------------------------
+// Brand Entity ID theo store
+// ---------------------------------------------------------------------------
+
+let entityCache: { at: number; map: Map<string, string> } | null = null;
+
+export async function getStoreBrandEntities(): Promise<Map<string, string>> {
+  if (entityCache && Date.now() - entityCache.at < 60_000) return entityCache.map;
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ store_name: string; brand_entity_id: string }[]>`
+    SELECT store_name, brand_entity_id FROM ppc_store_brand_entities
+  `;
+  entityCache = { at: Date.now(), map: new Map(rows.map((r) => [storeKey(r.store_name), r.brand_entity_id])) };
+  return entityCache.map;
+}
+
+/** Danh sách store trong Bảng mã + Entity đã lưu (để xem / sửa trên web). */
+export async function listStoreBrandEntities(): Promise<Array<{ store: string; brandEntityId: string; updatedBy: string | null; updatedAt: string | null }>> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ store: string; brand_entity_id: string | null; updated_by: string | null; updated_at: Date | null }[]>`
+    WITH names AS (
+      SELECT UPPER(BTRIM(name)) AS store FROM stores WHERE status = 'active'
+      UNION SELECT store_name FROM ppc_store_brand_entities
+    )
+    SELECT n.store, e.brand_entity_id, e.updated_by, e.updated_at
+    FROM names n LEFT JOIN ppc_store_brand_entities e ON e.store_name = n.store
+    ORDER BY n.store
+  `;
+  return rows.map((r) => ({ store: r.store, brandEntityId: r.brand_entity_id || "", updatedBy: r.updated_by, updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null }));
+}
+
+export async function saveStoreBrandEntity(storeName: string, brandEntityId: string, userId: string): Promise<void> {
+  const store = storeKey(storeName);
+  const entity = brandEntityId.trim().toUpperCase();
+  if (!store) throw new Error("Thiếu tên store.");
+  const sql = await getDatabaseClient();
+  if (!entity) {
+    await sql`DELETE FROM ppc_store_brand_entities WHERE store_name = ${store}`;
+  } else {
+    if (!BRAND_ENTITY_PATTERN.test(entity)) throw new Error("Brand Entity ID phải dạng ENTITY + chữ/số.");
+    await sql`
+      INSERT INTO ppc_store_brand_entities (store_name, brand_entity_id, updated_by, updated_at)
+      VALUES (${store}, ${entity}, ${userId}, NOW())
+      ON CONFLICT (store_name) DO UPDATE SET brand_entity_id = EXCLUDED.brand_entity_id, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+    `;
+  }
+  entityCache = null;
+}
+
 export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampSkuInfo[]> {
   const sql = await getDatabaseClient();
+  const storeEntities = await getStoreBrandEntities();
   const table = loaiHinh === "FBM" ? sql("accounting_sku_master_fbm") : sql("accounting_sku_master");
   const rows = await sql<SkuRow[]>`
     SELECT DISTINCT ON (UPPER(BTRIM(m.sku)))
@@ -67,8 +118,9 @@ export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampS
       niche: r.niche || "",
       picMkt: r.pic_mkt || "",
       brand: r.brand || "",
-      brandEntityId: r.brand_entity_id || "",
-      creativeAsinsVideo: r.creative_asins_video || "",
+      // Entity chuẩn của store; Creative ASIN (Video) luôn là ASIN của chính SKU (khớp 100% Bảng mã FBM, 842/845 FBA)
+      brandEntityId: storeEntities.get(storeKey(r.store_name)) || r.brand_entity_id || "",
+      creativeAsinsVideo: r.asin || r.creative_asins_video || "",
       creativeAsinsCollection: r.creative_asins_collection || "",
       videoMediaIds: r.video_media_ids || "",
       creativeHeadline: r.creative_headline || "",

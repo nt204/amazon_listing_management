@@ -15,6 +15,7 @@ import {
   SB_FIELD_LABELS,
   SB_FIELD_PLACEHOLDERS,
   missingSbFields,
+  sbFieldValue,
   BIDDING_STRATEGIES,
   DEFAULT_ADVANCED,
   NAME_FIELDS,
@@ -245,6 +246,72 @@ function MockupThumb({ url, size = 36 }: { url?: string; size?: number }) {
   );
 }
 
+/** Brand Entity ID theo store: lưu trên server, Enter / rời ô là lưu. */
+function StoreEntityEditor({ onSaved }: { onSaved: (store: string, entity: string) => void }) {
+  const [rows, setRows] = useState<Array<{ store: string; brandEntityId: string }>>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState<Record<string, "saving" | "saved" | string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/ppc/new-camp/brand-entities", { cache: "no-store" }).catch(() => null);
+      const json = res && res.ok ? await res.json().catch(() => ({})) : {};
+      if (!cancelled) setRows(Array.isArray(json.data) ? json.data : []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const save = async (store: string) => {
+    const value = (drafts[store] ?? "").trim().toUpperCase();
+    const current = rows.find((r) => r.store === store)?.brandEntityId ?? "";
+    if (drafts[store] === undefined || value === current) return;
+    setStatus((p) => ({ ...p, [store]: "saving" }));
+    const res = await fetch("/api/ppc/new-camp/brand-entities", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ store, brandEntityId: value }),
+    }).catch(() => null);
+    const json = res ? await res.json().catch(() => ({})) : {};
+    if (res?.ok) {
+      setRows(json.data || rows);
+      setDrafts((p) => { const n = { ...p }; delete n[store]; return n; });
+      setStatus((p) => ({ ...p, [store]: "saved" }));
+      onSaved(store, value);
+    } else {
+      setStatus((p) => ({ ...p, [store]: json.error || "Lỗi lưu" }));
+    }
+  };
+  return (
+    <div className="border-t border-slate-100 px-4 py-4">
+      <p className="mb-2.5 text-[13px] font-extrabold text-slate-800">Brand Entity ID theo store</p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {rows.map((r) => {
+          const st = status[r.store];
+          const value = drafts[r.store] ?? r.brandEntityId;
+          return (
+            <label key={r.store} className="flex items-center gap-2">
+              <span className="w-28 shrink-0 truncate text-xs font-bold text-slate-600">{r.store}</span>
+              <input
+                className={`${cellInputBase} font-mono ${st && st !== "saving" && st !== "saved" ? "border-rose-400 bg-rose-50" : value ? "border-slate-300 bg-white" : "border-amber-400 bg-amber-50"}`}
+                placeholder="ENTITY…"
+                value={value}
+                onChange={(e) => setDrafts((p) => ({ ...p, [r.store]: e.target.value }))}
+                onBlur={() => void save(r.store)}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                title={st && st !== "saving" && st !== "saved" ? st : undefined}
+              />
+              <span className="w-4 shrink-0">
+                {st === "saving" ? <CircleNotch size={14} className="animate-spin text-slate-400" /> : st === "saved" ? <CheckCircle size={14} weight="fill" className="text-emerald-600" /> : null}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function MoneyInput({ label, value, onChange, step = "1" }: { label: string; value: string; onChange: (v: string) => void; step?: string }) {
   return (
     <label className="block">
@@ -323,6 +390,7 @@ export function PpcNewCampView() {
   const [ppcStores, setPpcStores] = useState<Array<{ id: string; name: string; canManageActions?: boolean }>>([]);
   const [uploadStoreId, setUploadStoreId] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [uploadJobs, setUploadJobs] = useState<{ store: string; jobs: Array<{ id: string; fileName: string; campaigns: number; status: string; progress: number; error?: string }> } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [nameEdits, setNameEdits] = useState<Record<string, string>>({});
@@ -604,6 +672,44 @@ export function PpcNewCampView() {
     return () => clearInterval(timer);
   }, [pendingJobIds]);
 
+  // Tóm tắt trước khi upload: số camp / budget theo dạng chạy, thông tin SB, cảnh báo store & Brand Entity
+  const confirmSummary = useMemo(() => {
+    const camps = preview?.campaigns ?? [];
+    const store = ppcStores.find((st) => st.id === effectiveStoreId);
+    const budgetOf: Record<string, string> = {
+      SP03: match.sp03.dailyBudget, SB01: match.sb01.dailyBudget, SB05: match.sb05.dailyBudget, SP04: sp04.dailyBudget, FL: flasin.dailyBudget,
+    };
+    const labelOf: Record<string, string> = { SP03: "SP03 KW", SB01: "SB01 CK KW (Collection)", SB05: "SB05 VIDEO", SP04: "SP04 Auto", FL: "FL Asin" };
+    const runs = ["SP03", "SB01", "SB05", "SP04", "FL"]
+      .map((r) => {
+        const n = camps.filter((c) => c.key.startsWith(`${r}|`)).length;
+        const budget = Number(budgetOf[r]) || 0;
+        return { run: r, label: labelOf[r], campaigns: n, budget, total: n * budget };
+      })
+      .filter((r) => r.campaigns > 0);
+    const sbSkus = sbActive
+      ? selected.map((sku) => {
+        const key = sku.toUpperCase();
+        const info = skuByUpper.get(key);
+        const v = (f: SbField) => sbFieldValue(info, sbOverrides[key], f);
+        return { sku, brandEntityId: v("brandEntityId"), brand: v("brand"), video: v("videoMediaIds"), logo: v("brandLogoAssetId") };
+      })
+      : [];
+    const otherStore = selected
+      .map((sku) => ({ sku, store: skuByUpper.get(sku.toUpperCase())?.storeName?.trim() || "" }))
+      .filter((x) => store && x.store && x.store.toUpperCase() !== store.name.trim().toUpperCase());
+    const entities = [...new Set(sbSkus.map((x) => x.brandEntityId).filter(Boolean))];
+    return {
+      store,
+      runs,
+      totalCampaigns: camps.length,
+      totalBudget: runs.reduce((n, r) => n + r.total, 0),
+      sbSkus,
+      otherStore,
+      entities,
+    };
+  }, [preview, ppcStores, effectiveStoreId, match, sp04.dailyBudget, flasin.dailyBudget, sbActive, selected, skuByUpper, sbOverrides]);
+
   const dupNames = useMemo(() => {
     const seen = new Set<string>();
     const dup = new Set<string>();
@@ -644,7 +750,7 @@ export function PpcNewCampView() {
       : {},
   });
 
-  const submit = async (mode: "download" | "upload" = "download") => {
+  const submit = async (mode: "download" | "upload" = "download", confirmed = false) => {
     setNotices([]);
     if (selected.length === 0) return setNotices([{ kind: "error", text: "Vui lòng chọn ít nhất một SKU." }]);
     if (kwCampaignSelected && kwMode === "none") {
@@ -668,11 +774,7 @@ export function PpcNewCampView() {
       return setNotices([{ kind: "error", text: `${existingCount} camp đã có trên Amazon (ô đỏ ở bước 5). Sửa tên hoặc thêm đuôi tên rồi tạo lại.` }]);
     }
     const uploadStore = ppcStores.find((st) => st.id === effectiveStoreId);
-    if (mode === "upload") {
-      if (!uploadStore) return setNotices([{ kind: "error", text: "Chọn store để upload lên Amazon." }]);
-      const n = preview?.campaigns.length ?? 0;
-      if (!window.confirm(`Upload ${n} camp lên Amazon store ${uploadStore.name}?`)) return;
-    }
+    if (mode === "upload" && !uploadStore) return setNotices([{ kind: "error", text: "Chọn store để upload lên Amazon." }]);
     const fd = new FormData();
     if (mode === "upload") {
       fd.append("output", "upload");
@@ -704,6 +806,11 @@ export function PpcNewCampView() {
       fd.append("kwParts", JSON.stringify(kwParts.map((p) => ({ ...p, bids: p.bids.map((b) => b.trim()) }))));
     }
 
+    if (mode === "upload" && !confirmed) {
+      setConfirmOpen(true);
+      return;
+    }
+    setConfirmOpen(false);
     if (mode === "upload") setUploadBusy(true);
     else setBusy(true);
     try {
@@ -1096,6 +1203,14 @@ export function PpcNewCampView() {
                     </div>
                   </div>
                 )}
+                {showAdvanced && (
+                  <StoreEntityEditor
+                    onSaved={(store, entity) => {
+                      if (!entity) return;
+                      setAllSkus((prev) => prev.map((x) => ((x.storeName || "").trim().toUpperCase() === store ? { ...x, brandEntityId: entity } : x)));
+                    }}
+                  />
+                )}
               </div>
             </div>
           </Section>
@@ -1464,6 +1579,120 @@ export function PpcNewCampView() {
               </div>
             )}
           </Section>
+        </div>
+      )}
+
+      {confirmOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[2px]" onMouseDown={() => setConfirmOpen(false)}>
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl thin-scrollbar" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white"><CloudArrowUp size={18} weight="bold" /></span>
+              <h2 className="text-lg font-black text-slate-900">Xác nhận upload lên Amazon</h2>
+              <button type="button" onClick={() => setConfirmOpen(false)} className="ml-auto rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"><X size={16} weight="bold" /></button>
+            </div>
+
+            <div className="space-y-5 px-6 py-5">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  ["Store", confirmSummary.store?.name ?? "—"],
+                  ["SKU", String(selected.length)],
+                  ["Loại hình", `${loaiHinh} · ${trangThai}`],
+                  ["Ngày lên camp", ngay.split("-").reverse().join("/")],
+                ].map(([k, v]) => (
+                  <div key={k} className="rounded-xl bg-slate-50 px-3 py-2.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{k}</div>
+                    <div className="mt-0.5 truncate text-[15px] font-black text-slate-900">{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-100">
+                    <tr className="text-left text-xs font-black uppercase tracking-wide text-slate-700">
+                      <th className="px-3 py-2">Dạng chạy</th>
+                      <th className="px-3 py-2 text-right">Số camp</th>
+                      <th className="px-3 py-2 text-right">Budget / camp</th>
+                      <th className="px-3 py-2 text-right">Tổng / ngày</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {confirmSummary.runs.map((r) => (
+                      <tr key={r.run}>
+                        <td className="px-3 py-2 font-bold text-slate-900">{r.label}</td>
+                        <td className="px-3 py-2 text-right font-semibold">{r.campaigns}</td>
+                        <td className="px-3 py-2 text-right font-semibold">${r.budget.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-bold text-slate-900">${r.total.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-indigo-50">
+                      <td className="px-3 py-2 font-black text-indigo-900">Tổng</td>
+                      <td className="px-3 py-2 text-right font-black text-indigo-900">{confirmSummary.totalCampaigns}</td>
+                      <td />
+                      <td className="px-3 py-2 text-right font-black text-indigo-900">${confirmSummary.totalBudget.toFixed(2)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {confirmSummary.sbSkus.length > 0 && (
+                <div>
+                  <p className="mb-2 text-[13px] font-black text-slate-800">Thông tin Sponsored Brands</p>
+                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-100">
+                        <tr className="text-left font-black uppercase tracking-wide text-slate-700">
+                          <th className="px-3 py-2">SKU</th>
+                          <th className="px-3 py-2">Brand Entity ID</th>
+                          <th className="px-3 py-2">Brand</th>
+                          {match.sb05.run && <th className="px-3 py-2">Video</th>}
+                          {match.sb01.run && <th className="px-3 py-2">Logo</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {confirmSummary.sbSkus.map((x) => (
+                          <tr key={x.sku}>
+                            <td className="px-3 py-2 font-mono font-bold text-slate-900">{x.sku}</td>
+                            <td className="px-3 py-2 font-mono font-semibold">{x.brandEntityId || <span className="text-rose-600">Thiếu</span>}</td>
+                            <td className="px-3 py-2 font-semibold">{x.brand || <span className="text-rose-600">Thiếu</span>}</td>
+                            {match.sb05.run && <td className="px-3 py-2">{x.video ? <CheckCircle size={16} weight="fill" className="text-emerald-600" /> : <span className="font-bold text-rose-600">Thiếu</span>}</td>}
+                            {match.sb01.run && <td className="px-3 py-2">{x.logo ? <CheckCircle size={16} weight="fill" className="text-emerald-600" /> : <span className="font-bold text-rose-600">Thiếu</span>}</td>}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {(confirmSummary.otherStore.length > 0 || confirmSummary.entities.length > 1) && (
+                <div className="space-y-1.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] font-semibold text-amber-900">
+                  <p className="flex items-center gap-1.5 font-black"><WarningCircle size={16} weight="fill" /> Kiểm tra lại</p>
+                  {confirmSummary.otherStore.length > 0 && (
+                    <p>
+                      SKU thuộc store khác trong Bảng mã:{" "}
+                      {confirmSummary.otherStore.slice(0, 6).map((x) => `${x.sku} (${x.store})`).join(", ")}
+                      {confirmSummary.otherStore.length > 6 ? "…" : ""}
+                    </p>
+                  )}
+                  {confirmSummary.entities.length > 1 && <p>Các SKU dùng {confirmSummary.entities.length} Brand Entity ID khác nhau — camp SB chỉ chạy được với brand của store đang upload.</p>}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 bg-slate-50/60 px-6 py-4">
+              <button type="button" onClick={() => setConfirmOpen(false)} className="rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">Huỷ</button>
+              <button
+                type="button"
+                onClick={() => void submit("upload", true)}
+                disabled={uploadBusy}
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-black text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
+              >
+                {uploadBusy ? <CircleNotch size={16} className="animate-spin" /> : <CloudArrowUp size={16} weight="bold" />}
+                Xác nhận upload {confirmSummary.totalCampaigns} camp
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -122,3 +122,12 @@ export const DEFAULT_ADVANCED: AdvancedOptions = {
   phrasePct: 90,
   broadPct: 80,
 };
+
+// ---------------------------------------------------------------------------
+// Brand Entity ID chuẩn theo store: lưu ở bảng ppc_store_brand_entities (sửa trên web)
+// ---------------------------------------------------------------------------
+export const BRAND_ENTITY_PATTERN = /^ENTITY[A-Z0-9]{8,}$/;
+
+export function storeKey(storeName: string | null | undefined): string {
+  return (storeName || "").trim().toUpperCase();
+}
