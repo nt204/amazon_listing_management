@@ -374,6 +374,8 @@ async function downloadWithRetry(
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
       console.error(`  ❌ [${label}] Lần ${attempt}/${maxAttempts}: ${lastError}`);
+      // Thiếu quyền trên Seller Central: thử lại không thay đổi được gì
+      if (lastError.startsWith(NO_PERMISSION_PREFIX)) break;
       if (attempt < maxAttempts) {
         // Crawler cũ refresh/chờ 30 giây rồi mới thử lại. Mỗi hàm download ở đây
         // đều điều hướng lại trang nguồn, nên không cần refresh riêng.
@@ -666,6 +668,21 @@ async function dismissOverlays(page: Page): Promise<void> {
   } catch {}
 }
 
+const NO_PERMISSION_PREFIX = "[Thiếu quyền]";
+
+/**
+ * Tài khoản đăng nhập profile không có quyền xem trang (Amazon hiện trang "Request access").
+ * Thử lại vô ích → ném lỗi có tiền tố NO_PERMISSION_PREFIX để downloadWithRetry dừng ngay.
+ */
+async function assertSellerCentralAccess(page: Page, permission: string): Promise<void> {
+  const denied = await page
+    .evaluate(() => /Request access|do not have (sufficient|the) permissions?|Yêu cầu quyền truy cập|không có đủ quyền/i.test(document.body?.innerText || ""))
+    .catch(() => false);
+  if (denied) {
+    throw new Error(`${NO_PERMISSION_PREFIX} Tài khoản Seller Central của profile chưa được cấp quyền "${permission}" — nhờ chủ tài khoản cấp quyền (Settings → User Permissions).`);
+  }
+}
+
 /**
  * File 03: Return Report
  */
@@ -681,6 +698,7 @@ async function downloadFile03Returns(page: Page, downloadDir: string, targetDate
   }
 
   await dismissOverlays(page);
+  await assertSellerCentralAccess(page, "Reports → Payments");
 
   // Tính 7 ngày gần nhất
   const dateFromStr = formatUsDateFromIso(targetDateStr, 6);
@@ -734,6 +752,7 @@ async function downloadFile04ServiceFees(page: Page, downloadDir: string, target
   }
 
   await dismissOverlays(page);
+  await assertSellerCentralAccess(page, "Reports → Payments");
 
   const dateFromStr = formatUsDateFromIso(targetDateStr, 6);
   const dateToStr = formatUsDateFromIso(targetDateStr);
