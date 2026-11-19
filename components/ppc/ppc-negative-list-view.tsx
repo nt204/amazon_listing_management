@@ -565,10 +565,12 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
       window.URL.revokeObjectURL(url);
       const count = Number(res.headers.get("X-Action-Count") || 0);
       const skipped = Number(res.headers.get("X-Skipped-Count") || 0);
+      const fileCount = Number(res.headers.get("X-File-Count") || 1);
       notify(
-        `Đã xuất file ${count.toLocaleString("en-US")} dòng ${matchType === "negativePhrase" ? "Negative Phrase" : "Negative Exact"}` +
-          (skipped > 0 ? ` (bỏ qua ${skipped.toLocaleString("en-US")} cặp đã phủ định)` : "") +
-          ". Upload file lên Amazon Bulk Operations xong thì tick “Đã upload lên Amazon” ở mục Lô chờ xác nhận.",
+        `Đã xuất ${count.toLocaleString("en-US")} dòng ${matchType === "negativePhrase" ? "Negative Phrase" : "Negative Exact"}` +
+          (fileCount > 1 ? ` (file zip gồm ${fileCount} file)` : "") +
+          (skipped > 0 ? `, bỏ qua ${skipped.toLocaleString("en-US")} cặp đã phủ định` : "") +
+          ". Upload xong file nào thì tick “Đã upload” file đó ở mục Lô chờ xác nhận.",
         "success",
       );
       void loadPendingBatches();
@@ -1108,6 +1110,9 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
                   <ul className="space-y-1 text-slate-600">
                     <li>• Store: <b>{selectedStore}</b> · ASIN: <span className="font-mono">{loadedAsins.join(", ")}</span></li>
                     <li>• Kiểu: <b>{matchLabel}</b> ở cấp <b>Campaign</b> (Campaign Negative Keyword)</li>
+                    {totalRows > 30000 && (
+                      <li className="text-indigo-700">• Hơn 30,000 dòng → tự chia thành nhiều file (≤ 30,000 dòng/file), mỗi file 1 job upload.</li>
+                    )}
                     <li>• Cặp keyword × campaign đã có trong Negative Hub (hoặc đang Auto Upload) sẽ được bỏ qua. Lô mới xuất file chưa xác nhận thì vẫn upload.</li>
                     {sdCount > 0 && <li className="text-amber-700">• {sdCount} campaign SD sẽ bị bỏ qua.</li>}
                   </ul>

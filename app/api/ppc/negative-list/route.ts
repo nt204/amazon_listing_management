@@ -17,13 +17,17 @@ import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 import { loadAsinCampaigns, normalizeAsins, searchAsins } from "@/lib/ppc/asin-campaigns";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 import crypto from "node:crypto";
+import JSZip from "jszip";
 
 export const runtime = "nodejs";
 
 const MAX_KEYWORDS = 1000;
 const MAX_ASINS = 50;
-// 1 ASIN có thể chạy vài trăm campaign → 300 campaign × 150 keyword ≈ 45k dòng
-const MAX_ROWS = 50000;
+// 1 ASIN có thể chạy vài trăm campaign (kể cả SB) → 330 campaign × 311 keyword ≈ 100k dòng.
+// Chia thành nhiều file, mỗi file tối đa ROWS_PER_FILE dòng (không cắt đôi 1 campaign): Auto Upload = mỗi file 1 job,
+// Xuất File = nhiều file thì nén zip.
+const ROWS_PER_FILE = 30000;
+const MAX_ROWS = 300000;
 const HEADER_WORDS = new Set(["negative phrase kw", "negative exact kw", "negative kw", "keyword", "keywords"]);
 
 type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
@@ -172,63 +176,116 @@ export async function POST(request: Request) {
       );
     }
 
-    const buffer = await exportBulksheetUpdateExcel(recommendations);
+    // Chia file theo campaign (recommendations đã xếp liền theo campaign)
+    const parts: NegativeListRecommendation[][] = [];
+    {
+      let current: NegativeListRecommendation[] = [];
+      let i = 0;
+      while (i < recommendations.length) {
+        const camp = recommendations[i].campaignName;
+        let j = i;
+        while (j < recommendations.length && recommendations[j].campaignName === camp) j++;
+        const group = recommendations.slice(i, j);
+        if (current.length > 0 && current.length + group.length > ROWS_PER_FILE) {
+          parts.push(current);
+          current = [];
+        }
+        current.push(...group);
+        i = j;
+      }
+      if (current.length > 0) parts.push(current);
+    }
+
     const cleanStore = store.name.replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
     const tag = matchType === "negativePhrase" ? "NegativePhrase" : "NegativeExact";
-    const fileName = `Upload_${cleanStore}_NegList_${tag}_${keywords.length}KW_${campaigns.length}Camp_${exportTimestamp(new Date())}.xlsx`;
+    const stamp = exportTimestamp(new Date());
+    const files: Array<{ fileName: string; recs: NegativeListRecommendation[]; buffer: Buffer; keywordCount: number; campaignCount: number }> = [];
+    for (let idx = 0; idx < parts.length; idx++) {
+      const recs = parts[idx];
+      const keywordCount = new Set(recs.map((r) => r.keyword)).size;
+      const campaignCount = new Set(recs.map((r) => r.campaignName)).size;
+      const partTag = parts.length > 1 ? `_Part${idx + 1}of${parts.length}` : "";
+      const fileName = `Upload_${cleanStore}_NegList_${tag}_${keywordCount}KW_${campaignCount}Camp_${stamp}${partTag}.xlsx`;
+      const buffer = await exportBulksheetUpdateExcel(recs);
+      files.push({ fileName, recs, buffer, keywordCount, campaignCount });
+    }
 
-    // Xuất file: tải về để tự upload lên Amazon. Ghi thành 1 lô 'exported' — chỉ sang Negative Hub khi người dùng
-    // tick "Đã upload lên Amazon" (hoặc Auto Upload lại các cặp này).
+    // Xuất file: tải về để tự upload lên Amazon. Mỗi file = 1 lô 'exported' — chỉ sang Negative Hub khi người dùng
+    // tick "Đã upload" (hoặc bấm Auto Upload lô đó).
     if (body?.mode === "export") {
-      const batchId = crypto.randomUUID();
-      const campaignCount = new Set(recommendations.map((r) => r.campaignName)).size;
-      const keywordCount = new Set(recommendations.map((r) => r.keyword)).size;
-      await sql`
-        INSERT INTO ppc_negative_batches (
-          id, team_id, store_id, store_name, source, file_name, match_type, asins,
-          keyword_count, campaign_count, row_count, status, created_by, created_at
-        ) VALUES (
-          ${batchId}, ${actor.teamId}, ${store.id}, ${store.name}, 'NEGATIVE_LIST', ${fileName}, ${matchType},
-          ${sql.json(asins)}, ${keywordCount}, ${campaignCount}, ${recommendations.length}, 'EXPORTED', ${actor.userId}, NOW()
-        )
-      `;
-      await registerNegatives(sql, { teamId: actor.teamId, store, recommendations, matchType, state: "exported", jobId: batchId });
-      const asciiFileName = fileName.replace(/[^A-Za-z0-9 ._+()-]+/g, "").trim() || "Negative_List.xlsx";
-      return new Response(new Uint8Array(buffer), {
+      for (const f of files) {
+        const batchId = crypto.randomUUID();
+        await sql`
+          INSERT INTO ppc_negative_batches (
+            id, team_id, store_id, store_name, source, file_name, match_type, asins,
+            keyword_count, campaign_count, row_count, status, created_by, created_at
+          ) VALUES (
+            ${batchId}, ${actor.teamId}, ${store.id}, ${store.name}, 'NEGATIVE_LIST', ${f.fileName}, ${matchType},
+            ${sql.json(asins)}, ${f.keywordCount}, ${f.campaignCount}, ${f.recs.length}, 'EXPORTED', ${actor.userId}, NOW()
+          )
+        `;
+        await registerNegatives(sql, { teamId: actor.teamId, store, recommendations: f.recs, matchType, state: "exported", jobId: batchId });
+      }
+
+      let outBytes: Uint8Array;
+      let outName: string;
+      let contentType: string;
+      if (files.length === 1) {
+        outBytes = new Uint8Array(files[0].buffer);
+        outName = files[0].fileName;
+        contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      } else {
+        const zip = new JSZip();
+        for (const f of files) zip.file(f.fileName, f.buffer);
+        outBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+        outName = `Upload_${cleanStore}_NegList_${tag}_${recommendations.length}rows_${files.length}files_${stamp}.zip`;
+        contentType = "application/zip";
+      }
+      const asciiFileName = outName.replace(/[^A-Za-z0-9 ._+()-]+/g, "").trim() || "Negative_List.xlsx";
+      return new Response(Buffer.from(outBytes), {
         status: 200,
         headers: {
-          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "Content-Disposition": `attachment; filename="${asciiFileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+          "Content-Type": contentType,
+          "Content-Disposition": `attachment; filename="${asciiFileName}"; filename*=UTF-8''${encodeURIComponent(outName)}`,
           "Cache-Control": "no-store",
           "X-Action-Count": String(recommendations.length),
           "X-Skipped-Count": String(skipped),
-          "X-Batch-Id": batchId,
+          "X-File-Count": String(files.length),
         },
       });
     }
 
-    const { jobId } = await queueNegativeAutoUpload(sql, {
-      teamId: actor.teamId,
-      userId: actor.userId,
-      store,
-      recommendations,
-      matchType,
-      asins,
-      buffer,
-      fileName,
-    });
+    // Auto Upload: mỗi file 1 job trên Mac mini
+    const jobs: Array<{ jobId: string; fileName: string; actionCount: number }> = [];
+    for (const f of files) {
+      const { jobId } = await queueNegativeAutoUpload(sql, {
+        teamId: actor.teamId,
+        userId: actor.userId,
+        store,
+        recommendations: f.recs,
+        matchType,
+        asins,
+        buffer: f.buffer,
+        fileName: f.fileName,
+      });
+      jobs.push({ jobId, fileName: f.fileName, actionCount: f.recs.length });
+    }
 
     return Response.json(
       {
         success: true,
-        jobId,
-        fileName,
+        jobId: jobs[0].jobId,
+        jobs,
+        fileName: jobs.map((j) => j.fileName).join(", "),
         actionCount: recommendations.length,
         skipped,
         keywordCount: keywords.length,
         campaignCount: campaigns.length,
         storeName: store.name,
-        message: `Đã tạo file Bulk và xếp hàng upload trên Mac mini (${keywords.length} keyword × ${campaigns.length} campaign = ${recommendations.length} dòng ${amazonMatch}).`,
+        message:
+          `Đã xếp hàng upload trên Mac mini: ${keywords.length} keyword × ${campaigns.length} campaign = ` +
+          `${recommendations.length.toLocaleString("en-US")} dòng ${amazonMatch}` +
+          (jobs.length > 1 ? `, chia ${jobs.length} file (tối đa ${ROWS_PER_FILE.toLocaleString("en-US")} dòng/file).` : "."),
       },
       { status: 202 },
     );
