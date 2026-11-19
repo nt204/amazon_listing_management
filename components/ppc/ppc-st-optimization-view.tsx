@@ -150,6 +150,7 @@ export function PpcStOptimizationView({
       if (selectedStore && selectedStore !== "ALL") {
         params.set("storeName", selectedStore);
       }
+      if (channel) params.set("channel", channel);
       // Cùng phạm vi với danh sách ứng viên: mặc định negative đang bật của campaign đang chạy
       const res = await fetch(`/api/ppc/negative-keywords?${params.toString()}`, { signal });
       if (!res.ok) return;
@@ -170,7 +171,7 @@ export function PpcStOptimizationView({
   const registryLoadedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isActive) return;
-    const loadKey = JSON.stringify([selectedStore]);
+    const loadKey = JSON.stringify([selectedStore, channel]);
     if (registryLoadedKeyRef.current === loadKey) return;
     registryLoadedKeyRef.current = loadKey;
     let finished = false;
@@ -181,7 +182,7 @@ export function PpcStOptimizationView({
       if (!finished) registryLoadedKeyRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchRegistry đọc store mới nhất
-  }, [isActive, selectedStore]);
+  }, [isActive, selectedStore, channel]);
 
   // Auto Upload AdsPower modal state
   const [isAutoUploadModalOpen, setIsAutoUploadModalOpen] = useState<boolean>(false);
@@ -1354,15 +1355,16 @@ export function PpcStOptimizationView({
       ) : subTab === "negative_list" ? (
         <PpcNegativeListView
           // Đổi store → dựng lại view, bỏ kết quả tra campaign của store cũ
-          key={selectedStore}
+          key={`${selectedStore}:${channel || ""}`}
           selectedStore={selectedStore}
+          channel={channel}
           notify={notify}
           onQueued={() => fetchRegistry()}
           onOpenActionQueue={onOpenActionQueue}
           onKeywordCountChange={setNegativeListCount}
         />
       ) : (
-        <PpcNegativeHubView selectedStore={selectedStore} notify={notify} onChanged={() => fetchRegistry()} />
+        <PpcNegativeHubView selectedStore={selectedStore} channel={channel} notify={notify} onChanged={() => fetchRegistry()} />
       )}
 
       {/* 6. Auto Upload AdsPower Confirmation & Execution Modal */}

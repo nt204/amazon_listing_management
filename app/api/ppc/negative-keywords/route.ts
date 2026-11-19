@@ -1,6 +1,7 @@
 import { ApiError, authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
+import { ppcChannelWhere, resolvePpcChannelScope, type PpcChannelScope } from "@/lib/ppc/channel-filter";
 import { getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere, type PpcCampaignStatusFilter } from "@/lib/ppc/campaign-status-filter";
 
 type Db = Awaited<ReturnType<typeof getDatabaseClient>>;
@@ -37,7 +38,11 @@ async function resolveStoreId(sql: Db, teamId: string, storeId: string, storeNam
   return null;
 }
 
-async function hubSummary(sql: Db, teamId: string, storeId: string | null) {
+function channelWhere(sql: Db, scope: PpcChannelScope | null) {
+  return ppcChannelWhere(sql, scope, { campaignCol: "nr.campaign_name" });
+}
+
+async function hubSummary(sql: Db, teamId: string, storeId: string | null, scope: PpcChannelScope | null = null) {
   const [row] = await sql<{ total: number; campaigns: number; spend: number; batches: number }[]>`
     SELECT count(*)::int AS total,
            count(DISTINCT nr.campaign_name)::int AS campaigns,
@@ -46,6 +51,7 @@ async function hubSummary(sql: Db, teamId: string, storeId: string | null) {
     FROM ppc_negative_registry nr
     WHERE nr.team_id = ${teamId} AND nr.state = ${HUB_STATE}
       ${storeId ? sql`AND nr.store_id = ${storeId}` : sql``}
+      AND ${channelWhere(sql, scope)}
   `;
   return {
     totalNegatives: Number(row?.total || 0),
@@ -57,7 +63,7 @@ async function hubSummary(sql: Db, teamId: string, storeId: string | null) {
 
 async function listBatches(
   sql: Db,
-  p: { teamId: string; storeId: string | null; adType: string; search: string },
+  p: { teamId: string; storeId: string | null; adType: string; search: string; scope: PpcChannelScope | null },
 ) {
   const like = p.search ? `%${p.search}%` : "";
   const rows = await sql<Array<{
@@ -100,6 +106,7 @@ async function listBatches(
       WHERE nr.team_id = ${p.teamId} AND nr.state = ${HUB_STATE}
         ${p.storeId ? sql`AND nr.store_id = ${p.storeId}` : sql``}
         ${p.adType && p.adType !== "ALL" ? sql`AND nr.ad_type = ${p.adType}` : sql``}
+        AND ${channelWhere(sql, p.scope)}
       GROUP BY 1
       ${like ? sql`HAVING bool_or(lower(nr.keyword_text) LIKE ${like} OR lower(nr.campaign_name) LIKE ${like})` : sql``}
     )
@@ -139,13 +146,14 @@ async function listBatches(
   }));
 }
 
-async function batchDetail(sql: Db, p: { teamId: string; storeId: string | null; batchKey: string }) {
+async function batchDetail(sql: Db, p: { teamId: string; storeId: string | null; batchKey: string; scope: PpcChannelScope | null }) {
   const rows = await sql<Array<{ keyword_text: string; campaign_name: string; ad_group_name: string | null; match_type: string; ad_type: string; clicks: number; spend: number }>>`
     SELECT lower(nr.keyword_text) AS keyword_text, nr.campaign_name, nr.ad_group_name, nr.match_type, nr.ad_type, nr.clicks, nr.spend
     FROM ppc_negative_registry nr
     WHERE nr.team_id = ${p.teamId} AND nr.state = ${HUB_STATE}
       ${p.storeId ? sql`AND nr.store_id = ${p.storeId}` : sql``}
       AND ${batchKeyExpr(sql)} = ${p.batchKey}
+      AND ${channelWhere(sql, p.scope)}
     LIMIT 100000
   `;
   const kwMap = new Map<string, { keyword: string; campaigns: number; clicks: number; spend: number }>();
@@ -181,15 +189,17 @@ export async function GET(request: Request) {
     const view = searchParams.get("view") || "";
     if (view === "batches" || view === "batch") {
       const hubStoreId = await resolveStoreId(sql, actor.teamId, storeId, storeName);
+      // Store chia kênh (FASTPEACE · FBA / FBM) → chỉ lấy campaign thuộc kênh đang chọn
+      const scope = await resolvePpcChannelScope(sql, storeName, searchParams.get("channel"));
       if (view === "batch") {
         const batchKey = searchParams.get("batchKey")?.trim() || "";
         if (!batchKey) throw new ApiError("Thiếu mã lô.", 400);
-        const detail = await batchDetail(sql, { teamId: actor.teamId, storeId: hubStoreId, batchKey });
+        const detail = await batchDetail(sql, { teamId: actor.teamId, storeId: hubStoreId, batchKey, scope });
         return Response.json({ success: true, data: detail });
       }
       const [batches, summary] = await Promise.all([
-        listBatches(sql, { teamId: actor.teamId, storeId: hubStoreId, adType, search }),
-        hubSummary(sql, actor.teamId, hubStoreId),
+        listBatches(sql, { teamId: actor.teamId, storeId: hubStoreId, adType, search, scope }),
+        hubSummary(sql, actor.teamId, hubStoreId, scope),
       ]);
       return Response.json({ success: true, data: { batches, summary } });
     }
@@ -260,7 +270,12 @@ export async function GET(request: Request) {
     const lookupKeys = Array.from(lookupKeysSet);
 
     // items chỉ lấy 2000 dòng mới nhất (tra nhanh phía client); số tổng đếm thật trên toàn bộ Negative Hub
-    const summary = await hubSummary(sql, actor.teamId, await resolveStoreId(sql, actor.teamId, storeId, storeName));
+    const summary = await hubSummary(
+      sql,
+      actor.teamId,
+      await resolveStoreId(sql, actor.teamId, storeId, storeName),
+      await resolvePpcChannelScope(sql, storeName, searchParams.get("channel")),
+    );
 
     return Response.json({
       success: true,
@@ -293,13 +308,16 @@ export async function DELETE(request: Request) {
     // Xoá cả 1 lô khỏi Negative Hub (chỉ xoá bản ghi lưu vết, không gỡ phủ định trên Amazon)
     if (batchKey) {
       const sql = await getDatabaseClient();
-      const hubStoreId = await resolveStoreId(sql, actor.teamId, "", searchParams.get("storeName")?.trim() || "");
+      const delStoreName = searchParams.get("storeName")?.trim() || "";
+      const hubStoreId = await resolveStoreId(sql, actor.teamId, "", delStoreName);
       if (!hubStoreId) throw new ApiError("Vui lòng chọn 1 Store cụ thể.", 400);
       await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, hubStoreId);
+      const delScope = await resolvePpcChannelScope(sql, delStoreName, searchParams.get("channel"));
       const result = await sql`
         DELETE FROM ppc_negative_registry nr
         WHERE nr.team_id = ${actor.teamId} AND nr.store_id = ${hubStoreId} AND nr.state = ${HUB_STATE}
           AND ${batchKeyExpr(sql)} = ${batchKey}
+          AND ${channelWhere(sql, delScope)}
         RETURNING nr.id
       `;
       return Response.json({

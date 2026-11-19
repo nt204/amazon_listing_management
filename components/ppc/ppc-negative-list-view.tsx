@@ -79,6 +79,8 @@ function Mockup({ url, size }: { url: string | null; size: number }) {
 
 interface PpcNegativeListViewProps {
   selectedStore: string;
+  /** Kênh FBA / FBM của store chia kênh (FASTPEACE) — lô chỉ hiện campaign thuộc kênh này. */
+  channel?: "FBA" | "FBM" | null;
   notify: (message: string, type?: "success" | "error") => void;
   onQueued?: () => void;
   /** Mở ngăn Action Queue (phần "Kết quả thực thi") để theo dõi job vừa xếp hàng. */
@@ -103,7 +105,119 @@ function parseKeywords(text: string): string[] {
 
 const fmtMoney = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function PpcNegativeListView({ selectedStore, notify, onQueued, onOpenActionQueue, onKeywordCountChange }: PpcNegativeListViewProps) {
+const fmtBatchTime = (v: string) =>
+  new Date(v).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric" });
+
+function PendingBatchRows({
+  batch: b,
+  open,
+  busy,
+  isAuto,
+  onToggle,
+  onConfirm,
+  onAutoUpload,
+  onCancel,
+}: {
+  batch: PendingBatch;
+  open: boolean;
+  busy: boolean;
+  isAuto: boolean;
+  onToggle: () => void;
+  onConfirm: () => void;
+  onAutoUpload: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <>
+      <tr className={`align-middle ${open ? "bg-slate-50" : "hover:bg-slate-50"}`}>
+        <td className="py-2.5 pl-4 pr-2">
+          <button type="button" onClick={onToggle} className="text-slate-500 cursor-pointer" title="Xem keyword">
+            <CaretRight size={12} weight="bold" className={`transition-transform ${open ? "rotate-90" : ""}`} />
+          </button>
+        </td>
+        <td className="py-2.5 px-2 min-w-[220px]">
+          <div className="flex items-center gap-2">
+            {isAuto ? (
+              <CloudArrowUp size={16} weight="bold" className="text-rose-600 shrink-0" />
+            ) : (
+              <FileXls size={16} weight="bold" className="text-emerald-600 shrink-0" />
+            )}
+            <span className="font-bold text-slate-800 break-all">{b.fileName || b.id}</span>
+          </div>
+        </td>
+        <td className="py-2.5 px-2 whitespace-nowrap text-slate-700">{fmtBatchTime(b.createdAt)}</td>
+        <td className="py-2.5 px-2 whitespace-nowrap text-slate-700">{b.createdBy || "—"}</td>
+        <td className="py-2.5 px-2 whitespace-nowrap">
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+            {b.matchType === "negativeExact" ? "Negative Exact" : "Negative Phrase"}
+          </span>
+        </td>
+        <td className="py-2.5 px-2 text-right font-mono font-bold text-orange-600">{b.keywordCount.toLocaleString("en-US")}</td>
+        <td className="py-2.5 px-2 text-right font-mono font-bold text-indigo-600">{b.campaignCount.toLocaleString("en-US")}</td>
+        <td className="py-2.5 px-2 text-right font-mono font-black text-slate-900">{b.rowCount.toLocaleString("en-US")}</td>
+        <td className="py-2.5 pl-2 pr-4">
+          {isAuto ? (
+            <div className="flex justify-end">
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-bold whitespace-nowrap">
+                <CircleNotch size={12} className="animate-spin" /> Đang Auto Upload{b.status ? ` · ${b.status}` : ""}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={busy}
+                className="px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-700 hover:text-rose-600 hover:border-rose-300 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                Huỷ lô
+              </button>
+              <button
+                type="button"
+                onClick={onAutoUpload}
+                disabled={busy}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-black hover:bg-rose-700 cursor-pointer disabled:opacity-60 shadow-xs whitespace-nowrap"
+              >
+                <CloudArrowUp size={14} weight="bold" />
+                Auto Upload
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                disabled={busy}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 cursor-pointer disabled:opacity-60 shadow-xs whitespace-nowrap"
+              >
+                {busy ? <CircleNotch size={14} className="animate-spin" /> : <CheckSquare size={14} weight="bold" />}
+                Đã upload
+              </button>
+            </div>
+          )}
+        </td>
+      </tr>
+      {open && (
+        <tr className="bg-slate-50">
+          <td></td>
+          <td colSpan={8} className="pb-3 pr-4">
+            <div className="flex flex-wrap gap-1">
+              {b.keywords.map((k) => (
+                <span key={k} className="px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-700 text-[10px] font-mono">
+                  {k}
+                </span>
+              ))}
+              {b.keywordCount > b.keywords.length && (
+                <span className="px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
+                  +{(b.keywordCount - b.keywords.length).toLocaleString("en-US")} từ
+                </span>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+export function PpcNegativeListView({ selectedStore, channel = null, notify, onQueued, onOpenActionQueue, onKeywordCountChange }: PpcNegativeListViewProps) {
   const [picks, setPicks] = useState<AsinPick[]>([]);
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<AsinPick[]>([]);
@@ -154,20 +268,23 @@ export function PpcNegativeListView({ selectedStore, notify, onQueued, onOpenAct
   // Lô chờ xác nhận (Xuất File) / đang Auto Upload
   const [pendingBatches, setPendingBatches] = useState<PendingBatch[]>([]);
   const [batchBusy, setBatchBusy] = useState<string | null>(null);
-  const [cancelTarget, setCancelTarget] = useState<PendingBatch | null>(null);
+  // Thao tác cần xác nhận trên 1 lô: huỷ lô / Auto Upload lô đã xuất
+  const [pendingAction, setPendingAction] = useState<{ batch: PendingBatch; action: "cancel" | "auto_upload" } | null>(null);
   const [openBatchId, setOpenBatchId] = useState<string | null>(null);
 
   const loadPendingBatches = useCallback(async () => {
     // View được dựng lại theo store (key={selectedStore}) → store "ALL" chỉ cần bỏ qua
     if (!selectedStore || selectedStore === "ALL") return;
     try {
-      const res = await fetch(`/api/ppc/negative-list/batches?storeName=${encodeURIComponent(selectedStore)}`, { cache: "no-store" });
+      const params = new URLSearchParams({ storeName: selectedStore });
+      if (channel) params.set("channel", channel);
+      const res = await fetch(`/api/ppc/negative-list/batches?${params}`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.success) setPendingBatches(json.batches || []);
     } catch {
       // bỏ qua lỗi tải nền
     }
-  }, [selectedStore]);
+  }, [selectedStore, channel]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- setState chỉ chạy sau khi fetch xong
@@ -184,20 +301,22 @@ export function PpcNegativeListView({ selectedStore, notify, onQueued, onOpenAct
     return () => clearInterval(timer);
   }, [hasRunningAuto, loadPendingBatches]);
 
-  const handleBatchAction = async (batch: PendingBatch, action: "confirm" | "cancel") => {
+  const handleBatchAction = async (batch: PendingBatch, action: "confirm" | "cancel" | "auto_upload") => {
     setBatchBusy(batch.id);
     try {
       const res = await fetch("/api/ppc/negative-list/batches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeName: selectedStore, batchId: batch.id, action }),
+        body: JSON.stringify({ storeName: selectedStore, channel, batchId: batch.id, action }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.error || json.message || `HTTP ${res.status}`);
       notify(json.message, "success");
-      setCancelTarget(null);
+      setPendingAction(null);
       await loadPendingBatches();
       onQueuedRef.current?.();
+      // Auto Upload → mở ngăn Action Queue để theo dõi tiến độ như nút Auto Upload thường
+      if (action === "auto_upload") onOpenActionQueue?.();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Lỗi khi cập nhật lô.", "error");
     } finally {
@@ -679,89 +798,53 @@ export function PpcNegativeListView({ selectedStore, notify, onQueued, onOpenAct
         )}
       </div>
 
-      {/* 1b. Lô chờ xác nhận: Xuất File chờ tick "Đã upload", Auto Upload đang chạy */}
+      {/* 1b. Lô chờ xác nhận: Xuất File chờ tick "Đã upload" / Auto Upload, lô Auto Upload đang chạy */}
       {pendingBatches.length > 0 && (
         <div className="bg-white border border-amber-300 rounded-2xl shadow-2xs overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-amber-200 bg-amber-50">
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-amber-200 bg-amber-50">
             <WarningCircle size={15} weight="bold" className="text-amber-700" />
-            <span className="text-xs font-black text-slate-800">Lô chờ xác nhận</span>
+            <span className="text-xs font-black text-slate-800">Lô chờ xác nhận{channel ? ` · ${channel}` : ""}</span>
             <span className="px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[11px] font-mono font-bold">{pendingBatches.length}</span>
-            <span className="text-[11px] text-slate-600 hidden md:inline">
-              — chưa tính là đã phủ định. Upload file lên Amazon xong thì tick “Đã upload” để chuyển sang Negative Hub.
+            <span className="text-[11px] text-slate-600">
+              Chưa tính là đã phủ định. Đã upload tay → tick “Đã upload”. Lỡ xuất mà chưa upload → bấm “Auto Upload”.
             </span>
           </div>
-          <div className="divide-y divide-slate-100">
-            {pendingBatches.map((b) => {
-              const isAuto = b.kind === "AUTO_UPLOAD";
-              const open = openBatchId === b.id;
-              const busy = batchBusy === b.id;
-              return (
-                <div key={b.id} className="px-4 py-2.5">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setOpenBatchId(open ? null : b.id)}
-                      className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer"
-                    >
-                      <CaretRight size={12} weight="bold" className={`text-slate-500 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-                      {isAuto ? (
-                        <CloudArrowUp size={16} weight="bold" className="text-rose-600 shrink-0" />
-                      ) : (
-                        <FileXls size={16} weight="bold" className="text-emerald-600 shrink-0" />
-                      )}
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-800 break-all">{b.fileName || b.id}</p>
-                        <p className="text-[11px] text-slate-600">
-                          {new Date(b.createdAt).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
-                          {b.createdBy ? ` · ${b.createdBy}` : ""} · {b.matchType === "negativeExact" ? "Negative Exact" : "Negative Phrase"} ·{" "}
-                          <b>{b.keywordCount.toLocaleString("en-US")}</b> kw × <b>{b.campaignCount.toLocaleString("en-US")}</b> camp ={" "}
-                          <b>{b.rowCount.toLocaleString("en-US")}</b> dòng
-                        </p>
-                      </div>
-                    </button>
-                    {isAuto ? (
-                      <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-bold">
-                        <CircleNotch size={12} className="animate-spin" /> Đang Auto Upload{b.status ? ` · ${b.status}` : ""}
-                      </span>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setCancelTarget(b)}
-                          disabled={busy}
-                          className="px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-700 hover:text-rose-600 hover:border-rose-300 cursor-pointer disabled:opacity-50"
-                        >
-                          Huỷ lô
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleBatchAction(b, "confirm")}
-                          disabled={busy}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 cursor-pointer disabled:opacity-60 shadow-xs"
-                        >
-                          {busy ? <CircleNotch size={14} className="animate-spin" /> : <CheckSquare size={14} weight="bold" />}
-                          Đã upload lên Amazon
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {open && (
-                    <div className="mt-2 ml-6 flex flex-wrap gap-1">
-                      {b.keywords.map((k) => (
-                        <span key={k} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-mono">
-                          {k}
-                        </span>
-                      ))}
-                      {b.keywordCount > b.keywords.length && (
-                        <span className="px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
-                          +{(b.keywordCount - b.keywords.length).toLocaleString("en-US")} từ
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  <th className="py-2 pl-4 pr-2 w-8"></th>
+                  <th className="py-2 px-2 text-left">File</th>
+                  <th className="py-2 px-2 text-left whitespace-nowrap">Thời gian</th>
+                  <th className="py-2 px-2 text-left whitespace-nowrap">Người xuất</th>
+                  <th className="py-2 px-2 text-left whitespace-nowrap">Kiểu</th>
+                  <th className="py-2 px-2 text-right whitespace-nowrap">Keyword</th>
+                  <th className="py-2 px-2 text-right whitespace-nowrap">Campaign</th>
+                  <th className="py-2 px-2 text-right whitespace-nowrap">Dòng</th>
+                  <th className="py-2 pl-2 pr-4 text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pendingBatches.map((b) => {
+                  const isAuto = b.kind === "AUTO_UPLOAD";
+                  const open = openBatchId === b.id;
+                  const busy = batchBusy === b.id;
+                  return (
+                    <PendingBatchRows
+                      key={b.id}
+                      batch={b}
+                      open={open}
+                      busy={busy}
+                      isAuto={isAuto}
+                      onToggle={() => setOpenBatchId(open ? null : b.id)}
+                      onConfirm={() => void handleBatchAction(b, "confirm")}
+                      onAutoUpload={() => setPendingAction({ batch: b, action: "auto_upload" })}
+                      onCancel={() => setPendingAction({ batch: b, action: "cancel" })}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1088,36 +1171,73 @@ export function PpcNegativeListView({ selectedStore, notify, onQueued, onOpenAct
           </div>
         </div>
       )}
-      {/* Xác nhận huỷ lô xuất file */}
-      {cancelTarget && (
+      {/* Xác nhận huỷ lô / Auto Upload lô đã xuất */}
+      {pendingAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
-            <div className="px-5 py-4 space-y-2 text-xs">
-              <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
-                <WarningCircle size={18} weight="fill" /> Huỷ lô xuất file
-              </div>
-              <p className="text-slate-700">
-                Huỷ lô <b className="break-all">{cancelTarget.fileName}</b> ({cancelTarget.rowCount.toLocaleString("en-US")} dòng)? Dùng khi file
-                này <b>không</b> upload lên Amazon. Các cặp keyword × campaign sẽ không được ghi vào Negative Hub.
-              </p>
+            <div className="px-5 py-4 space-y-3 text-xs">
+              {pendingAction.action === "auto_upload" ? (
+                <>
+                  <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
+                    <CloudArrowUp size={18} weight="bold" /> Auto Upload lô đã xuất
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-xl bg-orange-50 p-2.5">
+                      <p className="text-base font-black text-orange-600">{pendingAction.batch.keywordCount.toLocaleString("en-US")}</p>
+                      <p className="text-[11px] font-bold text-slate-700">keyword</p>
+                    </div>
+                    <div className="rounded-xl bg-indigo-50 p-2.5">
+                      <p className="text-base font-black text-indigo-600">{pendingAction.batch.campaignCount.toLocaleString("en-US")}</p>
+                      <p className="text-[11px] font-bold text-slate-700">campaign</p>
+                    </div>
+                    <div className="rounded-xl bg-rose-50 p-2.5">
+                      <p className="text-base font-black text-rose-600">{pendingAction.batch.rowCount.toLocaleString("en-US")}</p>
+                      <p className="text-[11px] font-bold text-slate-700">dòng</p>
+                    </div>
+                  </div>
+                  <p className="text-slate-700">
+                    Tạo lại file Bulk từ lô <b className="break-all">{pendingAction.batch.fileName}</b> và để Mac mini tự upload lên Amazon.
+                    Chạy xong lô tự chuyển sang Negative Hub.
+                  </p>
+                  <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    Chỉ dùng khi file này <b>chưa</b> được upload tay lên Amazon.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
+                    <WarningCircle size={18} weight="fill" /> Huỷ lô xuất file
+                  </div>
+                  <p className="text-slate-700">
+                    Huỷ lô <b className="break-all">{pendingAction.batch.fileName}</b> ({pendingAction.batch.rowCount.toLocaleString("en-US")} dòng)? Dùng
+                    khi file này <b>không</b> upload lên Amazon. Các cặp keyword × campaign sẽ không được ghi vào Negative Hub.
+                  </p>
+                </>
+              )}
             </div>
             <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50">
               <button
                 type="button"
-                onClick={() => setCancelTarget(null)}
-                disabled={batchBusy === cancelTarget.id}
+                onClick={() => setPendingAction(null)}
+                disabled={batchBusy === pendingAction.batch.id}
                 className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
               >
                 Đóng
               </button>
               <button
                 type="button"
-                onClick={() => void handleBatchAction(cancelTarget, "cancel")}
-                disabled={batchBusy === cancelTarget.id}
+                onClick={() => void handleBatchAction(pendingAction.batch, pendingAction.action)}
+                disabled={batchBusy === pendingAction.batch.id}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-black hover:bg-rose-700 cursor-pointer disabled:opacity-60"
               >
-                {batchBusy === cancelTarget.id ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} weight="bold" />}
-                Huỷ lô
+                {batchBusy === pendingAction.batch.id ? (
+                  <CircleNotch size={14} className="animate-spin" />
+                ) : pendingAction.action === "auto_upload" ? (
+                  <CloudArrowUp size={14} weight="bold" />
+                ) : (
+                  <Trash size={14} weight="bold" />
+                )}
+                {pendingAction.action === "auto_upload" ? "Xác nhận Auto Upload" : "Huỷ lô"}
               </button>
             </div>
           </div>

@@ -2,7 +2,7 @@
 
 // Negative Hub: phủ định ĐÃ lên Amazon, gom theo từng lô (job Auto Upload / lô Xuất File đã tick "Đã upload").
 // Lô mới xuất file chưa xác nhận và lô đang Auto Upload nằm ở tab Negative List.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   MagnifyingGlass,
   Trash,
@@ -74,6 +74,8 @@ interface HubSummary {
 
 interface PpcNegativeHubViewProps {
   selectedStore: string;
+  /** Kênh FBA / FBM của store chia kênh (FASTPEACE) — chỉ hiện phủ định của campaign thuộc kênh này. */
+  channel?: "FBA" | "FBM" | null;
   notify: (message: string, type?: "success" | "error") => void;
   /** Gọi sau khi xoá lô để màn cha cập nhật số đếm. */
   onChanged?: () => void;
@@ -118,7 +120,7 @@ function MethodBadge({ method }: { method: NegativeBatch["method"] }) {
   );
 }
 
-export function PpcNegativeHubView({ selectedStore, notify, onChanged }: PpcNegativeHubViewProps) {
+export function PpcNegativeHubView({ selectedStore, channel = null, notify, onChanged }: PpcNegativeHubViewProps) {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [adTypeFilter, setAdTypeFilter] = useState<"ALL" | "SP" | "SB">("ALL");
@@ -145,10 +147,11 @@ export function PpcNegativeHubView({ selectedStore, notify, onChanged }: PpcNega
   const queryKey = useMemo(() => {
     const params = new URLSearchParams({ view: "batches" });
     if (selectedStore && selectedStore !== "ALL") params.set("storeName", selectedStore);
+    if (channel) params.set("channel", channel);
     if (adTypeFilter !== "ALL") params.set("adType", adTypeFilter);
     if (search) params.set("search", search);
     return params.toString();
-  }, [selectedStore, adTypeFilter, search]);
+  }, [selectedStore, channel, adTypeFilter, search]);
   const loading = refreshing || loadedFor !== queryKey;
 
   const load = useCallback(
@@ -196,6 +199,7 @@ export function PpcNegativeHubView({ selectedStore, notify, onChanged }: PpcNega
     setLoadingDetail(b.batchKey);
     try {
       const params = new URLSearchParams({ view: "batch", batchKey: b.batchKey, storeName: b.storeName });
+      if (channel) params.set("channel", channel);
       const res = await fetch(`/api/ppc/negative-keywords?${params}`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
@@ -212,6 +216,7 @@ export function PpcNegativeHubView({ selectedStore, notify, onChanged }: PpcNega
     setIsDeleting(true);
     try {
       const params = new URLSearchParams({ batchKey: deleteTarget.batchKey, storeName: deleteTarget.storeName });
+      if (channel) params.set("channel", channel);
       const res = await fetch(`/api/ppc/negative-keywords?${params}`, { method: "DELETE" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.error || json.message || "Lỗi khi xoá lô.");
@@ -310,8 +315,8 @@ export function PpcNegativeHubView({ selectedStore, notify, onChanged }: PpcNega
         </button>
       </div>
 
-      {/* 3. Danh sách lô */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden divide-y divide-slate-100">
+      {/* 3. Danh sách lô — mỗi lô 1 dòng, thông tin chia cột */}
+      <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
         {loading && batches.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs">
             <CircleNotch size={24} className="animate-spin mx-auto text-indigo-600 mb-2" />
@@ -329,122 +334,141 @@ export function PpcNegativeHubView({ selectedStore, notify, onChanged }: PpcNega
               {search ? "Không có lô nào chứa từ khoá / chiến dịch này." : "Chưa có lô phủ định nào trong Negative Hub."}
             </span>
             <span className="text-[11px]">
-              Lô Auto Upload chạy xong, hoặc lô Xuất File đã tick “Đã upload lên Amazon” sẽ hiện ở đây.
+              Lô Auto Upload chạy xong, hoặc lô Xuất File đã tick “Đã upload” sẽ hiện ở đây.
             </span>
           </div>
         ) : (
-          batches.map((b) => {
-            const open = openKey === b.batchKey;
-            const detail = details[b.batchKey];
-            const restKw = b.keywordCount - b.keywords.slice(0, 12).length;
-            return (
-              <div key={b.batchKey}>
-                <div
-                  onClick={() => void toggleOpen(b)}
-                  className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 ${open ? "bg-slate-50" : ""}`}
-                >
-                  <CaretRight
-                    size={13}
-                    weight="bold"
-                    className={`mt-1 text-slate-500 transition-transform shrink-0 ${open ? "rotate-90" : ""}`}
-                  />
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <MethodBadge method={b.method} />
-                      <span className="text-[11px] font-bold text-indigo-700">{SOURCE_LABEL[b.source] || b.source}</span>
-                      {b.matchTypes.map((m) => (
-                        <span key={m} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                          {MATCH_LABEL[m] || m}
-                        </span>
-                      ))}
-                      {showStore && <span className="text-[11px] font-black text-slate-700">{b.storeName}</span>}
-                    </div>
-                    <p className="text-xs font-semibold text-slate-800 break-all">
-                      {b.fileName || `Lô ${fmtDateTime(b.createdAt)}`}
-                    </p>
-                    <p className="text-[11px] text-slate-600">
-                      {fmtDateTime(b.createdAt)}
-                      {b.createdBy ? ` · ${b.createdBy}` : ""}
-                      {b.confirmedAt ? ` · xác nhận đã upload ${fmtDateTime(b.confirmedAt)}${b.confirmedBy ? ` bởi ${b.confirmedBy}` : ""}` : ""}
-                    </p>
-                    {!open && (
-                      <div className="flex flex-wrap gap-1">
-                        {b.keywords.slice(0, 12).map((k) => (
-                          <span key={k} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-mono">
-                            {k}
-                          </span>
-                        ))}
-                        {restKw > 0 && <span className="px-1.5 py-0.5 text-[10px] font-bold text-slate-500">+{fmtNum(restKw)} từ</span>}
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-right shrink-0 space-y-0.5">
-                    <p className="text-sm font-black text-slate-900 font-mono">{fmtNum(b.rowCount)} <span className="text-[11px] font-bold text-slate-500">dòng</span></p>
-                    <p className="text-[11px] font-mono text-slate-600">
-                      {fmtNum(b.keywordCount)} kw × {fmtNum(b.campaignCount)} camp
-                    </p>
-                    {b.spend > 0 && <p className="text-[11px] font-mono text-emerald-700">${b.spend.toFixed(2)} chặn</p>}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteTarget(b);
-                    }}
-                    className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
-                    title="Xoá cả lô khỏi Negative Hub"
-                  >
-                    <Trash size={15} />
-                  </button>
-                </div>
-
-                {open && (
-                  <div className="px-4 pb-4 pl-10 bg-slate-50">
-                    {loadingDetail === b.batchKey || !detail ? (
-                      <div className="py-6 text-center text-xs text-slate-500">
-                        <CircleNotch size={18} className="animate-spin mx-auto mb-1 text-indigo-600" />
-                        Đang tải chi tiết lô...
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,320px)_1fr] gap-3">
-                        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                          <div className="px-3 py-2 border-b border-slate-200 bg-amber-50 text-xs font-black text-slate-800 flex items-center justify-between">
-                            <span>Keyword ({fmtNum(detail.keywords.length)})</span>
-                            <PpcCopyButton value={detail.keywords.map((k) => k.keyword).join("\n")} label="danh sách keyword" />
-                          </div>
-                          <div className="max-h-[360px] overflow-auto divide-y divide-slate-50">
-                            {detail.keywords.map((k) => (
-                              <div key={k.keyword} className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
-                                <span className="font-mono font-semibold text-slate-900 break-all">{k.keyword}</span>
-                                <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap">
-                                  {fmtNum(k.campaigns)} camp{k.spend > 0 ? ` · $${k.spend.toFixed(2)}` : ""}
-                                </span>
-                              </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  <th className="py-2.5 pl-4 pr-2 w-8"></th>
+                  <th className="py-2.5 px-2 text-left whitespace-nowrap">Cách đưa lên</th>
+                  <th className="py-2.5 px-2 text-left whitespace-nowrap">Nguồn</th>
+                  <th className="py-2.5 px-2 text-left whitespace-nowrap">Kiểu</th>
+                  {showStore && <th className="py-2.5 px-2 text-left">Store</th>}
+                  <th className="py-2.5 px-2 text-left">File / Lô</th>
+                  <th className="py-2.5 px-2 text-left whitespace-nowrap">Thời gian</th>
+                  <th className="py-2.5 px-2 text-left whitespace-nowrap">Người làm</th>
+                  <th className="py-2.5 px-2 text-right whitespace-nowrap">Keyword</th>
+                  <th className="py-2.5 px-2 text-right whitespace-nowrap">Campaign</th>
+                  <th className="py-2.5 px-2 text-right whitespace-nowrap">Dòng</th>
+                  <th className="py-2.5 px-2 text-right whitespace-nowrap">Đã chặn</th>
+                  <th className="py-2.5 pl-2 pr-4 w-10"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {batches.map((b) => {
+                  const open = openKey === b.batchKey;
+                  const detail = details[b.batchKey];
+                  const colCount = showStore ? 13 : 12;
+                  return (
+                    <Fragment key={b.batchKey}>
+                      <tr onClick={() => void toggleOpen(b)} className={`cursor-pointer ${open ? "bg-slate-50" : "hover:bg-slate-50"}`}>
+                        <td className="py-2.5 pl-4 pr-2">
+                          <CaretRight size={12} weight="bold" className={`text-slate-500 transition-transform ${open ? "rotate-90" : ""}`} />
+                        </td>
+                        <td className="py-2.5 px-2">
+                          <MethodBadge method={b.method} />
+                        </td>
+                        <td className="py-2.5 px-2 whitespace-nowrap font-bold text-indigo-700">{SOURCE_LABEL[b.source] || b.source}</td>
+                        <td className="py-2.5 px-2">
+                          <div className="flex flex-col gap-1">
+                            {b.matchTypes.map((m) => (
+                              <span key={m} className="w-fit px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 whitespace-nowrap">
+                                {MATCH_LABEL[m] || m}
+                              </span>
                             ))}
                           </div>
-                        </div>
-                        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                          <div className="px-3 py-2 border-b border-slate-200 bg-indigo-50 text-xs font-black text-slate-800">
-                            Campaign ({fmtNum(detail.campaigns.length)})
-                          </div>
-                          <div className="max-h-[360px] overflow-auto divide-y divide-slate-50">
-                            {detail.campaigns.map((c) => (
-                              <div key={c.campaignName} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[9px] font-black shrink-0">{c.adType}</span>
-                                <span className="font-semibold text-slate-800 break-words flex-1 min-w-0">{c.campaignName}</span>
-                                <PpcCopyButton value={c.campaignName} label="campaign" />
-                                <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap">{fmtNum(c.keywords)} kw</span>
+                        </td>
+                        {showStore && <td className="py-2.5 px-2 font-black text-slate-700 whitespace-nowrap">{b.storeName}</td>}
+                        <td className="py-2.5 px-2 min-w-[200px]">
+                          <span className="font-semibold text-slate-800 break-all">{b.fileName || "—"}</span>
+                        </td>
+                        <td className="py-2.5 px-2 whitespace-nowrap text-slate-700">
+                          {fmtDateTime(b.createdAt)}
+                          {b.confirmedAt && (
+                            <span className="block text-[10px] text-emerald-700">✓ xác nhận {fmtDateTime(b.confirmedAt)}</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-2 whitespace-nowrap text-slate-700">
+                          {b.createdBy || "—"}
+                          {b.confirmedBy && b.confirmedBy !== b.createdBy && (
+                            <span className="block text-[10px] text-emerald-700">✓ {b.confirmedBy}</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono font-bold text-orange-600">{fmtNum(b.keywordCount)}</td>
+                        <td className="py-2.5 px-2 text-right font-mono font-bold text-indigo-600">{fmtNum(b.campaignCount)}</td>
+                        <td className="py-2.5 px-2 text-right font-mono font-black text-slate-900">{fmtNum(b.rowCount)}</td>
+                        <td className="py-2.5 px-2 text-right font-mono text-emerald-700 whitespace-nowrap">
+                          {b.spend > 0 ? `$${b.spend.toFixed(2)}` : "—"}
+                        </td>
+                        <td className="py-2.5 pl-2 pr-4 text-right">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteTarget(b);
+                            }}
+                            className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            title="Xoá cả lô khỏi Negative Hub"
+                          >
+                            <Trash size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="bg-slate-50">
+                          <td colSpan={colCount} className="px-4 pb-4 pt-1 pl-10">
+                            {loadingDetail === b.batchKey || !detail ? (
+                              <div className="py-6 text-center text-xs text-slate-500">
+                                <CircleNotch size={18} className="animate-spin mx-auto mb-1 text-indigo-600" />
+                                Đang tải chi tiết lô...
                               </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })
+                            ) : (
+                              <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,340px)_1fr] gap-3">
+                                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                                  <div className="px-3 py-2 border-b border-slate-200 bg-amber-50 text-xs font-black text-slate-800 flex items-center justify-between">
+                                    <span>Keyword ({fmtNum(detail.keywords.length)})</span>
+                                    <PpcCopyButton value={detail.keywords.map((k) => k.keyword).join("\n")} label="danh sách keyword" />
+                                  </div>
+                                  <div className="max-h-[360px] overflow-auto divide-y divide-slate-50">
+                                    {detail.keywords.map((k) => (
+                                      <div key={k.keyword} className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+                                        <span className="font-mono font-semibold text-slate-900 break-all">{k.keyword}</span>
+                                        <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap">
+                                          {fmtNum(k.campaigns)} camp{k.spend > 0 ? ` · $${k.spend.toFixed(2)}` : ""}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                                  <div className="px-3 py-2 border-b border-slate-200 bg-indigo-50 text-xs font-black text-slate-800">
+                                    Campaign ({fmtNum(detail.campaigns.length)})
+                                  </div>
+                                  <div className="max-h-[360px] overflow-auto divide-y divide-slate-50">
+                                    {detail.campaigns.map((c) => (
+                                      <div key={c.campaignName} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[9px] font-black shrink-0">{c.adType}</span>
+                                        <span className="font-semibold text-slate-800 break-words flex-1 min-w-0">{c.campaignName}</span>
+                                        <PpcCopyButton value={c.campaignName} label="campaign" />
+                                        <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap">{fmtNum(c.keywords)} kw</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
