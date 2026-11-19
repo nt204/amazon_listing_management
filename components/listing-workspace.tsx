@@ -95,6 +95,10 @@ const PpcCostMasterStandalone = dynamic(
   () => import("@/components/ppc/ppc-settings-tab").then((module) => module.PpcCostMasterStandalone),
   { loading: ViewLoading },
 );
+const PpcNewCampView = dynamic(
+  () => import("@/components/ppc/ppc-new-camp-view").then((module) => module.PpcNewCampView),
+  { loading: ViewLoading },
+);
 const PpcRuleManagerStandalone = dynamic(
   () => import("@/components/ppc/ppc-settings-tab").then((module) => module.PpcRuleManagerStandalone),
   { loading: ViewLoading },
@@ -126,7 +130,7 @@ interface ListingWorkspaceProps {
 }
 
 type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
-type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "manual_bid" | "phoi" | "rules";
+type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "new_camp" | "auto_bid" | "manual_bid" | "phoi" | "rules";
 type PpcDashboardTab = "overview" | "portfolios" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
 type AccountingSection =
   | "overview"
@@ -635,6 +639,27 @@ function WorkspaceSidebar({
                       }`}
                     />
                     <span>Lên Camp Sale KW</span>
+                  </button>
+
+                  {/* Mục 3b: Lên camp SKU mới (tool NCE-Campaign-Auto) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("new_camp");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
+                      ppcSection === "new_camp"
+                        ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
+                        ppcSection === "new_camp" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Lên Camp SKU Mới</span>
                   </button>
 
                   {/* Mục 4: Đề Xuất & Auto Bid */}
@@ -1229,7 +1254,7 @@ export function ListingWorkspace({
 
       const effectiveView = urlView || savedView;
       const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban"];
-      const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "manual_bid", "phoi", "rules"];
+      const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "new_camp", "auto_bid", "manual_bid", "phoi", "rules"];
       const validDashboardTabs: PpcDashboardTab[] = ["overview", "portfolios", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
       const validAccountingSections: AccountingSection[] = [
         "overview",
@@ -1495,6 +1520,8 @@ export function ListingWorkspace({
                           ? "Amazon PPC - Negative Keyword (ST Optimization)"
                           : ppcSection === "sale_kw"
                             ? "Amazon PPC - Lên Campaign Sale KW"
+                          : ppcSection === "new_camp"
+                            ? "Amazon PPC - Lên Camp SKU Mới"
                             : ppcSection === "auto_bid"
                               ? "Amazon PPC - Đề Xuất & Auto Bid"
                               : ppcSection === "manual_bid"
@@ -1625,6 +1652,8 @@ export function ListingWorkspace({
                 <PpcCostMasterStandalone />
               ) : ppcSection === "rules" ? (
                 <PpcRuleManagerStandalone />
+              ) : ppcSection === "new_camp" ? (
+                <PpcNewCampView />
               ) : (
                 <PpcDashboard
                   isEmbedded={true}
