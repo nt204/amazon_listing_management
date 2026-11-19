@@ -20,7 +20,7 @@ import {
   buildDailyReportDetailText,
   displayDate,
 } from "@/lib/accounting/daily-report-card";
-import { buildTeamReport, buildTeamReportCard, buildTeamReportText, sameDayLastMonth } from "@/lib/accounting/daily-team-report";
+import { buildTeamReport, buildTeamReportText, sameDayLastMonth } from "@/lib/accounting/daily-team-report";
 import { buildDailyReportHtml, renderHtmlToPng } from "@/lib/accounting/daily-report-image";
 import { buildDailyReportBrief } from "@/lib/accounting/daily-report-brief";
 import { comparableRows, diagnosisBlock, fallingMovers, storeAlert, toMover } from "@/lib/accounting/daily-report-diagnosis";
@@ -407,8 +407,18 @@ export async function reportDailyBusinessData(
   };
   const roster = await sql<Array<{ name: string; team: string | null }>>`SELECT name, team FROM stores ORDER BY name`;
   const teamReport = buildTeamReport(latestDate, channels, roster);
-  const card = buildTeamReportCard(teamReport, cardOptions);
   const text = buildTeamReportText(teamReport, cardOptions);
+  // Gửi đi dùng mẫu Báo cáo KPI ngày (scripts/send-daily-kpi-report.ts, mẫu chốt 2026-11-18).
+  // Mẫu mới lỗi thì báo lỗi, không gửi bù bằng mẫu cũ.
+  let card: Record<string, unknown>;
+  try {
+    const { generateDailyKpiReport } = await import("@/scripts/send-daily-kpi-report");
+    card = (await generateDailyKpiReport(latestDate)).card;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[DailyReport] Lỗi lập Báo cáo KPI ngày ${latestDate}:`, err);
+    return { success: false, reportedDate: latestDate, message: `Lỗi lập Báo cáo KPI ngày ${displayDate(latestDate)}: ${reason}` };
+  }
 
   if (options.dryRun) {
     return {
@@ -438,15 +448,23 @@ export async function reportDailyBusinessData(
         await sendLarkCardNotification(card, { receiveId: webhookUrl, receiveIdType: "webhook" });
       } catch (whErr) {
         console.error("[DailyReport] Lỗi gửi qua Webhook:", whErr);
-        if (text) {
-          await sendLarkTextNotification(text, { receiveId: webhookUrl, receiveIdType: "webhook" }).catch(() => {});
+        const reason = whErr instanceof Error ? whErr.message : String(whErr);
+        await sendLarkTextNotification(`⚠️ Gửi Báo cáo KPI ngày ${displayDate(latestDate)} lỗi: ${reason}`, { receiveId: webhookUrl, receiveIdType: "webhook" }).catch(() => {});
+        if (isAutomatic) {
+          // Trả lại trạng thái trước đó để lượt cron sau gửi lại
+          await sql`
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (${settingKey}, ${sql.json(lastState)}, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+          `;
         }
+        return { success: false, reportedDate: latestDate, message: `Gửi Báo cáo KPI ngày ${displayDate(latestDate)} qua Lark lỗi: ${reason}` };
       }
     } else {
       await notifyLarkEventBestEffort(
         { teamId: scope.teamId, actorId: "system" },
         "accounting",
-        { card, fallbackText: text },
+        { card, fallbackText: `Báo cáo KPI ngày ${displayDate(latestDate)}: không hiển thị được card, xem trên web.` },
       );
     }
   }
