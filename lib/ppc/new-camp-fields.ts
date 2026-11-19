@@ -131,3 +131,15 @@ export const BRAND_ENTITY_PATTERN = /^ENTITY[A-Z0-9]{8,}$/;
 export function storeKey(storeName: string | null | undefined): string {
   return (storeName || "").trim().toUpperCase();
 }
+
+// ---------------------------------------------------------------------------
+// Trạng thái SKU trong Bảng mã → Win / Test trong tên camp ("Phát triển" = Win, còn lại Test)
+// ---------------------------------------------------------------------------
+export function isWinStatus(status: string | null | undefined): boolean {
+  return (status || "").normalize("NFC").trim().toLowerCase() === "phát triển";
+}
+
+/** Trạng thái đã dừng (Hủy / OFF / Cũ) — vẫn tính Test nhưng hiện cảnh báo */
+export function isStoppedStatus(status: string | null | undefined): boolean {
+  return ["hủy", "huỷ", "off", "cũ"].includes((status || "").normalize("NFC").trim().toLowerCase());
+}

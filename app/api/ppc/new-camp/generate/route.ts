@@ -66,7 +66,7 @@ function parseForm(raw: RawForm): NewCampForm {
   const skus = Array.isArray(raw?.selectedSkus) ? raw.selectedSkus.map((s: unknown) => str(s).trim()).filter(Boolean) : [];
   return {
     loaiHinh: raw?.loaiHinh === "FBA" ? "FBA" : "FBM",
-    trangThai: raw?.trangThai === "Win" ? "Win" : "Test",
+    trangThai: raw?.trangThai === "Win" ? "Win" : raw?.trangThai === "Auto" ? "Auto" : "Test",
     ngay: str(raw?.ngay).trim(),
     selectedSkus: [...new Set<string>(skus)],
     sp03: matchRun(raw?.sp03),

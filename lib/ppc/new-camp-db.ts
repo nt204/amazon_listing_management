@@ -20,6 +20,7 @@ type SkuRow = {
   store_name: string | null;
   asin: string | null;
   mockup_url: string | null;
+  status: string | null;
 };
 
 /**
@@ -95,12 +96,14 @@ export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampS
       BTRIM(m.landing_page_url) AS landing_page_url,
       s.name AS store_name,
       BTRIM(m.asin) AS asin,
+      BTRIM(m.status) AS status,
       COALESCE(NULLIF(BTRIM(m.mockup_url), ''), NULLIF(BTRIM(m.mockup), '')) AS mockup_url
     FROM ${table} m
     LEFT JOIN stores s ON s.id = m.store_id
     WHERE m.deleted_at IS NULL AND BTRIM(COALESCE(m.sku, '')) <> ''
     ORDER BY
       UPPER(BTRIM(m.sku)),
+      (LOWER(BTRIM(COALESCE(m.status, ''))) IN ('off', 'hủy', 'huỷ', 'cũ')) ASC,
       (
         (NULLIF(BTRIM(m.product_type), '') IS NOT NULL)::int + (NULLIF(BTRIM(m.niche), '') IS NOT NULL)::int
         + (NULLIF(BTRIM(m.pic_mkt), '') IS NOT NULL)::int + (NULLIF(BTRIM(m.brand), '') IS NOT NULL)::int
@@ -128,6 +131,7 @@ export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampS
       landingPageUrl: r.landing_page_url || "",
       storeName: r.store_name || "",
       asin: r.asin || "",
+      status: r.status || "",
       mockupUrl: r.mockup_url || "",
     }))
     .sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));

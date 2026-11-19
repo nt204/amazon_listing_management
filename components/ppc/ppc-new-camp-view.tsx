@@ -16,6 +16,8 @@ import {
   SB_FIELD_PLACEHOLDERS,
   missingSbFields,
   sbFieldValue,
+  isWinStatus,
+  isStoppedStatus,
   BIDDING_STRATEGIES,
   DEFAULT_ADVANCED,
   NAME_FIELDS,
@@ -52,6 +54,7 @@ const SKU_INFO_FIELDS: Array<{ key: keyof NewCampSkuInfo; label: string }> = [
   { key: "niche", label: "Ngách" },
   { key: "picMkt", label: "PIC MKT" },
   { key: "storeName", label: "Store" },
+  { key: "status", label: "Trạng thái" },
   { key: "brandEntityId", label: "Brand Entity ID" },
   { key: "brand", label: "Brand Name" },
   { key: "brandLogoAssetId", label: "Brand Logo Asset ID" },
@@ -312,6 +315,21 @@ function StoreEntityEditor({ onSaved }: { onSaved: (store: string, entity: strin
   );
 }
 
+type SkuRow = NewCampSkuInfo & { channel: LoaiHinh };
+
+function ChannelBadge({ channel }: { channel: LoaiHinh }) {
+  return (
+    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-black ${channel === "FBA" ? "bg-sky-100 text-sky-800" : "bg-violet-100 text-violet-800"}`}>{channel}</span>
+  );
+}
+
+/** Win = "Phát triển"; Hủy / OFF / Cũ hiện đỏ; còn lại Test */
+function StatusBadge({ status }: { status?: string }) {
+  if (isWinStatus(status)) return <span className="shrink-0 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-black text-white">WIN</span>;
+  if (isStoppedStatus(status)) return <span className="shrink-0 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-black text-rose-700">{(status || "").toUpperCase()}</span>;
+  return <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-600" title={status || undefined}>TEST</span>;
+}
+
 function MoneyInput({ label, value, onChange, step = "1" }: { label: string; value: string; onChange: (v: string) => void; step?: string }) {
   return (
     <label className="block">
@@ -326,10 +344,10 @@ function MoneyInput({ label, value, onChange, step = "1" }: { label: string; val
 
 export function PpcNewCampView() {
   // --- Cấu hình chung ---
-  const [loaiHinh, setLoaiHinh] = useState<LoaiHinh>("FBM");
-  const [trangThai, setTrangThai] = useState<"Test" | "Win">("Test");
+  // Trạng thái: "Auto" = theo Bảng mã từng SKU ("Phát triển" = Win), hoặc chọn tay Test / Win
+  const [trangThai, setTrangThai] = useState<"Auto" | "Test" | "Win">("Auto");
   const [ngay, setNgay] = useState(todayVn());
-  const [allSkus, setAllSkus] = useState<NewCampSkuInfo[]>([]);
+  const [allSkus, setAllSkus] = useState<SkuRow[]>([]);
   const [skuLoading, setSkuLoading] = useState(true);
   const [skuSearch, setSkuSearch] = useState("");
   const [bulkSkus, setBulkSkus] = useState("");
@@ -398,7 +416,7 @@ export function PpcNewCampView() {
 
   const skuByUpper = useMemo(() => new Map(allSkus.map((s) => [s.sku.toUpperCase(), s])), [allSkus]);
 
-  // Đổi loại hình / bấm "Tải lại" → tăng reloadKey; effect tải lại danh sách SKU.
+  // Tải Bảng mã FBA + FBM một lượt (SKU không trùng giữa 2 bảng → biết ngay SKU là FBA hay FBM).
   const [reloadKey, setReloadKey] = useState(0);
   const announceReload = useRef(false);
 
@@ -406,15 +424,24 @@ export function PpcNewCampView() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/ppc/new-camp/skus?type=${loaiHinh}`, { cache: "no-store" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error || `Lỗi ${res.status}`);
-        const list: NewCampSkuInfo[] = json.data || [];
+        const load = async (type: LoaiHinh): Promise<SkuRow[]> => {
+          const res = await fetch(`/api/ppc/new-camp/skus?type=${type}`, { cache: "no-store" });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(json.error || `Lỗi ${res.status}`);
+          return ((json.data || []) as NewCampSkuInfo[]).map((x) => ({ ...x, channel: type }));
+        };
+        const [fba, fbm] = await Promise.all([load("FBA"), load("FBM")]);
         if (cancelled) return;
+        // SKU có ở cả 2 bảng (dữ liệu nhập nhầm): giữ 1 dòng, ưu tiên dòng đang chạy (không OFF / Hủy), rồi FBA
+        const merged = new Map<string, SkuRow>();
+        for (const row of [...fba, ...fbm]) {
+          const key = row.sku.toUpperCase();
+          const prev = merged.get(key);
+          if (!prev || (isStoppedStatus(prev.status) && !isStoppedStatus(row.status))) merged.set(key, row);
+        }
+        const list = [...merged.values()].sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
         setAllSkus(list);
-        setSelected([]);
-        setActiveSku(null);
-        if (announceReload.current) setNotices([{ kind: "success", text: `Đã tải ${list.length} SKU ${loaiHinh} từ Bảng mã.` }]);
+        if (announceReload.current) setNotices([{ kind: "success", text: `Đã tải ${fba.length} SKU FBA + ${fbm.length} SKU FBM từ Bảng mã.` }]);
       } catch (error) {
         if (!cancelled) setNotices([{ kind: "error", text: `Không thể tải danh sách SKU: ${error instanceof Error ? error.message : error}` }]);
       } finally {
@@ -425,14 +452,22 @@ export function PpcNewCampView() {
     return () => {
       cancelled = true;
     };
-  }, [loaiHinh, reloadKey]);
+  }, [reloadKey]);
 
-  const reloadSkus = (type: LoaiHinh, announce: boolean) => {
+  const reloadSkus = (announce: boolean) => {
     announceReload.current = announce;
     setSkuLoading(true);
-    if (type !== loaiHinh) setLoaiHinh(type);
-    else setReloadKey((k) => k + 1);
+    setReloadKey((k) => k + 1);
   };
+
+  // Loại hình tự theo SKU đã chọn (1 lần lên camp chỉ 1 loại hình)
+  const channelOf = (sku: string) => skuByUpper.get(sku.toUpperCase())?.channel;
+  const loaiHinh: LoaiHinh = (selected.length ? channelOf(selected[0]) : undefined) ?? "FBA";
+  // Tự nhận Win/Test theo Bảng mã chỉ với FBA; FBM chọn tay Test / Win
+  const isFbm = selected.length > 0 && loaiHinh === "FBM";
+  const effectiveTrangThai = isFbm && trangThai === "Auto" ? "Test" : trangThai;
+  const winCount = selected.filter((sku) => isWinStatus(skuByUpper.get(sku.toUpperCase())?.status)).length;
+  const trangThaiLabel = effectiveTrangThai === "Auto" ? (selected.length ? `${winCount} Win · ${selected.length - winCount} Test` : "Tự động") : effectiveTrangThai;
 
   const filteredSkus = useMemo(() => {
     const q = skuSearch.trim().toLowerCase();
@@ -441,11 +476,17 @@ export function PpcNewCampView() {
   }, [allSkus, skuSearch]);
 
   const addSkus = (skus: string[]) => {
+    const base = selected.length ? channelOf(selected[0]) : skus.length ? channelOf(skus[0]) : undefined;
+    const ok = skus.filter((s) => channelOf(s) === base);
+    const other = skus.filter((s) => channelOf(s) !== base);
     setSelected((prev) => {
       const next = [...prev];
-      for (const s of skus) if (!next.includes(s)) next.push(s);
+      for (const s of ok) if (!next.includes(s)) next.push(s);
       return next;
     });
+    if (other.length) {
+      setNotices([{ kind: "error", text: `Đang chọn SKU ${base} — mỗi lần chỉ lên 1 loại hình. Bỏ qua ${other.length} SKU ${base === "FBA" ? "FBM" : "FBA"}:\n${other.slice(0, 10).join("\n")}` }]);
+    }
   };
 
   const addBulk = () => {
@@ -460,7 +501,7 @@ export function PpcNewCampView() {
     addSkus(found);
     setBulkSkus("");
     if (notFound.length > 0) {
-      setNotices([{ kind: "error", text: `Các SKU sau không có trong Bảng mã ${loaiHinh} và đã bị bỏ qua:\n${notFound.join("\n")}` }]);
+      setNotices([{ kind: "error", text: `Các SKU sau không có trong Bảng mã và đã bị bỏ qua:\n${notFound.join("\n")}` }]);
     }
   };
 
@@ -580,7 +621,7 @@ export function PpcNewCampView() {
   };
 
   const previewDeps = JSON.stringify({
-    selected, loaiHinh, trangThai, ngay, match, sp04: sp04.run, flasin: flasin.run, naming, nameOverrides,
+    selected, loaiHinh, trangThai: effectiveTrangThai, ngay, match, sp04: sp04.run, flasin: flasin.run, naming, nameOverrides,
     kwMode, upload: uploadFile ? `${uploadFile.name}|${uploadFile.size}|${uploadFile.lastModified}` : null, lib: libFile?.id ?? null, kwParts: kwParts.map((p) => [p.name, p.keywords]),
   });
   useEffect(() => {
@@ -724,7 +765,7 @@ export function PpcNewCampView() {
   // Dữ liệu form gửi server (tạo file và xem trước dùng chung)
   const buildOptions = (withEdits: boolean) => ({
     loaiHinh,
-    trangThai,
+    trangThai: effectiveTrangThai,
     ngay: ngay.replace(/-/g, ""),
     selectedSkus: selected,
     sp03: match.sp03,
@@ -951,11 +992,24 @@ export function PpcNewCampView() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
                 <span className={labelCls}>Loại hình</span>
-                <Segmented value={loaiHinh} options={[{ value: "FBM", label: "FBM" }, { value: "FBA", label: "FBA" }]} onChange={(v) => reloadSkus(v, false)} />
+                <div className="flex gap-1 rounded-xl bg-slate-100 p-1" title="Tự theo SKU đã chọn">
+                  {(["FBA", "FBM"] as const).map((c) => (
+                    <span
+                      key={c}
+                      className={`flex-1 rounded-lg py-2 text-center text-sm font-bold ${selected.length && loaiHinh === c ? "bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200" : "text-slate-400"}`}
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
               </div>
               <div>
                 <span className={labelCls}>Trạng thái</span>
-                <Segmented value={trangThai} options={[{ value: "Test", label: "Test" }, { value: "Win", label: "Win" }]} onChange={setTrangThai} />
+                <Segmented
+                  value={effectiveTrangThai}
+                  options={isFbm ? [{ value: "Test", label: "Test" }, { value: "Win", label: "Win" }] : [{ value: "Auto", label: "Tự động" }, { value: "Test", label: "Test" }, { value: "Win", label: "Win" }]}
+                  onChange={setTrangThai}
+                />
               </div>
               <label className="block">
                 <span className={labelCls}>Ngày lên camp</span>
@@ -972,7 +1026,7 @@ export function PpcNewCampView() {
             right={
               <button
                 type="button"
-                onClick={() => reloadSkus(loaiHinh, true)}
+                onClick={() => reloadSkus(true)}
                 disabled={skuLoading}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
                 title="Tải lại danh sách SKU từ Bảng mã"
@@ -1011,7 +1065,11 @@ export function PpcNewCampView() {
                         >
                           <MockupThumb url={s.mockupUrl} />
                           <span className="min-w-0 flex-1">
-                            <span className={`block truncate font-mono text-[13px] font-bold ${picked ? "text-emerald-700" : "text-slate-900"}`}>{s.sku}</span>
+                            <span className="flex items-center gap-1.5">
+                              <span className={`truncate font-mono text-[13px] font-bold ${picked ? "text-emerald-700" : "text-slate-900"}`}>{s.sku}</span>
+                              <ChannelBadge channel={s.channel} />
+                              {s.channel === "FBA" && <StatusBadge status={s.status} />}
+                            </span>
                             <span className="block truncate text-xs font-medium text-slate-500">
                               {[s.asin, s.productType].filter(Boolean).join(" · ")}
                             </span>
@@ -1045,7 +1103,10 @@ export function PpcNewCampView() {
                         >
                           <MockupThumb url={skuByUpper.get(sku.toUpperCase())?.mockupUrl} size={32} />
                           <button type="button" onClick={() => setActiveSku(activeSku === sku ? null : sku)} className="min-w-0 flex-1 text-left cursor-pointer" title="Xem thông tin SKU">
-                            <span className="block truncate font-mono text-[13px] font-bold text-slate-900">{sku}</span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate font-mono text-[13px] font-bold text-slate-900">{sku}</span>
+                              {skuByUpper.get(sku.toUpperCase())?.channel === "FBA" && <StatusBadge status={skuByUpper.get(sku.toUpperCase())?.status} />}
+                            </span>
                             {skuByUpper.get(sku.toUpperCase())?.asin && (
                               <span className="block truncate text-xs font-medium text-slate-500">{skuByUpper.get(sku.toUpperCase())?.asin}</span>
                             )}
@@ -1424,7 +1485,7 @@ export function PpcNewCampView() {
         {selected.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 font-mono text-[13px] font-semibold text-slate-500">
             {buildCampaignName(
-              { sku: "{SKU}", loaiChay: previewRun.loaiChay, productType: "{Phôi}", niche: "{Ngách}", loaiHinh, trangThai, picMkt: "{PIC}", ngay: ngay.replace(/-/g, ""), tail: previewRun.tail },
+              { sku: "{SKU}", loaiChay: previewRun.loaiChay, productType: "{Phôi}", niche: "{Ngách}", loaiHinh: "{FBA/FBM}", trangThai: effectiveTrangThai === "Auto" ? "{Win/Test}" : effectiveTrangThai, picMkt: "{PIC}", ngay: ngay.replace(/-/g, ""), tail: previewRun.tail },
               naming,
             )}
           </div>
@@ -1596,7 +1657,7 @@ export function PpcNewCampView() {
                 {[
                   ["Store", confirmSummary.store?.name ?? "—"],
                   ["SKU", String(selected.length)],
-                  ["Loại hình", `${loaiHinh} · ${trangThai}`],
+                  ["Loại hình", `${loaiHinh} · ${trangThaiLabel}`],
                   ["Ngày lên camp", ngay.split("-").reverse().join("/")],
                 ].map(([k, v]) => (
                   <div key={k} className="rounded-xl bg-slate-50 px-3 py-2.5">
@@ -1700,7 +1761,7 @@ export function PpcNewCampView() {
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-800">{selected.length} SKU</span>
-            <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-800">{loaiHinh} · {trangThai}</span>
+            <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold text-slate-800">{loaiHinh} · {trangThaiLabel}</span>
             {runLabels.length ? (
               runLabels.map((r) => <span key={r} className="rounded-lg bg-indigo-100 px-2.5 py-1 font-bold text-indigo-800">{r}</span>)
             ) : (

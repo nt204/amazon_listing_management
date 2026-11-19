@@ -4,7 +4,7 @@
 // xuất ra giống hệt tool cũ. Chỉ chạy phía server (exceljs, jszip).
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import { DEFAULT_ADVANCED, buildCampaignName, type AdvancedOptions, type NamingOptions } from "./new-camp-fields";
+import { DEFAULT_ADVANCED, buildCampaignName, isWinStatus, type AdvancedOptions, type NamingOptions } from "./new-camp-fields";
 
 export const COLUMN_TITLES_SP03 = [
   "Product", "Entity", "Operation", "Campaign ID", "Ad Group ID", "Portfolio ID",
@@ -76,6 +76,8 @@ export interface NewCampSkuInfo {
   brandLogoAssetId: string;
   landingPageUrl: string;
   storeName?: string;
+  /** Trạng thái trong Bảng mã ("Phát triển" = Win) — dùng khi trạng thái chọn "Auto" */
+  status?: string;
   /** Chỉ để hiển thị (ảnh mockup, ASIN) — không dùng khi sinh file. */
   asin?: string;
   mockupUrl?: string;
@@ -92,6 +94,7 @@ export interface MatchRunForm {
 /** Giá trị form giữ nguyên dạng chuỗi như form HTML của tool cũ (ghi vào file đúng như vậy). */
 export interface NewCampForm {
   loaiHinh: "FBA" | "FBM";
+  /** "Test" | "Win" như tool cũ, hoặc "Auto" = theo trạng thái từng SKU trong Bảng mã */
   trangThai: string;
   ngay: string;
   selectedSkus: string[];
@@ -470,7 +473,12 @@ function emptyRow(columns: string[]): Row {
 
 function campaignName(sku: string, loaiChay: string, info: NewCampSkuInfo, form: NewCampForm, tail: string): string {
   return buildCampaignName(
-    { sku, loaiChay, productType: info.productType, niche: info.niche, loaiHinh: form.loaiHinh, trangThai: form.trangThai, picMkt: info.picMkt, ngay: form.ngay, tail },
+    {
+      sku, loaiChay, productType: info.productType, niche: info.niche, loaiHinh: form.loaiHinh,
+      // "Auto" chỉ đọc trạng thái Bảng mã với FBA; FBM luôn Test (trạng thái FBM mang nghĩa khác: OFF, Active, MAX BID…)
+      trangThai: form.trangThai === "Auto" ? (form.loaiHinh === "FBA" && isWinStatus(info.status) ? "Win" : "Test") : form.trangThai,
+      picMkt: info.picMkt, ngay: form.ngay, tail,
+    },
     form.naming,
   );
 }
