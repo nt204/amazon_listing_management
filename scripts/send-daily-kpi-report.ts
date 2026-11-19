@@ -666,9 +666,8 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
 
   for (const team of TEAMS) {
     const teamChannels = allChannelDetails.filter((c) => c.teamDef.id === team.id);
-    const activeTeamChannels = teamChannels.filter((c) => c.hasDataToday && (c.today.revenue > 0 || c.today.quantity > 0));
-
-    const teamToday = sumMetrics(activeTeamChannels.map((c) => c.today));
+    // Tổng team gồm cả kênh không có đơn (Spend / phí của kênh đó vẫn trừ vào Profit), khớp tổng công ty
+    const teamToday = sumMetrics(teamChannels.map((c) => c.today));
     const teamPriorAvg = sumMetrics(teamChannels.map((c) => c.priorAvg));
 
     const teamRevDiffPct = teamPriorAvg.revenue > 0 ? ((teamToday.revenue - teamPriorAvg.revenue) / teamPriorAvg.revenue) * 100 : 0;
@@ -696,37 +695,24 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
     const storeComments: string[] = [];
 
     for (const ch of teamChannels) {
-      if (!ch.hasDataToday || (ch.today.revenue === 0 && ch.today.quantity === 0)) {
-        teamTableRows.push({
-          channel: ch.displayName,
-          revenue: grey("—"),
-          units: grey("—"),
-          spend: grey("—"),
-          profit: grey("—"),
-          margin: grey("—"),
-          tacos: grey("—"),
-          acos: grey("—"),
-        });
-        let feeText = "";
-        if (ch.serviceFees && ch.serviceFees.length > 0) {
-          const feeLines = ch.serviceFees.map(
-            (f) =>
-              `  ❗ **Service Fee:** ${f.productDetails} -$${f.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-          );
-          feeText = `\n${feeLines.join("\n")}`;
-        }
-        storeComments.push(`🔹 **${ch.displayName}:** Không có dữ liệu.${feeText}`);
-      } else {
-        teamTableRows.push({
-          channel: ch.displayName,
-          revenue: fmtUsd(ch.today.revenue),
-          units: fmtCount(ch.today.quantity),
-          spend: fmtUsd(ch.today.adsFee),
-          profit: blue(`**${fmtUsd(ch.today.profit)}**`),
-          margin: fmtPct(ch.today.margin),
-          tacos: fmtPct(ch.today.tacos),
-          acos: ch.today.revenueAds > 0 ? fmtPct(ch.today.acos) : grey("—"),
-        });
+      // Không có đơn vẫn hiện số như mọi kênh (Revenue $0, Units 0, Spend, Profit); tỷ lệ % thì "—"
+      const hasRevenue = ch.today.revenue > 0;
+      teamTableRows.push({
+        channel: ch.displayName,
+        revenue: fmtUsd(ch.today.revenue),
+        units: fmtCount(ch.today.quantity),
+        spend: fmtUsd(ch.today.adsFee),
+        profit: blue(`**${fmtUsd(ch.today.profit)}**`),
+        margin: hasRevenue ? fmtPct(ch.today.margin) : grey("—"),
+        tacos: hasRevenue ? fmtPct(ch.today.tacos) : grey("—"),
+        acos: ch.today.revenueAds > 0 ? fmtPct(ch.today.acos) : grey("—"),
+      });
+      if (!hasRevenue && ch.today.quantity === 0 && ch.serviceFees && ch.serviceFees.length > 0) {
+        const feeLines = ch.serviceFees.map(
+          (f) =>
+            `  ❗ **Service Fee:** ${f.productDetails} -$${f.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        );
+        storeComments.push(`🔹 **${ch.displayName}:**\n${feeLines.join("\n")}`);
       }
 
       // Tạo nhận xét cho store (đổi nhận xét ACoS sang TACoS, kèm 1-2 SKU cảnh báo)
