@@ -1075,6 +1075,12 @@ export async function parseAndIngestShipmentFile(filePath: string, store: StoreT
 
   console.log(`  [Ingest - Check Shipment] Đang đọc file: ${path.basename(filePath)} → ${store.store_name} (${storeId})...`);
   const content = fs.readFileSync(filePath, "utf8");
+  // Store không có lô hàng: Amazon trả file chỉ có tiêu đề (hoặc thêm dòng "","",…) → không có gì để nạp
+  const dataLines = content.split(/\r?\n/).slice(1).filter((line) => line.replace(/[",\s\uFEFF]/g, "") !== "");
+  if (dataLines.length === 0) {
+    console.log(`  [Ingest - Check Shipment] ${store.store_name}: ${path.basename(filePath)} không có lô hàng nào → bỏ qua.`);
+    return 0;
+  }
 
   const formData = new FormData();
   const blob = new Blob([content], { type: "text/csv" });
