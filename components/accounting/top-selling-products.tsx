@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { PackageIcon } from "@phosphor-icons/react";
 import type { DashboardTopProducts, TopGroupItem, TopProductItem, TopProductLists } from "@/lib/accounting/dashboard-db";
 
@@ -22,6 +23,9 @@ type TopTab = "profit" | "revenue" | "loss" | "niche" | "productType";
 
 /** Thẻ trái: Top Products theo SKU; thẻ phải: Top Ngách / Top Phôi. */
 type CardKind = "products" | "groups";
+
+/** Số dòng hiện sẵn ở mỗi tab Top (API trả tới 10, bấm "Xem thêm" để mở). */
+const ROWS_COLLAPSED = 5;
 
 /** Tab gộp nhiều SKU thành 1 dòng (ngách / phôi), xếp theo Profit. */
 const isGroupTab = (tab: TopTab): tab is "niche" | "productType" => tab === "niche" || tab === "productType";
@@ -213,26 +217,105 @@ function RankBadge({ rank }: { rank: number }) {
   );
 }
 
+/** Title sản phẩm trên đơn, bỏ tên brand ở đầu (brand = tên store, vd "Fastpeace Daughter Gifts…" → "Daughter Gifts…"). */
+function stripBrand(title: string, storeName: string): string {
+  const brand = storeName.trim();
+  if (!brand) return title;
+  const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const stripped = title.replace(new RegExp(`^\\s*${escaped}\\b[\\s:,|-]*`, "i"), "").trim();
+  return stripped || title;
+}
+
+const thumbClass = "h-11 w-11 @max-[560px]:h-9 @max-[560px]:w-9 shrink-0 rounded-lg border border-slate-200/80";
+
+/**
+ * Ảnh mockup: di chuột vào hiện ảnh lớn nổi bên cạnh, bấm vào mở ảnh phóng to giữa màn hình (bấm nền / Esc để đóng).
+ * Ảnh nổi và ảnh phóng to vẽ qua portal để không bị khung cuộn của bảng cắt mất.
+ */
 function ProductThumbnail({ src, alt }: { src: string | null; alt: string }) {
   const [error, setError] = useState(false);
+  const [hoverAt, setHoverAt] = useState<{ top: number; left: number } | null>(null);
+  const [zoomed, setZoomed] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!zoomed) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setZoomed(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomed]);
 
   if (!src || error) {
     return (
-      <div className="flex h-11 w-11 @max-[560px]:h-9 @max-[560px]:w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200/80 bg-slate-100 text-slate-400">
+      <div className={`flex items-center justify-center bg-slate-100 text-slate-400 ${thumbClass}`}>
         <PackageIcon size={22} weight="duotone" />
       </div>
     );
   }
 
+  const PREVIEW = 260;
+  const showPreview = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    // Ưu tiên bên phải ảnh nhỏ; sát mép phải màn hình thì đặt bên trái
+    const left = r.right + 12 + PREVIEW > window.innerWidth ? r.left - 12 - PREVIEW : r.right + 12;
+    const top = Math.min(Math.max(8, r.top + r.height / 2 - PREVIEW / 2), window.innerHeight - PREVIEW - 8);
+    setHoverAt({ top, left });
+  };
+
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={alt}
-      onError={() => setError(true)}
-      loading="lazy"
-      className="h-11 w-11 @max-[560px]:h-9 @max-[560px]:w-9 shrink-0 rounded-lg border border-slate-200/80 bg-white object-contain p-0.5 shadow-2xs transition-transform duration-200 hover:scale-105"
-    />
+    <>
+      <button
+        ref={ref}
+        type="button"
+        onMouseEnter={showPreview}
+        onMouseLeave={() => setHoverAt(null)}
+        onClick={() => {
+          setHoverAt(null);
+          setZoomed(true);
+        }}
+        title="Bấm để phóng to mockup"
+        className="shrink-0 cursor-zoom-in"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={alt}
+          onError={() => setError(true)}
+          loading="lazy"
+          className={`${thumbClass} bg-white object-contain p-0.5 shadow-2xs transition-transform duration-200 hover:scale-105`}
+        />
+      </button>
+      {hoverAt &&
+        !zoomed &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-[60] rounded-xl border border-slate-200 bg-white/95 p-1.5 shadow-xl backdrop-blur-sm animate-in fade-in zoom-in-95 duration-150"
+            style={{ top: hoverAt.top, left: hoverAt.left, width: PREVIEW, height: PREVIEW }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={alt} className="h-full w-full rounded-lg object-contain" />
+          </div>,
+          document.body,
+        )}
+      {zoomed &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-label={alt}
+            onClick={() => setZoomed(false)}
+            className="fixed inset-0 z-[70] flex cursor-zoom-out items-center justify-center bg-slate-900/60 p-6 backdrop-blur-sm animate-in fade-in duration-150"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              alt={alt}
+              className="max-h-[85vh] max-w-[90vw] rounded-2xl bg-white object-contain p-2 shadow-2xl"
+            />
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -348,9 +431,15 @@ function ChannelTopCard({
   const channel: Channel = pickedChannel && channels.includes(pickedChannel) ? pickedChannel : defaultChannel;
   const lists: TopProductLists | undefined = data?.[channel];
   const grouped = isGroupTab(tab);
-  const products: TopProductItem[] = grouped ? [] : (lists?.[tab] ?? []);
-  const groups: TopGroupItem[] = grouped ? (lists?.[tab] ?? []) : [];
-  const rowCount = grouped ? groups.length : products.length;
+  // Mỗi tab mặc định 5 dòng, bấm "Xem thêm" mở tới 10 (giữ trạng thái khi đổi tab / kênh)
+  const [expanded, setExpanded] = useState(false);
+  const allProducts: TopProductItem[] = grouped ? [] : (lists?.[tab] ?? []);
+  const allGroups: TopGroupItem[] = grouped ? (lists?.[tab] ?? []) : [];
+  const products = expanded ? allProducts : allProducts.slice(0, ROWS_COLLAPSED);
+  const groups = expanded ? allGroups : allGroups.slice(0, ROWS_COLLAPSED);
+  const totalRows = grouped ? allGroups.length : allProducts.length;
+  const rowCount = totalRows;
+  const itemLabel = grouped ? (tab === "niche" ? "ngách" : "phôi") : "sản phẩm";
   const activeTab = TABS.find((t) => t.key === tab)!;
   const groupLabel = tab === "niche" ? "ngách" : "phôi";
 
@@ -533,12 +622,12 @@ function ChannelTopCard({
                       <div className="flex items-center gap-3 @max-[560px]:gap-2">
                         <ProductThumbnail src={p.imageUrl} alt={p.productName} />
                         <div className="min-w-0">
-                          {/* Tên phôi (Product Type); chưa khai báo phôi thì dùng tên sản phẩm trên đơn */}
+                          {/* Title sản phẩm trên đơn (bỏ brand), cắt "…" theo độ rộng; di chuột xem đủ title */}
                           <p
-                            title={p.productType ? `${p.productType}\n${p.productName}` : p.productName}
+                            title={p.productName}
                             className="truncate text-[13px] font-semibold text-slate-800 transition-colors group-hover:text-blue-600"
                           >
-                            {p.productType || p.productName}
+                            {stripBrand(p.productName, p.storeName)}
                           </p>
                           <p className="mt-0.5 truncate font-mono text-[11.5px] font-medium text-slate-500">
                             {p.sku}
@@ -577,6 +666,15 @@ function ChannelTopCard({
               })}
             </tbody>
           </table>
+          {totalRows > ROWS_COLLAPSED && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-2 w-full cursor-pointer rounded-lg py-2 text-[12.5px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
+            >
+              {expanded ? "Thu gọn" : `Xem thêm ${totalRows - ROWS_COLLAPSED} ${itemLabel}`}
+            </button>
+          )}
         </div>
       )}
     </div>

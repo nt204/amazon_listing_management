@@ -537,7 +537,8 @@ export async function getAccountingDashboard(options: {
 
 // ----------------- TOP SẢN PHẨM -----------------
 
-const TOP_PRODUCTS_LIMIT = 5;
+/** Mọi danh sách Top trả 10 dòng: giao diện hiện 5, bấm "Xem thêm" mở đủ 10. */
+const TOP_PRODUCTS_LIMIT = 10;
 
 /**
  * Gom SKU theo ngách / phôi (bỏ SKU chưa khai báo), cộng Units · Revenue · Profit · Ads rồi xếp theo Profit.
@@ -566,7 +567,7 @@ function topGroups(items: TopProductItem[], groupOf: (i: TopProductItem) => stri
     }
   }
   return Array.from(groups.values())
-    .filter((g) => g.revenue !== 0 || g.profit !== 0)
+    .filter((g) => g.profit > 0)
     .sort((a, b) => b.profit - a.profit || b.revenue - a.revenue)
     .slice(0, TOP_PRODUCTS_LIMIT)
     .map(({ name, skuCount, stores, imageUrl, units, revenue, profit, adsFee }) => ({
