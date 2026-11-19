@@ -1,6 +1,8 @@
 // Tra toàn bộ campaign đang quảng cáo 1 hoặc nhiều ASIN (dùng cho "Negative List").
 // ASIN chỉ nằm ở dòng PRODUCT của facts → map ASIN → campaign_id của snapshot đang dùng, cache theo snapshot
 // (quét 1 lần / snapshot), rồi lấy chi tiết campaign qua index (store_id, campaign_id, grain).
+// Sponsored Brands KHÔNG có dòng PRODUCT (báo cáo SB không ghi ASIN) → ghép SB vào ASIN qua SKU ở đầu tên campaign
+// ("FCMD15081 SB05 ..." ↔ SKU FCMD15081 của ASIN), chi tiết lấy từ dòng TARGET (có ad group — phủ định SB ở cấp ad group).
 import type { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
 
@@ -63,6 +65,37 @@ async function loadAsinCampaignMap(sql: Sql, storeId: string): Promise<{ snap: S
   return { snap, map };
 }
 
+type SbMap = Record<string, string[]>;
+
+// Map "từ đầu tên campaign" (thường là SKU) → campaign_id của các campaign SB trong snapshot
+async function loadSbCampaignMap(sql: Sql, storeId: string, snap: Snap): Promise<SbMap> {
+  return getCachedOrFetch(
+    `ppc:sb-campaign-map:v1:${storeId}:${snap.snapshot_id}:${snap.report_start_date}:${snap.report_end_date}`,
+    ASIN_CAMPAIGN_MAP_TTL_SECONDS,
+    async () => {
+      const rows = await sql<Array<{ tok: string; campaign_ids: string[] }>>`
+        SELECT upper(split_part(trim(p.campaign_name), ' ', 1)) AS tok,
+               array_agg(DISTINCT p.campaign_id) AS campaign_ids
+        FROM ppc_performance_facts p
+        WHERE p.store_id = ${storeId}
+          AND p.report_start_date = ${snap.report_start_date}::date
+          AND p.report_end_date = ${snap.report_end_date}::date
+          AND p.ad_type = 'SB'
+          AND p.grain = 'CAMPAIGN'
+          AND p.campaign_id <> ''
+        GROUP BY 1
+      `;
+      return Object.fromEntries(rows.map((r) => [r.tok, r.campaign_ids])) as SbMap;
+    },
+  );
+}
+
+function sbCampaignIdsForSkus(sbMap: SbMap, skus: string[]): string[] {
+  const out = new Set<string>();
+  for (const sku of skus) for (const id of sbMap[sku.toUpperCase()] || []) out.add(id);
+  return [...out];
+}
+
 export interface AsinSearchItem {
   asin: string;
   skus: string[];
@@ -77,14 +110,15 @@ export async function searchAsins(
 ): Promise<AsinSearchItem[]> {
   const q = params.query.trim().toUpperCase();
   if (q.length < 2) return [];
-  const { map } = await loadAsinCampaignMap(sql, params.storeId);
+  const { snap, map } = await loadAsinCampaignMap(sql, params.storeId);
+  const sbMap = snap ? await loadSbCampaignMap(sql, params.storeId, snap) : {};
   const scored: Array<{ asin: string; skus: string[]; count: number; rank: number }> = [];
   for (const [asin, v] of Object.entries(map)) {
     let rank = -1;
     if (asin === q || v.s.includes(q)) rank = 0;
     else if (asin.startsWith(q) || v.s.some((x) => x.startsWith(q))) rank = 1;
     else if (asin.includes(q) || v.s.some((x) => x.includes(q))) rank = 2;
-    if (rank >= 0) scored.push({ asin, skus: v.s, count: v.c.length, rank });
+    if (rank >= 0) scored.push({ asin, skus: v.s, count: v.c.length + sbCampaignIdsForSkus(sbMap, v.s).length, rank });
   }
   scored.sort((a, b) => a.rank - b.rank || b.count - a.count || a.asin.localeCompare(b.asin));
   const top = scored.slice(0, params.limit ?? 20);
@@ -132,6 +166,17 @@ export async function loadAsinCampaigns(
   for (const asin of params.asins) {
     for (const id of map[asin]?.c || []) if (!campaignAsin.has(id)) campaignAsin.set(id, asin);
   }
+  // Campaign SB của SKU thuộc ASIN (không có dòng PRODUCT)
+  const sbMap = await loadSbCampaignMap(sql, params.storeId, snap);
+  const sbIds = new Set<string>();
+  for (const asin of params.asins) {
+    for (const id of sbCampaignIdsForSkus(sbMap, map[asin]?.s || [])) {
+      if (campaignAsin.has(id)) continue;
+      campaignAsin.set(id, asin);
+      sbIds.add(id);
+    }
+  }
+  const productIds = [...campaignAsin.keys()].filter((id) => !sbIds.has(id));
   if (campaignAsin.size === 0) {
     return { campaigns: [], snapshot: { start: snap.report_start_date, end: snap.report_end_date } };
   }
@@ -151,8 +196,10 @@ export async function loadAsinCampaigns(
            SUM(p.clicks) AS clicks, SUM(p.spend) AS spend, SUM(p.orders) AS orders
     FROM ppc_performance_facts p
     WHERE p.store_id = ${params.storeId}
-      AND p.campaign_id = ANY(${[...campaignAsin.keys()]})
-      AND p.grain = 'PRODUCT'
+      AND (
+        (p.campaign_id = ANY(${productIds}) AND p.grain = 'PRODUCT')
+        OR (p.campaign_id = ANY(${[...sbIds]}) AND p.grain = 'TARGET' AND p.ad_group_id <> '')
+      )
       AND p.report_start_date = ${snap.report_start_date}::date
       AND p.report_end_date = ${snap.report_end_date}::date
     GROUP BY 1, 2, 3, 4, 5, 6
