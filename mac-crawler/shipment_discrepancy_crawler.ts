@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import ExcelJS from "exceljs";
 import { sendTelegramMessage } from "./telegram";
 import { ensureAmazonSession } from "./amazon_auth";
+import { syncDiscrepanciesToGoogleSheet } from "./google_sheets_sync";
 
 // ============================================================================
 // CONFIGURATION & PATH RESOLUTION
@@ -58,7 +59,17 @@ interface DbShipmentClassification {
   total_single_sku_items: number;
   total_multi_sku_shipments: number;
   single_sku_items: DiscrepancyRow[];
+  /** Lô > 1 SKU đã đủ số nhận theo từng SKU trong bảng Chi tiết đi hàng → tính luôn, không mở Seller Central */
+  db_resolved_items?: DiscrepancyRow[];
   multi_sku_shipments: string[];
+  /** Trạng thái lô (Closed / Receiving / …) để biết lô nào còn thay đổi */
+  shipment_status?: Record<string, string>;
+}
+
+/** Lô đã chốt: Closed và không còn dòng "Action required" → giữ cache, không mở lại Seller Central */
+function isSettled(status: string | undefined, items: DiscrepancyRow[]): boolean {
+  if ((status || "").trim().toLowerCase() !== "closed") return false;
+  return !items.some((it) => /action required/i.test(it.status || ""));
 }
 
 interface CachedShipmentRecord {
@@ -70,7 +81,7 @@ interface CachedShipmentRecord {
 }
 
 // ============================================================================
-// STATE CACHE MANAGEMENT (CHỐNG QUÉT LẶP LẠI & BẮT BIẾN ĐỘNG KHI AMZ CẬP NHẬT)
+// STATE CACHE & DATABASE PERSISTENCE (LƯU VĨNH VIỄN VÀO POSTGRESQL CHỐNG MẤT)
 // ============================================================================
 function loadStateCache(): Record<string, Record<string, CachedShipmentRecord>> {
   try {
@@ -78,8 +89,27 @@ function loadStateCache(): Record<string, Record<string, CachedShipmentRecord>> 
       return JSON.parse(fs.readFileSync(STATE_CACHE_FILE, "utf8"));
     }
   } catch (err: any) {
-    console.warn(`[Cache] Không thể đọc cache: ${err.message}`);
+    console.warn(`[Cache] Không thể đọc file cache local: ${err.message}`);
   }
+
+  // Nếu file cache local bị mất, tự động khôi phục từ PostgreSQL Server trong 0.1s!
+  console.log(`[Cache] Đang khôi phục dữ liệu cache từ PostgreSQL Database trên server...`);
+  try {
+    const scriptPath = path.join(__dirname, "get_discrepancy_shipments.py");
+    const output = execSync(`python3 "${scriptPath}" "--load-all-cached"`, {
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    const restored = JSON.parse(output.trim());
+    if (restored && typeof restored === "object" && !restored.error) {
+      console.log(`✅ Đã khôi phục cache thành công từ Database Server!`);
+      saveStateCache(restored);
+      return restored;
+    }
+  } catch (err: any) {
+    console.warn(`[Cache] Không thể khôi phục từ DB: ${err.message}`);
+  }
+
   return {};
 }
 
@@ -88,7 +118,23 @@ function saveStateCache(cache: Record<string, Record<string, CachedShipmentRecor
     fs.mkdirSync(BASE_DOWNLOAD_DIR, { recursive: true });
     fs.writeFileSync(STATE_CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
   } catch (err: any) {
-    console.warn(`[Cache] Không thể lưu cache: ${err.message}`);
+    console.warn(`[Cache] Không thể lưu file cache local: ${err.message}`);
+  }
+}
+
+function persistDiscrepanciesToDb(items: DiscrepancyRow[]) {
+  if (!items || items.length === 0) return;
+  try {
+    const scriptPath = path.join(__dirname, "save_discrepancy_items.py");
+    const jsonStr = JSON.stringify(items);
+    execSync(`python3 "${scriptPath}"`, {
+      input: jsonStr,
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    console.log(`💾 Đã đồng bộ lưu vĩnh viễn ${items.length} bản ghi vào PostgreSQL Database.`);
+  } catch (err: any) {
+    console.warn(`[DB Sync] Cảnh báo khi lưu DB: ${err.message}`);
   }
 }
 
@@ -359,28 +405,23 @@ async function extractShipmentDiscrepancy(
 }
 
 // ============================================================================
-// EXPORT EXCEL & CSV (DUY NHẤT 1 FILE CHO MỖI STORE / ALL STORES)
+// EXPORT EXCEL & CSV (CÁCH 2: 1 FILE DUY NHẤT GỒM NHIỀU TAB CHO TỪNG STORE)
 // ============================================================================
-export async function exportResultsToExcelAndCsv(
-  label: string,
-  rows: DiscrepancyRow[]
-): Promise<{ excelPath: string; csvPath: string }> {
-  fs.mkdirSync(BASE_DOWNLOAD_DIR, { recursive: true });
-
-  // CHỈ DÙNG 1 TÊN FILE DUY NHẤT (Không sinh thêm đuôi ngày giờ)
-  const excelPath = path.join(BASE_DOWNLOAD_DIR, `shipment_discrepancy_${label}.xlsx`);
-  const csvPath = path.join(BASE_DOWNLOAD_DIR, `shipment_discrepancy_${label}.csv`);
-
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Amazon Listing Management";
-  workbook.created = new Date();
-
-  const worksheet = workbook.addWorksheet("Shipment Discrepancy", {
+function addWorksheetWithData(
+  workbook: ExcelJS.Workbook,
+  tabTitle: string,
+  rows: DiscrepancyRow[],
+  includeStoreCol = true
+) {
+  const worksheet = workbook.addWorksheet(tabTitle, {
     views: [{ state: "frozen", ySplit: 1 }],
   });
 
-  worksheet.columns = [
-    { header: "Store", key: "store", width: 14 },
+  const columns: any[] = [];
+  if (includeStoreCol) {
+    columns.push({ header: "Store", key: "store", width: 14 });
+  }
+  columns.push(
     { header: "SKU", key: "sku", width: 22 },
     { header: "ASIN", key: "asin", width: 15 },
     { header: "Shipment ID", key: "shipment_id", width: 18 },
@@ -388,22 +429,23 @@ export async function exportResultsToExcelAndCsv(
     { header: "Số Lượng Amazon Nhận", key: "so_luong_amazon_nhan", width: 22 },
     { header: "Discrepancy", key: "discrepancy", width: 14 },
     { header: "Receiving Date", key: "receiving_date", width: 26 },
-    { header: "Status", key: "status", width: 25 },
-  ];
+    { header: "Status", key: "status", width: 25 }
+  );
+
+  worksheet.columns = columns;
 
   const headerRow = worksheet.getRow(1);
   headerRow.font = { bold: true, color: { argb: "FFFFFF" }, size: 11 };
   headerRow.fill = {
     type: "pattern",
     pattern: "solid",
-    fgColor: { argb: "1E3A8A" },
+    fgColor: { argb: "1E3A8A" }, // Xanh navy hiện đại
   };
   headerRow.alignment = { vertical: "middle", horizontal: "center" };
   headerRow.height = 28;
 
   for (const r of rows) {
-    const row = worksheet.addRow({
-      store: r.store,
+    const rowData: any = {
       sku: r.sku,
       asin: r.asin,
       shipment_id: r.shipment_id,
@@ -412,9 +454,16 @@ export async function exportResultsToExcelAndCsv(
       discrepancy: r.discrepancy,
       receiving_date: r.receiving_date,
       status: r.status,
-    });
+    };
+    if (includeStoreCol) {
+      rowData.store = r.store;
+    }
 
-    row.getCell("store").alignment = { horizontal: "center" };
+    const row = worksheet.addRow(rowData);
+
+    if (includeStoreCol) {
+      row.getCell("store").alignment = { horizontal: "center" };
+    }
     row.getCell("asin").alignment = { horizontal: "center" };
     row.getCell("shipment_id").alignment = { horizontal: "center" };
     row.getCell("amazon_received").alignment = { horizontal: "right" };
@@ -429,7 +478,103 @@ export async function exportResultsToExcelAndCsv(
       discCell.font = { color: { argb: "16A34A" }, bold: true };
     }
   }
+}
 
+export function cleanOldTemporaryFiles() {
+  try {
+    if (!fs.existsSync(BASE_DOWNLOAD_DIR)) return;
+    const files = fs.readdirSync(BASE_DOWNLOAD_DIR);
+    for (const f of files) {
+      // Xóa tất cả các file excel, csv trên local vì đã chuyển sang cập nhật trực tiếp trên Google Sheets
+      if (f.endsWith(".xlsx") || f.endsWith(".csv")) {
+        fs.unlinkSync(path.join(BASE_DOWNLOAD_DIR, f));
+        console.log(`🧹 Đã dọn file local thừa: ${f}`);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`Lỗi dọn file: ${err.message}`);
+  }
+}
+
+export async function exportConsolidatedWorkbook(
+  allRows: DiscrepancyRow[],
+  storeList: string[]
+): Promise<{ excelPath: string; csvPath: string }> {
+  cleanOldTemporaryFiles();
+  fs.mkdirSync(BASE_DOWNLOAD_DIR, { recursive: true });
+
+  const excelPath = path.join(BASE_DOWNLOAD_DIR, "shipment_discrepancy_ALL_STORES.xlsx");
+  const csvPath = path.join(BASE_DOWNLOAD_DIR, "shipment_discrepancy_ALL_STORES.csv");
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Amazon Listing Management";
+  workbook.created = new Date();
+
+  // Tab 1: Tổng hợp tất cả store
+  addWorksheetWithData(workbook, "Tất Cả", allRows, true);
+
+  // Tab 2..N: Mỗi store 1 tab riêng
+  for (const sName of storeList) {
+    const storeRows = allRows.filter((r) => r.store.toUpperCase() === sName.toUpperCase());
+    if (storeRows.length > 0) {
+      addWorksheetWithData(workbook, sName, storeRows, false);
+    }
+  }
+
+  await workbook.xlsx.writeFile(excelPath);
+
+  // Xuất file CSV gộp
+  const csvHeaders = [
+    "store",
+    "sku",
+    "asin",
+    "shipment_id",
+    "amazon_received",
+    "so_luong_amazon_nhan",
+    "discrepancy",
+    "receiving_date",
+    "status",
+  ];
+  const csvRows = [csvHeaders.join(",")];
+  for (const r of allRows) {
+    const escapeCsv = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    csvRows.push(
+      [
+        escapeCsv(r.store),
+        escapeCsv(r.sku),
+        escapeCsv(r.asin),
+        escapeCsv(r.shipment_id),
+        r.amazon_received,
+        r.so_luong_amazon_nhan,
+        r.discrepancy,
+        escapeCsv(r.receiving_date),
+        escapeCsv(r.status),
+      ].join(",")
+    );
+  }
+  fs.writeFileSync(csvPath, csvRows.join("\n"), "utf8");
+
+  console.log(`\n✅ Đã cập nhật file Master (Cách 2 - Nhiều Tabs):`);
+  console.log(`  - Excel: ${excelPath}`);
+  console.log(`  - CSV:   ${csvPath}`);
+
+  return { excelPath, csvPath };
+}
+
+export async function exportSingleStoreWorkbook(
+  storeName: string,
+  rows: DiscrepancyRow[]
+): Promise<{ excelPath: string; csvPath: string }> {
+  fs.mkdirSync(BASE_DOWNLOAD_DIR, { recursive: true });
+
+  const excelPath = path.join(BASE_DOWNLOAD_DIR, `shipment_discrepancy_${storeName}.xlsx`);
+  const csvPath = path.join(BASE_DOWNLOAD_DIR, `shipment_discrepancy_${storeName}.csv`);
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Amazon Listing Management";
+  workbook.created = new Date();
+
+  addWorksheetWithData(workbook, storeName, rows, false);
   await workbook.xlsx.writeFile(excelPath);
 
   const csvHeaders = [
@@ -443,7 +588,6 @@ export async function exportResultsToExcelAndCsv(
     "receiving_date",
     "status",
   ];
-
   const csvRows = [csvHeaders.join(",")];
   for (const r of rows) {
     const escapeCsv = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -461,12 +605,7 @@ export async function exportResultsToExcelAndCsv(
       ].join(",")
     );
   }
-
   fs.writeFileSync(csvPath, csvRows.join("\n"), "utf8");
-
-  console.log(`\n✅ Đã cập nhật file duy nhất:`);
-  console.log(`  - Excel: ${excelPath}`);
-  console.log(`  - CSV:   ${csvPath}`);
 
   return { excelPath, csvPath };
 }
@@ -490,6 +629,8 @@ async function processStore(
 
   const classification = classifyShipmentsFromDb(storeName);
   const singleSkuItems = classification.single_sku_items;
+  const dbResolvedItems = classification.db_resolved_items || [];
+  const shipmentStatus = classification.shipment_status || {};
   let candidateMultiShipments = options?.specificShipmentIds || classification.multi_sku_shipments;
 
   if (options?.limit && options.limit > 0) {
@@ -497,6 +638,7 @@ async function processStore(
   }
 
   console.log(`  - Lô 1 SKU (tự động giải quyết): ${singleSkuItems.length} mặt hàng.`);
+  console.log(`  - Lô > 1 SKU tính từ bảng (đủ số nhận theo SKU): ${dbResolvedItems.length} mặt hàng.`);
   console.log(`  - Lô > 1 SKU tổng cộng: ${candidateMultiShipments.length} lô.`);
 
   const needBrowserCheck: string[] = [];
@@ -504,7 +646,9 @@ async function processStore(
 
   for (const sId of candidateMultiShipments) {
     const cached = stateCache[storeName][sId];
-    if (cached && cached.items && cached.items.length > 0) {
+    // Lô chưa chốt (Receiving…) hoặc còn "Action required" thì số lệch còn đổi → mở lại Seller Central
+    const forceRecheck = !!options?.specificShipmentIds?.includes(sId);
+    if (cached && cached.items && cached.items.length > 0 && !forceRecheck && isSettled(shipmentStatus[sId], cached.items)) {
       cachedRows.push(...cached.items);
     } else {
       needBrowserCheck.push(sId);
@@ -566,9 +710,11 @@ async function processStore(
     }
   }
 
-  const allStoreRows = [...singleSkuItems, ...cachedRows, ...browserCheckedRows];
+  const allStoreRows = [...singleSkuItems, ...dbResolvedItems, ...cachedRows, ...browserCheckedRows];
+  
+  // Đồng bộ lưu vĩnh viễn vào Database PostgreSQL
   if (allStoreRows.length > 0) {
-    await exportResultsToExcelAndCsv(storeName, allStoreRows);
+    persistDiscrepanciesToDb(allStoreRows);
   }
 
   return allStoreRows;
@@ -599,11 +745,14 @@ export async function runShipmentDiscrepancyCrawler(options?: {
     console.log(`🚀 BẮT ĐẦU QUÉT SHIPMENT DISCREPANCY CHO TẤT CẢ CÁC STORE (${stores.length} stores)`);
     console.log(`===============================================================`);
 
+    const processedStoreNames: string[] = [];
+
     for (const st of stores) {
       if (st.enabled === false) continue;
       try {
         const rows = await processStore(st, stateCache, { limit: options?.limit });
         allStoresRows.push(...rows);
+        processedStoreNames.push(st.store_name);
       } catch (err: any) {
         console.error(`❌ Lỗi xử lý store ${st.store_name}: ${err.message}`);
       }
@@ -611,22 +760,32 @@ export async function runShipmentDiscrepancyCrawler(options?: {
 
     if (allStoresRows.length > 0) {
       console.log(`\n===============================================================`);
-      console.log(`📊 ĐANG TẠO BẢNG TỔNG HỢP TOÀN BỘ STORE (TỔNG ${allStoresRows.length} DÒNG)...`);
-      const { excelPath, csvPath } = await exportResultsToExcelAndCsv("ALL_STORES", allStoresRows);
+      console.log(`📊 ĐANG ĐỒNG BỘ DỮ LIỆU ĐỐI SOÁT LÊN GOOGLE SHEETS (TỔNG ${allStoresRows.length} DÒNG)...`);
+      cleanOldTemporaryFiles();
+
+      const allRegisteredStores = stores.map((s) => s.store_name);
+      let sheetUrl = "";
+      try {
+        sheetUrl = await syncDiscrepanciesToGoogleSheet(allStoresRows, allRegisteredStores);
+      } catch (e: any) {
+        console.warn(`[GoogleSheet] Lỗi đồng bộ: ${e.message}`);
+      }
 
       const totalLost = allStoresRows.reduce((acc, r) => (r.discrepancy < 0 ? acc + Math.abs(r.discrepancy) : acc), 0);
       const totalOver = allStoresRows.reduce((acc, r) => (r.discrepancy > 0 ? acc + r.discrepancy : acc), 0);
 
-      const message = [
+      const messageParts = [
         `🔔 *Báo Cáo Đối Soát Shipment Amazon Discrepancy (ALL STORES)*`,
-        `🏪 Tổng số store: *${stores.filter((s) => s.enabled !== false).length}*`,
+        `🏪 Tổng số store: *${processedStoreNames.length}*`,
         `📋 Tổng số dòng dữ liệu: *${allStoresRows.length}*`,
         `🔴 Tổng thiếu: *${totalLost}* units`,
         `🟢 Tổng thừa: *${totalOver}* units`,
-        `📁 Master Excel: \`${path.basename(excelPath)}\``,
-      ].join("\n");
+      ];
+      if (sheetUrl) {
+        messageParts.push(`🌐 Google Sheet: [Mở Bảng Đối Soát Online](${sheetUrl})`);
+      }
 
-      await sendTelegramMessage(message).catch((e) => console.warn(`Telegram error: ${e.message}`));
+      await sendTelegramMessage(messageParts.join("\n")).catch((e) => console.warn(`Telegram error: ${e.message}`));
     }
   } else {
     const targetStoreName = (options?.storeName || "FASTPEACE").toUpperCase();
@@ -640,6 +799,33 @@ export async function runShipmentDiscrepancyCrawler(options?: {
       specificShipmentIds: options?.shipmentIds,
     });
     allStoresRows.push(...rows);
+
+    // Dữ liệu các store khác lấy từ DB (bảng accounting_shipment_discrepancies, đủ cả lô 1 SKU);
+    // DB lỗi thì dùng cache local như trước.
+    const fullDataset: DiscrepancyRow[] = [...rows];
+    let otherStores: Record<string, Record<string, CachedShipmentRecord>> = stateCache;
+    try {
+      const scriptPath = path.join(__dirname, "get_discrepancy_shipments.py");
+      const output = execSync(`python3 "${scriptPath}" "--load-all-cached"`, { encoding: "utf8", timeout: 30000 });
+      const fromDb = JSON.parse(output.trim());
+      if (fromDb && typeof fromDb === "object" && !fromDb.error) otherStores = fromDb;
+    } catch (err: any) {
+      console.warn(`[DB] Không tải được dữ liệu store khác, dùng cache local: ${err.message}`);
+    }
+    for (const [stName, shipments] of Object.entries(otherStores)) {
+      if (stName.toUpperCase() === targetStoreName) continue;
+      for (const rec of Object.values(shipments)) {
+        if (rec.items && Array.isArray(rec.items) && rec.items.length > 0) fullDataset.push(...rec.items);
+      }
+    }
+
+    cleanOldTemporaryFiles();
+    const allRegisteredStores = stores.map((s) => s.store_name);
+    try {
+      await syncDiscrepanciesToGoogleSheet(fullDataset, allRegisteredStores);
+    } catch (e: any) {
+      console.warn(`[GoogleSheet] Lỗi đồng bộ: ${e.message}`);
+    }
   }
 
   console.log(`\n🎉 HOÀN THÀNH TIẾN TRÌNH.`);

@@ -35,5 +35,12 @@
     "enabled": true,
     "ppc": false,
     "description": "Store EVERPHANT (chỉ crawl accounting, không chạy PPC)"
+  },
+  {
+    "store_name": "EKASPEEK",
+    "profile_id": "k1j878fy",
+    "enabled": true,
+    "ppc": false,
+    "description": "Store EKASPEEK (chỉ crawl accounting, không chạy PPC)"
   }
 ]

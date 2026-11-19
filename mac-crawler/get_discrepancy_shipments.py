@@ -3,10 +3,12 @@
 get_discrepancy_shipments.py
 Truy vấn danh sách shipment có discrepancy lệch từ bảng accounting_inbound_shipments.
 Quy tắc:
-- Chỉ lấy các lô hàng ĐÃ ĐẾN KHO hoặc ĐANG NHẬN (status IN ('Closed', 'Receiving', 'Delivered')).
-  BỎ QUA các lô 'In transit', 'Working', 'Shipped' (hàng đang đi trên đường, chưa nhận kiện nào nên không phải lệch thực sự).
+- Chỉ lấy các lô hàng ĐÃ ĐẾN KHO hoặc ĐANG NHẬN (loại trừ In transit, Working, Shipped).
 - Lô nào chỉ có 1 SKU -> Mặc định con đó lệch luôn, lấy trực tiếp từ DB kèm ASIN từ bảng mã.
-- Lô nào có > 1 SKU -> Cần mở Seller Central để check xem chính xác SKU/ASIN nào bị lệch bao nhiêu.
+- Lô > 1 SKU mà mọi SKU đã có số nhận (amazon_received) và tổng khớp số nhận của lô -> tính luôn từ DB.
+- Lô > 1 SKU còn lại -> Cần mở Seller Central để check xem chính xác SKU/ASIN nào bị lệch bao nhiêu.
+- Dấu discrepancy đầu ra giống Seller Central: số nhận - số gửi (âm = thiếu).
+- Khôi phục cache tự động từ bảng accounting_shipment_discrepancies nếu mất file cache.
 """
 
 import sys
@@ -45,84 +47,154 @@ def main():
         conn = psycopg2.connect(db_url)
         cur = conn.cursor()
         cur.execute("SET statement_timeout = 30000;")
-        
-        # Chỉ quét các lô ĐÃ ĐẾN KHO / ĐANG NHẬN (loại trừ In transit, Working, Shipped)
+
+        # Nếu gọi với lệnh --load-all-cached: tải lại toàn bộ cache đã lưu vĩnh viễn trên DB
+        if store_name == "--load-all-cached":
+            cur.execute("""
+                SELECT store_name, sku, asin, shipment_id, amazon_received, 
+                       so_luong_amazon_nhan, discrepancy, receiving_date, status
+                FROM accounting_shipment_discrepancies;
+            """)
+            db_rows = cur.fetchall()
+            cached_data = {}
+            for r in db_rows:
+                st = r[0]
+                item = {
+                    "store": st,
+                    "sku": r[1],
+                    "asin": r[2] or "",
+                    "shipment_id": r[3],
+                    "amazon_received": r[4],
+                    "so_luong_amazon_nhan": r[5],
+                    "discrepancy": r[6],
+                    "receiving_date": r[7] or "",
+                    "status": r[8] or "Action required"
+                }
+                if st not in cached_data:
+                    cached_data[st] = {}
+                sid = r[3]
+                if sid not in cached_data[st]:
+                    cached_data[st][sid] = {
+                        "shipment_id": sid,
+                        "store": st,
+                        "items": [],
+                        "receivingDate": r[7] or "",
+                        "last_checked_at": ""
+                    }
+                cached_data[st][sid]["items"].append(item)
+            print(json.dumps(cached_data))
+            conn.close()
+            return
+
+        # Quét các shipment có discrepancy != 0 từ accounting_inbound_shipments.
+        # Quy ước dấu ĐẦU RA (giống Seller Central): discrepancy = số Amazon nhận - số gửi → ÂM = THIẾU, DƯƠNG = THỪA.
+        # (Cột discrepancy trong bảng Chi tiết đi hàng ngược dấu: số gửi - số nhận, dương = thiếu → không dùng thẳng.)
+        # Lô chưa nhận xong / chưa gửi / lỗi dữ liệu thì bỏ qua.
         query = """
-            WITH disc_shipments AS (
-                SELECT DISTINCT s.shipment_id
+            WITH base AS (
+                SELECT s.*
                 FROM accounting_inbound_shipments s
                 JOIN stores st ON s.store_id = st.id
                 WHERE UPPER(st.name) = UPPER(%s)
-                  AND s.shipment_id IS NOT NULL 
+                  AND s.deleted_at IS NULL
+                  AND s.shipment_id IS NOT NULL
                   AND TRIM(s.shipment_id) != ''
-                  AND s.discrepancy IS NOT NULL 
-                  AND s.discrepancy != 0
-                  AND s.deleted_at IS NULL
-                  AND LOWER(TRIM(COALESCE(s.status, ''))) NOT IN ('in transit', 'working', 'shipped', 'ready to ship')
+                  AND LOWER(TRIM(COALESCE(s.status, ''))) NOT IN (
+                    'in transit', 'working', 'shipped', 'ready to ship', 'created', 'delivered',
+                    'cancelled', 'canceled', 'deleted', '[object object]'
+                  )
             ),
-            shipment_sku_counts AS (
-                SELECT s.shipment_id, COUNT(DISTINCT s.sku) as sku_count
-                FROM accounting_inbound_shipments s
-                JOIN stores st ON s.store_id = st.id
-                WHERE UPPER(st.name) = UPPER(%s)
-                  AND s.shipment_id IN (SELECT shipment_id FROM disc_shipments)
-                  AND s.deleted_at IS NULL
-                GROUP BY s.shipment_id
+            disc_shipments AS (
+                SELECT DISTINCT shipment_id FROM base WHERE COALESCE(discrepancy, 0) != 0
+            ),
+            lot AS (
+                SELECT shipment_id,
+                       COUNT(DISTINCT UPPER(TRIM(sku))) AS sku_count,
+                       COUNT(*) FILTER (WHERE amazon_received IS NULL) AS missing_sku_received,
+                       SUM(amazon_received) AS sum_sku_received,
+                       MAX(so_luong_amazon_nhan) AS lot_received,
+                       MAX(TRIM(COALESCE(status, ''))) AS lot_status
+                FROM base
+                WHERE shipment_id IN (SELECT shipment_id FROM disc_shipments)
+                GROUP BY shipment_id
             )
-            SELECT 
-                s.shipment_id,
-                c.sku_count,
-                s.sku,
-                COALESCE(m.asin, '') as asin,
-                s.quantity as amazon_received,
-                COALESCE(s.so_luong_amazon_nhan, 0) as so_luong_amazon_nhan,
-                s.discrepancy,
-                COALESCE(s.ngay_den, '') as receiving_date,
-                COALESCE(s.status, '') as status
-            FROM accounting_inbound_shipments s
-            JOIN shipment_sku_counts c ON s.shipment_id = c.shipment_id
-            JOIN stores st ON s.store_id = st.id
-            LEFT JOIN accounting_sku_master m ON (s.sku_id = m.id OR (s.store_id = m.store_id AND LOWER(TRIM(s.sku)) = LOWER(TRIM(m.sku))))
-            WHERE UPPER(st.name) = UPPER(%s)
-              AND s.deleted_at IS NULL
-              AND LOWER(TRIM(COALESCE(s.status, ''))) NOT IN ('in transit', 'working', 'shipped', 'ready to ship')
-            ORDER BY c.sku_count DESC, s.shipment_id, s.sku;
+            SELECT
+                b.shipment_id,
+                l.sku_count,
+                b.sku,
+                COALESCE((
+                    SELECT m.asin FROM accounting_sku_master m
+                    WHERE m.deleted_at IS NULL
+                      AND (m.id = b.sku_id OR (m.store_id = b.store_id AND LOWER(TRIM(m.sku)) = LOWER(TRIM(b.sku))))
+                    ORDER BY (m.id = b.sku_id) DESC NULLS LAST
+                    LIMIT 1
+                ), '') AS asin,
+                COALESCE(b.quantity, 0) AS quantity,
+                b.amazon_received,
+                b.so_luong_amazon_nhan,
+                b.discrepancy,
+                COALESCE(b.ngay_den, '') AS receiving_date,
+                COALESCE(l.lot_status, '') AS lot_status,
+                -- Lô nhiều SKU tự tính được từ bảng khi mọi SKU đã có số nhận và tổng khớp số nhận của lô
+                (l.missing_sku_received = 0 AND (l.lot_received IS NULL OR l.lot_received = l.sum_sku_received)) AS resolvable
+            FROM base b
+            JOIN lot l ON l.shipment_id = b.shipment_id
+            ORDER BY l.sku_count DESC, b.shipment_id, b.sku;
         """
-        cur.execute(query, (store_name, store_name, store_name))
+        cur.execute(query, (store_name,))
         rows = cur.fetchall()
 
         single_sku_items = []
+        db_resolved_items = []
         multi_sku_shipments = []
+        shipment_status = {}
 
         seen_multi = set()
         for r in rows:
-            shipment_id = r[0].strip()
+            shipment_id = (r[0] or "").strip()
             sku_count = r[1]
-            sku = r[2].strip()
-            asin = r[3].strip()
-            amazon_received = int(r[4] or 0)
-            so_luong_amazon_nhan = int(r[5] or 0)
-            discrepancy = int(r[6] or 0)
-            receiving_date = r[7].strip()
-            raw_status = r[8].strip()
+            sku = (r[2] or "").strip()
+            asin = (r[3] or "").strip()
+            quantity = int(r[4] or 0)
+            sku_received = r[5]
+            lot_received = r[6]
+            raw_disc = int(r[7] or 0)
+            receiving_date = (r[8] or "").strip()
+            lot_status = (r[9] or "").strip()
+            resolvable = bool(r[10])
 
-            status = raw_status if raw_status and raw_status.lower() != "null" else "Closed"
+            status = lot_status if lot_status else "Closed"
+            shipment_status[shipment_id] = status
 
             if sku_count == 1:
-                # 1 SKU: mặc định con đó lệch luôn
+                # Lô 1 SKU: số nhận của SKU = số nhận theo SKU, không có thì số nhận của lô
+                received = sku_received if sku_received is not None else lot_received
+                discrepancy = (int(received) - quantity) if received is not None else -raw_disc
                 single_sku_items.append({
                     "store": store_name,
                     "sku": sku,
                     "asin": asin,
                     "shipment_id": shipment_id,
-                    "amazon_received": amazon_received,
-                    "so_luong_amazon_nhan": so_luong_amazon_nhan,
+                    "amazon_received": quantity,
+                    "so_luong_amazon_nhan": quantity + discrepancy,
                     "discrepancy": discrepancy,
                     "receiving_date": receiving_date,
                     "status": status
                 })
+            elif resolvable:
+                received = int(sku_received or 0)
+                db_resolved_items.append({
+                    "store": store_name,
+                    "sku": sku,
+                    "asin": asin,
+                    "shipment_id": shipment_id,
+                    "amazon_received": quantity,
+                    "so_luong_amazon_nhan": received,
+                    "discrepancy": received - quantity,
+                    "receiving_date": receiving_date,
+                    "status": status
+                })
             else:
-                # > 1 SKU: cần crawl chi tiết trên Amazon Seller Central
                 if shipment_id not in seen_multi:
                     seen_multi.add(shipment_id)
                     multi_sku_shipments.append(shipment_id)
@@ -132,7 +204,9 @@ def main():
             "total_single_sku_items": len(single_sku_items),
             "total_multi_sku_shipments": len(multi_sku_shipments),
             "single_sku_items": single_sku_items,
-            "multi_sku_shipments": multi_sku_shipments
+            "db_resolved_items": db_resolved_items,
+            "multi_sku_shipments": multi_sku_shipments,
+            "shipment_status": shipment_status
         }))
         conn.close()
     except Exception as e:
