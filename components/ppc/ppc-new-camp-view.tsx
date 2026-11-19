@@ -1000,12 +1000,8 @@ export function PpcNewCampView() {
           >
             <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
               <div className="flex flex-col gap-2.5">
-                <span className={`${labelCls} mb-0`}>Dán danh sách SKU</span>
-                <textarea className={inputCls} rows={3} placeholder="Mỗi SKU một dòng" value={bulkSkus} onChange={(e) => setBulkSkus(e.target.value)} />
-                <button type="button" onClick={addBulk} className="w-full rounded-lg bg-slate-900 py-2 text-sm font-bold text-white hover:bg-slate-800 cursor-pointer">
-                  Thêm vào danh sách
-                </button>
-                <div className="relative mt-1">
+                <span className={`${labelCls} mb-0`}>Tìm SKU / ASIN</span>
+                <div className="relative">
                   <MagnifyingGlass size={16} weight="bold" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input className={`${inputCls} pl-9`} placeholder="Tìm SKU hoặc ASIN…" value={skuSearch} onChange={(e) => setSkuSearch(e.target.value)} />
                 </div>
@@ -1042,6 +1038,11 @@ export function PpcNewCampView() {
                     })
                   )}
                 </div>
+                <span className={`${labelCls} mb-0 mt-1`}>Dán danh sách SKU</span>
+                <textarea className={inputCls} rows={2} placeholder="Mỗi SKU một dòng" value={bulkSkus} onChange={(e) => setBulkSkus(e.target.value)} />
+                <button type="button" onClick={addBulk} className="w-full rounded-lg bg-slate-900 py-2 text-sm font-bold text-white hover:bg-slate-800 cursor-pointer">
+                  Thêm vào danh sách
+                </button>
               </div>
 
               <div className="flex flex-col gap-2.5">
