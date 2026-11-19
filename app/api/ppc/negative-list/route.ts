@@ -2,7 +2,8 @@
 // GET  ?storeName=&q=      → gợi ý ASIN/SKU có campaign trong store (kèm SKU, ảnh mockup)
 // GET  ?storeName=&asins=  → danh sách campaign đang quảng cáo các ASIN
 // POST { storeName, asins, campaignIds, keywords, matchType, mode? } → tạo bulksheet:
-//   mode = "export" → trả file về trình duyệt; mặc định → xếp hàng Auto Upload trên Mac mini
+//   mode = "export" → trả file về trình duyệt + tạo lô 'exported' (chờ tick "Đã upload"); mặc định → xếp hàng Auto Upload
+// Lô chờ xác nhận / đang Auto Upload: xem ./batches/route.ts
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { invalidateCachePattern } from "@/lib/redis";
@@ -43,7 +44,7 @@ async function registerNegatives(
     store: { id: string; name: string };
     recommendations: PpcRecommendation[];
     matchType: string;
-    state: "pending" | "enabled";
+    state: "pending" | "exported";
     jobId: string | null;
   },
 ) {
@@ -75,9 +76,16 @@ async function registerNegatives(
         ON CONFLICT (store_id, campaign_name, keyword_text, match_type) DO UPDATE SET
           updated_at = NOW(),
           source = EXCLUDED.source,
-          -- Đã bật trên Amazon thì giữ: job mới lỗi sẽ xoá theo source_job_id, không được xoá mất phủ định đang chạy
-          state = CASE WHEN ppc_negative_registry.state = 'enabled' THEN 'enabled' ELSE EXCLUDED.state END,
-          source_job_id = CASE WHEN ppc_negative_registry.state = 'enabled' THEN ppc_negative_registry.source_job_id ELSE EXCLUDED.source_job_id END,
+          -- Đã bật trên Amazon thì giữ: job mới lỗi sẽ xoá theo source_job_id, không được xoá mất phủ định đang chạy.
+          -- Đang Auto Upload (pending) mà chỉ xuất file thì cũng giữ nguyên job đang chạy.
+          state = CASE
+            WHEN ppc_negative_registry.state = 'enabled' THEN 'enabled'
+            WHEN ppc_negative_registry.state = 'pending' AND EXCLUDED.state = 'exported' THEN 'pending'
+            ELSE EXCLUDED.state END,
+          source_job_id = CASE
+            WHEN ppc_negative_registry.state = 'enabled' THEN ppc_negative_registry.source_job_id
+            WHEN ppc_negative_registry.state = 'pending' AND EXCLUDED.state = 'exported' THEN ppc_negative_registry.source_job_id
+            ELSE EXCLUDED.source_job_id END,
           reason = EXCLUDED.reason
       `;
     }
@@ -176,11 +184,13 @@ export async function POST(request: Request) {
     const campaigns = asinCampaigns.filter((c) => c.campaignId && c.adType !== "SD" && wantedCampaignIds.has(c.campaignId));
     if (campaigns.length === 0) throw new ApiError("Không có campaign hợp lệ của ASIN đã chọn.", 400);
 
-    // Bỏ cặp (campaign, keyword, match type) đã có trong Negative Hub
+    // Bỏ cặp (campaign, keyword, match type) đã phủ định (enabled) hoặc đang Auto Upload (pending).
+    // Lô chỉ mới xuất file ('exported') chưa chắc đã lên Amazon → không chặn.
     const existing = await sql<{ campaign_name: string; keyword_text: string }[]>`
       SELECT campaign_name, keyword_text FROM ppc_negative_registry
       WHERE store_id = ${store.id}
         AND match_type = ${matchType}
+        AND state IN ('enabled', 'pending')
         AND campaign_name = ANY(${campaigns.map((c) => c.campaignName)})
         AND lower(trim(keyword_text)) = ANY(${keywords})
     `;
@@ -236,9 +246,22 @@ export async function POST(request: Request) {
     const tag = matchType === "negativePhrase" ? "NegativePhrase" : "NegativeExact";
     const fileName = `Upload_${cleanStore}_NegList_${tag}_${keywords.length}KW_${campaigns.length}Camp_${exportTimestamp(new Date())}.xlsx`;
 
-    // Xuất file: tải về để tự upload lên Amazon, ghi Negative Hub luôn (giống Xuất File của Đề Xuất Phủ Định ST)
+    // Xuất file: tải về để tự upload lên Amazon. Ghi thành 1 lô 'exported' — chỉ sang Negative Hub khi người dùng
+    // tick "Đã upload lên Amazon" (hoặc Auto Upload lại các cặp này).
     if (body?.mode === "export") {
-      await registerNegatives(sql, { teamId: actor.teamId, store, recommendations, matchType, state: "enabled", jobId: null });
+      const batchId = crypto.randomUUID();
+      const campaignCount = new Set(recommendations.map((r) => r.campaignName)).size;
+      const keywordCount = new Set(recommendations.map((r) => r.keyword)).size;
+      await sql`
+        INSERT INTO ppc_negative_batches (
+          id, team_id, store_id, store_name, source, file_name, match_type, asins,
+          keyword_count, campaign_count, row_count, status, created_by, created_at
+        ) VALUES (
+          ${batchId}, ${actor.teamId}, ${store.id}, ${store.name}, 'NEGATIVE_LIST', ${fileName}, ${matchType},
+          ${sql.json(asins)}, ${keywordCount}, ${campaignCount}, ${recommendations.length}, 'EXPORTED', ${actor.userId}, NOW()
+        )
+      `;
+      await registerNegatives(sql, { teamId: actor.teamId, store, recommendations, matchType, state: "exported", jobId: batchId });
       const asciiFileName = fileName.replace(/[^A-Za-z0-9 ._+()-]+/g, "").trim() || "Negative_List.xlsx";
       return new Response(new Uint8Array(buffer), {
         status: 200,
@@ -248,6 +271,7 @@ export async function POST(request: Request) {
           "Cache-Control": "no-store",
           "X-Action-Count": String(recommendations.length),
           "X-Skipped-Count": String(skipped),
+          "X-Batch-Id": batchId,
         },
       });
     }

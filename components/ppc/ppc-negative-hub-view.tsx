@@ -1,24 +1,21 @@
 "use client";
 
-import { useState, useMemo } from "react";
+// Negative Hub: phủ định ĐÃ lên Amazon, gom theo từng lô (job Auto Upload / lô Xuất File đã tick "Đã upload").
+// Lô mới xuất file chưa xác nhận và lô đang Auto Upload nằm ở tab Negative List.
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   MagnifyingGlass,
-  Copy,
   Trash,
   ArrowsClockwise,
-  Check,
   ShieldCheck,
   CircleNotch,
   WarningCircle,
+  CaretRight,
+  CloudArrowUp,
   FileXls,
-  CheckSquare,
-  Square,
+  Stack,
 } from "@phosphor-icons/react";
-import { PpcPagination } from "./ppc-pagination";
 import { PpcCopyButton } from "./ppc-copy-button";
-import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
-import { useBulkSelection } from "@/hooks/use-bulk-selection";
-import { PpcBulkSelectionBanner } from "./ppc-bulk-selection-banner";
 
 export interface NegativeRegistryItem {
   id: string;
@@ -42,105 +39,171 @@ export interface NegativeRegistryItem {
   updated_at: string;
 }
 
-interface PpcNegativeHubViewProps {
-  selectedStore: string;
-  /** ACTIVE (mặc định): danh sách đang lọc negative bật của campaign đang chạy — "xoá tất cả theo bộ lọc" cũng theo phạm vi này. */
-  campaignStatus?: "ACTIVE" | "ALL";
-  items: NegativeRegistryItem[];
-  summary: {
-    totalNegatives: number;
-    totalCampaigns: number;
-    totalSpendPrevented: number;
-  };
-  loading: boolean;
-  onRefresh: () => void;
-  notify: (message: string, type?: "success" | "error") => void;
+interface NegativeBatch {
+  batchKey: string;
+  jobId: string | null;
+  storeName: string;
+  source: string;
+  method: "AUTO_UPLOAD" | "EXPORT_CONFIRMED" | "EXPORT" | "OTHER";
+  matchTypes: string[];
+  adTypes: string[];
+  levels: string[];
+  rowCount: number;
+  keywordCount: number;
+  campaignCount: number;
+  spend: number;
+  keywords: string[];
+  createdAt: string;
+  fileName: string | null;
+  createdBy: string | null;
+  confirmedAt: string | null;
+  confirmedBy: string | null;
 }
 
-export function PpcNegativeHubView({
-  selectedStore,
-  campaignStatus = "ALL",
-  items,
-  summary,
-  loading,
-  onRefresh,
-  notify,
-}: PpcNegativeHubViewProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [adTypeFilter, setAdTypeFilter] = useState<"ALL" | "SP" | "SB">("ALL");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+interface BatchDetail {
+  keywords: Array<{ keyword: string; campaigns: number; clicks: number; spend: number }>;
+  campaigns: Array<{ campaignName: string; adGroupName: string | null; adType: string; keywords: number }>;
+}
 
-  // Delete modal state
-  const [deleteTarget, setDeleteTarget] = useState<NegativeRegistryItem | null>(null);
-  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+interface HubSummary {
+  totalNegatives: number;
+  totalCampaigns: number;
+  totalSpendPrevented: number;
+  totalBatches: number;
+}
+
+interface PpcNegativeHubViewProps {
+  selectedStore: string;
+  notify: (message: string, type?: "success" | "error") => void;
+  /** Gọi sau khi xoá lô để màn cha cập nhật số đếm. */
+  onChanged?: () => void;
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  NEGATIVE_LIST: "Negative List",
+  AUTO_UPLOAD: "Đề xuất phủ định ST",
+  MANUAL_EXPORT: "Đề xuất phủ định ST",
+};
+
+const MATCH_LABEL: Record<string, string> = {
+  negativePhrase: "Negative Phrase",
+  negativeExact: "Negative Exact",
+};
+
+const fmtNum = (n: number) => n.toLocaleString("en-US");
+const fmtDateTime = (v: string | null) =>
+  v
+    ? new Date(v).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric" })
+    : "--";
+
+function MethodBadge({ method }: { method: NegativeBatch["method"] }) {
+  if (method === "AUTO_UPLOAD") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-bold whitespace-nowrap">
+        <CloudArrowUp size={12} weight="bold" /> Auto Upload
+      </span>
+    );
+  }
+  if (method === "EXPORT_CONFIRMED" || method === "EXPORT") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold whitespace-nowrap">
+        <FileXls size={12} weight="bold" /> Xuất file · upload tay
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-bold whitespace-nowrap">
+      Khác
+    </span>
+  );
+}
+
+export function PpcNegativeHubView({ selectedStore, notify, onChanged }: PpcNegativeHubViewProps) {
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [adTypeFilter, setAdTypeFilter] = useState<"ALL" | "SP" | "SB">("ALL");
+  const [batches, setBatches] = useState<NegativeBatch[]>([]);
+  const [summary, setSummary] = useState<HubSummary>({ totalNegatives: 0, totalCampaigns: 0, totalSpendPrevented: 0, totalBatches: 0 });
+  // Đang tải = bộ lọc hiện tại chưa có kết quả (không setState đồng bộ trong effect)
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, BatchDetail>>({});
+  const [loadingDetail, setLoadingDetail] = useState<string | null>(null);
+
+  const [deleteTarget, setDeleteTarget] = useState<NegativeBatch | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Filtered items
-  const filteredItems = useMemo(() => {
-    let list = [...items];
+  // Gõ tìm kiếm → đợi 400ms mới gọi API
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim().toLowerCase()), 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
-    if (adTypeFilter !== "ALL") {
-      list = list.filter((it) => (it.ad_type || "SP").toUpperCase() === adTypeFilter);
-    }
+  const queryKey = useMemo(() => {
+    const params = new URLSearchParams({ view: "batches" });
+    if (selectedStore && selectedStore !== "ALL") params.set("storeName", selectedStore);
+    if (adTypeFilter !== "ALL") params.set("adType", adTypeFilter);
+    if (search) params.set("search", search);
+    return params.toString();
+  }, [selectedStore, adTypeFilter, search]);
+  const loading = refreshing || loadedFor !== queryKey;
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
-      list = list.filter(
-        (it) =>
-          it.keyword_text.toLowerCase().includes(q) ||
-          it.campaign_name.toLowerCase().includes(q) ||
-          (it.ad_group_name && it.ad_group_name.toLowerCase().includes(q)),
-      );
-    }
-
-    return list;
-  }, [items, adTypeFilter, searchQuery]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
-  const paginatedItems = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return filteredItems.slice(start, start + pageSize);
-  }, [filteredItems, page, pageSize]);
-
-  // Current filters snapshot for Enterprise Selection
-  const currentFilters = useMemo(
-    () => ({
-      storeName: selectedStore,
-      adType: adTypeFilter,
-      search: searchQuery.trim(),
-      campaignStatus,
-    }),
-    [selectedStore, adTypeFilter, searchQuery, campaignStatus]
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const res = await fetch(`/api/ppc/negative-keywords?${queryKey}`, { signal, cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.success) throw new Error(json.error || json.message || `HTTP ${res.status}`);
+        setBatches(json.data.batches || []);
+        setSummary(json.data.summary);
+        setDetails({});
+        setError(null);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Không tải được Negative Hub.");
+      } finally {
+        if (!signal?.aborted) {
+          setLoadedFor(queryKey);
+          setRefreshing(false);
+        }
+      }
+    },
+    [queryKey],
   );
 
-  // Enterprise Bulk Selection Hook
-  const {
-    mode: bulkMode,
-    isSelected: isItemSelected,
-    isPageAllSelected,
-    isPageIndeterminate,
-    totalSelectedCount,
-    toggleSelectPage,
-    toggleItem,
-    selectAllFiltered,
-    clearSelection,
-    getPayload,
-  } = useBulkSelection({
-    currentPageItems: paginatedItems,
-    totalFilteredCount: filteredItems.length,
-    currentFilters,
-  });
+  const refresh = () => {
+    setRefreshing(true);
+    void load();
+  };
 
-  const handleCopy = async (text: string, id: string) => {
+  useEffect(() => {
+    const ctrl = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState chỉ chạy sau khi fetch xong
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, [load]);
+
+  const toggleOpen = async (b: NegativeBatch) => {
+    if (openKey === b.batchKey) {
+      setOpenKey(null);
+      return;
+    }
+    setOpenKey(b.batchKey);
+    if (details[b.batchKey]) return;
+    setLoadingDetail(b.batchKey);
     try {
-      await navigator.clipboard.writeText(text);
-      setCopiedKey(id);
-      setTimeout(() => setCopiedKey(null), 1500);
-      notify(`Đã copy: "${text}"`, "success");
-    } catch {
-      notify("Không thể copy từ khóa", "error");
+      const params = new URLSearchParams({ view: "batch", batchKey: b.batchKey, storeName: b.storeName });
+      const res = await fetch(`/api/ppc/negative-keywords?${params}`, { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
+      setDetails((prev) => ({ ...prev, [b.batchKey]: json.data }));
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Không tải được chi tiết lô.", "error");
+    } finally {
+      setLoadingDetail(null);
     }
   };
 
@@ -148,466 +211,259 @@ export function PpcNegativeHubView({
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
-      const res = await fetch(`/api/ppc/negative-keywords?id=${encodeURIComponent(deleteTarget.id)}`, {
-        method: "DELETE",
-      });
+      const params = new URLSearchParams({ batchKey: deleteTarget.batchKey, storeName: deleteTarget.storeName });
+      const res = await fetch(`/api/ppc/negative-keywords?${params}`, { method: "DELETE" });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || json.message || "Lỗi khi xóa từ khóa.");
-      }
-      notify(`Đã xóa "${deleteTarget.keyword_text}" khỏi Negative Hub.`, "success");
-      clearSelection();
+      if (!res.ok || !json.success) throw new Error(json.error || json.message || "Lỗi khi xoá lô.");
+      notify(json.message || "Đã xoá lô khỏi Negative Hub.", "success");
       setDeleteTarget(null);
-      onRefresh();
-    } catch (err: any) {
-      notify(err.message || "Lỗi khi xóa từ khóa", "error");
+      setOpenKey(null);
+      refresh();
+      onChanged?.();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Lỗi khi xoá lô.", "error");
     } finally {
       setIsDeleting(false);
     }
   };
 
-  const handleBulkDelete = async () => {
-    if (totalSelectedCount === 0) return;
-    setIsDeleting(true);
-    try {
-      const payload = getPayload();
-      const res = await fetch("/api/ppc/negative-keywords", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || json.message || "Lỗi khi xóa từ khóa.");
-      }
-      notify(json.message || `Đã xóa thành công ${totalSelectedCount.toLocaleString("vi-VN")} từ khóa khỏi Negative Hub.`, "success");
-      clearSelection();
-      setIsBulkDeleting(false);
-      onRefresh();
-    } catch (err: any) {
-      notify(err.message || "Lỗi khi xóa từ khóa", "error");
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+  const showStore = !selectedStore || selectedStore === "ALL";
 
   return (
     <div className="space-y-4">
-      {/* 1. Summary Metric Banner */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* 1. Tổng quan */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
             <ShieldCheck size={22} weight="bold" />
           </div>
           <div>
-            <span className="text-[11px] font-bold text-slate-400 block uppercase">
-              Tổng số từ đã phủ định
-            </span>
-            <span className="text-xl font-black text-slate-900 font-mono">
-              {summary.totalNegatives} <span className="text-xs text-slate-500 font-normal">từ khóa</span>
-            </span>
+            <span className="text-[11px] font-bold text-slate-500 block uppercase">Tổng dòng phủ định</span>
+            <span className="text-xl font-black text-slate-900 font-mono">{fmtNum(summary.totalNegatives)}</span>
           </div>
         </div>
-
+        <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center shrink-0">
+            <Stack size={22} weight="bold" />
+          </div>
+          <div>
+            <span className="text-[11px] font-bold text-slate-500 block uppercase">Số lô (job)</span>
+            <span className="text-xl font-black text-slate-900 font-mono">{fmtNum(summary.totalBatches)}</span>
+          </div>
+        </div>
         <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center shrink-0">
             <span className="text-lg font-black">🎯</span>
           </div>
           <div>
-            <span className="text-[11px] font-bold text-slate-400 block uppercase">
-              Chiến dịch được bảo vệ
-            </span>
-            <span className="text-xl font-black text-slate-900 font-mono">
-              {summary.totalCampaigns} <span className="text-xs text-slate-500 font-normal">campaigns</span>
-            </span>
+            <span className="text-[11px] font-bold text-slate-500 block uppercase">Chiến dịch được bảo vệ</span>
+            <span className="text-xl font-black text-slate-900 font-mono">{fmtNum(summary.totalCampaigns)}</span>
           </div>
         </div>
-
         <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center shrink-0">
             <span className="text-lg font-black">💰</span>
           </div>
           <div>
-            <span className="text-[11px] font-bold text-slate-400 block uppercase">
-              Chi phí lãng phí đã chặn
-            </span>
-            <span className="text-xl font-black text-emerald-700 font-mono">
-              ${Number(summary.totalSpendPrevented || 0).toFixed(2)}
-            </span>
+            <span className="text-[11px] font-bold text-slate-500 block uppercase">Chi phí lãng phí đã chặn</span>
+            <span className="text-xl font-black text-emerald-700 font-mono">${Number(summary.totalSpendPrevented || 0).toFixed(2)}</span>
           </div>
         </div>
       </div>
 
-      {/* 2. Filter & Action Bar */}
+      {/* 2. Bộ lọc */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
         <div className="flex flex-wrap items-center gap-2">
-          {/* Ad Type Filter */}
           <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-bold">
-            <button
-              type="button"
-              onClick={() => {
-                setAdTypeFilter("ALL");
-                setPage(1);
-              }}
-              className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                adTypeFilter === "ALL" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              Tất cả
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAdTypeFilter("SP");
-                setPage(1);
-              }}
-              className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                adTypeFilter === "SP" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              SP (Products)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAdTypeFilter("SB");
-                setPage(1);
-              }}
-              className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                adTypeFilter === "SB" ? "bg-purple-600 text-white shadow-xs" : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              SB (Brands)
-            </button>
+            {(["ALL", "SP", "SB"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setAdTypeFilter(t)}
+                className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                  adTypeFilter === t ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                {t === "ALL" ? "Tất cả" : t === "SP" ? "SP (Products)" : "SB (Brands)"}
+              </button>
+            ))}
           </div>
-
-          {/* Search box */}
-          <div className="relative min-w-[220px]">
+          <div className="relative min-w-[240px]">
             <MagnifyingGlass size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Tìm theo từ khóa, chiến dịch..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setPage(1);
-              }}
+              placeholder="Tìm lô chứa từ khoá / chiến dịch..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
         </div>
-
-        <div className="flex items-center gap-2 justify-end">
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition cursor-pointer disabled:opacity-50"
-            title="Tải lại danh sách"
-          >
-            <ArrowsClockwise size={14} className={loading ? "animate-spin" : ""} />
-            <span>Làm Mới</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition cursor-pointer disabled:opacity-50"
+        >
+          <ArrowsClockwise size={14} className={loading ? "animate-spin" : ""} />
+          <span>Làm Mới</span>
+        </button>
       </div>
 
-      {/* Bulk Selection Bar */}
-      {totalSelectedCount > 0 && (
-        <div className="flex items-center justify-between p-3 px-4 rounded-xl bg-linear-to-r from-rose-50 to-indigo-50 border border-rose-200 text-slate-800 animate-in fade-in duration-150">
-          <div className="flex items-center gap-2 text-xs font-bold">
-            <CheckSquare size={18} weight="fill" className="text-indigo-600 shrink-0" />
-            <span>
-              Đã chọn <strong className="text-indigo-700 font-mono text-sm px-1.5 py-0.5 rounded bg-indigo-100/70">{totalSelectedCount.toLocaleString("vi-VN")}</strong> từ khóa {bulkMode === "ALL_FILTERED" ? "(toàn bộ bộ lọc)" : "trong danh sách"}
+      {/* 3. Danh sách lô */}
+      <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden divide-y divide-slate-100">
+        {loading && batches.length === 0 ? (
+          <div className="py-12 text-center text-slate-500 text-xs">
+            <CircleNotch size={24} className="animate-spin mx-auto text-indigo-600 mb-2" />
+            Đang tải Negative Hub...
+          </div>
+        ) : error ? (
+          <div className="py-10 text-center text-rose-700 text-xs font-semibold">
+            <WarningCircle size={24} className="mx-auto mb-2" />
+            {error}
+          </div>
+        ) : batches.length === 0 ? (
+          <div className="py-12 text-center text-slate-500 text-xs">
+            <ShieldCheck size={36} className="mx-auto text-slate-300 mb-2" />
+            <span className="font-semibold block text-slate-600">
+              {search ? "Không có lô nào chứa từ khoá / chiến dịch này." : "Chưa có lô phủ định nào trong Negative Hub."}
+            </span>
+            <span className="text-[11px]">
+              Lô Auto Upload chạy xong, hoặc lô Xuất File đã tick “Đã upload lên Amazon” sẽ hiện ở đây.
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={clearSelection}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700 transition cursor-pointer"
-            >
-              Bỏ chọn
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsBulkDeleting(true)}
-              className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <Trash size={14} weight="bold" />
-              <span>Xóa {totalSelectedCount.toLocaleString("vi-VN")} từ đã chọn</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 3. Negative Keywords Table */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
-        {/* Enterprise Gmail-Style Banner */}
-        <PpcBulkSelectionBanner
-          mode={bulkMode}
-          isPageAllSelected={isPageAllSelected}
-          currentPageCount={paginatedItems.length}
-          totalFilteredCount={filteredItems.length}
-          totalSelectedCount={totalSelectedCount}
-          onSelectAllFiltered={selectAllFiltered}
-          onClearSelection={clearSelection}
-          itemName="từ khóa"
-        />
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                <th className="py-2.5 px-3 w-10 text-center">
-                  <input
-                    type="checkbox"
-                    checked={isPageAllSelected}
-                    ref={(el) => {
-                      if (el) el.indeterminate = isPageIndeterminate;
-                    }}
-                    onChange={toggleSelectPage}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                    title={isPageAllSelected ? "Bỏ chọn trang này" : "Chọn tất cả trên trang này"}
+        ) : (
+          batches.map((b) => {
+            const open = openKey === b.batchKey;
+            const detail = details[b.batchKey];
+            const restKw = b.keywordCount - b.keywords.slice(0, 12).length;
+            return (
+              <div key={b.batchKey}>
+                <div
+                  onClick={() => void toggleOpen(b)}
+                  className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 ${open ? "bg-slate-50" : ""}`}
+                >
+                  <CaretRight
+                    size={13}
+                    weight="bold"
+                    className={`mt-1 text-slate-500 transition-transform shrink-0 ${open ? "rotate-90" : ""}`}
                   />
-                </th>
-                <th className="py-2.5 px-3 w-12 text-center">STT</th>
-                <th className="py-2.5 px-3 w-16">Loại</th>
-                <th className="py-2.5 px-3">Từ Khóa / ASIN Phủ Định</th>
-                <th className="py-2.5 px-3 w-28">Match Type</th>
-                <th className="py-2.5 px-3">Chiến Dịch &amp; Nhóm</th>
-                <th className="py-2.5 px-3 w-24 text-right">Clicks / Spend</th>
-                <th className="py-2.5 px-3 w-32">Nguồn &amp; Cấp độ</th>
-                <th className="py-2.5 px-3 w-24">Ngày Phủ Định</th>
-                <th className="py-2.5 px-3 w-14 text-center">Xóa</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
-                    <CircleNotch size={24} className="animate-spin mx-auto text-indigo-600 mb-2" />
-                    <span>Đang tải danh sách Negative Registry...</span>
-                  </td>
-                </tr>
-              ) : paginatedItems.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
-                    <ShieldCheck size={36} className="mx-auto text-slate-300 mb-2" />
-                    <span className="font-semibold block text-slate-600">
-                      Chưa có từ khóa nào trong Negative Hub của shop này.
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      Khi bạn Auto Upload phủ định Search Term, từ khóa sẽ tự động được lưu vào đây.
-                    </span>
-                  </td>
-                </tr>
-              ) : (
-                paginatedItems.map((item, index) => {
-                  const globalIdx = (page - 1) * pageSize + index + 1;
-                  const isCopied = copiedKey === item.id;
-                  const isSelected = isItemSelected(item.id);
-                  const isASIN =
-                    item.keyword_text.toLowerCase().startsWith("b0") ||
-                    item.keyword_text.toLowerCase().startsWith("asin=");
-                  const campaignSku = extractSkuFromText(item.campaign_name)
-                    || extractSkuFromText(item.ad_group_name || "");
-
-                  return (
-                    <tr
-                      key={item.id}
-                      className={`transition ${
-                        isSelected ? "bg-indigo-50/50" : "hover:bg-slate-50/70"
-                      }`}
-                    >
-                      {/* Checkbox */}
-                      <td className="py-2.5 px-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleItem(item.id)}
-                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                        />
-                      </td>
-
-                      <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px]">
-                        {globalIdx}
-                      </td>
-
-                      {/* Ad Type */}
-                      <td className="py-2.5 px-3">
-                        <span
-                          className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                            item.ad_type === "SB"
-                              ? "bg-purple-100 text-purple-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          }`}
-                        >
-                          {item.ad_type || "SP"}
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <MethodBadge method={b.method} />
+                      <span className="text-[11px] font-bold text-indigo-700">{SOURCE_LABEL[b.source] || b.source}</span>
+                      {b.matchTypes.map((m) => (
+                        <span key={m} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                          {MATCH_LABEL[m] || m}
                         </span>
-                      </td>
-
-                      {/* Keyword Text */}
-                      <td className="py-2.5 px-3 font-medium">
-                        <div className="flex items-center gap-1.5 group">
-                          <span
-                            className={`font-mono text-xs font-bold select-all ${
-                              isASIN ? "text-amber-800" : "text-slate-900"
-                            }`}
-                          >
-                            {item.keyword_text}
+                      ))}
+                      {showStore && <span className="text-[11px] font-black text-slate-700">{b.storeName}</span>}
+                    </div>
+                    <p className="text-xs font-semibold text-slate-800 break-all">
+                      {b.fileName || `Lô ${fmtDateTime(b.createdAt)}`}
+                    </p>
+                    <p className="text-[11px] text-slate-600">
+                      {fmtDateTime(b.createdAt)}
+                      {b.createdBy ? ` · ${b.createdBy}` : ""}
+                      {b.confirmedAt ? ` · xác nhận đã upload ${fmtDateTime(b.confirmedAt)}${b.confirmedBy ? ` bởi ${b.confirmedBy}` : ""}` : ""}
+                    </p>
+                    {!open && (
+                      <div className="flex flex-wrap gap-1">
+                        {b.keywords.slice(0, 12).map((k) => (
+                          <span key={k} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-mono">
+                            {k}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(item.keyword_text, item.id)}
-                            className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-700 transition cursor-pointer p-0.5"
-                            title="Copy từ khóa"
-                          >
-                            {isCopied ? (
-                              <Check size={12} className="text-emerald-600" weight="bold" />
-                            ) : (
-                              <Copy size={12} />
-                            )}
-                          </button>
-                        </div>
-                        {item.reason && (
-                          <span className="text-[10px] text-slate-400 block truncate max-w-sm" title={item.reason}>
-                            {item.reason}
-                          </span>
-                        )}
-                      </td>
+                        ))}
+                        {restKw > 0 && <span className="px-1.5 py-0.5 text-[10px] font-bold text-slate-500">+{fmtNum(restKw)} từ</span>}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0 space-y-0.5">
+                    <p className="text-sm font-black text-slate-900 font-mono">{fmtNum(b.rowCount)} <span className="text-[11px] font-bold text-slate-500">dòng</span></p>
+                    <p className="text-[11px] font-mono text-slate-600">
+                      {fmtNum(b.keywordCount)} kw × {fmtNum(b.campaignCount)} camp
+                    </p>
+                    {b.spend > 0 && <p className="text-[11px] font-mono text-emerald-700">${b.spend.toFixed(2)} chặn</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(b);
+                    }}
+                    className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
+                    title="Xoá cả lô khỏi Negative Hub"
+                  >
+                    <Trash size={15} />
+                  </button>
+                </div>
 
-                      {/* Match Type */}
-                      <td className="py-2.5 px-3">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                          {item.match_type || "negativeExact"}
-                        </span>
-                      </td>
-
-                      {/* Campaign & Ad Group */}
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1 max-w-[260px]">
-                          <span
-                            className="font-semibold text-slate-800 truncate"
-                            title={item.campaign_name}
-                          >
-                            {item.campaign_name}
-                          </span>
-                          <PpcCopyButton value={item.campaign_name} label="campaign" />
-                        </div>
-                        {item.ad_group_name && item.ad_group_name !== item.campaign_name && (
-                          <div className="flex items-center gap-1 max-w-[260px] mt-0.5">
-                            <span
-                              className="text-[10px] text-slate-400 truncate"
-                              title={item.ad_group_name}
-                            >
-                              Nhóm: {item.ad_group_name}
-                            </span>
-                            <PpcCopyButton value={item.ad_group_name} label="ad group" />
+                {open && (
+                  <div className="px-4 pb-4 pl-10 bg-slate-50">
+                    {loadingDetail === b.batchKey || !detail ? (
+                      <div className="py-6 text-center text-xs text-slate-500">
+                        <CircleNotch size={18} className="animate-spin mx-auto mb-1 text-indigo-600" />
+                        Đang tải chi tiết lô...
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,320px)_1fr] gap-3">
+                        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                          <div className="px-3 py-2 border-b border-slate-200 bg-amber-50 text-xs font-black text-slate-800 flex items-center justify-between">
+                            <span>Keyword ({fmtNum(detail.keywords.length)})</span>
+                            <PpcCopyButton value={detail.keywords.map((k) => k.keyword).join("\n")} label="danh sách keyword" />
                           </div>
-                        )}
-                        {campaignSku && (
-                          <div className="flex items-center gap-1 mt-0.5 text-[10px] text-indigo-600 font-mono">
-                            <span>SKU: {campaignSku}</span>
-                            <PpcCopyButton value={campaignSku} label="SKU" />
+                          <div className="max-h-[360px] overflow-auto divide-y divide-slate-50">
+                            {detail.keywords.map((k) => (
+                              <div key={k.keyword} className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+                                <span className="font-mono font-semibold text-slate-900 break-all">{k.keyword}</span>
+                                <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap">
+                                  {fmtNum(k.campaigns)} camp{k.spend > 0 ? ` · $${k.spend.toFixed(2)}` : ""}
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                        )}
-                      </td>
-
-                      {/* Clicks / Spend */}
-                      <td className="py-2.5 px-3 text-right font-mono">
-                        <span className="text-rose-700 font-bold block text-[11px]">
-                          {item.clicks || 0} clk
-                        </span>
-                        <span className="text-[10px] text-slate-500 block">
-                          ${Number(item.spend || 0).toFixed(2)}
-                        </span>
-                      </td>
-
-                      {/* Source & Level */}
-                      <td className="py-2.5 px-3">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-100 text-slate-600 w-fit">
-                            {item.level === "CAMPAIGN" ? "Campaign Level" : "Ad Group Level"}
-                          </span>
-                          <span className="text-[9px] text-indigo-600 font-semibold block">
-                            {item.source === "AUTO_UPLOAD"
-                              ? "Auto Upload Negative KW"
-                              : item.source === "NEGATIVE_LIST"
-                                ? "Negative List"
-                                : item.source === "MANUAL_EXPORT"
-                                  ? "Xuất Bulk tay"
-                                  : "Amazon Bulksheet"}
-                          </span>
-                          {item.state?.toLowerCase() === "pending" && (
-                            <span className="text-[9px] text-amber-700 font-semibold block">Chờ upload</span>
-                          )}
                         </div>
-                      </td>
-
-                      {/* Date */}
-                      <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
-                        {item.created_at
-                          ? new Date(item.created_at).toLocaleDateString("vi-VN", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "numeric",
-                            })
-                          : "--"}
-                      </td>
-
-                      {/* Action: Delete */}
-                      <td className="py-2.5 px-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(item)}
-                          className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                          title="Xóa khỏi Negative Hub"
-                        >
-                          <Trash size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        {!loading && filteredItems.length > pageSize && (
-          <div className="p-3 border-t border-slate-200 bg-slate-50/50">
-            <PpcPagination
-              currentPage={page}
-              totalPages={totalPages}
-              pageSize={pageSize}
-              totalItems={filteredItems.length}
-              onPageChange={setPage}
-              onPageSizeChange={(sz) => {
-                setPageSize(sz);
-                setPage(1);
-              }}
-            />
-          </div>
+                        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                          <div className="px-3 py-2 border-b border-slate-200 bg-indigo-50 text-xs font-black text-slate-800">
+                            Campaign ({fmtNum(detail.campaigns.length)})
+                          </div>
+                          <div className="max-h-[360px] overflow-auto divide-y divide-slate-50">
+                            {detail.campaigns.map((c) => (
+                              <div key={c.campaignName} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[9px] font-black shrink-0">{c.adType}</span>
+                                <span className="font-semibold text-slate-800 break-words flex-1 min-w-0">{c.campaignName}</span>
+                                <PpcCopyButton value={c.campaignName} label="campaign" />
+                                <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap">{fmtNum(c.keywords)} kw</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 
-      {/* Single Delete Confirmation Modal */}
+      {/* Xác nhận xoá lô */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
             <div className="p-5 space-y-3">
               <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
                 <WarningCircle size={20} weight="fill" />
-                <span>Xác nhận xóa khỏi Negative Hub</span>
+                <span>Xoá lô khỏi Negative Hub</span>
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Bạn có chắc chắn muốn xóa từ khóa{" "}
-                <b className="font-mono text-slate-900 font-extrabold">&quot;{deleteTarget.keyword_text}&quot;</b> khỏi
-                danh sách Negative Hub của chiến dịch <b className="text-slate-900">&quot;{deleteTarget.campaign_name}&quot;</b> không?
+                Xoá <b className="text-rose-600">{fmtNum(deleteTarget.rowCount)} dòng</b> ({fmtNum(deleteTarget.keywordCount)} keyword ×{" "}
+                {fmtNum(deleteTarget.campaignCount)} campaign) của lô{" "}
+                <b className="text-slate-900 break-all">{deleteTarget.fileName || fmtDateTime(deleteTarget.createdAt)}</b>?
               </p>
-              <p className="text-[11px] text-slate-400 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                Lưu ý: Thao tác này chỉ xóa bản ghi lưu vết trên hệ thống để từ khóa có thể xuất hiện lại trong đề xuất nếu tiếp tục phát sinh click không chuyển đổi.
+              <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                Chỉ xoá bản ghi lưu vết trên hệ thống (để có thể phủ định lại các cặp này). Phủ định đang chạy trên Amazon không bị gỡ.
               </p>
             </div>
             <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -617,7 +473,7 @@ export function PpcNegativeHubView({
                 disabled={isDeleting}
                 className="px-3.5 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer"
               >
-                Hủy
+                Huỷ
               </button>
               <button
                 type="button"
@@ -626,46 +482,7 @@ export function PpcNegativeHubView({
                 className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 {isDeleting ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} />}
-                <span>Xác Nhận Xóa</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bulk Delete Confirmation Modal */}
-      {isBulkDeleting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="p-5 space-y-3">
-              <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
-                <WarningCircle size={20} weight="fill" />
-                <span>Xác nhận xóa hàng loạt ({totalSelectedCount.toLocaleString("vi-VN")} từ khóa)</span>
-              </div>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Bạn có chắc chắn muốn xóa <b className="font-extrabold text-rose-600">{totalSelectedCount.toLocaleString("vi-VN")} từ khóa đã chọn</b> khỏi danh sách Negative Hub không?
-              </p>
-              <p className="text-[11px] text-slate-400 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                Lưu ý: Thao tác này sẽ xóa các bản ghi lưu vết trên hệ thống để những từ này có thể xuất hiện lại trong đề xuất tối ưu nếu tiếp tục phát sinh click không chuyển đổi.
-              </p>
-            </div>
-            <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsBulkDeleting(false)}
-                disabled={isDeleting}
-                className="px-3.5 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkDelete}
-                disabled={isDeleting}
-                className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                {isDeleting ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} />}
-                <span>Xác Nhận Xóa {totalSelectedCount.toLocaleString("vi-VN")} Từ Khóa</span>
+                <span>Xoá lô</span>
               </button>
             </div>
           </div>

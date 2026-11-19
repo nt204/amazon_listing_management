@@ -23,7 +23,7 @@ import {
 } from "@phosphor-icons/react";
 import type { PpcSearchTermRow, MatchType, PpcAdType } from "@/lib/ppc/types";
 import { PpcPagination } from "./ppc-pagination";
-import { PpcNegativeHubView, type NegativeRegistryItem } from "./ppc-negative-hub-view";
+import { PpcNegativeHubView } from "./ppc-negative-hub-view";
 import { PpcNegativeListView } from "./ppc-negative-list-view";
 import { PpcCopyButton } from "./ppc-copy-button";
 import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
@@ -106,7 +106,6 @@ export function PpcStOptimizationView({
   }, [onOpenActionQueue]);
 
   // Negative Registry state
-  const [registryItems, setRegistryItems] = useState<NegativeRegistryItem[]>([]);
   const [registrySummary, setRegistrySummary] = useState<{
     totalNegatives: number;
     totalCampaigns: number;
@@ -117,7 +116,6 @@ export function PpcStOptimizationView({
     totalSpendPrevented: 0,
   });
   const [negatedLookupSet, setNegatedLookupSet] = useState<Set<string>>(new Set());
-  const [loadingRegistry, setLoadingRegistry] = useState<boolean>(false);
   const [hideNegated, setHideNegated] = useState<boolean>(true);
   const [negativeListCount, setNegativeListCount] = useState<number>(0);
   // Mặc định chỉ lấy search term của campaign đang chạy; bật "Gồm paused" để xem cả campaign đã tắt
@@ -148,7 +146,6 @@ export function PpcStOptimizationView({
   // Fetch registry
   const fetchRegistry = async (signal?: AbortSignal) => {
     try {
-      setLoadingRegistry(true);
       const params = new URLSearchParams();
       if (selectedStore && selectedStore !== "ALL") {
         params.set("storeName", selectedStore);
@@ -158,7 +155,6 @@ export function PpcStOptimizationView({
       if (!res.ok) return;
       const json = await res.json();
       if (json.success && json.data) {
-        setRegistryItems(json.data.items || []);
         setRegistrySummary(
           json.data.summary || { totalNegatives: 0, totalCampaigns: 0, totalSpendPrevented: 0 },
         );
@@ -167,8 +163,6 @@ export function PpcStOptimizationView({
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Lỗi khi tải Negative Registry:", err);
-    } finally {
-      setLoadingRegistry(false);
     }
   };
 
@@ -910,7 +904,7 @@ export function PpcStOptimizationView({
                 subTab === "registry" ? "bg-indigo-700 text-white" : "bg-slate-100 text-slate-700"
               }`}
             >
-              {registrySummary.totalNegatives}
+              {Number(registrySummary.totalNegatives || 0).toLocaleString("en-US")}
             </span>
           </button>
         </div>
@@ -1368,14 +1362,7 @@ export function PpcStOptimizationView({
           onKeywordCountChange={setNegativeListCount}
         />
       ) : (
-        <PpcNegativeHubView
-          selectedStore={selectedStore}
-          items={registryItems}
-          summary={registrySummary}
-          loading={loadingRegistry}
-          onRefresh={fetchRegistry}
-          notify={notify}
-        />
+        <PpcNegativeHubView selectedStore={selectedStore} notify={notify} onChanged={() => fetchRegistry()} />
       )}
 
       {/* 6. Auto Upload AdsPower Confirmation & Execution Modal */}

@@ -207,6 +207,8 @@ export async function GET(request: Request) {
                 AND nr.store_id = gc.store_id
                 AND lower(trim(nr.campaign_name)) = lower(trim(gc.campaign_name))
                 AND lower(trim(nr.keyword_text)) = lower(trim(gc.customer_search_term))
+                -- 'exported' = Negative List mới xuất file, chưa xác nhận đã upload lên Amazon
+                AND nr.state <> 'exported'
               LIMIT 1
             ))) AS is_already_negated
           FROM active_candidates gc
