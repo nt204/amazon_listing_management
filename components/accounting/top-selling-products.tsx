@@ -31,11 +31,11 @@ const ROWS_COLLAPSED = 5;
 const isGroupTab = (tab: TopTab): tab is "niche" | "productType" => tab === "niche" || tab === "productType";
 
 const TABS: { key: TopTab; kind: CardKind; label: string; heading: string; title: string }[] = [
-  { key: "profit", kind: "products", label: "Top Profit", heading: "Top Products", title: "Profit" },
-  { key: "revenue", kind: "products", label: "Top Revenue", heading: "Top Products", title: "Revenue" },
-  { key: "loss", kind: "products", label: "Top Loss", heading: "Top Products", title: "Loss" },
-  { key: "niche", kind: "groups", label: "Top Ngách", heading: "Top Ngách", title: "Profit" },
-  { key: "productType", kind: "groups", label: "Top Phôi", heading: "Top Phôi", title: "Profit" },
+  { key: "profit", kind: "products", label: "Profit", heading: "Top Products", title: "Profit" },
+  { key: "revenue", kind: "products", label: "Revenue", heading: "Top Products", title: "Revenue" },
+  { key: "loss", kind: "products", label: "Loss", heading: "Top Products", title: "Loss" },
+  { key: "niche", kind: "groups", label: "Niche", heading: "Top Niche", title: "Profit" },
+  { key: "productType", kind: "groups", label: "Product Type", heading: "Top Product Type", title: "Profit" },
 ];
 
 function formatCurrency(val: number): string {
@@ -439,9 +439,9 @@ function ChannelTopCard({
   const groups = expanded ? allGroups : allGroups.slice(0, ROWS_COLLAPSED);
   const totalRows = grouped ? allGroups.length : allProducts.length;
   const rowCount = totalRows;
-  const itemLabel = grouped ? (tab === "niche" ? "ngách" : "phôi") : "sản phẩm";
+  const itemLabel = grouped ? (tab === "niche" ? "niche" : "product type") : "sản phẩm";
   const activeTab = TABS.find((t) => t.key === tab)!;
-  const groupLabel = tab === "niche" ? "ngách" : "phôi";
+  const groupLabel = tab === "niche" ? "niche" : "product type";
 
   return (
     <div
@@ -539,7 +539,7 @@ function ChannelTopCard({
             <thead>
               <tr className="bg-slate-50/90 text-[12px] font-semibold text-slate-500">
                 <th className="rounded-l-lg py-2.5 pl-2 pr-1 text-center w-10">#</th>
-                <th className="py-2.5 px-2">{tab === "niche" ? "Ngách" : tab === "productType" ? "Phôi" : "Product / SKU"}</th>
+                <th className="py-2.5 px-2">{tab === "niche" ? "Niche" : tab === "productType" ? "Product Type" : "Product / SKU"}</th>
                 <th className="py-2.5 px-2 @max-[560px]:px-1.5 text-right">Units</th>
                 <th className={`py-2.5 px-2 @max-[560px]:px-1.5 text-right ${tab === "revenue" ? "font-bold text-slate-800" : ""}`}>Revenue</th>
                 <th
