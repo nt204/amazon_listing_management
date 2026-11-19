@@ -37,6 +37,26 @@ function readPlan(v: unknown): PlanMetrics | null {
   return out;
 }
 
+/**
+ * Mục tiêu tháng theo team (SKU phát triển + SKU test, nạp từ file "KẾ HOẠCH KINH DOANH" của từng store) cộng lại
+ * thành mục tiêu cả store — dùng cho tháng chưa có kế hoạch kỳ riêng ở accounting_kpi_store_plans.
+ */
+export async function teamTargetPlans(storeId: string, months: string[]): Promise<Map<string, PlanMetrics>> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ period: string; metrics: unknown }[]>`
+    SELECT period, metrics FROM accounting_kpi_team_targets WHERE store_id = ${storeId} AND period = ANY(${months})
+  `;
+  const out = new Map<string, PlanMetrics>();
+  for (const r of rows) {
+    const m = readPlan(r.metrics);
+    if (!m) continue;
+    const cur = out.get(r.period);
+    if (!cur) out.set(r.period, m);
+    else for (const k of PLAN_KEYS) cur[k] += m[k];
+  }
+  return out;
+}
+
 export async function getPlanSheetUrl(): Promise<string | null> {
   const sql = await getDatabaseClient();
   const [row] = await sql<{ value: unknown }[]>`SELECT value FROM app_settings WHERE key = ${PLAN_SHEET_URL_KEY} LIMIT 1`;
@@ -81,7 +101,7 @@ export async function getStorePlan(storeId: string, year: number, half: PlanHalf
   const sql = await getDatabaseClient();
   const months = halfMonths(year, half);
   const currentPeriod = new Date().toISOString().slice(0, 7);
-  const [plans, closed] = await Promise.all([
+  const [plans, closed, teamPlans] = await Promise.all([
     sql<{ period: string; plan: unknown; sheet_result: unknown; source: string | null; updated_by: string | null; updated_at: Date | null }[]>`
       SELECT period, plan, sheet_result, source, updated_by, updated_at
       FROM accounting_kpi_store_plans WHERE store_id = ${storeId} AND period = ANY(${months})
@@ -92,6 +112,7 @@ export async function getStorePlan(storeId: string, year: number, half: PlanHalf
       FROM accounting_monthly_store_summary
       WHERE store_id = ${storeId} AND year = ${year} AND month BETWEEN ${half === 1 ? 1 : 7} AND ${half === 1 ? 6 : 12}
     `,
+    teamTargetPlans(storeId, months),
   ]);
   const planBy = new Map(plans.map((p) => [p.period, p]));
   const closedBy = new Map<string, PlanMetrics>();
@@ -141,7 +162,8 @@ export async function getStorePlan(storeId: string, year: number, half: PlanHalf
       const sheetResult = closedResult || liveResult ? null : readPlan(row?.sheet_result);
       return {
         period,
-        plan: readPlan(row?.plan),
+        // Chưa có kế hoạch kỳ riêng → lấy tổng mục tiêu tháng của team (dev + test)
+        plan: readPlan(row?.plan) ?? teamPlans.get(period) ?? null,
         result: closedResult ?? liveResult ?? sheetResult,
         resultSource: closedResult ? "closed" : liveResult ? (period === currentPeriod ? "running" : "live") : sheetResult ? "sheet" : null,
       };
@@ -158,7 +180,10 @@ export async function setStorePlanCell(storeId: string, period: string, key: Pla
   const [row] = await sql<{ plan: unknown }[]>`
     SELECT plan FROM accounting_kpi_store_plans WHERE store_id = ${storeId} AND period = ${period} LIMIT 1
   `;
-  const plan = { ...((row?.plan as Record<string, unknown>) ?? {}) };
+  const existing = row?.plan as Record<string, unknown> | undefined;
+  // Tháng đang hiện mục tiêu team (chưa có kế hoạch riêng) → sửa 1 ô thì giữ nguyên các ô còn lại của mục tiêu team
+  const base = existing && readPlan(existing) ? existing : ((await teamTargetPlans(storeId, [period])).get(period) ?? existing ?? {});
+  const plan = { ...(base as Record<string, unknown>) };
   if (value == null) delete plan[key];
   else plan[key] = value;
   await sql`
