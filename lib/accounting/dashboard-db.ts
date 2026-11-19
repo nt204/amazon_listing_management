@@ -79,20 +79,44 @@ export interface TopProductItem {
   productName: string;
   /** Tên phôi (Product Type trong Bảng mã). */
   productType: string | null;
+  /** Ngách (cột Ngách trong Bảng mã). */
+  niche: string | null;
   imageUrl: string | null;
   units: number;
   revenue: number;
   /** Profit như tab SKU WIN / LỌC SKU CỐ ĐỊNH FBM (chưa trừ phí dịch vụ cố định). */
   profit: number;
+  /** Chi phí quảng cáo (để cộng TACOS của ngách / phôi). */
+  adsFee: number;
   margin: number;
   acos: number;
+  tacos: number;
+}
+
+/** Một ngách / một phôi: cộng số liệu mọi SKU của nhóm (trong kênh, qua các store đang lọc). */
+export interface TopGroupItem {
+  name: string;
+  /** Số SKU có số liệu trong kỳ. */
+  skuCount: number;
+  storeNames: string[];
+  /** Ảnh của SKU có profit cao nhất trong nhóm. */
+  imageUrl: string | null;
+  units: number;
+  revenue: number;
+  profit: number;
+  margin: number;
   tacos: number;
 }
 
 export interface TopProductLists {
   profit: TopProductItem[];
   revenue: TopProductItem[];
+  /** SKU lỗ nhiều nhất (profit âm thấp nhất). */
   loss: TopProductItem[];
+  /** Top ngách theo profit. */
+  niche: TopGroupItem[];
+  /** Top phôi (Product Type) theo profit. */
+  productType: TopGroupItem[];
 }
 
 export interface DashboardTopProducts {
@@ -515,11 +539,55 @@ export async function getAccountingDashboard(options: {
 
 const TOP_PRODUCTS_LIMIT = 5;
 
+/**
+ * Gom SKU theo ngách / phôi (bỏ SKU chưa khai báo), cộng Units · Revenue · Profit · Ads rồi xếp theo Profit.
+ * Tên nhóm so khớp không phân biệt hoa thường / khoảng trắng thừa.
+ */
+function topGroups(items: TopProductItem[], groupOf: (i: TopProductItem) => string | null): TopGroupItem[] {
+  const groups = new Map<string, TopGroupItem & { adsFee: number; stores: Set<string>; bestProfit: number }>();
+  for (const i of items) {
+    const name = groupOf(i)?.replace(/\s+/g, " ").trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    let g = groups.get(key);
+    if (!g) {
+      g = { name, skuCount: 0, storeNames: [], stores: new Set(), imageUrl: null, bestProfit: -Infinity, units: 0, revenue: 0, profit: 0, adsFee: 0, margin: 0, tacos: 0 };
+      groups.set(key, g);
+    }
+    g.skuCount += 1;
+    g.stores.add(i.storeName);
+    g.units += i.units;
+    g.revenue += i.revenue;
+    g.profit += i.profit;
+    g.adsFee += i.adsFee;
+    if (i.imageUrl && i.profit > g.bestProfit) {
+      g.imageUrl = i.imageUrl;
+      g.bestProfit = i.profit;
+    }
+  }
+  return Array.from(groups.values())
+    .filter((g) => g.revenue !== 0 || g.profit !== 0)
+    .sort((a, b) => b.profit - a.profit || b.revenue - a.revenue)
+    .slice(0, TOP_PRODUCTS_LIMIT)
+    .map(({ name, skuCount, stores, imageUrl, units, revenue, profit, adsFee }) => ({
+      name,
+      skuCount,
+      storeNames: Array.from(stores).sort(),
+      imageUrl,
+      units,
+      revenue,
+      profit,
+      margin: revenue > 0 ? profit / revenue : 0,
+      tacos: revenue > 0 ? adsFee / revenue : 0,
+    }));
+}
+
 /** Số liệu 1 SKU của 1 store trong kỳ (chỉ giữ các trường Top cần để cache gọn). */
 interface SkuPerformance {
   sku: string;
   asin: string | null;
   productType: string | null;
+  niche: string | null;
   imageUrl: string | null;
   units: number;
   revenue: number;
@@ -541,7 +609,7 @@ function loadStoreSkuPerformance(
   // Khoảng đã qua hẳn (trước cửa sổ gần đây) dùng phiên bản dữ liệu cũ → không nguội mỗi lần crawler ghi
   return stampedValue(
     cache,
-    `${DASHBOARD_CACHE_PREFIX}sku6:${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "fba"}`,
+    `${DASHBOARD_CACHE_PREFIX}sku7:${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "fba"}`,
     rangeStamp(cache, endDate),
     async () => {
       const options = { status: "all", startDate, endDate, limit: 100_000, includeAllTime: false };
@@ -557,6 +625,7 @@ function loadStoreSkuPerformance(
           sku: i.sku,
           asin: i.asin,
           productType: i.product_type || null,
+          niche: i.niche || null,
           imageUrl: i.mockup_url || i.mockup || null,
           units: i.quantity,
           revenue: i.revenue,
@@ -600,7 +669,7 @@ async function loadProductNames(items: TopProductItem[], startDate: string, endD
 }
 
 /**
- * Top sản phẩm của Dashboard (kỳ hiện tại): top Profit, top Revenue, top Loss (profit âm thấp nhất).
+ * Top sản phẩm của Dashboard (kỳ hiện tại): top Profit, top Revenue, top Loss (theo SKU), top Ngách và top Phôi (gộp SKU, theo Profit).
  * Cùng bộ lọc store / team và cùng quy tắc kênh theo Team với getAccountingDashboard.
  * Tách khỏi getAccountingDashboard để phần tổng quan hiện ngay, bảng Top tải sau.
  */
@@ -624,7 +693,7 @@ export async function getDashboardTopProducts(options: {
       storeChannels(s.team, options.team, options.allowedChannels?.(s.id)).length > 0,
   );
   const period = resolveDashboardPeriods(options.startDate ?? "", options.endDate ?? "", latestDate, "none").current;
-  const empty = (): TopProductLists => ({ profit: [], revenue: [], loss: [] });
+  const empty = (): TopProductLists => ({ profit: [], revenue: [], loss: [], niche: [], productType: [] });
   // Kỳ rỗng = "Toàn thời gian": SKU WIN / LỌC SKU CỐ ĐỊNH tính trên toàn bộ dữ liệu như phần tổng quan Dashboard.
   if (!stores.length) return { period, channels: [], FBA: empty(), FBM: empty() };
 
@@ -641,10 +710,12 @@ export async function getDashboardTopProducts(options: {
               asin: r.asin,
               productName: "",
               productType: r.productType,
+              niche: r.niche,
               imageUrl: r.imageUrl,
               units: r.units,
               revenue: r.revenue,
               profit: r.profit,
+              adsFee: r.adsFee,
               margin: r.revenue > 0 ? r.profit / r.revenue : 0,
               acos: r.revenueAds > 0 ? r.adsFee / r.revenueAds : 0,
               tacos: r.revenue > 0 ? r.adsFee / r.revenue : 0,
@@ -666,6 +737,8 @@ export async function getDashboardTopProducts(options: {
       profit: top((i) => i.profit > 0, (a, b) => b.profit - a.profit),
       revenue: top((i) => i.revenue > 0, (a, b) => b.revenue - a.revenue),
       loss: top((i) => i.profit < 0, (a, b) => a.profit - b.profit),
+      niche: topGroups(channelRows, (i) => i.niche),
+      productType: topGroups(channelRows, (i) => i.productType),
     };
   };
   const byChannel = { FBA: topLists("FBA"), FBM: topLists("FBM") };
@@ -680,6 +753,8 @@ export async function getDashboardTopProducts(options: {
     profit: l.profit.map(withName),
     revenue: l.revenue.map(withName),
     loss: l.loss.map(withName),
+    niche: l.niche,
+    productType: l.productType,
   });
   return { period, channels, FBA: named(byChannel.FBA), FBM: named(byChannel.FBM) };
 }

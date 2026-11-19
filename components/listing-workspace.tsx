@@ -129,6 +129,11 @@ interface ListingWorkspaceProps {
   initialSidebarDark?: boolean;
 }
 
+/** Các mục thuộc System Admin của Accounting — chỉ Admin / Kế toán thấy. */
+const ACCOUNTING_ADMIN_SECTIONS = new Set<string>([
+  "admin", "files", "stores", "orders", "import", "reports", "pnl", "settlements", "access",
+]);
+
 type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
 type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "new_camp" | "auto_bid" | "manual_bid" | "phoi" | "rules";
 type PpcDashboardTab = "overview" | "portfolios" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
@@ -903,6 +908,9 @@ function WorkspaceSidebar({
                     label="KPI kinh doanh"
                   />
 
+                  {/* System Admin (Stores, Import, Payout, Phân quyền) — chỉ Admin / Kế toán */}
+                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                  <>
                   {/* Subtle Divider before System Admin */}
                   <div className="my-1.5 border-t border-slate-100" />
 
@@ -941,8 +949,7 @@ function WorkspaceSidebar({
                     indent
                   />
 
-                  {/* 7.3 Payout Amount (trong System Admin) — chỉ admin / kế toán */}
-                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                  {/* 7.3 Payout Amount (trong System Admin) */}
                     <SidebarSubItem
                       active={
                         accountingSection === "reports" ||
@@ -957,10 +964,8 @@ function WorkspaceSidebar({
                       label="Payout Amount"
                       indent
                     />
-                  )}
 
-                  {/* 7.4 Phân quyền kế toán (Admin / Kế toán) */}
-                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                  {/* 7.4 Phân quyền kế toán */}
                     <SidebarSubItem
                       active={accountingSection === "access"}
                       onClick={() => {
@@ -971,6 +976,7 @@ function WorkspaceSidebar({
                       label="Phân quyền"
                       indent
                     />
+                  </>
                   )}
                 </div>
               )}
@@ -1698,7 +1704,12 @@ export function ListingWorkspace({
           ) : viewMode === "accounting" ? (
             <div className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
               <AccountingWorkspace
-                activeSection={accountingSection}
+                activeSection={
+                  // Mục System Admin chỉ dành cho Admin / Kế toán: link / localStorage cũ trỏ vào đó thì về Overview
+                  actor?.role !== "admin" && actor?.role !== "accountant" && ACCOUNTING_ADMIN_SECTIONS.has(accountingSection)
+                    ? "overview"
+                    : accountingSection
+                }
                 activeSubTab={accountingSubTab}
                 onSectionChange={(s, tab) => selectAccountingSection(s, tab)}
               />

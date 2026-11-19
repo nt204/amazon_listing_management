@@ -472,14 +472,23 @@ function compareLabel(base: CompareBase, unit: PeriodUnit): string {
 const compareModeFor = dashboardCompareMode;
 
 /** Đặt trong biểu đồ nhưng điều khiển chung cho KPI, biểu đồ và P&L: so với kỳ nào. */
+const GRANULARITY_OPTIONS: { key: ChartGranularity; label: string }[] = [
+  { key: "day", label: "Ngày" },
+  { key: "week", label: "Tuần" },
+  { key: "month", label: "Tháng" },
+];
+
 function PeriodControls({
+  granularity,
+  onGranularityChange,
   compareUnit,
   compareBase,
   onCompareBaseChange,
   comparePreview = {},
 }: {
-  /** Cách gộp biểu đồ (tự suy ra từ khoảng ngày, không có nút chọn). */
+  /** Cách gộp biểu đồ: mặc định suy ra từ khoảng ngày, người dùng chọn lại được Ngày / Tuần / Tháng. */
   granularity: ChartGranularity;
+  onGranularityChange?: (granularity: ChartGranularity) => void;
   /** Đơn vị của khoảng ngày đã chọn → tên kỳ so sánh (Tuần trước / Tháng trước…). */
   compareUnit: PeriodUnit;
   compareBase: CompareBase | null;
@@ -490,6 +499,24 @@ function PeriodControls({
   const [compareOpen, setCompareOpen] = useState(false);
   return (
     <div className="flex items-center gap-2">
+      {onGranularityChange && (
+        <div className="inline-flex rounded-lg bg-slate-100 p-0.5" role="tablist" aria-label="Gộp biểu đồ theo">
+          {GRANULARITY_OPTIONS.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              role="tab"
+              aria-selected={granularity === o.key}
+              onClick={() => onGranularityChange(o.key)}
+              className={`cursor-pointer rounded-md px-3 py-1 text-[13px] font-semibold transition-colors ${
+                granularity === o.key ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
       <DropdownShell
         label={compareBase ? `vs ${compareLabel(compareBase, compareUnit)}` : "So sánh"}
         open={compareOpen}
@@ -926,13 +953,14 @@ function TrendChart({
 
 // ---------- store table ----------
 
-type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units" | "stockUnits" | "stock";
+type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units" | "spend" | "stockUnits" | "stock";
 
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
   { key: "revenue", label: "Revenue" },
   { key: "units", label: "Units" },
   { key: "profit", label: "Profit" },
+  { key: "spend", label: "Spend" },
   { key: "margin", label: "Margin" },
   { key: "tacos", label: "TACOS" },
   { key: "acos", label: "ACOS" },
@@ -956,6 +984,8 @@ function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | str
       return c.revenue;
     case "profit":
       return c.profit;
+    case "spend":
+      return c.adsFee;
     case "margin":
       return c.revenue > 0 ? c.margin : null;
     case "tacos":
@@ -994,6 +1024,7 @@ function StoreMetricCells({
   t,
   sub = false,
   hideAcos = false,
+  showSpend = false,
   stockValue,
   stockUnits,
 }: {
@@ -1001,6 +1032,8 @@ function StoreMetricCells({
   sub?: boolean;
   /** Bỏ cột ACOS (bảng Team Performance). */
   hideAcos?: boolean;
+  /** Thêm cột Spend (chi phí quảng cáo) ngay sau Profit (bảng Stores Performance). */
+  showSpend?: boolean;
   /** Có thì thêm cột Tồn + Giá trị tồn sau Profit (null = kênh FBM không có tồn → "—"). */
   stockValue?: number | null;
   /** Tồn (FBA + AWD) tại ngày cuối kỳ */
@@ -1014,6 +1047,7 @@ function StoreMetricCells({
       <td className={cell}>
         <span className={`${sub ? "font-semibold" : "font-bold"} ${profitTone(t.profit)}`}>{money(t.profit)}</span>
       </td>
+      {showSpend && <td className={cell}>{money(t.adsFee)}</td>}
       <td className={cell}>
         <MarginCell t={t} cls={sub ? "" : "text-slate-900"} />
       </td>
@@ -1213,6 +1247,7 @@ function StoresPerformance({
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-xs tabular-nums text-slate-500">
                     <span>Rev {money(c.revenue)}</span>
+                    <span>Spend {money(c.adsFee)}</span>
                     <span>
                       TACOS <TacosCell t={c} />
                     </span>
@@ -1307,7 +1342,7 @@ function StoresPerformance({
                       )}
                     </div>
                   </td>
-                  <StoreMetricCells t={c} stockValue={row.stockValue ?? null} stockUnits={row.stockUnits ?? null} />
+                  <StoreMetricCells t={c} showSpend stockValue={row.stockValue ?? null} stockUnits={row.stockUnits ?? null} />
                 </tr>
               </tbody>
             );
@@ -1324,6 +1359,7 @@ function StoresPerformance({
                 <td className="px-3 py-2.5 text-right">{money(total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{int.format(total.quantity)}</td>
                 <td className="px-3 py-2.5 text-right text-[15px] !font-bold">{money(total.profit)}</td>
+                <td className="px-3 py-2.5 text-right">{money(total.adsFee)}</td>
                 <td className="px-3 py-2.5 text-right"><MarginCell t={total} /></td>
                 <td className="px-3 py-2.5 text-right"><TacosCell t={total} /></td>
                 <td className="px-3 py-2.5 pr-4 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
@@ -1536,7 +1572,9 @@ export function AccountingDashboardView() {
   // Một bộ điều khiển chung: ngày / tuần / tháng quyết định cả cách gộp biểu đồ lẫn kỳ so sánh.
   // Cách gộp biểu đồ tự suy ra từ khoảng ngày (không có nút chọn), tách khỏi kỳ so sánh (theo đơn vị của khoảng ngày).
   const periodUnit = dashboardRangeUnit(dateRange.startDate, dateRange.endDate, datePreset);
-  const granularity = dashboardChartGranularity(periodUnit, dateRange.startDate, dateRange.endDate);
+  // Người dùng chọn Ngày / Tuần / Tháng trên biểu đồ thì giữ lựa chọn đó; chưa chọn thì tự suy ra từ khoảng ngày.
+  const [granularityChoice, setGranularityChoice] = useState<ChartGranularity | null>(null);
+  const granularity = granularityChoice ?? dashboardChartGranularity(periodUnit, dateRange.startDate, dateRange.endDate);
   const compare = compareModeFor(periodUnit, compareBase);
   // Ô (ngày / tuần / tháng) đang xem trong P&L; null = ô mới nhất.
   const [storeMenuOpen, setStoreMenuOpen] = useState(false);
@@ -2241,6 +2279,7 @@ export function AccountingDashboardView() {
                   previousPeriod={data.previousPeriod}
                   controls={{
                     granularity,
+                    onGranularityChange: setGranularityChoice,
                     compareUnit: periodUnit,
                     compareBase,
                     onCompareBaseChange: handleCompareBaseChange,

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { PackageIcon } from "@phosphor-icons/react";
-import type { DashboardTopProducts, TopProductItem, TopProductLists } from "@/lib/accounting/dashboard-db";
+import type { DashboardTopProducts, TopGroupItem, TopProductItem, TopProductLists } from "@/lib/accounting/dashboard-db";
 
 interface TopSellingProductsProps {
   startDate: string;
@@ -18,12 +18,20 @@ interface TopSellingProductsProps {
 
 type Channel = DashboardTopProducts["channels"][number];
 
-type TopTab = "profit" | "revenue" | "loss";
+type TopTab = "profit" | "revenue" | "loss" | "niche" | "productType";
 
-const TABS: { key: TopTab; label: string; title: string }[] = [
-  { key: "profit", label: "Top Profit", title: "Profit" },
-  { key: "revenue", label: "Top Revenue", title: "Revenue" },
-  { key: "loss", label: "Top Loss", title: "Loss" },
+/** Thẻ trái: Top Products theo SKU; thẻ phải: Top Ngách / Top Phôi. */
+type CardKind = "products" | "groups";
+
+/** Tab gộp nhiều SKU thành 1 dòng (ngách / phôi), xếp theo Profit. */
+const isGroupTab = (tab: TopTab): tab is "niche" | "productType" => tab === "niche" || tab === "productType";
+
+const TABS: { key: TopTab; kind: CardKind; label: string; heading: string; title: string }[] = [
+  { key: "profit", kind: "products", label: "Top Profit", heading: "Top Products", title: "Profit" },
+  { key: "revenue", kind: "products", label: "Top Revenue", heading: "Top Products", title: "Revenue" },
+  { key: "loss", kind: "products", label: "Top Loss", heading: "Top Products", title: "Loss" },
+  { key: "niche", kind: "groups", label: "Top Ngách", heading: "Top Ngách", title: "Profit" },
+  { key: "productType", kind: "groups", label: "Top Phôi", heading: "Top Phôi", title: "Profit" },
 ];
 
 function formatCurrency(val: number): string {
@@ -283,35 +291,25 @@ export function TopSellingProducts({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestKey]);
 
-  // Team / store chỉ có 1 kênh (hoặc 1 kênh không có sản phẩm nào trong kỳ) thì chỉ hiện kênh đó.
-  // Có aside: FBA | FBM | aside chia 3 (1 kênh thì rộng 2 cột).
-  // Không aside: FBA | FBM chia đôi; 1 kênh thì chia đôi thành Top Profit | Top Loss của kênh đó để hàng không trống.
+  // Thẻ trái: Top Products (Profit / Revenue / Loss theo SKU), mặc định FBA. Thẻ phải: Top Ngách / Top Phôi, mặc định FBM.
+  // Lọc có cả 2 kênh thì bấm nhãn FBA / FBM trên mỗi thẻ để đổi kênh; chỉ 1 kênh thì cả 2 thẻ cùng kênh đó.
   const shown = data ? visibleChannels(data) : [];
   const channels: Channel[] = shown.length ? shown : lastChannels;
   const multiStore = storeIds.length !== 1;
-  const cards: { channel: Channel; initialTab: TopTab }[] =
-    !aside && channels.length === 1
-      ? [
-          { channel: channels[0], initialTab: "profit" },
-          { channel: channels[0], initialTab: "loss" },
-        ]
-      : channels.map((channel) => ({ channel, initialTab: "profit" }));
+  const cards: { kind: CardKind; defaultChannel: Channel }[] = [
+    { kind: "products", defaultChannel: channels.includes("FBA") ? "FBA" : channels[0] },
+    { kind: "groups", defaultChannel: channels.includes("FBM") ? "FBM" : channels[0] },
+  ];
 
   return (
-    <div
-      className={`grid gap-4 ${
-        aside ? "@min-[900px]:grid-cols-3" : cards.length > 1 ? "@min-[900px]:grid-cols-2" : ""
-      }`}
-    >
-      {cards.map(({ channel, initialTab }, i) => (
-        <div
-          key={`${channel}-${initialTab}`}
-          className={`min-w-0 ${aside && channels.length === 1 ? "@min-[900px]:col-span-2" : ""}`}
-        >
+    <div className={`grid gap-4 ${aside ? "@min-[900px]:grid-cols-3" : "@min-[900px]:grid-cols-2"}`}>
+      {cards.map(({ kind, defaultChannel }, i) => (
+        <div key={kind} className="min-w-0">
           <ChannelTopCard
-            channel={channel}
-            initialTab={initialTab}
-            lists={data?.[channel]}
+            kind={kind}
+            channels={channels}
+            defaultChannel={defaultChannel}
+            data={data}
             loading={loading}
             error={error}
             multiStore={multiStore}
@@ -325,25 +323,36 @@ export function TopSellingProducts({
 }
 
 function ChannelTopCard({
-  channel,
-  initialTab = "profit",
-  lists,
+  kind,
+  channels,
+  defaultChannel,
+  data,
   loading,
   error,
   multiStore,
   delay,
 }: {
-  channel: Channel;
-  initialTab?: TopTab;
-  lists: TopProductLists | undefined;
+  kind: CardKind;
+  channels: Channel[];
+  defaultChannel: Channel;
+  data: DashboardTopProducts | undefined;
   loading: boolean;
   error: string | null;
   multiStore: boolean;
   delay: number;
 }) {
-  const [tab, setTab] = useState<TopTab>(initialTab);
-  const products: TopProductItem[] = lists?.[tab] ?? [];
+  const tabs = TABS.filter((t) => t.kind === kind);
+  const [tab, setTab] = useState<TopTab>(tabs[0].key);
+  // Kênh người dùng bấm chọn; bộ lọc không còn kênh đó thì quay về kênh mặc định của thẻ.
+  const [pickedChannel, setPickedChannel] = useState<Channel | null>(null);
+  const channel: Channel = pickedChannel && channels.includes(pickedChannel) ? pickedChannel : defaultChannel;
+  const lists: TopProductLists | undefined = data?.[channel];
+  const grouped = isGroupTab(tab);
+  const products: TopProductItem[] = grouped ? [] : (lists?.[tab] ?? []);
+  const groups: TopGroupItem[] = grouped ? (lists?.[tab] ?? []) : [];
+  const rowCount = grouped ? groups.length : products.length;
   const activeTab = TABS.find((t) => t.key === tab)!;
+  const groupLabel = tab === "niche" ? "ngách" : "phôi";
 
   return (
     <div
@@ -353,20 +362,43 @@ function ChannelTopCard({
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
         <h2 className="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900">
-          <span
-            className={`rounded-md px-1.5 py-0.5 text-[12px] font-bold ${
-              channel === "FBM" ? "bg-violet-50 text-violet-600" : "bg-sky-50 text-sky-600"
-            }`}
-          >
-            {channel}
-          </span>
+          {channels.length > 1 ? (
+            <span className="inline-flex rounded-md bg-slate-100 p-0.5" role="tablist" aria-label="Kênh">
+              {channels.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  role="tab"
+                  aria-selected={channel === c}
+                  onClick={() => setPickedChannel(c)}
+                  className={`cursor-pointer rounded px-1.5 py-0.5 text-[12px] font-bold transition-colors ${
+                    channel === c
+                      ? c === "FBM"
+                        ? "bg-violet-50 text-violet-600 shadow-2xs"
+                        : "bg-sky-50 text-sky-600 shadow-2xs"
+                      : "text-slate-400 hover:text-slate-700"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </span>
+          ) : (
+            <span
+              className={`rounded-md px-1.5 py-0.5 text-[12px] font-bold ${
+                channel === "FBM" ? "bg-violet-50 text-violet-600" : "bg-sky-50 text-sky-600"
+              }`}
+            >
+              {channel}
+            </span>
+          )}
           <span>
-            Top Products (by{" "}
+            {activeTab.heading} (by{" "}
             <span className={`font-extrabold ${tab === "loss" ? "text-rose-600" : "text-emerald-600"}`}>{activeTab.title}</span>)
           </span>
         </h2>
         <div role="tablist" className="flex rounded-lg bg-slate-100 p-0.5 text-[12.5px] font-semibold">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.key}
               type="button"
@@ -395,18 +427,20 @@ function ChannelTopCard({
           <p className="text-sm font-semibold text-rose-600">Không tải được Top sản phẩm</p>
           <p className="mt-1 text-xs text-slate-400">{error}</p>
         </div>
-      ) : products.length === 0 ? (
+      ) : rowCount === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
             <PackageIcon size={24} weight="duotone" />
           </div>
           <p className="mt-3 text-sm font-semibold text-slate-700">
-            {tab === "loss" ? "Không có sản phẩm lỗ" : "Chưa có dữ liệu sản phẩm"}
+            {grouped ? `Chưa có dữ liệu theo ${groupLabel}` : tab === "loss" ? "Không có sản phẩm lỗ" : "Chưa có dữ liệu sản phẩm"}
           </p>
           <p className="mt-1 text-xs text-slate-400">
-            {tab === "loss"
-              ? `Không có SKU ${channel} nào có profit âm trong khoảng thời gian hoặc bộ lọc đã chọn.`
-              : `Không tìm thấy đơn ${channel} nào trong khoảng thời gian hoặc bộ lọc đã chọn.`}
+            {grouped
+              ? `Không có SKU ${channel} nào được khai báo ${groupLabel} trong Bảng mã có số liệu trong khoảng thời gian hoặc bộ lọc đã chọn.`
+              : tab === "loss"
+                ? `Không có SKU ${channel} nào có profit âm trong khoảng thời gian hoặc bộ lọc đã chọn.`
+                : `Không tìm thấy đơn ${channel} nào trong khoảng thời gian hoặc bộ lọc đã chọn.`}
           </p>
         </div>
       ) : (
@@ -416,7 +450,7 @@ function ChannelTopCard({
             <thead>
               <tr className="bg-slate-50/90 text-[12px] font-semibold text-slate-500">
                 <th className="rounded-l-lg py-2.5 pl-2 pr-1 text-center w-10">#</th>
-                <th className="py-2.5 px-2">Product / SKU</th>
+                <th className="py-2.5 px-2">{tab === "niche" ? "Ngách" : tab === "productType" ? "Phôi" : "Product / SKU"}</th>
                 <th className="py-2.5 px-2 @max-[560px]:px-1.5 text-right">Units</th>
                 <th className={`py-2.5 px-2 @max-[560px]:px-1.5 text-right ${tab === "revenue" ? "font-bold text-slate-800" : ""}`}>Revenue</th>
                 <th
@@ -431,6 +465,52 @@ function ChannelTopCard({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-[13px]">
+              {groups.map((g, index) => (
+                <tr key={g.name} className="group transition-colors hover:bg-slate-50/60">
+                  <td className="py-3 pl-2 pr-1 text-center align-middle">
+                    <RankBadge rank={index + 1} />
+                  </td>
+                  <td className="w-full max-w-0 py-3 px-2 @max-[560px]:px-1.5 align-middle">
+                    <div className="flex items-center gap-3 @max-[560px]:gap-2">
+                      <ProductThumbnail src={g.imageUrl} alt={g.name} />
+                      <div className="min-w-0">
+                        <p title={g.name} className="truncate text-[13px] font-semibold text-slate-800 transition-colors group-hover:text-blue-600">
+                          {g.name}
+                        </p>
+                        <p className="mt-0.5 truncate text-[11.5px] font-medium text-slate-500" title={g.storeNames.join(", ")}>
+                          {g.skuCount.toLocaleString("en-US")} SKU
+                          {multiStore && g.storeNames.length > 0 && (
+                            <span className="text-slate-400">
+                              {" "}· {g.storeNames.length === 1 ? g.storeNames[0] : `${g.storeNames.length} store`}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-3 px-2 @max-[560px]:px-1.5 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    {g.units.toLocaleString("en-US")}
+                  </td>
+                  <td className="py-3 px-2 @max-[560px]:px-1.5 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    {formatCurrency(g.revenue)}
+                  </td>
+                  <td
+                    className="py-3 px-2 @max-[560px]:px-1.5 text-right font-bold align-middle tabular-nums text-sm"
+                    style={{ color: g.profit >= 0 ? "#16a34a" : "#e11d48" }}
+                  >
+                    {formatCurrency(g.profit)}
+                  </td>
+                  <td
+                    className="py-3 px-2 @max-[560px]:px-1.5 text-right font-normal text-slate-700 align-middle tabular-nums text-sm"
+                    style={g.margin < 0 ? { color: "#e11d48" } : undefined}
+                  >
+                    {g.revenue > 0 ? formatPercent(g.margin) : "—"}
+                  </td>
+                  <td className="py-3 pl-2 pr-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                    {g.tacos > 0 ? formatPercent(g.tacos) : "—"}
+                  </td>
+                </tr>
+              ))}
               {products.map((p, index) => {
                 const rank = index + 1;
                 return (
