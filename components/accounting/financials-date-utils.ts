@@ -1,13 +1,15 @@
 import type { DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 
-/**
- * Returns latest complete date for Amazon financials reporting (yesterday).
- */
-export function getAmazonLatestAvailableDate(): string {
-  const date = new Date();
-  date.setDate(date.getDate() - 1);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+/** Ngày hôm nay theo giờ Amazon (PST/PDT), YYYY-MM-DD — không theo giờ máy (VN đi trước PST 14–15 tiếng). */
+export function getAmazonToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+/** Ngày gần nhất đã đủ dữ liệu Amazon = hôm qua theo giờ PST (sáng VN ngày 20 thì PST mới ngày 19, chưa hết ngày). */
+export function getAmazonLatestAvailableDate(now: Date = new Date()): string {
+  const [y, m, d] = getAmazonToday(now).split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d - 1));
+  return date.toISOString().slice(0, 10);
 }
 
 /**
@@ -16,12 +18,10 @@ export function getAmazonLatestAvailableDate(): string {
  * - End date: current date (or clamped to maxDate if provided and within current month)
  */
 export function getThisMonthDateRange(maxDateStr?: string): DateRange {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const year = now.getFullYear();
-  const month = pad(now.getMonth() + 1);
-  const startDate = `${year}-${month}-01`;
-  let endDate = `${year}-${month}-${pad(now.getDate())}`;
+  // Tháng / ngày theo giờ Amazon (PST)
+  const today = getAmazonToday();
+  const startDate = `${today.slice(0, 7)}-01`;
+  let endDate = today;
 
   if (maxDateStr && endDate > maxDateStr) {
     endDate = maxDateStr;

@@ -1918,6 +1918,11 @@ export function AccountingDashboardView() {
   const compareEmpty = Boolean(data?.previous && data.previous.days === 0);
   // Lịch chỉ cho chọn tới ngày đã có dữ liệu (Cập nhật đến …); preset vẫn tính theo hôm qua rồi bị kẹp về ngày này.
   const pickerMaxDate = data?.latestDate && data.latestDate < maxDate ? data.latestDate : maxDate;
+  // Ngày cuối chưa có dữ liệu (crawler 16h10 chưa nạp) → ô ngày hiện tới ngày có dữ liệu, khớp "Showing …"
+  const shownDateRange =
+    data?.latestDate && dateRange.endDate > data.latestDate && dateRange.startDate <= data.latestDate
+      ? { ...dateRange, endDate: data.latestDate }
+      : dateRange;
   const dataClamped = Boolean(data?.period.endDate && dateRange.endDate && data.period.endDate < dateRange.endDate);
 
   return (
@@ -2238,7 +2243,7 @@ export function AccountingDashboardView() {
             </DropdownShell>
             <div className="order-last w-full @min-[640px]:order-none @min-[640px]:w-auto">
               <PpcAmazonDatePicker
-                value={dateRange}
+                value={shownDateRange}
                 onChange={handleRangeChange}
                 maxDate={pickerMaxDate}
                 anchorDate={maxDate}
