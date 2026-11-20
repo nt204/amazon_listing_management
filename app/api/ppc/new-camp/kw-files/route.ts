@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-/** GET ?query=… tìm file keyword đã lưu; GET ?id=… tải file về. */
+/** GET ?query=… tìm file keyword đã lưu (query rỗng → file mới nhất); GET ?id=… tải file về. */
 export async function GET(request: Request) {
   try {
     const actor = await authorize(request, "read", "ppc");
@@ -33,8 +33,7 @@ export async function GET(request: Request) {
         },
       });
     }
-    const query = (params.get("query") || "").trim();
-    if (query.length < 2) return Response.json({ success: true, data: [] });
+    const query = (params.get("query") || "").trim().slice(0, 200);
     return Response.json({ success: true, data: await searchKwFiles(actor.teamId, query) });
   } catch (error) {
     return routeErrorResponse(error, "Không tìm được file keyword.", 500);

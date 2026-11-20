@@ -241,17 +241,55 @@ export async function saveKwFile(teamId: string, userId: string, fileName: strin
   return Number(rows[0].id);
 }
 
-export async function searchKwFiles(teamId: string, query: string): Promise<Array<{ id: number; name: string; createdAt: string }>> {
+/** Bỏ dấu tiếng Việt + chữ thường, gom ký tự không phải chữ/số thành khoảng trắng ("Trường - Veteran" → "truong veteran"). */
+function foldText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Tìm file keyword trong kho: mỗi từ gõ vào phải có trong tên file (không phân biệt dấu / thứ tự / dấu "-").
+ * Query rỗng → các file mới nhất. Trùng tên thì chỉ giữ bản mới nhất.
+ */
+export async function searchKwFiles(teamId: string, query: string, limit = 30): Promise<Array<{ id: number; name: string; createdAt: string }>> {
   const sql = await getDatabaseClient();
-  const pattern = `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  // Chỉ đọc tên (không đọc file_data); kho nhỏ nên lọc trong JS để tìm được không dấu
   const rows = await sql<{ id: string; file_name: string; created_at: Date }[]>`
     SELECT id, file_name, created_at
     FROM ppc_new_camp_kw_files
-    WHERE team_id = ${teamId} AND file_name ILIKE ${pattern}
-    ORDER BY created_at DESC
+    WHERE team_id = ${teamId}
+    ORDER BY created_at DESC, id DESC
+    LIMIT 2000
+  `;
+  const tokens = foldText(query).split(" ").filter(Boolean);
+  const seen = new Set<string>();
+  const out: Array<{ id: number; name: string; createdAt: string }> = [];
+  for (const r of rows) {
+    const folded = foldText(r.file_name);
+    if (seen.has(folded)) continue;
+    if (tokens.length && !tokens.every((t) => folded.includes(t))) continue;
+    seen.add(folded);
+    out.push({ id: Number(r.id), name: r.file_name, createdAt: new Date(r.created_at).toISOString() });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Các file trong kho cùng tên (để chặn lưu trùng một bộ keyword). */
+export async function listKwFilesByName(teamId: string, fileName: string): Promise<Array<{ id: number; data: Buffer }>> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ id: string; file_data: Buffer }[]>`
+    SELECT id, file_data FROM ppc_new_camp_kw_files
+    WHERE team_id = ${teamId} AND file_name = ${fileName}
+    ORDER BY created_at DESC, id DESC
     LIMIT 20
   `;
-  return rows.map((r) => ({ id: Number(r.id), name: r.file_name, createdAt: new Date(r.created_at).toISOString() }));
+  return rows.map((r) => ({ id: Number(r.id), data: Buffer.from(r.file_data) }));
 }
 
 export async function getKwFile(teamId: string, id: number): Promise<{ name: string; data: Buffer } | null> {

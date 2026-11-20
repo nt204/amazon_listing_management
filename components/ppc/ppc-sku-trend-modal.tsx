@@ -166,7 +166,7 @@ export function PpcSkuTrendModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-white rounded-2xl p-5 shadow-2xl border border-slate-200 cursor-default animate-in zoom-in-95 duration-150"
+        className="relative w-full max-w-6xl max-h-[92vh] overflow-y-auto bg-white rounded-2xl p-5 shadow-2xl border border-slate-200 cursor-default animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -383,6 +383,7 @@ interface BreakdownRow {
   targetKeyword: string;
   matchType: string;
   searchTerm: string;
+  impressions: number;
   clicks: number;
   spend: number;
   sales: number;
@@ -454,15 +455,16 @@ function SkuTargetBreakdown({
   const targets = useMemo(() => {
     const map = new Map<string, {
       key: string; campaignName: string; targetKeyword: string; matchType: string;
-      clicks: number; spend: number; sales: number; orders: number; terms: BreakdownRow[];
+      impressions: number; clicks: number; spend: number; sales: number; orders: number; terms: BreakdownRow[];
     }>();
     for (const r of rows || []) {
       const key = `${r.storeName}|${r.campaignName}|${r.adGroupName}|${r.targetKeyword}|${r.matchType}`;
       let t = map.get(key);
       if (!t) {
-        t = { key, campaignName: r.campaignName, targetKeyword: r.targetKeyword, matchType: r.matchType, clicks: 0, spend: 0, sales: 0, orders: 0, terms: [] };
+        t = { key, campaignName: r.campaignName, targetKeyword: r.targetKeyword, matchType: r.matchType, impressions: 0, clicks: 0, spend: 0, sales: 0, orders: 0, terms: [] };
         map.set(key, t);
       }
+      t.impressions += r.impressions || 0;
       t.clicks += r.clicks;
       t.spend += r.spend;
       t.sales += r.sales;
@@ -534,6 +536,7 @@ function SkuTargetBreakdown({
               <tr>
                 <th className="py-2 pl-3 pr-2">Target</th>
                 <th className="py-2 px-2">Campaign</th>
+                <th className="py-2 px-2 text-right">Impr.</th>
                 <th className="py-2 px-2 text-right">Clicks</th>
                 <th className="py-2 px-2 text-right">Spend</th>
                 <th className="py-2 px-2 text-right">Orders</th>
@@ -560,7 +563,8 @@ function SkuTargetBreakdown({
                           </div>
                         </div>
                       </td>
-                      <td className="py-2 px-2 text-[11px] text-slate-500 break-all max-w-[280px]">{t.campaignName}</td>
+                      <td className="py-2 px-2 text-[11px] text-slate-500 break-all max-w-[320px]">{t.campaignName}</td>
+                      <td className="py-2 px-2 text-right font-mono text-slate-500">{t.impressions.toLocaleString("en-US")}</td>
                       <td className="py-2 px-2 text-right font-mono">{t.clicks}</td>
                       <td className="py-2 px-2 text-right font-mono font-semibold text-slate-900">${t.spend.toFixed(2)}</td>
                       <td className={`py-2 px-2 text-right font-mono ${t.orders ? "font-bold text-emerald-700" : "text-slate-300"}`}>{t.orders}</td>
@@ -570,6 +574,7 @@ function SkuTargetBreakdown({
                     {isOpen && t.terms.map((st) => (
                       <tr key={`${t.key}|${st.searchTerm}`} className="bg-slate-50/60 text-slate-500">
                         <td className="py-1.5 pl-8 pr-2 italic break-words" colSpan={2}>“{st.searchTerm}”</td>
+                        <td className="py-1.5 px-2 text-right font-mono">{(st.impressions || 0).toLocaleString("en-US")}</td>
                         <td className="py-1.5 px-2 text-right font-mono">{st.clicks}</td>
                         <td className="py-1.5 px-2 text-right font-mono">${st.spend.toFixed(2)}</td>
                         <td className={`py-1.5 px-2 text-right font-mono ${st.orders ? "font-bold text-emerald-700" : ""}`}>{st.orders}</td>

@@ -371,7 +371,7 @@ export function PpcNewCampView() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadName, setUploadName] = useState<KwNameEdits>({});
   const [libQuery, setLibQuery] = useState("");
-  const [libResults, setLibResults] = useState<{ query: string; items: Array<{ id: number; name: string }> } | null>(null);
+  const [libResults, setLibResults] = useState<{ query: string; items: Array<{ id: number; name: string; createdAt?: string }> } | null>(null);
   const [libSearching, setLibSearching] = useState(false);
   const [libFile, setLibFile] = useState<{ id: number; name: string } | null>(null);
   // Tạo mới: nhiều part, mỗi part một ô dán keyword → bảng điền bid
@@ -536,10 +536,11 @@ export function PpcNewCampView() {
     setBulkBid("");
   };
 
+  // Tab "Từ kho": ô trống → hiện file mới nhất; gõ chữ → tìm theo từng từ, không phân biệt dấu (server lọc)
+  const libTabOpen = kwMode === "library" || (kwMode === "none" && kwTab === "library");
   useEffect(() => {
-    if (kwMode !== "none" && kwMode !== "library") return;
+    if (!libTabOpen || libFile) return;
     const q = libQuery.trim();
-    if (q.length < 2 || libFile) return;
     const timer = setTimeout(async () => {
       setLibSearching(true);
       try {
@@ -549,9 +550,9 @@ export function PpcNewCampView() {
       } finally {
         setLibSearching(false);
       }
-    }, 400);
+    }, q ? 400 : 0);
     return () => clearTimeout(timer);
-  }, [libQuery, libFile, kwMode]);
+  }, [libQuery, libFile, libTabOpen]);
 
   const processKwList = () => {
     const parts = draftParts
@@ -599,6 +600,22 @@ export function PpcNewCampView() {
     phoi: createName.phoi ?? autoName.phoi,
     set: createName.set ?? autoName.createSet,
   };
+
+  // File trong kho khớp PIC / Ngách / Phôi của SKU đang chọn thì đưa lên đầu (giữ thứ tự mới nhất khi bằng điểm)
+  const libItems = useMemo(() => {
+    if (!libResults || libResults.query !== libQuery.trim()) return null;
+    const fold = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const hints = [autoName.user, autoName.niche, autoName.phoi].map(fold).filter(Boolean);
+    if (!hints.length) return libResults.items;
+    const score = (name: string) => {
+      const f = ` ${fold(name)} `;
+      return hints.filter((h) => f.includes(` ${h} `)).length;
+    };
+    return libResults.items
+      .map((item, i) => ({ item, i, s: score(item.name) }))
+      .sort((a, b) => b.s - a.s || a.i - b.i)
+      .map((x) => x.item);
+  }, [libResults, libQuery, autoName.user, autoName.niche, autoName.phoi]);
 
   // --- Kiểm tra thông tin SB: ô nào Bảng mã còn trống thì hiện ô để bổ sung ---
   const sbRuns = useMemo(() => ({ sb01: match.sb01.run, sb05: match.sb05.run }), [match.sb01.run, match.sb05.run]);
@@ -936,6 +953,7 @@ export function PpcNewCampView() {
         const json = (await res.json()) as { stores: string[]; jobs: Array<{ id: string; fileName: string; campaigns: number; store: string }> };
         setUploadJobs({ stores: json.stores, jobs: json.jobs.map((j) => ({ ...j, status: "PENDING", progress: 25 })) });
         setNotices(uploadNotice ? [uploadNotice] : []);
+        setShowIssues(false);
         resetKeyword();
         return;
       }
@@ -958,7 +976,9 @@ export function PpcNewCampView() {
         { kind: "success", text: `Đã tải ${files.length} file:\n${files.map((f) => `• ${f.name} (${f.rows} dòng)`).join("\n")}` },
         ...(uploadNotice ? [uploadNotice] : []),
       ]);
-      resetKeyword();
+      // Giữ nguyên file keyword sau khi tải file: thường tải xem rồi bấm "Upload lên Amazon" ngay với cùng bộ keyword
+      // (server không lưu trùng vào kho nếu nội dung giống hệt)
+      setShowIssues(false);
     } catch (error) {
       setNotices([{ kind: "error", text: `Lỗi kết nối khi gửi yêu cầu: ${error instanceof Error ? error.message : error}` }]);
     } finally {
@@ -1407,12 +1427,12 @@ export function PpcNewCampView() {
                         <MagnifyingGlass size={16} weight="bold" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input className={`${inputCls} pl-9`} placeholder="Tên người, ngách, phôi…" value={libQuery} onChange={(e) => setLibQuery(e.target.value)} />
                       </div>
-                      {libQuery.trim().length >= 2 && (
+                      {(libSearching || libItems) && (
                         <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 thin-scrollbar">
-                          {libSearching ? (
+                          {libSearching && !libItems ? (
                             <div className="flex items-center gap-2 p-3 text-sm font-medium text-slate-500"><CircleNotch size={16} className="animate-spin" /> Đang tìm…</div>
-                          ) : libResults?.query === libQuery.trim() && libResults.items.length > 0 ? (
-                            libResults.items.map((f) => (
+                          ) : libItems && libItems.length > 0 ? (
+                            libItems.map((f) => (
                               <button
                                 key={f.id}
                                 type="button"
@@ -1420,11 +1440,12 @@ export function PpcNewCampView() {
                                 className="flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2.5 text-left text-sm font-semibold text-slate-800 last:border-b-0 hover:bg-indigo-50 cursor-pointer"
                               >
                                 <FileXls size={18} weight="fill" className="shrink-0 text-emerald-600" />
-                                {f.name}
+                                <span className="min-w-0 flex-1 break-words">{f.name}</span>
+                                {f.createdAt && <span className="shrink-0 text-[11px] font-medium text-slate-400">{new Date(f.createdAt).toLocaleDateString("vi-VN")}</span>}
                               </button>
                             ))
-                          ) : libResults?.query === libQuery.trim() ? (
-                            <div className="p-3 text-sm font-semibold text-rose-600">Không tìm thấy file</div>
+                          ) : libItems ? (
+                            <div className="p-3 text-sm font-semibold text-rose-600">{libQuery.trim() ? "Không tìm thấy file" : "Kho chưa có file keyword nào"}</div>
                           ) : null}
                         </div>
                       )}

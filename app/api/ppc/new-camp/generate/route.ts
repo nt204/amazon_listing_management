@@ -4,7 +4,7 @@ import { getDatabaseClient } from "@/lib/db";
 import { withKwPlus } from "@/lib/ppc/campaign-launch";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
-import { findExistingCampaigns, listNewCampSkus, getKwFile, rememberUploadedCampaigns, saveKwFile } from "@/lib/ppc/new-camp-db";
+import { findExistingCampaigns, listNewCampSkus, getKwFile, listKwFilesByName, rememberUploadedCampaigns, saveKwFile } from "@/lib/ppc/new-camp-db";
 import {
   NewCampInputError,
   applyNameEdits,
@@ -155,6 +155,25 @@ function asciiFileName(name: string): string {
   return name.replace(/[^A-Za-z0-9._ -]+/g, "_");
 }
 
+/** Chữ ký nội dung keyword (tên part + keyword + bid) để so 2 file có cùng bộ keyword hay không. */
+function keywordSignature(parts: KeywordPart[]): string {
+  const cell = (v: unknown) => (typeof v === "number" ? (Number.isFinite(v) ? String(v) : "") : String(v ?? "").trim());
+  return JSON.stringify(parts.map((p) => [p.name.trim(), p.keywords.map(cell), p.bids.map(cell)]));
+}
+
+/** File cùng tên + cùng nội dung keyword đã có trong kho → trả ID của nó (bấm Tạo file nhiều lần không lưu trùng). */
+async function findSameKwFile(teamId: string, fileName: string, parts: KeywordPart[]): Promise<number | null> {
+  const target = keywordSignature(parts);
+  for (const f of await listKwFilesByName(teamId, fileName)) {
+    try {
+      if (keywordSignature((await parseKeywordFile(f.data)).parts) === target) return f.id;
+    } catch {
+      // file cũ không đọc được → bỏ qua, coi như khác
+    }
+  }
+  return null;
+}
+
 /**
  * POST multipart: options (JSON), kwMode (upload | library | create | none),
  * keyword_file, kwFileId, kwName (JSON {user, niche, phoi, set}), kwList / bidList (JSON), asin_file.
@@ -288,9 +307,15 @@ export async function POST(request: Request) {
     if (pendingSaveName && kwBuffer) {
       if (keywordParts && keywordParts.length > 0) {
         try {
-          const id = await saveKwFile(actor.teamId, actor.userId, pendingSaveName, kwBuffer);
-          uploadStatus = "success";
-          uploadMessage = `File keyword '${pendingSaveName}' đã được lưu vào kho thành công (ID: ${id}).`;
+          const existingId = await findSameKwFile(actor.teamId, pendingSaveName, keywordParts);
+          if (existingId) {
+            uploadStatus = "success";
+            uploadMessage = `File keyword '${pendingSaveName}' đã có sẵn trong kho (ID: ${existingId}), không lưu thêm bản trùng.`;
+          } else {
+            const id = await saveKwFile(actor.teamId, actor.userId, pendingSaveName, kwBuffer);
+            uploadStatus = "success";
+            uploadMessage = `File keyword '${pendingSaveName}' đã được lưu vào kho thành công (ID: ${id}).`;
+          }
         } catch (error) {
           uploadStatus = "error";
           uploadMessage = `Lỗi khi lưu file keyword '${pendingSaveName}': ${error instanceof Error ? error.message : String(error)}`;
