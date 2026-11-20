@@ -902,7 +902,8 @@ export function PpcNewCampView() {
       return setNotices([{ kind: "error", text: `Không xác định được store để upload:\n${uploadGroups.noStore.slice(0, 10).join("\n")}` }]);
     }
     const fd = new FormData();
-    if (mode === "upload") fd.append("output", "upload");
+    // Tải về: 1 file zip chứa từng file Excel theo dạng chạy (SP03, SB01, SB05, SP04, FL Asin)
+    fd.append("output", mode === "upload" ? "upload" : "zip");
     fd.append("options", JSON.stringify(buildOptions(true)));
     if (asinFile) fd.append("asin_file", asinFile);
     fd.append("kwMode", kwMode);
@@ -957,23 +958,26 @@ export function PpcNewCampView() {
         setShowIssues(false);
         return;
       }
-      // Tải từng file Excel riêng (không nén zip)
-      const json = (await res.json()) as { files?: Array<{ name: string; rows: number; data: string }> };
-      const files = json.files ?? [];
-      for (const [i, f] of files.entries()) {
-        if (i > 0) await new Promise((r) => setTimeout(r, 350)); // trình duyệt chặn khi tải nhiều file cùng lúc
-        const bytes = Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0));
-        const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = f.name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const zipName = decodeURIComponent(disposition.match(/filename\*=UTF-8''([^;]+)/)?.[1] || "") || "Campaigns.zip";
+      const files = (decodeURIComponent(res.headers.get("X-Generated-Files") || "") || "")
+        .split("|")
+        .filter(Boolean)
+        .map((item) => {
+          const i = item.lastIndexOf(":");
+          return { name: item.slice(0, i), rows: Number(item.slice(i + 1)) || 0 };
+        });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = zipName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
       setNotices([
-        { kind: "success", text: `Đã tải ${files.length} file:\n${files.map((f) => `• ${f.name} (${f.rows} dòng)`).join("\n")}` },
+        { kind: "success", text: `Đã tải ${zipName} (${files.length} file):\n${files.map((f) => `• ${f.name} (${f.rows} dòng)`).join("\n")}` },
         ...(uploadNotice ? [uploadNotice] : []),
       ]);
       // Giữ nguyên file keyword sau khi tải file: thường tải xem rồi bấm "Upload lên Amazon" ngay với cùng bộ keyword

@@ -849,71 +849,7 @@ export function generateAllFiles(
 /** df.to_excel(index=False): sheet "Sheet1", header in đậm có viền. */
 export async function writeGeneratedXlsx(file: GeneratedFile): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  writeSheet(wb, "Sheet1", file.columns, file.rows);
-  return Buffer.from(await wb.xlsx.writeBuffer());
-}
-
-// SP04 / FL Asin dùng tên cột kiểu cũ ("Campaign Id"…) → đổi về tên cột bulksheet 2.0 như SP03 để chung một sheet
-const SP_LEGACY_COLUMNS: Record<string, string> = {
-  "Campaign Id": "Campaign ID",
-  "Ad Group Id": "Ad Group ID",
-  "Portfolio Id": "Portfolio ID",
-  "Ad Id (Read only)": "Ad ID",
-  "Keyword Id (Read only)": "Keyword ID",
-  "Product Targeting Id (Read only)": "Product Targeting ID",
-};
-export const SP_SHEET_NAME = "Sponsored Products Campaigns";
-export const SB_SHEET_NAME = "Sponsored Brands Campaigns";
-
-export interface CombinedSheet {
-  name: string;
-  columns: string[];
-  rows: Row[];
-}
-export interface CombinedFile {
-  fileName: string;
-  sheets: CombinedSheet[];
-  rowCount: number;
-}
-
-/**
- * Gộp mọi file của 1 lượt thành 1 file bulk theo mẫu Amazon: sheet "Sponsored Products Campaigns"
- * (SP03 + SP04 + FL Asin) và "Sponsored Brands Campaigns" (SB01 + SB05). Gọi sau applyNameEdits.
- */
-export function combineGeneratedFiles(files: GeneratedFile[], form: NewCampForm): CombinedFile {
-  const sp: Row[] = [];
-  const sb: Row[] = [];
-  const kinds: string[] = [];
-  for (const f of files) {
-    const kind = f.fileName.split(" - ")[0];
-    if (!kinds.includes(kind.split(" ")[0])) kinds.push(kind.split(" ")[0]);
-    if (f.columns === COLUMN_TITLES_SB) {
-      sb.push(...f.rows);
-      continue;
-    }
-    for (const row of f.rows) {
-      const out: Row = {};
-      for (const [k, v] of Object.entries(row)) out[SP_LEGACY_COLUMNS[k] ?? k] = v;
-      sp.push(out);
-    }
-  }
-  const sheets: CombinedSheet[] = [];
-  if (sp.length) sheets.push({ name: SP_SHEET_NAME, columns: COLUMN_TITLES_SP03, rows: sp });
-  if (sb.length) sheets.push({ name: SB_SHEET_NAME, columns: COLUMN_TITLES_SB, rows: sb });
-  const skus = form.selectedSkus;
-  const skuPart = skus.length > 1 ? `${skus[0]} +${skus.length - 1} SKU` : skus[0];
-  return { fileName: `${kinds.join("+")} - ${skuPart} - ${form.ngay}.xlsx`, sheets, rowCount: sp.length + sb.length };
-}
-
-export async function writeCombinedXlsx(file: CombinedFile): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
-  for (const sh of file.sheets) writeSheet(wb, sh.name, sh.columns, sh.rows);
-  return Buffer.from(await wb.xlsx.writeBuffer());
-}
-
-function writeSheet(wb: ExcelJS.Workbook, name: string, columns: string[], rows: Row[]) {
-  const ws = wb.addWorksheet(name);
-  const file = { columns, rows };
+  const ws = wb.addWorksheet("Sheet1");
   const header = ws.getRow(1);
   file.columns.forEach((c, i) => {
     const cell = header.getCell(i + 1);
@@ -932,6 +868,7 @@ function writeSheet(wb: ExcelJS.Workbook, name: string, columns: string[], rows:
       xr.getCell(i + 1).value = typeof v === "number" ? Number(v.toPrecision(16)) : v;
     });
   });
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 export async function buildCampaignZip(files: GeneratedFile[]): Promise<Buffer> {
