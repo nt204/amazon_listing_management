@@ -5,6 +5,7 @@
 // chọn SKU từ BẢNG MÃ, file keyword (upload / chọn từ kho / tạo từ list), file ASIN Crawl,
 // chọn dạng chạy SP03 / SB01 / SB05 / SP04 / FL Asin rồi tải file zip bulk.
 import type React from "react";
+import { findPpcStoreForAccountingName } from "@/lib/ppc/store-aliases";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowCounterClockwise, ArrowsClockwise, CaretDown, Check, CheckCircle, CircleNotch, CloudArrowUp, DownloadSimple, FileXls, FolderOpen, GearSix, ImageSquare, MagnifyingGlass, PencilSimple, Plus, RocketLaunch, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
@@ -718,7 +719,7 @@ export function PpcNewCampView() {
     const noStore: string[] = [];
     for (const sku of selected) {
       const name = skuByUpper.get(sku.toUpperCase())?.storeName?.trim() || "";
-      const hit = name ? ppcStores.find((st) => st.name.trim().toUpperCase() === name.toUpperCase()) : undefined;
+      const hit = findPpcStoreForAccountingName(ppcStores, name);
       if (hit) groups.set(hit.name, (groups.get(hit.name) ?? 0) + 1);
       else noStore.push(`${sku}${name ? ` (${name} chưa có trong PPC)` : ""}`);
     }

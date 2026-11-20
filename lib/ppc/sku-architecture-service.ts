@@ -66,9 +66,8 @@ export async function resolveStoreId(storeIdOrName?: string | null): Promise<str
   return anyStore.length > 0 ? anyStore[0].id : "00000000-0000-0000-0000-000000000000";
 }
 
-export const PPC_TO_ACCOUNTING_STORE_NAME_MAP: Record<string, string> = {
-  HSOSTORE: "WARMSTOREY",
-};
+export { PPC_TO_ACCOUNTING_STORE_NAME_MAP } from "./store-aliases";
+import { PPC_TO_ACCOUNTING_STORE_NAME_MAP } from "./store-aliases";
 
 export async function getAccountingStoreForPpcStore(ppcStoreIdOrName?: string | null): Promise<{
   accountingStoreId: string;

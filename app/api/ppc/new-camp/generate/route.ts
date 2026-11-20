@@ -4,6 +4,7 @@ import { getDatabaseClient } from "@/lib/db";
 import { withKwPlus } from "@/lib/ppc/campaign-launch";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
+import { findPpcStoreForAccountingName } from "@/lib/ppc/store-aliases";
 import { findExistingCampaigns, listNewCampSkus, getKwFile, listKwFilesByName, rememberUploadedCampaigns, saveKwFile } from "@/lib/ppc/new-camp-db";
 import {
   NewCampInputError,
@@ -218,12 +219,11 @@ export async function POST(request: Request) {
       if (objectStorageDriver() !== "r2") throw new ApiError("Upload tự động cần OBJECT_STORAGE_DRIVER=r2 (chỉ có trên server).", 400);
       const sql = await getDatabaseClient();
       const ppcStores = await sql<{ id: string; name: string }[]>`SELECT id, name FROM ppc_stores WHERE team_id = ${actor.teamId}`;
-      const ppcByName = new Map(ppcStores.map((st) => [st.name.trim().toUpperCase(), st]));
       const skuStore = new Map((await listNewCampSkus(form.loaiHinh)).map((x) => [x.sku.toUpperCase(), (x.storeName || "").trim()]));
       const noStore: string[] = [];
       for (const sku of form.selectedSkus) {
         const storeName = skuStore.get(sku.toUpperCase()) || "";
-        const st = ppcByName.get(storeName.toUpperCase());
+        const st = findPpcStoreForAccountingName(ppcStores, storeName);
         if (st) uploadStoreOf.set(sku.toUpperCase(), st);
         else noStore.push(`${sku}${storeName ? ` (store ${storeName} chưa có trong PPC)` : " (không có store trong Bảng mã)"}`);
       }
