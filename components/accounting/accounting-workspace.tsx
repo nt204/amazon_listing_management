@@ -249,12 +249,12 @@ const MODULE_DEFINITIONS: Record<
 > = {
   overview: {
     number: 1,
-    name: "Overview",
+    name: "Dashboard",
     description: "Executive overview tổng quan về doanh thu, chi phí, lợi nhuận ròng và biên lợi nhuận.",
   },
   dashboard: {
     number: 1,
-    name: "Overview",
+    name: "Dashboard",
     description: "Executive overview tổng quan về doanh thu, chi phí, lợi nhuận ròng và biên lợi nhuận.",
   },
   stores: {

@@ -1916,6 +1916,8 @@ export function AccountingDashboardView() {
   }, [data?.period, periodUnit]);
   // Cả kỳ so sánh không có ngày nào có dữ liệu (vd chưa nhập dữ liệu năm trước) → ẩn phần so sánh.
   const compareEmpty = Boolean(data?.previous && data.previous.days === 0);
+  // Lịch chỉ cho chọn tới ngày đã có dữ liệu (Cập nhật đến …); preset vẫn tính theo hôm qua rồi bị kẹp về ngày này.
+  const pickerMaxDate = data?.latestDate && data.latestDate < maxDate ? data.latestDate : maxDate;
   const dataClamped = Boolean(data?.period.endDate && dateRange.endDate && data.period.endDate < dateRange.endDate);
 
   return (
@@ -1930,7 +1932,17 @@ export function AccountingDashboardView() {
         {/* HEADER */}
         <div className="acc-rise relative z-20 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-[28px]">Finance Overview</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-[28px]">
+              {/* Bấm tiêu đề → quay về All Stores (bỏ chọn store/team) */}
+              <button
+                type="button"
+                onClick={handleSelectAll}
+                title="Về All Stores"
+                className="cursor-pointer rounded-md transition-colors hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              >
+                Dashboard
+              </button>
+            </h1>
             {data?.period.startDate && (
               <p className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-slate-600">
                 <span>
@@ -2225,7 +2237,14 @@ export function AccountingDashboardView() {
               </div>
             </DropdownShell>
             <div className="order-last w-full @min-[640px]:order-none @min-[640px]:w-auto">
-              <PpcAmazonDatePicker value={dateRange} onChange={handleRangeChange} maxDate={maxDate} align="right" presets={OVERVIEW_DATE_PRESETS} />
+              <PpcAmazonDatePicker
+                value={dateRange}
+                onChange={handleRangeChange}
+                maxDate={pickerMaxDate}
+                anchorDate={maxDate}
+                align="right"
+                presets={OVERVIEW_DATE_PRESETS}
+              />
             </div>
             <button
               type="button"

@@ -795,7 +795,7 @@ function WorkspaceSidebar({
               {/* Sub-items under Accounting: 6 main groups + System Admin */}
               {viewMode === "accounting" && (
                 <div className="space-y-0.5 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                  {/* 1. Overview */}
+                  {/* 1. Dashboard */}
                   <SidebarSubItem
                     active={accountingSection === "overview" || accountingSection === "dashboard"}
                     onClick={() => {
@@ -803,7 +803,7 @@ function WorkspaceSidebar({
                       onClose?.();
                     }}
                     icon={SquaresFourIcon}
-                    label="Overview"
+                    label="Dashboard"
                   />
 
                   {/* 3. Inventory */}
