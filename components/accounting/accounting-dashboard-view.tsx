@@ -953,7 +953,7 @@ function TrendChart({
 
 // ---------- store table ----------
 
-type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units" | "spend" | "stockUnits" | "stock";
+type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "basecost" | "tacos" | "acos" | "units" | "spend" | "stockUnits" | "stock";
 
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
@@ -962,6 +962,7 @@ const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "profit", label: "Profit" },
   { key: "spend", label: "Spend" },
   { key: "margin", label: "Margin" },
+  { key: "basecost", label: "Base cost" },
   { key: "tacos", label: "TACOS" },
   { key: "acos", label: "ACOS" },
   { key: "stockUnits", label: "Tồn" },
@@ -988,6 +989,8 @@ function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | str
       return c.adsFee;
     case "margin":
       return c.revenue > 0 ? c.margin : null;
+    case "basecost":
+      return c.basecost;
     case "tacos":
       return c.revenue > 0 ? c.tacos : null;
     case "acos":
@@ -1032,7 +1035,7 @@ function StoreMetricCells({
   sub?: boolean;
   /** Bỏ cột ACOS (bảng Team Performance). */
   hideAcos?: boolean;
-  /** Thêm cột Spend (chi phí quảng cáo) ngay sau Profit (bảng Stores Performance). */
+  /** Thêm cột Spend (chi phí quảng cáo) ngay sau Profit và Base cost (giá vốn) ngay sau Margin (bảng Stores Performance). */
   showSpend?: boolean;
   /** Có thì thêm cột Tồn + Giá trị tồn sau Profit (null = kênh FBM không có tồn → "—"). */
   stockValue?: number | null;
@@ -1051,6 +1054,7 @@ function StoreMetricCells({
       <td className={cell}>
         <MarginCell t={t} cls={sub ? "" : "text-slate-900"} />
       </td>
+      {showSpend && <td className={cell}>{money(t.basecost)}</td>}
       <td className={hideAcos ? `${cell} pr-4` : cell}>
         <TacosCell t={t} />
       </td>
@@ -1248,6 +1252,7 @@ function StoresPerformance({
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-xs tabular-nums text-slate-500">
                     <span>Rev {money(c.revenue)}</span>
                     <span>Spend {money(c.adsFee)}</span>
+                    <span>Base cost {money(c.basecost)}</span>
                     <span>
                       TACOS <TacosCell t={c} />
                     </span>
@@ -1361,6 +1366,7 @@ function StoresPerformance({
                 <td className="px-3 py-2.5 text-right text-[15px] !font-bold">{money(total.profit)}</td>
                 <td className="px-3 py-2.5 text-right">{money(total.adsFee)}</td>
                 <td className="px-3 py-2.5 text-right"><MarginCell t={total} /></td>
+                <td className="px-3 py-2.5 text-right">{money(total.basecost)}</td>
                 <td className="px-3 py-2.5 text-right"><TacosCell t={total} /></td>
                 <td className="px-3 py-2.5 pr-4 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
                 <td className="px-3 py-2.5 text-right">{totalStockUnits == null ? "—" : int.format(totalStockUnits)}</td>
