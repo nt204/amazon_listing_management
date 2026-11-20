@@ -249,9 +249,11 @@ function MockupThumb({ url, size = 36 }: { url?: string; size?: number }) {
   );
 }
 
-/** Brand Entity ID theo store: lưu trên server, Enter / rời ô là lưu. */
+type BrandField = "brandEntityId" | "brandLogoAssetId";
+
+/** Brand Entity ID + Logo theo store: lưu trên server, Enter / rời ô là lưu. */
 function StoreEntityEditor({ onSaved }: { onSaved: (store: string, entity: string) => void }) {
-  const [rows, setRows] = useState<Array<{ store: string; brandEntityId: string }>>([]);
+  const [rows, setRows] = useState<Array<{ store: string; brandEntityId: string; brandLogoAssetId: string }>>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<Record<string, "saving" | "saved" | string>>({});
   useEffect(() => {
@@ -265,51 +267,60 @@ function StoreEntityEditor({ onSaved }: { onSaved: (store: string, entity: strin
       cancelled = true;
     };
   }, []);
-  const save = async (store: string) => {
-    const value = (drafts[store] ?? "").trim().toUpperCase();
-    const current = rows.find((r) => r.store === store)?.brandEntityId ?? "";
-    if (drafts[store] === undefined || value === current) return;
-    setStatus((p) => ({ ...p, [store]: "saving" }));
+  const save = async (store: string, field: BrandField) => {
+    const key = `${store}|${field}`;
+    const raw = (drafts[key] ?? "").trim();
+    const value = field === "brandEntityId" ? raw.toUpperCase() : raw;
+    const current = rows.find((r) => r.store === store)?.[field] ?? "";
+    if (drafts[key] === undefined || value === current) return;
+    setStatus((p) => ({ ...p, [key]: "saving" }));
     const res = await fetch("/api/ppc/new-camp/brand-entities", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ store, brandEntityId: value }),
+      body: JSON.stringify({ store, [field]: value }),
     }).catch(() => null);
     const json = res ? await res.json().catch(() => ({})) : {};
     if (res?.ok) {
       setRows(json.data || rows);
-      setDrafts((p) => { const n = { ...p }; delete n[store]; return n; });
-      setStatus((p) => ({ ...p, [store]: "saved" }));
-      onSaved(store, value);
+      setDrafts((p) => { const n = { ...p }; delete n[key]; return n; });
+      setStatus((p) => ({ ...p, [key]: "saved" }));
+      if (field === "brandEntityId") onSaved(store, value);
     } else {
-      setStatus((p) => ({ ...p, [store]: json.error || "Lỗi lưu" }));
+      setStatus((p) => ({ ...p, [key]: json.error || "Lỗi lưu" }));
     }
+  };
+  const cell = (store: string, field: BrandField, saved: string, placeholder: string) => {
+    const key = `${store}|${field}`;
+    const st = status[key];
+    const value = drafts[key] ?? saved;
+    return (
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        <input
+          className={`${cellInputBase} font-mono ${st && st !== "saving" && st !== "saved" ? "border-rose-400 bg-rose-50" : value ? "border-slate-300 bg-white" : "border-amber-400 bg-amber-50"}`}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => setDrafts((p) => ({ ...p, [key]: e.target.value }))}
+          onBlur={() => void save(store, field)}
+          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          title={st && st !== "saving" && st !== "saved" ? st : value || undefined}
+        />
+        <span className="w-4 shrink-0">
+          {st === "saving" ? <CircleNotch size={14} className="animate-spin text-slate-400" /> : st === "saved" ? <CheckCircle size={14} weight="fill" className="text-emerald-600" /> : null}
+        </span>
+      </span>
+    );
   };
   return (
     <div className="border-t border-slate-100 px-4 py-4">
-      <p className="mb-2.5 text-[13px] font-extrabold text-slate-800">Brand Entity ID theo store</p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {rows.map((r) => {
-          const st = status[r.store];
-          const value = drafts[r.store] ?? r.brandEntityId;
-          return (
-            <label key={r.store} className="flex items-center gap-2">
-              <span className="w-28 shrink-0 truncate text-xs font-bold text-slate-600">{r.store}</span>
-              <input
-                className={`${cellInputBase} font-mono ${st && st !== "saving" && st !== "saved" ? "border-rose-400 bg-rose-50" : value ? "border-slate-300 bg-white" : "border-amber-400 bg-amber-50"}`}
-                placeholder="ENTITY…"
-                value={value}
-                onChange={(e) => setDrafts((p) => ({ ...p, [r.store]: e.target.value }))}
-                onBlur={() => void save(r.store)}
-                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                title={st && st !== "saving" && st !== "saved" ? st : undefined}
-              />
-              <span className="w-4 shrink-0">
-                {st === "saving" ? <CircleNotch size={14} className="animate-spin text-slate-400" /> : st === "saved" ? <CheckCircle size={14} weight="fill" className="text-emerald-600" /> : null}
-              </span>
-            </label>
-          );
-        })}
+      <p className="mb-2.5 text-[13px] font-extrabold text-slate-800">Brand Entity ID & Logo theo store</p>
+      <div className="space-y-2">
+        {rows.map((r) => (
+          <div key={r.store} className="flex items-center gap-2">
+            <span className="w-28 shrink-0 truncate text-xs font-bold text-slate-600">{r.store}</span>
+            {cell(r.store, "brandEntityId", r.brandEntityId, "ENTITY…")}
+            {cell(r.store, "brandLogoAssetId", r.brandLogoAssetId, "Logo: amzn1.assetlibrary.asset1…")}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -382,6 +393,7 @@ export function PpcNewCampView() {
   const [asinFile, setAsinFile] = useState<File | null>(null);
   const asinFileRef = useRef<HTMLInputElement>(null);
 
+  const [kwPlus, setKwPlus] = useState(false);
   // --- Dạng chạy ---
   const [match, setMatch] = useState<Record<MatchKey, MatchRun>>({
     sp03: { run: false, exact: false, phrase: false, broad: false, dailyBudget: "5" },
@@ -625,7 +637,7 @@ export function PpcNewCampView() {
 
   const previewDeps = JSON.stringify({
     selected, loaiHinh, trangThai: effectiveTrangThai, ngay, match, sp04: sp04.run, flasin: flasin.run, naming, nameOverrides,
-    kwMode, upload: uploadFile ? `${uploadFile.name}|${uploadFile.size}|${uploadFile.lastModified}` : null, lib: libFile?.id ?? null, kwParts: kwParts.map((p) => [p.name, p.keywords]),
+    kwMode, upload: uploadFile ? `${uploadFile.name}|${uploadFile.size}|${uploadFile.lastModified}` : null, lib: libFile?.id ?? null, kwParts: kwParts.map((p) => [p.name, p.keywords]), kwPlus,
   });
   useEffect(() => {
     if (selected.length === 0) return;
@@ -770,6 +782,7 @@ export function PpcNewCampView() {
     sb05: match.sb05,
     sp04,
     flasin,
+    kwPlus,
     sbOverrides: sbActive
       ? Object.fromEntries(sbRows.map((r) => [
         r.key,
@@ -815,7 +828,6 @@ export function PpcNewCampView() {
         if (nameMissing(createNameValue)) list.push({ step: "4", text: "Điền đủ 4 ô lưu kho keyword (Người lên camp, Ngách, Phôi, Bộ keyword)" });
       }
     }
-    if (sbBlocking.length) list.push({ step: "sb", text: `${sbBlocking.length} SKU thiếu thông tin SB (ô đỏ ở mục "Thông tin SB còn thiếu")` });
     if (dupNames.size) list.push({ step: "5", text: `Tên camp bị trùng: ${[...dupNames].slice(0, 2).join(", ")}` });
     if (existingCount) list.push({ step: "5", text: `${existingCount} camp đã có trên Amazon — sửa tên hoặc thêm đuôi tên` });
     return list;
@@ -852,11 +864,11 @@ export function PpcNewCampView() {
     if (kwCampaignSelected && kwMode === "none") {
       return setNotices([{ kind: "error", text: "Bạn đã chọn chạy campaign Keyword (SP03, SB01, SB05) nhưng chưa chọn file Keyword." }]);
     }
-    if (sbBlocking.length > 0) {
+    if (mode === "upload" && sbBlocking.length > 0) {
       sbPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       return setNotices([{
         kind: "error",
-        text: `Còn ${sbBlocking.length} SKU thiếu thông tin để lên SB — điền các ô đỏ ở mục "Thông tin SB còn thiếu":\n${sbBlocking
+        text: `Còn ${sbBlocking.length} SKU thiếu thông tin SB nên không upload tự động được (vẫn tải file được) — điền các ô đỏ ở mục "Thông tin SB còn thiếu":\n${sbBlocking
           .slice(0, 10)
           .map((r) => `${r.sku}: ${r.stillMissing.map((f) => SB_FIELD_LABELS[f]).join(", ")}`)
           .join("\n")}${sbBlocking.length > 10 ? "\n…" : ""}`,
@@ -1336,13 +1348,21 @@ export function PpcNewCampView() {
               step={4}
               title="File keyword"
               className={kwCampaignSelected ? "" : "opacity-60"}
-              right={kwMode !== "none" ? (
-                <button type="button" onClick={resetKeyword} className="rounded-lg border border-slate-300 p-1.5 text-slate-700 hover:bg-slate-50 cursor-pointer" title="Làm lại" aria-label="Làm lại">
-                  <ArrowCounterClockwise size={16} weight="bold" />
-                </button>
-              ) : (
-                <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">SP03 · SB01 · SB05</span>
-              )}
+              right={
+                <div className="flex items-center gap-3">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[13px] font-bold text-slate-700" title='Thêm keyword "a+b+c" cho mỗi keyword nhiều từ'>
+                    <input type="checkbox" checked={kwPlus} onChange={(e) => setKwPlus(e.target.checked)} className="h-4 w-4 cursor-pointer accent-indigo-600" />
+                    KW plus
+                  </label>
+                  {kwMode !== "none" ? (
+                    <button type="button" onClick={resetKeyword} className="rounded-lg border border-slate-300 p-1.5 text-slate-700 hover:bg-slate-50 cursor-pointer" title="Làm lại" aria-label="Làm lại">
+                      <ArrowCounterClockwise size={16} weight="bold" />
+                    </button>
+                  ) : (
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">SP03 · SB01 · SB05</span>
+                  )}
+                </div>
+              }
             >
               <Segmented
                 value={shownTab}

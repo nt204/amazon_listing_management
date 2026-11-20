@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, CircleNotch, CaretDown, Download } from "@phosphor-icons/react";
 import type { RequestActor } from "@/lib/auth";
 import {
@@ -8,7 +8,9 @@ import {
   LAUNCH_MATCH_TYPES,
   LAUNCH_RUN_TYPES,
   buildLaunchPlan,
+  countLaunchTargets,
   isTermUsableForRunType,
+  kwPlusVariant,
   launchRunType,
   type LaunchBiddingStrategy,
   type LaunchFulfillment,
@@ -21,6 +23,8 @@ import {
   formatYYYYMMDD,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
+import { SB_FIELD_LABELS, SB_FIELD_PLACEHOLDERS, missingSbFields, type SbField, type SbOverrides } from "@/lib/ppc/new-camp-fields";
+import type { NewCampSkuInfo } from "@/lib/ppc/new-camp-generator";
 
 type BidRule = "cpc" | "cpc_pct";
 const UNKNOWN_SKU = "UNKNOWN_SKU";
@@ -193,11 +197,14 @@ export function PpcSearchTermLaunchPanel({
   const [dateStr, setDateStr] = useState(() => formatYYYYMMDD());
   const [items, setItems] = useState<LaunchItem[]>([]);
   const [commonBid, setCommonBid] = useState("");
+  const [kwPlus, setKwPlus] = useState(false);
   const [skuOverrides, setSkuOverrides] = useState<Record<string, LaunchSkuOverride>>({});
   const [expandedSkus, setExpandedSkus] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<"export" | "upload" | null>(null);
   const [uploadStatus, setUploadStatus] = useState<{ jobId: string; status: string; progress?: number; error?: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sbInfos, setSbInfos] = useState<{ type: LaunchFulfillment; map: Map<string, NewCampSkuInfo> } | null>(null);
+  const [sbOverrides, setSbOverrides] = useState<SbOverrides>({});
 
   useEffect(() => () => {
     if (pollRef.current) clearTimeout(pollRef.current);
@@ -229,9 +236,12 @@ export function PpcSearchTermLaunchPanel({
     } catch { }
     setItems(buildItems(selectedRows, selectedSku));
     setCommonBid("");
+    setKwPlus(false);
     setSkuOverrides({});
     setExpandedSkus(new Set());
     setUploadStatus(null);
+    setSbInfos(null);
+    setSbOverrides({});
     // Mỗi lần mở: ngày trong tên campaign mặc định là hôm nay (giờ VN), sửa được.
     setDateStr(formatYYYYMMDD());
     setOpen(true);
@@ -291,6 +301,33 @@ export function PpcSearchTermLaunchPanel({
   };
 
   const runType = launchRunType(settings.runType);
+  const isSb = runType.adProduct === "SB";
+
+  useEffect(() => {
+    if (!open || !isSb || sbInfos?.type === settings.fulfillment) return;
+    const type = settings.fulfillment;
+    let cancelled = false;
+    fetch(`/api/ppc/new-camp/skus?type=${type}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        setSbInfos({ type, map: new Map((json.data as NewCampSkuInfo[]).map((x) => [x.sku.toUpperCase(), x])) });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isSb, settings.fulfillment, sbInfos?.type]);
+
+  const sbRuns = { sb01: runType.value === "SB01", sb05: runType.value === "SB05" };
+  const sbInfoOf = (sku: string) => (isSb && sbInfos?.type === settings.fulfillment ? sbInfos.map.get(sku.toUpperCase()) : undefined);
+  const sbReady = isSb && sbInfos?.type === settings.fulfillment;
+  // Trường BẢNG MÃ còn trống (hiện ô nhập); còn thiếu = chưa điền bổ sung
+  const sbBlankFields = (sku: string): SbField[] => (sbReady ? missingSbFields(sbInfoOf(sku), undefined, sbRuns) : []);
+  const sbBlankOptional = (sku: string): SbField[] => (sbReady ? missingSbFields(sbInfoOf(sku), undefined, sbRuns, "optional") : []);
+  const sbMissing = (sku: string): SbField[] => (sbReady ? missingSbFields(sbInfoOf(sku), sbOverrides[sku.toUpperCase()], sbRuns) : []);
+  const setSbOverride = (sku: string, field: SbField, value: string) =>
+    setSbOverrides((prev) => ({ ...prev, [sku.toUpperCase()]: { ...prev[sku.toUpperCase()], [field]: value } }));
   const enabledMatchTypes = LAUNCH_MATCH_TYPES.filter((m) => settings.matchTypes[m.key]);
   const usable = (it: LaunchItem) => isTermUsableForRunType(it.term, runType.value);
   const usableItems = items.filter(usable);
@@ -323,6 +360,7 @@ export function PpcSearchTermLaunchPanel({
     fulfillment: settings.fulfillment,
     skuOverrides,
     commonBid: Number(commonBid) > 0 ? Number(commonBid) : undefined,
+    kwPlus: runType.target === "keyword" && kwPlus,
   };
   const plan = buildLaunchPlan(launchTerms, launchOptions);
   const campaignsBySku = new Map<string, string[]>();
@@ -331,6 +369,9 @@ export function PpcSearchTermLaunchPanel({
     campaignsBySku.get(camp.sku)!.push(camp.name);
   }
 
+  const sbMissingSkus = isSb ? [...campaignsBySku.keys()].filter((sku) => sbMissing(sku).length > 0) : [];
+  const sbLoading = isSb && sbInfos?.type !== settings.fulfillment;
+
   const blocker =
     usableItems.length === 0
       ? `Không có term nào phù hợp ${runType.label}.`
@@ -338,7 +379,10 @@ export function PpcSearchTermLaunchPanel({
         ? "Chọn ít nhất 1 match type."
         : missingSkuCount > 0
           ? `Còn ${missingSkuCount} term chưa có SKU.`
-          : null;
+          : sbLoading
+            ? "Đang tải thông tin SB…"
+            : null;
+  const uploadBlocker = sbMissingSkus.length > 0 ? `${sbMissingSkus.length} SKU thiếu thông tin SB: tải file được, chưa upload tự động được.` : null;
 
   const renameSku = (fromSku: string, toSku: string) => {
     const next = toSku.trim().toUpperCase();
@@ -412,7 +456,7 @@ export function PpcSearchTermLaunchPanel({
   };
 
   const requestBody = (mode: "export" | "upload") =>
-    JSON.stringify({ mode, storeName, storeId, terms: launchTerms, options: launchOptions });
+    JSON.stringify({ mode, storeName, storeId, terms: launchTerms, options: launchOptions, sbOverrides: isSb ? sbOverrides : undefined });
 
   const finish = () => {
     setOpen(false);
@@ -479,7 +523,7 @@ export function PpcSearchTermLaunchPanel({
   };
 
   const handleUpload = async () => {
-    if (blocker) return;
+    if (blocker || uploadBlocker) return;
     if (!confirm(`Upload ${plan.campaigns.length} campaign lên Amazon store ${storeName}?`)) return;
     setBusy("upload");
     try {
@@ -613,7 +657,6 @@ export function PpcSearchTermLaunchPanel({
                     className={`${inputCls} min-w-[200px] cursor-pointer font-semibold`}
                   >
                     {LAUNCH_RUN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    <option disabled>SB01 / SB05 Video (chưa hỗ trợ)</option>
                   </select>
                   <div className="flex rounded-lg border border-slate-200 p-0.5">
                     {(["FBA", "FBM"] as const).map((f) => (
@@ -646,6 +689,15 @@ export function PpcSearchTermLaunchPanel({
                         </button>
                       ))}
                     </div>
+                  )}
+                  {runType.target === "keyword" && (
+                    <label
+                      className="ml-auto flex cursor-pointer items-center gap-1.5 text-sm font-semibold text-slate-600"
+                      title='Thêm keyword "a+b+c" cho mỗi keyword nhiều từ'
+                    >
+                      <input type="checkbox" checked={kwPlus} onChange={(e) => setKwPlus(e.target.checked)} className="h-4 w-4 cursor-pointer accent-indigo-600" />
+                      KW plus
+                    </label>
                   )}
                 </div>
               </section>
@@ -786,6 +838,30 @@ export function PpcSearchTermLaunchPanel({
                               </button>
                             )}
                           </div>
+                          {!unknown && sbBlankFields(sku).length + sbBlankOptional(sku).length > 0 && (
+                            <div className="mt-2 rounded-lg border border-rose-200 bg-white p-2.5">
+                              <div className={`mb-1.5 text-xs font-semibold ${sbBlankFields(sku).length ? "text-rose-600" : "text-slate-500"}`}>
+                                {sbInfoOf(sku) ? "BẢNG MÃ thiếu thông tin SB" : `SKU không có trong BẢNG MÃ ${settings.fulfillment}`} · chỉ dùng cho lần này
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {[...sbBlankFields(sku), ...sbBlankOptional(sku)].map((f) => {
+                                  const value = sbOverrides[sku.toUpperCase()]?.[f] ?? "";
+                                  const optional = !sbBlankFields(sku).includes(f);
+                                  return (
+                                    <label key={f} className="min-w-0">
+                                      <span className={labelCls}>{SB_FIELD_LABELS[f]}{optional ? " (không bắt buộc)" : ""}</span>
+                                      <input
+                                        value={value}
+                                        placeholder={SB_FIELD_PLACEHOLDERS[f]}
+                                        onChange={(e) => setSbOverride(sku, f, e.target.value)}
+                                        className={`${inputCls} w-full font-mono text-xs ${value.trim() || optional ? "" : "border-rose-300"}`}
+                                      />
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                           {expanded && !unknown && (
                             <div className="mt-2 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-2.5">
                               {runType.target === "keyword" && (
@@ -890,7 +966,8 @@ export function PpcSearchTermLaunchPanel({
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {skuItems.map((it) => (
-                              <tr key={it.id} className={usable(it) ? "" : "opacity-40"}>
+                              <Fragment key={it.id}>
+                              <tr className={usable(it) ? "" : "opacity-40"}>
                                 <td className="py-2 pl-3.5 pr-2 text-slate-800">
                                   <div className="break-words">
                                     {it.term}
@@ -936,6 +1013,21 @@ export function PpcSearchTermLaunchPanel({
                                   </button>
                                 </td>
                               </tr>
+                              {launchOptions.kwPlus && usable(it) && kwPlusVariant(it.term) && (
+                                <tr className="bg-indigo-50/40">
+                                  <td className="py-2 pl-3.5 pr-2 text-slate-800">
+                                    <div className="break-words">
+                                      {kwPlusVariant(it.term)}
+                                      <span className="ml-2 whitespace-nowrap rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">KW plus</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-2 py-2 text-right text-slate-300">—</td>
+                                  <td className="px-2 py-2 text-right text-slate-300">—</td>
+                                  <td className="px-2 py-2 text-right font-mono text-slate-500" title="Cùng bid với keyword gốc">{bidFor(it).toFixed(2)}</td>
+                                  <td />
+                                </tr>
+                              )}
+                              </Fragment>
                             ))}
                           </tbody>
                         </table>
@@ -950,10 +1042,15 @@ export function PpcSearchTermLaunchPanel({
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="text-slate-600">
                   <span className="font-bold text-slate-900">{usableItems.length}</span> term ·{" "}
+                  {launchOptions.kwPlus && (
+                    <>
+                      <span className="font-bold text-slate-900">{countLaunchTargets(plan)}</span> keyword ·{" "}
+                    </>
+                  )}
                   <span className="font-bold text-slate-900">{campaignsBySku.size}</span> SKU ·{" "}
                   <span className="font-bold text-slate-900">{plan.campaigns.length}</span> campaign
                 </span>
-                {blocker && <span className="font-semibold text-amber-700">{blocker}</span>}
+                {(blocker || uploadBlocker) && <span className="font-semibold text-amber-700">{blocker || uploadBlocker}</span>}
               </div>
               {uploadStatus && (
                 <div className={`text-sm ${uploadFailed ? "text-rose-600" : "text-slate-600"}`}>
@@ -975,7 +1072,7 @@ export function PpcSearchTermLaunchPanel({
                 <button
                   type="button"
                   onClick={handleUpload}
-                  disabled={Boolean(blocker) || Boolean(busy) || uploading}
+                  disabled={Boolean(blocker) || Boolean(uploadBlocker) || Boolean(busy) || uploading}
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-300 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {(busy === "upload" || uploading) && <CircleNotch size={15} className="animate-spin" />}

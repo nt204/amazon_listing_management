@@ -5,6 +5,7 @@ Export Amazon Bulksheet cho "Lên camp" từ search term đã chọn.
 Input (stdin JSON): { campaigns: LaunchCampaign[] } — xem lib/ppc/campaign-launch.ts
 - adProduct "SP": sheet Sponsored Products Campaigns (MANUAL keyword / product targeting, hoặc AUTO)
 - adProduct "SD": sheet Sponsored Display Campaigns (tactic T00020, contextual targeting theo ASIN)
+- adProduct "SB": sheet Sponsored Brands Campaigns (SB01 Product Collection / SB05 Video, keyword)
 Dùng template chuẩn: templates/ppc/AdvertisingBulksheetTemplate-seller.xlsx
 """
 
@@ -121,6 +122,46 @@ def write_sd_campaign(w, camp, today_str):
                 })
 
 
+def write_sb_campaign(w, camp, today_str):
+    name = camp["name"]
+    cr = camp.get("sbCreative") or {}
+    row = {
+        "Entity": "Campaign",
+        "Operation": "Create",
+        "Campaign ID": name,
+        "Campaign Name": name,
+        "Start Date": today_str,
+        "State": "enabled",
+        "Budget Type": "Daily",
+        "Budget": money(camp.get("dailyBudget"), 5.0),
+        "Bid Optimization": "Auto",
+        "Brand Entity ID": cr.get("brandEntityId"),
+        "Brand Name": cr.get("brand"),
+        "Creative ASINs": cr.get("creativeAsins"),
+    }
+    if camp.get("runType") == "SB05":
+        row.update({"Ad Format": "Video", "Video Media IDs": cr.get("videoMediaIds"), "Creative Type": "Video"})
+    else:
+        row.update({
+            "Ad Format": "Product Collection",
+            "Landing Page URL": cr.get("landingPageUrl"),
+            "Brand Logo Asset ID": cr.get("brandLogoAssetId"),
+            "Creative Headline": cr.get("creativeHeadline"),
+        })
+    w.write(row)
+    for group in camp.get("adGroups", []):
+        default_bid = money(group.get("defaultBid"), 1.0)
+        for kw in group.get("keywords", []):
+            text = str(kw.get("text") or "").strip()
+            match = str(kw.get("matchType") or "exact").strip().lower()
+            if text:
+                w.write({
+                    "Entity": "Keyword", "Operation": "Create", "Campaign ID": name, "Ad Group ID": name,
+                    "State": "enabled", "Bid": money(kw.get("bid"), default_bid), "Keyword Text": text,
+                    "Match Type": match if match in MATCH_TYPES else "exact",
+                })
+
+
 def export_campaign_launch_bulksheet(data, output_path=None):
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Official Amazon template not found at {TEMPLATE_PATH}")
@@ -129,6 +170,7 @@ def export_campaign_launch_bulksheet(data, output_path=None):
     writers = {
         "SP": SheetWriter(wb["Sponsored Products Campaigns"], "Sponsored Products"),
         "SD": SheetWriter(wb["Sponsored Display Campaigns"], "Sponsored Display"),
+        "SB": SheetWriter(wb["Sponsored Brands Campaigns"], "Sponsored Brands"),
     }
     today_str = datetime.datetime.now().strftime("%Y%m%d")
 
@@ -138,6 +180,8 @@ def export_campaign_launch_bulksheet(data, output_path=None):
         camp["name"] = str(camp["name"]).strip()
         if camp.get("adProduct") == "SD":
             write_sd_campaign(writers["SD"], camp, today_str)
+        elif camp.get("adProduct") == "SB":
+            write_sb_campaign(writers["SB"], camp, today_str)
         else:
             write_sp_campaign(writers["SP"], camp, today_str)
 

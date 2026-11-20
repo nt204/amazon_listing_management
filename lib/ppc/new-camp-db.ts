@@ -31,49 +31,103 @@ type SkuRow = {
 // Brand Entity ID theo store
 // ---------------------------------------------------------------------------
 
-let entityCache: { at: number; map: Map<string, string> } | null = null;
+const LOGO_PATTERN = /^amzn1\.assetlibrary\.asset1\.[a-z0-9]+(:version_v\d+)?$/i;
 
-export async function getStoreBrandEntities(): Promise<Map<string, string>> {
-  if (entityCache && Date.now() - entityCache.at < 60_000) return entityCache.map;
+let brandCache: { at: number; entities: Map<string, string>; logos: Map<string, string> } | null = null;
+
+async function getStoreBrandConfig() {
+  if (brandCache && Date.now() - brandCache.at < 60_000) return brandCache;
   const sql = await getDatabaseClient();
-  const rows = await sql<{ store_name: string; brand_entity_id: string }[]>`
-    SELECT store_name, brand_entity_id FROM ppc_store_brand_entities
+  const rows = await sql<{ store_name: string; brand_entity_id: string | null; brand_logo_asset_id: string | null }[]>`
+    SELECT store_name, brand_entity_id, brand_logo_asset_id FROM ppc_store_brand_entities
   `;
-  entityCache = { at: Date.now(), map: new Map(rows.map((r) => [storeKey(r.store_name), r.brand_entity_id])) };
-  return entityCache.map;
+  const entities = new Map<string, string>();
+  const logos = new Map<string, string>();
+  for (const r of rows) {
+    if (r.brand_entity_id) entities.set(storeKey(r.store_name), r.brand_entity_id);
+    if (r.brand_logo_asset_id) logos.set(storeKey(r.store_name), r.brand_logo_asset_id);
+  }
+  brandCache = { at: Date.now(), entities, logos };
+  return brandCache;
 }
 
-/** Danh sách store trong Bảng mã + Entity đã lưu (để xem / sửa trên web). */
-export async function listStoreBrandEntities(): Promise<Array<{ store: string; brandEntityId: string; updatedBy: string | null; updatedAt: string | null }>> {
+export async function getStoreBrandEntities(): Promise<Map<string, string>> {
+  return (await getStoreBrandConfig()).entities;
+}
+
+export interface StoreBrandRow {
+  store: string;
+  brandEntityId: string;
+  brandLogoAssetId: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
+/** Danh sách store trong Bảng mã + Entity / Logo đã lưu (để xem / sửa trên web). */
+export async function listStoreBrandEntities(): Promise<StoreBrandRow[]> {
   const sql = await getDatabaseClient();
-  const rows = await sql<{ store: string; brand_entity_id: string | null; updated_by: string | null; updated_at: Date | null }[]>`
+  const rows = await sql<{ store: string; brand_entity_id: string | null; brand_logo_asset_id: string | null; updated_by: string | null; updated_at: Date | null }[]>`
     WITH names AS (
       SELECT UPPER(BTRIM(name)) AS store FROM stores WHERE status = 'active'
       UNION SELECT store_name FROM ppc_store_brand_entities
     )
-    SELECT n.store, e.brand_entity_id, e.updated_by, e.updated_at
+    SELECT n.store, e.brand_entity_id, e.brand_logo_asset_id, e.updated_by, e.updated_at
     FROM names n LEFT JOIN ppc_store_brand_entities e ON e.store_name = n.store
     ORDER BY n.store
   `;
-  return rows.map((r) => ({ store: r.store, brandEntityId: r.brand_entity_id || "", updatedBy: r.updated_by, updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null }));
+  return rows.map((r) => ({
+    store: r.store,
+    brandEntityId: r.brand_entity_id || "",
+    brandLogoAssetId: r.brand_logo_asset_id || "",
+    updatedBy: r.updated_by,
+    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+  }));
 }
 
-export async function saveStoreBrandEntity(storeName: string, brandEntityId: string, userId: string): Promise<void> {
+/** Lưu Entity và/hoặc Logo của store; chuỗi rỗng = xoá trường đó, undefined = giữ nguyên. */
+export async function saveStoreBrand(storeName: string, patch: { brandEntityId?: string; brandLogoAssetId?: string }, userId: string): Promise<void> {
   const store = storeKey(storeName);
-  const entity = brandEntityId.trim().toUpperCase();
   if (!store) throw new Error("Thiếu tên store.");
+  const entity = patch.brandEntityId?.trim().toUpperCase();
+  const logo = patch.brandLogoAssetId?.trim();
+  if (entity && !BRAND_ENTITY_PATTERN.test(entity)) throw new Error("Brand Entity ID phải dạng ENTITY + chữ/số.");
+  if (logo && !LOGO_PATTERN.test(logo)) throw new Error("Logo Asset ID phải dạng amzn1.assetlibrary.asset1…");
   const sql = await getDatabaseClient();
-  if (!entity) {
-    await sql`DELETE FROM ppc_store_brand_entities WHERE store_name = ${store}`;
-  } else {
-    if (!BRAND_ENTITY_PATTERN.test(entity)) throw new Error("Brand Entity ID phải dạng ENTITY + chữ/số.");
-    await sql`
-      INSERT INTO ppc_store_brand_entities (store_name, brand_entity_id, updated_by, updated_at)
-      VALUES (${store}, ${entity}, ${userId}, NOW())
-      ON CONFLICT (store_name) DO UPDATE SET brand_entity_id = EXCLUDED.brand_entity_id, updated_by = EXCLUDED.updated_by, updated_at = NOW()
-    `;
+  await sql`
+    INSERT INTO ppc_store_brand_entities (store_name, brand_entity_id, brand_logo_asset_id, updated_by, updated_at)
+    VALUES (${store}, ${entity || null}, ${logo || null}, ${userId}, NOW())
+    ON CONFLICT (store_name) DO UPDATE SET
+      brand_entity_id = CASE WHEN ${entity !== undefined} THEN EXCLUDED.brand_entity_id ELSE ppc_store_brand_entities.brand_entity_id END,
+      brand_logo_asset_id = CASE WHEN ${logo !== undefined} THEN EXCLUDED.brand_logo_asset_id ELSE ppc_store_brand_entities.brand_logo_asset_id END,
+      updated_by = EXCLUDED.updated_by,
+      updated_at = NOW()
+  `;
+  await sql`DELETE FROM ppc_store_brand_entities WHERE store_name = ${store} AND brand_entity_id IS NULL AND brand_logo_asset_id IS NULL`;
+  brandCache = null;
+}
+
+/** Mỗi store dùng 1 logo: logo đã lưu theo store, chưa có thì lấy logo nhiều SKU dùng nhất (BẢNG MÃ FBA + FBM). */
+async function getStoreLogos(): Promise<Map<string, string>> {
+  const sql = await getDatabaseClient();
+  const saved = (await getStoreBrandConfig()).logos;
+  const rows = await sql<{ store_name: string | null; logo: string; n: number }[]>`
+    SELECT s.name AS store_name, BTRIM(m.brand_logo_asset_id) AS logo, COUNT(*)::int AS n
+    FROM (
+      SELECT store_id, brand_logo_asset_id FROM accounting_sku_master WHERE deleted_at IS NULL
+      UNION ALL
+      SELECT store_id, brand_logo_asset_id FROM accounting_sku_master_fbm WHERE deleted_at IS NULL
+    ) m
+    JOIN stores s ON s.id = m.store_id
+    WHERE BTRIM(COALESCE(m.brand_logo_asset_id, '')) <> ''
+    GROUP BY 1, 2
+    ORDER BY n DESC
+  `;
+  const map = new Map(saved);
+  for (const r of rows) {
+    const key = storeKey(r.store_name);
+    if (key && !map.has(key) && LOGO_PATTERN.test(r.logo)) map.set(key, r.logo);
   }
-  entityCache = null;
+  return map;
 }
 
 export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampSkuInfo[]> {
@@ -114,6 +168,7 @@ export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampS
       ) DESC,
       m.updated_at DESC NULLS LAST
   `;
+  const storeLogo = await getStoreLogos();
   return rows
     .map((r) => ({
       sku: r.sku,
@@ -121,13 +176,13 @@ export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampS
       niche: r.niche || "",
       picMkt: r.pic_mkt || "",
       brand: r.brand || "",
-      // Entity chuẩn của store; Creative ASIN (Video) luôn là ASIN của chính SKU (khớp 100% Bảng mã FBM, 842/845 FBA)
+      // Entity chuẩn của store; Creative ASIN (Video, Collection) luôn là ASIN của chính SKU (khớp 100% Bảng mã FBM, 842/845 FBA)
       brandEntityId: storeEntities.get(storeKey(r.store_name)) || r.brand_entity_id || "",
       creativeAsinsVideo: r.asin || r.creative_asins_video || "",
-      creativeAsinsCollection: r.creative_asins_collection || "",
+      creativeAsinsCollection: r.asin || r.creative_asins_collection || "",
       videoMediaIds: r.video_media_ids || "",
       creativeHeadline: r.creative_headline || "",
-      brandLogoAssetId: r.brand_logo_asset_id || "",
+      brandLogoAssetId: storeLogo.get(storeKey(r.store_name)) || (LOGO_PATTERN.test(r.brand_logo_asset_id || "") ? r.brand_logo_asset_id : "") || "",
       landingPageUrl: r.landing_page_url || "",
       storeName: r.store_name || "",
       asin: r.asin || "",

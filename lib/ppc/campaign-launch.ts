@@ -3,7 +3,8 @@
 import { extractSkuFromText, isAsinProductTarget, normalizeSaleKwDate, sanitizeSaleKwUserName } from "./sku-extractor";
 
 export type LaunchMatchType = "exact" | "phrase" | "broad";
-export type LaunchRunType = "SP03" | "SP02" | "SP04" | "SD01";
+export type LaunchRunType = "SP03" | "SP02" | "SP04" | "SD01" | "SB01" | "SB05";
+export type LaunchAdProduct = "SP" | "SD" | "SB";
 export type LaunchBiddingStrategy = "Dynamic bids - down only" | "Dynamic bids - up and down" | "Fixed bid";
 
 export const LAUNCH_MATCH_TYPES: Array<{ key: LaunchMatchType; label: string }> = [
@@ -17,14 +18,27 @@ export const LAUNCH_RUN_TYPES: Array<{
   value: LaunchRunType;
   label: string;
   nameLabel: string;
-  adProduct: "SP" | "SD";
+  adProduct: LaunchAdProduct;
   target: "keyword" | "asin" | "none";
 }> = [
   { value: "SP03", label: "SP03 Keyword", nameLabel: "SP03 KW", adProduct: "SP", target: "keyword" },
   { value: "SP02", label: "SP02 Product (ASIN)", nameLabel: "SP02 PAT", adProduct: "SP", target: "asin" },
   { value: "SP04", label: "SP04 Auto", nameLabel: "SP04 Auto", adProduct: "SP", target: "none" },
   { value: "SD01", label: "SD01 Display (ASIN)", nameLabel: "SD01", adProduct: "SD", target: "asin" },
+  { value: "SB01", label: "SB01 Collection (Keyword)", nameLabel: "SB01 CK KW", adProduct: "SB", target: "keyword" },
+  { value: "SB05", label: "SB05 Video (Keyword)", nameLabel: "SB05 VIDEO", adProduct: "SB", target: "keyword" },
 ];
+
+/** Creative SB lấy từ BẢNG MÃ lúc xuất file. */
+export interface LaunchSbCreative {
+  brandEntityId: string;
+  brand: string;
+  brandLogoAssetId?: string;
+  creativeHeadline?: string;
+  creativeAsins: string;
+  landingPageUrl?: string;
+  videoMediaIds?: string;
+}
 
 export const LAUNCH_BIDDING_STRATEGIES: Array<{ value: LaunchBiddingStrategy; label: string }> = [
   { value: "Dynamic bids - down only", label: "Dynamic - down only" },
@@ -57,6 +71,8 @@ export interface LaunchOptions {
   skuOverrides?: Record<string, LaunchSkuOverride>;
   /** Bid chung: có thì dùng làm Ad Group Default Bid (bid từng target do client gửi) */
   commonBid?: number;
+  /** Thêm keyword dạng "a+b+c" cho mỗi keyword nhiều từ */
+  kwPlus?: boolean;
 }
 
 export interface LaunchAdGroup {
@@ -70,15 +86,38 @@ export interface LaunchAdGroup {
 export interface LaunchCampaign {
   name: string;
   sku: string;
-  adProduct: "SP" | "SD";
+  adProduct: LaunchAdProduct;
+  runType: LaunchRunType;
   targetingType: "MANUAL" | "AUTO";
   dailyBudget: number;
   biddingStrategy: LaunchBiddingStrategy;
   adGroups: LaunchAdGroup[];
+  sbCreative?: LaunchSbCreative;
 }
 
 export interface LaunchPlan {
   campaigns: LaunchCampaign[];
+}
+
+/** "usa 250 christmas ornament" → "usa+250+christmas+ornament"; keyword 1 từ thì null. */
+export function kwPlusVariant(term: string): string | null {
+  const words = term.trim().split(/\s+/).filter(Boolean);
+  return words.length > 1 ? words.join("+") : null;
+}
+
+/** Thêm bản "+" ngay sau mỗi keyword nhiều từ (bỏ qua nếu đã có). */
+export function withKwPlus<T>(items: T[], textOf: (item: T) => string, make: (item: T, plus: string) => T): T[] {
+  const seen = new Set(items.map((it) => textOf(it).trim().toLowerCase()));
+  const out: T[] = [];
+  for (const it of items) {
+    out.push(it);
+    const plus = kwPlusVariant(textOf(it));
+    if (plus && !seen.has(plus.toLowerCase())) {
+      seen.add(plus.toLowerCase());
+      out.push(make(it, plus));
+    }
+  }
+  return out;
 }
 
 const MATCH_LABEL: Record<LaunchMatchType, string> = { exact: "Exact", phrase: "Phrase", broad: "Broad" };
@@ -165,6 +204,7 @@ export function buildLaunchPlan(terms: LaunchTerm[], options: LaunchOptions): La
       name,
       sku,
       adProduct: runType.adProduct,
+      runType: runType.value,
       targetingType: runType.target === "none" ? "AUTO" : "MANUAL",
       dailyBudget: opts.dailyBudget > 0 ? opts.dailyBudget : 5,
       biddingStrategy: opts.biddingStrategy,
@@ -175,7 +215,8 @@ export function buildLaunchPlan(terms: LaunchTerm[], options: LaunchOptions): La
       for (const m of opts.matchTypes) {
         campaigns.push(makeCampaign(sku, buildLaunchCampaignName({ sku, matchType: m, ...nameBase }), {
           defaultBid,
-          keywords: skuTerms.map((t) => ({ text: t.term, matchType: m, bid: t.bid })),
+          keywords: (options.kwPlus ? withKwPlus(skuTerms, (t) => t.term, (t, plus) => ({ ...t, term: plus })) : skuTerms)
+            .map((t) => ({ text: t.term, matchType: m, bid: t.bid })),
           productTargets: [],
         }));
       }

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { withKwPlus } from "@/lib/ppc/campaign-launch";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 import { findExistingCampaigns, listNewCampSkus, getKwFile, rememberUploadedCampaigns, saveKwFile } from "@/lib/ppc/new-camp-db";
@@ -299,6 +300,17 @@ export async function POST(request: Request) {
         uploadMessage = `File keyword '${pendingSaveName}' không được lưu vào kho vì không đọc được keyword${kwParseError ? `: ${kwParseError}` : "."}`;
       }
     }
+    // KW plus: chỉ thêm khi lên camp, file trong kho giữ nguyên
+    if (rawOptions.kwPlus === true && keywordParts) {
+      keywordParts = keywordParts.map((p) => {
+        const rows = withKwPlus(
+          p.keywords.map((kw, i) => ({ kw, bid: p.bids[i] ?? "" })),
+          (r) => String(r.kw),
+          (r, plus) => ({ kw: plus, bid: r.bid }),
+        );
+        return { ...p, keywords: rows.map((r) => r.kw), bids: rows.map((r) => r.bid) };
+      });
+    }
     const kwMissing = needsKeywordFile(form) && (!keywordParts || keywordParts.length === 0);
     if (kwMissing && !preview) {
       const base = "Đã chọn chạy campaign Keyword nhưng file Keyword ";
@@ -348,15 +360,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // SB thiếu trường bắt buộc thì Amazon từ chối camp → dừng và báo đúng ô còn thiếu.
+    // SB thiếu trường bắt buộc: tải file vẫn được, upload tự động thì chặn (Amazon từ chối camp).
     const runs = { sb01: form.sb01.run && !!keywordParts?.length, sb05: form.sb05.run && !!keywordParts?.length };
-    if (runs.sb01 || runs.sb05) {
+    if (output === "upload" && (runs.sb01 || runs.sb05)) {
       const lines = [...infos.entries()]
         .map(([sku, info]) => ({ sku, missing: missingSbFields(info, undefined, runs) }))
         .filter((r) => r.missing.length > 0)
         .map((r) => `${r.sku}: ${r.missing.map((f) => SB_FIELD_LABELS[f]).join(", ")}`);
       if (lines.length) {
-        throw new ApiError(`Còn ${lines.length} SKU thiếu thông tin để lên SB:\n${lines.slice(0, 20).join("\n")}${lines.length > 20 ? "\n…" : ""}`, 400);
+        throw new ApiError(`Còn ${lines.length} SKU thiếu thông tin SB nên không upload tự động được (tải file vẫn được):\n${lines.slice(0, 20).join("\n")}${lines.length > 20 ? "\n…" : ""}`, 400);
       }
     }
 
