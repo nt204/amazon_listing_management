@@ -2752,9 +2752,10 @@ export async function getAutoUploadLogs(storeId?: string | null): Promise<PpcAut
     ? await sql<any[]>`
         SELECT l.id, l.store_id, s.name as store_name, l.file_name, l.adspower_profile_id, l.adspower_profile_name,
                l.action_count, l.skus, l.status, l.stage, l.file_status, l.file_error_message,
-               l.error_message, l.result_summary, l.duration_ms, l.created_at, l.created_by
+               l.error_message, l.result_summary, l.duration_ms, l.created_at, l.created_by, u.display_name AS created_by_name
         FROM ppc_auto_upload_logs l
         LEFT JOIN ppc_stores s ON l.store_id = s.id
+        LEFT JOIN app_users u ON u.team_id = l.team_id AND u.user_id = l.created_by
         WHERE l.store_id = ${storeId}
         ORDER BY l.created_at DESC
         LIMIT 50
@@ -2762,9 +2763,10 @@ export async function getAutoUploadLogs(storeId?: string | null): Promise<PpcAut
     : await sql<any[]>`
         SELECT l.id, l.store_id, s.name as store_name, l.file_name, l.adspower_profile_id, l.adspower_profile_name,
                l.action_count, l.skus, l.status, l.stage, l.file_status, l.file_error_message,
-               l.error_message, l.result_summary, l.duration_ms, l.created_at, l.created_by
+               l.error_message, l.result_summary, l.duration_ms, l.created_at, l.created_by, u.display_name AS created_by_name
         FROM ppc_auto_upload_logs l
         LEFT JOIN ppc_stores s ON l.store_id = s.id
+        LEFT JOIN app_users u ON u.team_id = l.team_id AND u.user_id = l.created_by
         ORDER BY l.created_at DESC
         LIMIT 50
       `;
@@ -2786,7 +2788,8 @@ export async function getAutoUploadLogs(storeId?: string | null): Promise<PpcAut
     resultSummary: r.result_summary,
     durationMs: Number(r.duration_ms || 0),
     createdAt: new Date(r.created_at).toISOString(),
-    createdBy: r.created_by || null,
+    // Tên hiển thị người tạo; không tìm thấy thì giữ user id
+    createdBy: r.created_by_name || r.created_by || null,
   }));
 }
 

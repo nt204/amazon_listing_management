@@ -125,6 +125,20 @@ export function getLogActionTypeMeta(fileName?: string, skus?: string[]) {
     };
   }
 
+  // Lên camp từ tab Target / Search Term (Upload_<store>_Launch_…) và Lên Camp SKU Mới (NewCamp_…)
+  if (lower.includes("_launch_")) {
+    return {
+      label: "Lên Camp",
+      className: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    };
+  }
+  if (lower.startsWith("newcamp_")) {
+    return {
+      label: "Lên Camp SKU Mới",
+      className: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    };
+  }
+
   // Negative List (Upload_<store>_NegList_…) — kiểm tra trước vì tên file cũng có chữ "Negative"
   if (lower.includes("_neglist_")) {
     return {

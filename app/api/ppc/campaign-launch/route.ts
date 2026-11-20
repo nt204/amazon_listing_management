@@ -265,7 +265,7 @@ export async function POST(request: Request) {
         status: "PENDING",
       }))),
     );
-    const campaignNames = plan.campaigns.map((c) => c.name).slice(0, 50);
+    const launchSkus = [...new Set(plan.campaigns.map((c) => c.sku))];
 
     await sql`
       INSERT INTO ppc_auto_upload_logs (
@@ -273,7 +273,7 @@ export async function POST(request: Request) {
         file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at, created_by
       ) VALUES (
         ${jobId}, ${actor.teamId}, ${store.id}, ${fileName}, ${targetCount},
-        ${sql.json(campaignNames)}, 'PENDING', 'FILE_READY',
+        ${sql.json(launchSkus)}, 'PENDING', 'FILE_READY',
         'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW(), ${actor.userId}
       )
     `;
