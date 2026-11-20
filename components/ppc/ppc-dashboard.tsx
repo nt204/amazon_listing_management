@@ -46,6 +46,7 @@ import {
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
+import { StockCells, stockKey, stockMetaTitle, useLiveStock } from "./ppc-live-stock";
 import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
 import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
@@ -767,8 +768,10 @@ export function PpcDashboard({
 
   // SKU search & sort
   const [skuQuery, setSkuQuery] = useState("");
-  const [skuSortField, setSkuSortField] = useState<SortField>("spend");
+  const [skuSortField, setSkuSortField] = useState<SortField | "stock" | "stockValue">("spend");
   const [skuSortDir, setSkuSortDir] = useState<SortDirection>("desc");
+  // Tồn real time FBA + AWD (cột Tồn / Giá trị tồn ở tab SKU, Đề xuất & Auto bid)
+  const liveStock = useLiveStock(selectedStore);
 
   const [loading, setLoading] = useState(true);
   const [isStoreSwitching, setIsStoreSwitching] = useState(false);
@@ -2651,13 +2654,25 @@ export function PpcDashboard({
         return tokens.every((tok) => text.includes(tok));
       });
     }
+    const stockVal = (s: (typeof list)[number]) => {
+      const st = liveStock?.bySku.get(stockKey(s.sku));
+      // SKU không có trong file tồn xếp cuối dù tăng hay giảm
+      if (skuSortField === "stock") return st ? st.total : null;
+      return st?.value ?? null;
+    };
     list.sort((a, b) => {
+      if (skuSortField === "stock" || skuSortField === "stockValue") {
+        const valA = stockVal(a);
+        const valB = stockVal(b);
+        if (valA == null || valB == null) return valA == null ? (valB == null ? 0 : 1) : -1;
+        return skuSortDir === "asc" ? valA - valB : valB - valA;
+      }
       const valA = a[skuSortField];
       const valB = b[skuSortField];
       return skuSortDir === "asc" ? valA - valB : valB - valA;
     });
     return list;
-  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuPicFilter, skuQuery, skuSortField, skuSortDir, parsedSkuRanges]);
+  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuPicFilter, skuQuery, skuSortField, skuSortDir, parsedSkuRanges, liveStock]);
 
   // Paginated SKUs
   const totalSkuPages = Math.max(1, Math.ceil(filteredSortedSkus.length / skuPageSize));
@@ -5337,13 +5352,31 @@ export function PpcDashboard({
                   >
                     ACOS (%) {skuSortField === "acos" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
+                  {selectedStore !== "ALL" && (
+                    <>
+                      <th
+                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                        title={stockMetaTitle(liveStock?.meta)}
+                        onClick={() => handleSort("stock", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                      >
+                        Tồn {skuSortField === "stock" && (skuSortDir === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th
+                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                        title={stockMetaTitle(liveStock?.meta)}
+                        onClick={() => handleSort("stockValue", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                      >
+                        Giá trị tồn {skuSortField === "stockValue" && (skuSortDir === "asc" ? "↑" : "↓")}
+                      </th>
+                    </>
+                  )}
                   <th className="py-3 px-3 text-center w-24">Trend (7D)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
                 {(loading || isStoreSwitching || loadingSection === "skus" || loadingSkuEcon) ? (
                   <tr>
-                    <td colSpan={selectedStore === "ALL" ? 12 : 11} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={selectedStore === "ALL" ? 12 : 13} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải danh sách SKU cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
@@ -5352,7 +5385,7 @@ export function PpcDashboard({
                   </tr>
                 ) : paginatedSkus.length === 0 ? (
                   <tr>
-                    <td colSpan={selectedStore === "ALL" ? 12 : 11} className="p-8 text-center text-xs text-slate-400">
+                    <td colSpan={selectedStore === "ALL" ? 12 : 13} className="p-8 text-center text-xs text-slate-400">
                       Không tìm thấy SKU nào trong kỳ đang chọn.
                     </td>
                   </tr>
@@ -5436,6 +5469,9 @@ export function PpcDashboard({
                           {s.spend === 0 ? "-" : s.acos > 500 ? "0 sales" : `${s.acos.toFixed(1)}%`}
                         </span>
                       </td>
+                      {selectedStore !== "ALL" && (
+                        <StockCells info={liveStock?.bySku.get(stockKey(s.sku))} cellClassName="py-2.5 px-3" />
+                      )}
                       <td className="py-2.5 px-3 text-center">
                         <SkuTrendSparkline
                           dailyTrend={s.dailyTrend}

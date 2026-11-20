@@ -3,6 +3,7 @@
 import { Fragment, useState, useMemo, useEffect, useRef, useCallback } from "react";
 import type { RequestActor } from "@/lib/auth";
 import { usePpcColumnVisibility } from "./use-ppc-column-visibility";
+import { StockCells, stockKey, stockMetaTitle, useLiveStock } from "./ppc-live-stock";
 import {
   Tag,
   CheckCircle,
@@ -117,7 +118,9 @@ export type SortField =
   | "totalRecommendations"
   | "increaseCount"
   | "decreaseCount"
-  | "pauseCount";
+  | "pauseCount"
+  | "stock"
+  | "stockValue";
 
 export type SortOrder = "asc" | "desc";
 
@@ -281,6 +284,8 @@ export function PpcSkuRecommendationGroupView({
   const [metricRanges, setMetricRanges] = useState<MetricRanges>({});
   const parsedRanges = useMemo(() => parseMetricRanges(metricRanges), [metricRanges]);
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
+  // Tồn real time FBA + AWD (cột Tồn / Giá trị tồn)
+  const liveStock = useLiveStock(selectedStore);
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -821,6 +826,17 @@ export function PpcSkuRecommendationGroupView({
 
     // 6. Sort
     return result.sort((a, b) => {
+      if (sortField === "stock" || sortField === "stockValue") {
+        const pick = (g: (typeof result)[number]) => {
+          const st = liveStock?.bySku.get(stockKey(g.sku));
+          return sortField === "stock" ? (st ? st.total : null) : (st?.value ?? null);
+        };
+        const sa = pick(a);
+        const sb = pick(b);
+        // SKU không có trong file tồn xếp cuối
+        if (sa == null || sb == null) return sa == null ? (sb == null ? 0 : 1) : -1;
+        return sortOrder === "asc" ? sa - sb : sb - sa;
+      }
       const valA = a[sortField];
       const valB = b[sortField];
 
@@ -832,7 +848,7 @@ export function PpcSkuRecommendationGroupView({
       const numB = typeof valB === "number" ? valB : 0;
       return sortOrder === "asc" ? numA - numB : numB - numA;
     });
-  }, [pageGroups, searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder]);
+  }, [pageGroups, searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder, liveStock]);
 
   const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -1242,13 +1258,13 @@ export function PpcSkuRecommendationGroupView({
   };
 
   // Render Sort Header Helper
-  const renderSortHeader = (label: string, field: SortField, align: "left" | "right" | "center" = "left") => {
+  const renderSortHeader = (label: string, field: SortField, align: "left" | "right" | "center" = "left", title?: string) => {
     const isActive = sortField === field;
     return (
       <th
         onClick={() => handleSort(field)}
         className={`py-3 px-3 text-${align} whitespace-nowrap select-none cursor-pointer hover:bg-slate-100/80 transition group`}
-        title={`Click để sắp xếp theo ${label}`}
+        title={title ?? `Click để sắp xếp theo ${label}`}
       >
         <div className={`inline-flex items-center gap-1 ${align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start"}`}>
           <span className={isActive ? "text-indigo-700 font-black" : "text-slate-700 font-bold group-hover:text-slate-900"}>
@@ -1769,6 +1785,8 @@ export function PpcSkuRecommendationGroupView({
               {renderSortHeader("Sales", "sales", "right")}
               {renderSortHeader("ACoS", "acos", "right")}
               {renderSortHeader("BE ACoS", "breakEvenAcos", "right")}
+              {renderSortHeader("Tồn", "stock", "right", stockMetaTitle(liveStock?.meta))}
+              {renderSortHeader("Giá trị tồn", "stockValue", "right", stockMetaTitle(liveStock?.meta))}
               {renderSortHeader("Đề xuất", "totalRecommendations", "center")}
               {renderSortHeader("Tăng Bid", "increaseCount", "center")}
               {renderSortHeader("Giảm Bid", "decreaseCount", "center")}
@@ -1780,7 +1798,7 @@ export function PpcSkuRecommendationGroupView({
           <tbody className="divide-y divide-slate-100 text-slate-700">
             {isLoading ? (
               <tr>
-                <td colSpan={14} className="py-16 text-center text-slate-500">
+                <td colSpan={16} className="py-16 text-center text-slate-500">
                   <div className="flex flex-col items-center justify-center gap-2.5">
                     <CircleNotch size={30} className="animate-spin text-indigo-600" />
                     <span className="font-bold text-sm text-slate-800">
@@ -1794,7 +1812,7 @@ export function PpcSkuRecommendationGroupView({
               </tr>
             ) : filteredGroups.length === 0 ? (
               <tr>
-                <td colSpan={14} className="py-12 text-center text-slate-400 font-medium">
+                <td colSpan={16} className="py-12 text-center text-slate-400 font-medium">
                   Không tìm thấy SKU nào phù hợp với bộ lọc hiện tại.
                 </td>
               </tr>
@@ -1863,6 +1881,7 @@ export function PpcSkuRecommendationGroupView({
                     <td className="py-3 px-3 text-right text-amber-700 font-normal">
                       {group.breakEvenAcos.toFixed(1)}%
                     </td>
+                    <StockCells info={liveStock?.bySku.get(stockKey(group.sku))} cellClassName="py-3 px-3" />
                     <td className="py-3 px-3 text-center">
                       <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-normal text-xs border border-indigo-200">
                         {group.totalRecommendations}

@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import type { PpcAction, SkuRecommendationGroup } from "@/lib/ppc/sku-architecture-types";
 import type { PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
 import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
+import { StockCells, stockMetaTitle, type SkuStock, type StockMeta } from "./ppc-live-stock";
 import {
   EMPTY_SKU_FILTER,
   MANUAL_BID_TIERS,
@@ -56,8 +57,6 @@ type Row = ManualBidRow & { tier: ManualBidTier; acos: number | null };
 type SkuMetrics = { targets: number; impressions: number; clicks: number; spend: number; sales: number; orders: number };
 type SkuChannel = "FBA" | "FBM" | "";
 /** Tồn real time (crawler kế toán 16h10): mỗi kho = available + inbound + reserved; total = FBA + AWD. */
-type SkuStock = { fba: number; awd: number; inbound?: number; total: number; unitCost: number | null; value: number | null };
-type StockMeta = { fbaAt: string | null; awdAt: string | null; fbaLabel: string | null; awdLabel: string | null };
 type SkuSummaryItem = { sku: string; channel?: SkuChannel; all: SkuMetrics; active: SkuMetrics; stock?: SkuStock | null };
 type ChannelPage = "FBA" | "FBM" | "OTHER";
 type ChannelCounts = Record<ChannelPage, { all: number; active: number }>;
@@ -2537,59 +2536,6 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
         {filtered.length > limit && <div ref={loadMoreRef}><LoadingBlock bare rows={2} /></div>}
       </div>
     </div>
-  );
-}
-
-function fmtStockTime(iso: string | null): string {
-  if (!iso) return "chưa có";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
-}
-
-function stockMetaTitle(meta: StockMeta | null | undefined): string {
-  const base = "Tồn real time = kho FBA (available + inbound + reserved) + kho AWD (available + inbound + reserved).\nGiá trị tồn = Tồn × Giá TB năm (như Bảng mã).";
-  if (!meta) return `${base}\nChưa có dữ liệu tồn — crawler kế toán nạp lúc 16h10 mỗi ngày.`;
-  return `${base}\nNạp FBA: ${fmtStockTime(meta.fbaAt)}${meta.fbaLabel ? ` (file ${meta.fbaLabel})` : ""}\nNạp AWD: ${fmtStockTime(meta.awdAt)}${meta.awdLabel ? ` (file ${meta.awdLabel})` : ""}`;
-}
-
-/** 2 ô Tồn + Giá trị tồn của bảng SKU; rê chuột xem tồn từng kho. */
-function StockCells({ info }: { info: SkuStock | null }) {
-  if (!info) {
-    return (
-      <>
-        <td className="px-3 py-1.5 text-right text-slate-300" title="Không có trong file tồn FBA / AWD">—</td>
-        <td className="px-3 py-1.5 text-right text-slate-300">—</td>
-      </>
-    );
-  }
-  const costNote = info.unitCost != null ? `Giá TB năm $${info.unitCost.toFixed(2)}` : "Chưa có giá vốn trong Bảng mã";
-  const line = (label: string, value: number, cls = "text-slate-800") => (
-    <div className="flex justify-between gap-4">
-      <span className="text-slate-500">{label}</span>
-      <span className={`font-semibold tabular-nums ${cls}`}>{int(value)}</span>
-    </div>
-  );
-  return (
-    <>
-      <td className="group relative px-3 py-1.5 text-right tabular-nums">
-        <span className={`cursor-default font-semibold ${info.total > 0 ? "text-slate-800" : "text-rose-500"}`}>{int(info.total)}</span>
-        {/* Rê chuột: chi tiết từng kho + hàng đang đến */}
-        <div className="pointer-events-none absolute right-full top-1/2 z-30 mr-1 hidden w-48 -translate-y-1/2 space-y-1 rounded-lg border border-slate-200 bg-white p-2.5 text-left text-[12px] font-normal shadow-xl group-hover:block">
-          {line("FBA", info.fba)}
-          {line("AWD", info.awd)}
-          {(info.inbound ?? 0) > 0 && line("Hàng đang đến", info.inbound ?? 0, "text-sky-700")}
-          <div className="flex justify-between gap-4 border-t border-slate-100 pt-1">
-            <span className="font-semibold text-slate-700">Tổng</span>
-            <span className="font-bold tabular-nums text-slate-900">{int(info.total)}</span>
-          </div>
-          {(info.inbound ?? 0) > 0 && <div className="text-[10.5px] leading-snug text-slate-400">Hàng đang đến đã tính trong FBA / AWD.</div>}
-        </div>
-      </td>
-      <td className="px-3 py-1.5 text-right tabular-nums text-slate-600" title={costNote}>
-        {info.value != null ? money(info.value) : <span className="text-slate-300">—</span>}
-      </td>
-    </>
   );
 }
 
