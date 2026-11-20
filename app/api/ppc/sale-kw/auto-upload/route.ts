@@ -1,5 +1,6 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { applySaleKwSb, parseSbOverrides, saleKwSbRun } from "@/lib/ppc/sale-kw-sb";
 import { invalidateCachePattern } from "@/lib/redis";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
@@ -65,6 +66,8 @@ export async function POST(request: Request) {
     const activeDateStr = normalizeSaleKwDate(String(body?.dateStr || "").trim());
     const activeUser = String(body?.userName || "").trim() || (actor.displayName ? actor.displayName.split(/\s+/)[0] : "Loan");
     const activeAdType = String(body?.adTypeCode || "").trim() || "SP03";
+    const requestedRunTypes = [activeAdType, ...(Array.isArray(body?.adTypeCodes) ? body.adTypeCodes.map(String) : [])];
+    if (requestedRunTypes.some((t) => /SP04|AUTO/i.test(t))) throw new ApiError("Sale KW chưa hỗ trợ SP04 Auto — chọn SP03, SB01 hoặc SB05.", 400);
 
     if (rawItems.length === 0 && (!directCampaigns || directCampaigns.length === 0)) {
       throw new ApiError("Không có Search Term nào được chọn để Auto Upload lên Camp Sale KW.", 400);
@@ -203,6 +206,10 @@ export async function POST(request: Request) {
               sales: it.sales || 0,
               clicks: it.clicks || 0,
               spend: it.spend || 0,
+              sourceCampaignId: it.campaignId || "",
+              sourceCampaignName: it.campaignName || "",
+              sourceAdGroupId: it.adGroupId || "",
+              sourceAdGroupName: it.adGroupName || "",
             };
           });
 
@@ -218,10 +225,30 @@ export async function POST(request: Request) {
             defaultBid: skuAvgCpc > 0 ? skuAvgCpc : defaultBidVal,
             biddingStrategy: "Dynamic bids - down only",
             negateInSource: globalNegateInSource,
+            runType: activeAdType,
             keywords,
           });
         }
       }
+    }
+
+    // SB01 / SB05 (theo dạng chạy từng camp): camp Sponsored Brands + creative theo SKU, bid = % CPC
+    const sbMissing: string[] = [];
+    const sbOverrides = parseSbOverrides(body?.sbOverrides);
+    const sbPcts = (body?.sbBidPcts && typeof body.sbBidPcts === "object" ? body.sbBidPcts : {}) as Record<string, unknown>;
+    for (const run of ["SB01", "SB05"] as const) {
+      const camps = campaignsPayload.filter((c) => saleKwSbRun(c.runType || activeAdType) === run);
+      if (camps.length === 0) continue;
+      sbMissing.push(...(await applySaleKwSb(camps, {
+        run,
+        storeName: storeName,
+        fulfillment: body?.channel === "FBM" ? "FBM" : "FBA",
+        overrides: sbOverrides,
+        bidPct: Number(sbPcts[run] ?? body?.sbBidPct),
+      })));
+    }
+    if (sbMissing.length) {
+      throw new ApiError(`Thiếu thông tin SB, chưa Auto Upload được (xuất file vẫn được):\n${[...new Set(sbMissing)].join("\n")}`, 400);
     }
 
     const totalKeywords = campaignsPayload.reduce((sum, c) => sum + c.keywords.length, 0);
@@ -253,7 +280,7 @@ export async function POST(request: Request) {
       metadata: { purpose: "amazon-ads-bulk-upload", store: safeStore, job: jobId },
     });
 
-    const distinctCamps = Array.from(new Set(campaignsPayload.map((c) => c.targetCampaignName))).slice(0, 50);
+    const distinctSkus = Array.from(new Set(campaignsPayload.map((c) => c.sku || c.skus?.[0] || "").filter(Boolean)));
 
     const actionsPayload = campaignsPayload.flatMap((camp) =>
       camp.keywords.map((kw, idx) => ({
@@ -280,7 +307,7 @@ export async function POST(request: Request) {
         file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at, created_by
       ) VALUES (
         ${jobId}, ${actor.teamId}, ${storeId}, ${fileName}, ${totalKeywords},
-        ${sql.json(distinctCamps)}, 'PENDING', 'FILE_READY',
+        ${sql.json(distinctSkus)}, 'PENDING', 'FILE_READY',
         'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW(), ${actor.userId}
       )
     `;

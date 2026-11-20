@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   RocketLaunch,
   FileXls,
@@ -31,6 +31,8 @@ import {
 } from "@phosphor-icons/react";
 import type { PpcSearchTermRow, MatchType, PpcAdType } from "@/lib/ppc/types";
 import type { RequestActor } from "@/lib/auth";
+import { SB_FIELD_LABELS, SB_FIELD_PLACEHOLDERS, missingSbFields, withStoreSbDefaults, type SbField, type SbOverrides, type StoreSbDefaults } from "@/lib/ppc/new-camp-fields";
+import type { NewCampSkuInfo } from "@/lib/ppc/new-camp-generator";
 import {
   isAsinProductTarget,
   formatYYYYMMDD,
@@ -79,7 +81,15 @@ export interface SaleKwSkuGroup {
     phrase: string;
     broad: string;
   };
+  /** Tên camp theo từng dạng chạy đang chọn (chọn nhiều dạng cùng lúc) */
+  campaignNamesByType: Array<{ adTypeCode: string; names: { exact: string; phrase: string; broad: string } }>;
 }
+
+const SALE_KW_RUN_OPTIONS = [
+  { value: "SP03", label: "SP03 KW" },
+  { value: "SB01", label: "SB01 Collection" },
+  { value: "SB05", label: "SB05 Video" },
+] as const;
 
 export interface SaleKwRegistryItem {
   id: string;
@@ -291,7 +301,52 @@ export function PpcSaleKwView({
     }
   }, [fileReportDate]);
 
-  const [adTypeCode, setAdTypeCode] = useState<string>("SP03");
+  // Chọn nhiều dạng chạy cùng lúc (vd SP03 + SB05) → 1 file
+  const [adTypeCodes, setAdTypeCodes] = useState<string[]>(["SP03"]);
+  const adTypeCode = adTypeCodes[0] || "SP03";
+  const toggleAdType = (value: string) =>
+    setAdTypeCodes((prev) => {
+      const next = prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value];
+      return SALE_KW_RUN_OPTIONS.map((o) => o.value as string).filter((v) => next.includes(v));
+    });
+  // SB01 / SB05: creative theo SKU (BẢNG MÃ + Entity / Logo theo store), bid = % CPC
+  const sbRun = adTypeCodes.includes("SB01") || adTypeCodes.includes("SB05");
+  const [sbBidPcts, setSbBidPcts] = useState<Record<"SB01" | "SB05", number>>({ SB01: 80, SB05: 90 });
+  const [sbOverrides, setSbOverrides] = useState<SbOverrides>({});
+  const [sbData, setSbData] = useState<{ key: string; map: Map<string, NewCampSkuInfo>; defaults: StoreSbDefaults | null } | null>(null);
+  const sbDataKey = `${selectedStore}|${channel === "FBM" ? "FBM" : "FBA"}`;
+  useEffect(() => {
+    if (!sbRun || sbData?.key === sbDataKey) return;
+    let cancelled = false;
+    const params = new URLSearchParams({ type: channel === "FBM" ? "FBM" : "FBA", merge: "1" });
+    if (selectedStore && selectedStore !== "ALL") params.set("store", selectedStore);
+    fetch(`/api/ppc/new-camp/skus?${params}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        setSbData({
+          key: sbDataKey,
+          map: new Map((json.data as NewCampSkuInfo[]).map((x) => [x.sku.toUpperCase(), x])),
+          defaults: (json.storeDefaults as StoreSbDefaults | null) ?? null,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sbRun, sbDataKey, sbData?.key, channel, selectedStore]);
+  const sbReady = Boolean(sbRun && sbData?.key === sbDataKey);
+  const sbRunFlags = { sb01: adTypeCodes.includes("SB01"), sb05: adTypeCodes.includes("SB05") };
+  const sbInfoOf = (sku: string) => {
+    if (!sbReady || !sbData) return undefined;
+    const raw = sbData.map.get(sku.toUpperCase());
+    return sbData.defaults ? withStoreSbDefaults(raw, sku, sbData.defaults) : raw;
+  };
+  const sbBlankFields = (sku: string): SbField[] =>
+    sbReady ? [...missingSbFields(sbInfoOf(sku), undefined, sbRunFlags), ...missingSbFields(sbInfoOf(sku), undefined, sbRunFlags, "optional")] : [];
+  const sbMissing = (sku: string): SbField[] => (sbReady ? missingSbFields(sbInfoOf(sku), sbOverrides[sku.toUpperCase()], sbRunFlags) : []);
+  const setSbOverride = (sku: string, field: SbField, value: string) =>
+    setSbOverrides((prev) => ({ ...prev, [sku.toUpperCase()]: { ...prev[sku.toUpperCase()], [field]: value } }));
 
   // 3. Global Campaign Launch Settings: Mặc định ngân sách ban đầu là 5$
   const [dailyBudget, setDailyBudget] = useState<number>(5.0);
@@ -329,6 +384,8 @@ export function PpcSaleKwView({
   const [regSearchQuery, setRegSearchQuery] = useState<string>("");
   const [regPage, setRegPage] = useState<number>(1);
   const [regPageSize, setRegPageSize] = useState<number>(50);
+  const [regChannel, setRegChannel] = useState<"ALL" | "FBA" | "FBM">(channel === "FBM" ? "FBM" : channel === "FBA" ? "FBA" : "ALL");
+  const [expandedRegCamps, setExpandedRegCamps] = useState<Set<string>>(new Set());
   const [selectedRegIds, setSelectedRegIds] = useState<Set<string>>(new Set());
   const [isDeletingReg, setIsDeletingReg] = useState<boolean>(false);
 
@@ -743,12 +800,17 @@ export function PpcSaleKwView({
     for (const c of filteredCandidates) {
       const cleanSku = extractSkuFromText(c.sku) || c.sku;
       if (!map.has(cleanSku)) {
-        const campNames = generateSaleKwCampaignTriad({
-          sku: cleanSku,
-          adTypeCode,
-          userName: userName.trim() || "Loan",
-          dateStr: customDate.trim() || formatYYYYMMDD(),
-        });
+        const byType = adTypeCodes.map((code) => ({
+          adTypeCode: code,
+          names: generateSaleKwCampaignTriad({
+            sku: cleanSku,
+            adTypeCode: code,
+            userName: userName.trim() || "Loan",
+            dateStr: customDate.trim() || formatYYYYMMDD(),
+            fulfillment: channel,
+          }),
+        }));
+        const campNames = byType[0]?.names || { exact: "", phrase: "", broad: "" };
 
         map.set(cleanSku, {
           sku: cleanSku,
@@ -760,6 +822,7 @@ export function PpcSaleKwView({
           avgCpc: 0,
           adTypeCode,
           campaignNames: campNames,
+          campaignNamesByType: byType,
         });
       }
       const g = map.get(cleanSku)!;
@@ -778,7 +841,7 @@ export function PpcSaleKwView({
     }
 
     return groups.sort((a, b) => b.totalOrders - a.totalOrders || b.totalSales - a.totalSales);
-  }, [filteredCandidates, adTypeCode, userName, customDate]);
+  }, [filteredCandidates, adTypeCode, adTypeCodes, channel, userName, customDate]);
 
   // Paginated SKU Groups
   const totalGroupPages = Math.max(1, Math.ceil(skuGroups.length / pageSize));
@@ -905,9 +968,17 @@ export function PpcSaleKwView({
   }, [targetItems, enabledTargetSkus]);
 
   const targetSkuCount = enabledTargetSkus.size;
+  const sbMissingSkus = sbRun ? Array.from(enabledTargetSkus).filter((sku) => sbMissing(sku).length > 0) : [];
+  const sbUploadBlocker = !sbRun
+    ? null
+    : !sbReady
+      ? "Đang tải thông tin SB…"
+      : sbMissingSkus.length > 0
+        ? `${sbMissingSkus.length} SKU thiếu thông tin SB: xuất file được, chưa Auto Upload được.`
+        : null;
 
   const targetCampaignCount = useMemo(() => {
-    return Array.from(enabledTargetSkus).reduce(
+    return adTypeCodes.length * Array.from(enabledTargetSkus).reduce(
       (sum, sku) =>
         sum +
         SALE_KW_MATCH_TYPES.filter(
@@ -915,7 +986,7 @@ export function PpcSaleKwView({
         ).length,
       0
     );
-  }, [enabledTargetSkus, disabledMatchTypes]);
+  }, [enabledTargetSkus, disabledMatchTypes, adTypeCodes.length]);
 
   // Build Campaign payload theo các match type được chọn cho từng SKU
   const buildTriadCampaignsPayload = (itemsToLaunch: SaleKwCandidate[] = launchableTargetItems) => {
@@ -931,12 +1002,13 @@ export function PpcSaleKwView({
     const activeUser = userName.trim() || "Loan";
     const campaigns: any[] = [];
 
-    for (const [sku, items] of skuMap.entries()) {
+    for (const [sku, items] of skuMap.entries()) for (const runCode of adTypeCodes) {
       const triad = generateSaleKwCampaignTriad({
         sku,
-        adTypeCode,
+        adTypeCode: runCode,
         userName: activeUser,
         dateStr: activeDateStr,
+        fulfillment: channel,
       });
 
       const totalSkuSpend = items.reduce((s, it) => s + it.spend, 0);
@@ -973,6 +1045,11 @@ export function PpcSaleKwView({
             sales: it.sales,
             clicks: it.clicks,
             spend: it.spend,
+            // Camp nguồn của riêng term này: phủ định Exact đúng camp nguồn
+            sourceCampaignId: it.sourceCampaignId || "",
+            sourceCampaignName: it.sourceCampaignNames?.[0] || "",
+            sourceAdGroupId: it.sourceAdGroupId || "",
+            sourceAdGroupName: it.sourceAdGroupName || "",
           };
         });
 
@@ -984,6 +1061,7 @@ export function PpcSaleKwView({
           targetCampaignName: cfg.campName,
           adGroupName: cfg.campName,
           sku,
+          runType: runCode,
           dailyBudget,
           defaultBid: skuAvgCpc > 0 ? skuAvgCpc : defaultBid,
           biddingStrategy: "Dynamic bids - down only",
@@ -1078,6 +1156,10 @@ export function PpcSaleKwView({
         userName,
         dateStr: customDate,
         adTypeCode,
+        adTypeCodes,
+        channel,
+        sbOverrides: sbRun ? sbOverrides : undefined,
+        sbBidPcts: sbRun ? sbBidPcts : undefined,
         campaigns: triadCampaigns,
         items: exportItems.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
@@ -1150,6 +1232,10 @@ export function PpcSaleKwView({
 
   // Open Auto Upload Modal
   const handleOpenAutoUploadModal = async () => {
+    if (sbUploadBlocker) {
+      notify(sbUploadBlocker, "error");
+      return;
+    }
     if (selectedStore === "ALL") {
       notify("Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn 1 Store cụ thể trên thanh điều hướng để đảm bảo upload chính xác vào đúng tài khoản Amazon Seller.", "error");
       return;
@@ -1223,6 +1309,10 @@ export function PpcSaleKwView({
         userName,
         dateStr: customDate,
         adTypeCode,
+        adTypeCodes,
+        channel,
+        sbOverrides: sbRun ? sbOverrides : undefined,
+        sbBidPcts: sbRun ? sbBidPcts : undefined,
         campaigns: triadCampaigns,
         items: uploadItems.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
@@ -1408,11 +1498,52 @@ export function PpcSaleKwView({
     return list;
   }, [registryItems, regSearchQuery]);
 
-  const totalRegPages = Math.max(1, Math.ceil(filteredRegItems.length / regPageSize));
-  const paginatedRegItems = useMemo(() => {
+  // Lịch sử gom theo camp đích; FBA / FBM theo tên camp
+  const regChannelOf = (name: string): "FBA" | "FBM" => (/\bFBM\b/i.test(name) ? "FBM" : "FBA");
+  const regCampaignGroups = useMemo(() => {
+    const map = new Map<string, {
+      name: string;
+      channel: "FBA" | "FBM";
+      sku: string;
+      matchType: string;
+      items: SaleKwRegistryItem[];
+      orders: number;
+      sales: number;
+      sources: Set<string>;
+      autoUpload: boolean;
+      createdAt: string;
+    }>();
+    for (const it of filteredRegItems) {
+      const name = it.target_campaign_name || "(không tên)";
+      let g = map.get(name);
+      if (!g) {
+        g = { name, channel: regChannelOf(name), sku: it.sku || "", matchType: it.match_type, items: [], orders: 0, sales: 0, sources: new Set(), autoUpload: false, createdAt: it.created_at };
+        map.set(name, g);
+      }
+      g.items.push(it);
+      g.orders += Number(it.orders) || 0;
+      g.sales += Number(it.sales) || 0;
+      if (it.source_campaign_name) g.sources.add(it.source_campaign_name);
+      if (it.source === "AUTO_UPLOAD") g.autoUpload = true;
+      if (it.created_at > g.createdAt) g.createdAt = it.created_at;
+    }
+    return Array.from(map.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.name.localeCompare(b.name));
+  }, [filteredRegItems]);
+  const regChannelCounts = useMemo(() => ({
+    ALL: regCampaignGroups.length,
+    FBA: regCampaignGroups.filter((g) => g.channel === "FBA").length,
+    FBM: regCampaignGroups.filter((g) => g.channel === "FBM").length,
+  }), [regCampaignGroups]);
+  const shownRegGroups = useMemo(
+    () => (regChannel === "ALL" ? regCampaignGroups : regCampaignGroups.filter((g) => g.channel === regChannel)),
+    [regCampaignGroups, regChannel],
+  );
+  const totalRegPages = Math.max(1, Math.ceil(shownRegGroups.length / regPageSize));
+  const paginatedRegGroups = useMemo(() => {
     const start = (regPage - 1) * regPageSize;
-    return filteredRegItems.slice(start, start + regPageSize);
-  }, [filteredRegItems, regPage, regPageSize]);
+    return shownRegGroups.slice(start, start + regPageSize);
+  }, [shownRegGroups, regPage, regPageSize]);
+  const paginatedRegItems = useMemo(() => paginatedRegGroups.flatMap((g) => g.items), [paginatedRegGroups]);
 
   const handleCopySelectedOrAll = async () => {
     const targetItems = selectedKeys.size > 0
@@ -1629,9 +1760,9 @@ export function PpcSaleKwView({
                 <button
                   type="button"
                   onClick={handleOpenAutoUploadModal}
-                  disabled={candidateActionsDisabled || launchableTargetItems.length === 0 || targetCampaignCount === 0 || selectedStore === "ALL"}
+                  disabled={candidateActionsDisabled || launchableTargetItems.length === 0 || targetCampaignCount === 0 || selectedStore === "ALL" || Boolean(sbUploadBlocker)}
                   className="px-4 py-1.5 rounded-lg bg-linear-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
-                  title={selectedStore === "ALL" ? "Vui lòng chọn 1 Store cụ thể trên thanh công cụ để thực hiện Auto Upload" : "Xếp hàng tự động nạp qua AdsPower lên Amazon"}
+                  title={selectedStore === "ALL" ? "Vui lòng chọn 1 Store cụ thể trên thanh công cụ để thực hiện Auto Upload" : sbUploadBlocker || "Xếp hàng tự động nạp qua AdsPower lên Amazon"}
                 >
                   <Lightning size={15} weight="fill" className="text-amber-300 animate-pulse" />
                   <span>Auto Upload ({targetCampaignCount} camps)</span>
@@ -1655,17 +1786,45 @@ export function PpcSaleKwView({
 
               <div className="flex items-center gap-1.5">
                 <span className="font-semibold text-slate-600" title="Dạng chạy (ví dụ SP03)">Dạng chạy:</span>
-                <select
-                  value={adTypeCode}
-                  onChange={(e) => setAdTypeCode(e.target.value)}
-                  className="px-2 py-0.5 font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500 cursor-pointer"
-                >
-                  <option value="SP03">SP03 KW</option>
-                  <option value="SB05">SB05 Video</option>
-                  <option value="SP04">SP04 Auto</option>
-                  <option value="SB01">SB01</option>
-                </select>
+                <div className="flex gap-1">
+                  {SALE_KW_RUN_OPTIONS.map((o) => {
+                    const on = adTypeCodes.includes(o.value);
+                    return (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => toggleAdType(o.value)}
+                        className={`px-2 py-0.5 rounded border font-bold cursor-pointer ${
+                          on ? "bg-emerald-600 border-emerald-600 text-white" : "bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+
+              {sbRun && (
+                <div className="flex items-center gap-1.5" title="Bid SB = % CPC từng term (CPC phần lớn là của SP)">
+                  {(["SB01", "SB05"] as const).filter((code) => adTypeCodes.includes(code)).map((code) => (
+                    <span key={code} className="flex items-center gap-1">
+                      <span className="font-semibold text-slate-600">Bid {code}:</span>
+                      <input
+                        type="number"
+                        min="10"
+                        max="500"
+                        step="5"
+                        value={sbBidPcts[code]}
+                        onChange={(e) => setSbBidPcts((prev) => ({ ...prev, [code]: Number(e.target.value) || 100 }))}
+                        className="w-14 px-1.5 py-0.5 text-right font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <span className="text-slate-500">% CPC</span>
+                    </span>
+                  ))}
+                  {sbUploadBlocker && <span className="ml-1 font-semibold text-amber-700">{sbUploadBlocker}</span>}
+                </div>
+              )}
 
               <div className="flex items-center gap-1.5">
                 <span className="font-semibold text-slate-600" title="Ngày tháng năm định dạng YYYYMMDD">Ngày (YYYYMMDD):</span>
@@ -1918,6 +2077,36 @@ export function PpcSaleKwView({
                             </span>
                           </div>
 
+                          {/* SB01 / SB05: trường creative BẢNG MÃ còn trống → điền cho lần này */}
+                          {enabledTargetSkus.has(group.sku) && sbBlankFields(group.sku).length > 0 && (
+                            <div className={`rounded-lg border bg-white p-2.5 ${sbMissing(group.sku).length ? "border-rose-200" : "border-slate-200"}`}>
+                              <div className={`mb-1.5 text-xs font-semibold ${sbMissing(group.sku).length ? "text-rose-600" : "text-slate-500"}`}>
+                                {sbData?.map.has(group.sku.toUpperCase()) ? "BẢNG MÃ thiếu thông tin SB" : "SKU không có trong BẢNG MÃ FBA / FBM"} · chỉ dùng cho lần này
+                              </div>
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {sbBlankFields(group.sku).map((f) => {
+                                  const value = sbOverrides[group.sku.toUpperCase()]?.[f] ?? "";
+                                  const optional = f === "landingPageUrl";
+                                  return (
+                                    <label key={f} className="min-w-0">
+                                      <span className="mb-0.5 block text-[11px] font-medium text-slate-500">
+                                        {SB_FIELD_LABELS[f]}{optional ? " (không bắt buộc)" : ""}
+                                      </span>
+                                      <input
+                                        value={value}
+                                        placeholder={SB_FIELD_PLACEHOLDERS[f]}
+                                        onChange={(e) => setSbOverride(group.sku, f, e.target.value)}
+                                        className={`w-full rounded-md border px-2 py-1 font-mono text-xs text-slate-800 outline-none focus:border-emerald-500 ${
+                                          value.trim() || optional ? "border-slate-200" : "border-rose-300"
+                                        }`}
+                                      />
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
                           {/* Triad Campaigns Preview: Tách 3 camp Exact, Phrase, Broad */}
                           <div className="space-y-1.5 pt-1">
                             {/* Exact Camp */}
@@ -1936,12 +2125,14 @@ export function PpcSaleKwView({
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${exactEnabled ? "bg-blue-600" : "bg-slate-400"}`}>
                                   Exact
                                 </span>
-                                <span className={`font-normal truncate text-[11px] ${exactEnabled ? "text-blue-950" : "text-slate-400"}`}>
-                                  {group.campaignNames.exact}
+                                <span className={`font-normal min-w-0 text-[11px] ${exactEnabled ? "text-blue-950" : "text-slate-400"}`}>
+                                  {group.campaignNamesByType.map((t) => (
+                                    <span key={t.adTypeCode} className="block truncate">{t.names.exact}</span>
+                                  ))}
                                 </span>
                               </div>
                               <button
-                                onClick={() => copyToClipboard(group.campaignNames.exact, `${group.sku}_exact`)}
+                                onClick={() => copyToClipboard(group.campaignNamesByType.map((t) => t.names.exact).join("\n"), `${group.sku}_exact`)}
                                 className="text-blue-600 hover:text-blue-800 p-1 shrink-0"
                                 title="Copy tên Campaign Exact"
                               >
@@ -1965,12 +2156,14 @@ export function PpcSaleKwView({
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${phraseEnabled ? "bg-sky-600" : "bg-slate-400"}`}>
                                   Phrase
                                 </span>
-                                <span className={`font-normal truncate text-[11px] ${phraseEnabled ? "text-sky-950" : "text-slate-400"}`}>
-                                  {group.campaignNames.phrase}
+                                <span className={`font-normal min-w-0 text-[11px] ${phraseEnabled ? "text-sky-950" : "text-slate-400"}`}>
+                                  {group.campaignNamesByType.map((t) => (
+                                    <span key={t.adTypeCode} className="block truncate">{t.names.phrase}</span>
+                                  ))}
                                 </span>
                               </div>
                               <button
-                                onClick={() => copyToClipboard(group.campaignNames.phrase, `${group.sku}_phrase`)}
+                                onClick={() => copyToClipboard(group.campaignNamesByType.map((t) => t.names.phrase).join("\n"), `${group.sku}_phrase`)}
                                 className="text-sky-600 hover:text-sky-800 p-1 shrink-0"
                                 title="Copy tên Campaign Phrase"
                               >
@@ -1994,12 +2187,14 @@ export function PpcSaleKwView({
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${broadEnabled ? "bg-emerald-600" : "bg-slate-400"}`}>
                                   Broad
                                 </span>
-                                <span className={`font-normal truncate text-[11px] ${broadEnabled ? "text-emerald-950" : "text-slate-400"}`}>
-                                  {group.campaignNames.broad}
+                                <span className={`font-normal min-w-0 text-[11px] ${broadEnabled ? "text-emerald-950" : "text-slate-400"}`}>
+                                  {group.campaignNamesByType.map((t) => (
+                                    <span key={t.adTypeCode} className="block truncate">{t.names.broad}</span>
+                                  ))}
                                 </span>
                               </div>
                               <button
-                                onClick={() => copyToClipboard(group.campaignNames.broad, `${group.sku}_broad`)}
+                                onClick={() => copyToClipboard(group.campaignNamesByType.map((t) => t.names.broad).join("\n"), `${group.sku}_broad`)}
                                 className="text-emerald-600 hover:text-emerald-800 p-1 shrink-0"
                                 title="Copy tên Campaign Broad"
                               >
@@ -2224,6 +2419,22 @@ export function PpcSaleKwView({
               )}
             </div>
 
+            <div className="flex rounded-lg border border-slate-200 p-0.5 text-xs font-bold">
+              {(["ALL", "FBA", "FBM"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => {
+                    setRegChannel(c);
+                    setRegPage(1);
+                  }}
+                  className={`rounded-md px-2.5 py-1 cursor-pointer ${regChannel === c ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-800"}`}
+                >
+                  {c === "ALL" ? "Tất cả" : c} ({regChannelCounts[c]} camp)
+                </button>
+              ))}
+            </div>
+
             <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
               {selectedRegIds.size > 0 && (
                 <>
@@ -2289,14 +2500,14 @@ export function PpcSaleKwView({
                         className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
                       />
                     </th>
-                    <th className="py-3 px-3">Search Term</th>
-                    <th className="py-3 px-3">Target Campaign (Mới)</th>
-                    <th className="py-3 px-3">Match Type</th>
-                    <th className="py-3 px-3">Source Campaign (Cũ)</th>
+                    <th className="py-3 px-3">Campaign đích (Mới)</th>
+                    <th className="py-3 px-3 text-center">Kênh</th>
+                    <th className="py-3 px-3 text-center">Match</th>
                     <th className="py-3 px-3">SKU</th>
+                    <th className="py-3 px-3 text-right">Từ khóa</th>
+                    <th className="py-3 px-3">Campaign nguồn (Cũ)</th>
                     <th className="py-3 px-3 text-right">Orders</th>
                     <th className="py-3 px-3 text-right">Sales</th>
-                    <th className="py-3 px-3 text-center">Bid</th>
                     <th className="py-3 px-3 text-center">Nguồn tạo</th>
                     <th className="py-3 px-3 text-center">Thời gian</th>
                   </tr>
@@ -2309,132 +2520,120 @@ export function PpcSaleKwView({
                         Đang tải danh mục...
                       </td>
                     </tr>
-                  ) : paginatedRegItems.length === 0 ? (
+                  ) : paginatedRegGroups.length === 0 ? (
                     <tr>
                       <td colSpan={11} className="py-12 text-center text-slate-500">
                         Chưa có Campaign Sale KW nào được ghi nhận.
                       </td>
                     </tr>
                   ) : (
-                    paginatedRegItems.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50/80 transition">
-                        <td className="py-3 px-4">
-                          <input
-                            type="checkbox"
-                            checked={selectedRegIds.has(item.id)}
-                            onChange={(e) => {
-                              const next = new Set(selectedRegIds);
-                              if (e.target.checked) next.add(item.id);
-                              else next.delete(item.id);
-                              setSelectedRegIds(next);
-                            }}
-                            className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
-                          />
-                        </td>
-                        <td className="py-3 px-3 font-bold text-slate-900 col-primary">
-                          <span className="font-bold text-slate-900">{item.keyword_text}</span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5 max-w-xs group">
-                            <span
-                              className="font-bold text-emerald-800 truncate"
-                              title={item.target_campaign_name}
-                            >
-                              {item.target_campaign_name}
-                            </span>
-                            {item.target_campaign_name && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  copyToClipboard(
-                                    item.target_campaign_name,
-                                    `reg_target_${item.id}`
-                                  )
-                                }
-                                className="shrink-0 p-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded transition"
-                                title="Copy Target Campaign (Mới)"
-                                aria-label="Copy Target Campaign (Mới)"
-                              >
-                                {copiedKey === `reg_target_${item.id}` ? (
-                                  <Check size={13} weight="bold" className="text-emerald-600" />
-                                ) : (
-                                  <Copy size={13} />
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${item.match_type.toLowerCase() === "exact"
-                              ? "bg-blue-100 text-blue-800"
-                              : item.match_type.toLowerCase() === "phrase"
-                                ? "bg-sky-100 text-sky-800"
-                                : "bg-emerald-100 text-emerald-800"
-                            }`}>
-                            {item.match_type}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5 max-w-xs group">
-                            <span
-                              className="text-slate-600 truncate"
-                              title={item.source_campaign_name}
-                            >
-                              {item.source_campaign_name || "-"}
-                            </span>
-                            {item.source_campaign_name && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  copyToClipboard(
-                                    item.source_campaign_name,
-                                    `reg_source_${item.id}`
-                                  )
-                                }
-                                className="shrink-0 p-1 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded transition"
-                                title="Copy Source Campaign (Cũ)"
-                                aria-label="Copy Source Campaign (Cũ)"
-                              >
-                                {copiedKey === `reg_source_${item.id}` ? (
-                                  <Check size={13} weight="bold" className="text-emerald-600" />
-                                ) : (
-                                  <Copy size={13} />
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 px-3 font-semibold text-indigo-700">
-                          {item.sku || "-"}
-                        </td>
-                        <td className="py-3 px-3 text-right font-extrabold text-emerald-600">
-                          {item.orders}
-                        </td>
-                        <td className="py-3 px-3 text-right text-slate-900">
-                          ${Number(item.sales || 0).toFixed(2)}
-                        </td>
-                        <td className="py-3 px-3 text-center font-bold text-slate-800">
-                          ${Number(item.bid || 1).toFixed(2)}
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${item.source === "AUTO_UPLOAD"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : "bg-slate-100 text-slate-700"
-                              }`}
+                    paginatedRegGroups.map((g) => {
+                      const expanded = expandedRegCamps.has(g.name);
+                      const allChecked = g.items.every((it) => selectedRegIds.has(it.id));
+                      const someChecked = !allChecked && g.items.some((it) => selectedRegIds.has(it.id));
+                      const sources = Array.from(g.sources);
+                      const match = g.matchType.toLowerCase();
+                      return (
+                        <Fragment key={g.name}>
+                          <tr
+                            className="hover:bg-slate-50/80 transition cursor-pointer"
+                            onClick={() =>
+                              setExpandedRegCamps((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(g.name)) next.delete(g.name);
+                                else next.add(g.name);
+                                return next;
+                              })
+                            }
                           >
-                            {item.source === "AUTO_UPLOAD" ? "Auto Mac" : "Xuất File"}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-center text-slate-500 text-[11px]">
-                          {new Date(item.created_at).toLocaleDateString("vi-VN", {
-                            day: "2-digit",
-                            month: "2-digit",
-                            year: "numeric",
-                          })}
-                        </td>
-                      </tr>
-                    ))
+                            <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={allChecked}
+                                ref={(el) => {
+                                  if (el) el.indeterminate = someChecked;
+                                }}
+                                onChange={(e) => {
+                                  const next = new Set(selectedRegIds);
+                                  g.items.forEach((it) => (e.target.checked ? next.add(it.id) : next.delete(it.id)));
+                                  setSelectedRegIds(next);
+                                }}
+                                className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-1.5 max-w-md">
+                                <CaretDown size={12} className={`shrink-0 text-slate-400 transition-transform ${expanded ? "" : "-rotate-90"}`} />
+                                <span className="font-bold text-emerald-800 truncate" title={g.name}>{g.name}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(g.name, `reg_camp_${g.name}`);
+                                  }}
+                                  className="shrink-0 p-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded transition"
+                                  title="Copy tên campaign"
+                                >
+                                  {copiedKey === `reg_camp_${g.name}` ? <Check size={13} weight="bold" className="text-emerald-600" /> : <Copy size={13} />}
+                                </button>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${g.channel === "FBM" ? "bg-violet-100 text-violet-800" : "bg-sky-100 text-sky-800"}`}>{g.channel}</span>
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${match === "exact" ? "bg-blue-100 text-blue-800" : match === "phrase" ? "bg-sky-100 text-sky-800" : "bg-emerald-100 text-emerald-800"}`}>
+                                {g.matchType}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 font-semibold text-indigo-700">{g.sku || "-"}</td>
+                            <td className="py-3 px-3 text-right font-bold text-slate-900">{g.items.length}</td>
+                            <td className="py-3 px-3">
+                              <span className="block max-w-xs truncate text-slate-600" title={sources.join("\n")}>
+                                {sources[0] || "-"}
+                                {sources.length > 1 && <span className="ml-1 text-slate-400">+{sources.length - 1}</span>}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right font-extrabold text-emerald-600">{g.orders}</td>
+                            <td className="py-3 px-3 text-right text-slate-900">${g.sales.toFixed(2)}</td>
+                            <td className="py-3 px-3 text-center">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${g.autoUpload ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
+                                {g.autoUpload ? "Auto Mac" : "Xuất File"}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-center text-slate-500 text-[11px]">
+                              {new Date(g.createdAt).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                            </td>
+                          </tr>
+                          {expanded &&
+                            g.items.map((item) => (
+                              <tr key={item.id} className="bg-slate-50/60">
+                                <td className="py-2 px-4">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedRegIds.has(item.id)}
+                                    onChange={(e) => {
+                                      const next = new Set(selectedRegIds);
+                                      if (e.target.checked) next.add(item.id);
+                                      else next.delete(item.id);
+                                      setSelectedRegIds(next);
+                                    }}
+                                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                                  />
+                                </td>
+                                <td className="py-2 px-3 pl-8 font-bold text-slate-900" colSpan={4}>{item.keyword_text}</td>
+                                <td className="py-2 px-3 text-right text-slate-500">${Number(item.bid || 1).toFixed(2)}</td>
+                                <td className="py-2 px-3">
+                                  <span className="block max-w-xs truncate text-slate-600" title={item.source_campaign_name}>{item.source_campaign_name || "-"}</span>
+                                </td>
+                                <td className="py-2 px-3 text-right text-emerald-600">{item.orders}</td>
+                                <td className="py-2 px-3 text-right text-slate-900">${Number(item.sales || 0).toFixed(2)}</td>
+                                <td className="py-2 px-3" colSpan={2} />
+                              </tr>
+                            ))}
+                        </Fragment>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -2445,10 +2644,10 @@ export function PpcSaleKwView({
                 <PpcPagination
                   currentPage={regPage}
                   totalPages={totalRegPages}
-                  totalItems={filteredRegItems.length}
+                  totalItems={shownRegGroups.length}
                   pageSize={regPageSize}
                   pageSizeOptions={[20, 50, 100]}
-                  itemName="mục"
+                  itemName="camp"
                   onPageChange={setRegPage}
                   onPageSizeChange={(sz) => {
                     setRegPageSize(sz);
@@ -2504,7 +2703,7 @@ export function PpcSaleKwView({
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Dạng chạy / Ngày chạy:</span>
-                    <span className="font-bold text-slate-900">{adTypeCode} / {customDate}</span>
+                    <span className="font-bold text-slate-900">{adTypeCodes.join(" + ")} / {customDate}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Ngân sách mỗi Camp:</span>

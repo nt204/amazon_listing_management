@@ -336,6 +336,8 @@ export function buildSaleKwCampaignName(params: {
   dateStr?: string;
   /** Đuôi tên campaign; bỏ trống thì không thêm, không truyền thì giữ "(sale kw)" */
   suffix?: string;
+  /** Kênh trong tên camp; mặc định FBA */
+  fulfillment?: "FBA" | "FBM" | null;
 }): string {
   const extractedSku = extractSkuFromText(params.sku);
   const cleanSku = (extractedSku || params.sku || "").trim().toUpperCase() || "SKU";
@@ -343,7 +345,8 @@ export function buildSaleKwCampaignName(params: {
   const user = sanitizeSaleKwUserName(params.userName);
   const dateStr = normalizeSaleKwDate(params.dateStr);
   const suffix = (params.suffix ?? "(sale kw)").trim();
-  return `${cleanSku} ${runType} ${params.matchType} FBA ${user} ${dateStr}${suffix ? ` ${suffix}` : ""}`;
+  const channel = params.fulfillment === "FBM" ? "FBM" : "FBA";
+  return `${cleanSku} ${runType} ${params.matchType} ${channel} ${user} ${dateStr}${suffix ? ` ${suffix}` : ""}`;
 }
 
 /**
@@ -355,6 +358,7 @@ export function generateSaleKwCampaignTriad(params: {
   userName?: string;
   dateStr?: string;
   suffix?: string;
+  fulfillment?: "FBA" | "FBM" | null;
 }): { exact: string; phrase: string; broad: string } {
   return {
     exact: buildSaleKwCampaignName({ ...params, matchType: "Exact" }),

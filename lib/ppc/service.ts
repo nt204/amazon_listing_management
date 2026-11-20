@@ -1792,6 +1792,18 @@ export interface SaleKwCampaignPayload {
   defaultBid?: number;
   biddingStrategy?: string;
   negateInSource?: boolean;
+  /** SB01 / SB05: camp Sponsored Brands (mặc định SP) */
+  adProduct?: "SP" | "SB";
+  runType?: string;
+  sbCreative?: {
+    brandEntityId: string;
+    brand: string;
+    brandLogoAssetId?: string;
+    creativeHeadline?: string;
+    creativeAsins: string;
+    landingPageUrl?: string;
+    videoMediaIds?: string;
+  };
   keywords: Array<{
     customerSearchTerm: string;
     keyword?: string;
@@ -1801,6 +1813,11 @@ export interface SaleKwCampaignPayload {
     sales?: number;
     clicks?: number;
     spend?: number;
+    /** Camp nguồn của riêng term này (phủ định Exact đúng camp nguồn) */
+    sourceCampaignId?: string;
+    sourceCampaignName?: string;
+    sourceAdGroupId?: string;
+    sourceAdGroupName?: string;
   }>;
 }
 
