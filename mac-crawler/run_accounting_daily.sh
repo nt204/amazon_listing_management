@@ -40,6 +40,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Lịch 16:10 không mở Seller Central đúng một phút mỗi ngày: chờ ngẫu nhiên 0–ACCOUNTING_START_JITTER_SEC giây.
+# Mac mini chạy bằng crontab: `10 16 * * * ACCOUNTING_START_JITTER_SEC=300 /bin/bash .../run_accounting_daily.sh`.
+# Plist launchd com.amazon.ketoan.crawler (nếu dùng) tự nhận 300s. Chạy tay, chạy bù, job từ web: không đặt biến → chạy ngay.
+if [ "${XPC_SERVICE_NAME:-}" = "com.amazon.ketoan.crawler" ]; then
+  START_JITTER_MAX_SEC="${ACCOUNTING_START_JITTER_SEC:-300}"
+else
+  START_JITTER_MAX_SEC="${ACCOUNTING_START_JITTER_SEC:-0}"
+fi
+if [ "$START_JITTER_MAX_SEC" -gt 0 ] 2>/dev/null; then
+  START_DELAY=$((RANDOM % (START_JITTER_MAX_SEC + 1)))
+  echo "[Lịch] Chờ ngẫu nhiên ${START_DELAY}s trước khi mở Seller Central (tối đa ${START_JITTER_MAX_SEC}s)."
+  sleep "$START_DELAY"
+fi
+
 # Giải phóng RAM trước khi khởi động phiên tải mới
 if command -v sudo >/dev/null 2>&1; then
   sudo -n purge 2>/dev/null && echo "[RAM GUARD] Đã purge giải phóng RAM trước khi chạy." || true
