@@ -3,6 +3,7 @@
 import { getDatabaseClient } from "@/lib/db";
 import type { NewCampSkuInfo } from "./new-camp-generator";
 import { BRAND_ENTITY_PATTERN, storeKey, type StoreSbDefaults } from "./new-camp-fields";
+import { accountingNameOfPpcStore } from "./store-aliases";
 
 type SkuRow = {
   sku: string;
@@ -135,7 +136,8 @@ async function getStoreLogos(): Promise<Map<string, string>> {
  * dùng nhất), Brand Name nhiều SKU dùng nhất — gom cả BẢNG MÃ FBA lẫn FBM.
  */
 export async function getStoreSbDefaults(storeName: string): Promise<StoreSbDefaults> {
-  const store = storeKey(storeName);
+  // Sale KW truyền tên store PPC (HSOSTORE) — Entity / Logo / Brand lưu theo tên Bảng mã (WARMSTOREY)
+  const store = storeKey(storeName ? accountingNameOfPpcStore(storeName) : storeName);
   const empty = { brandEntityId: "", brandLogoAssetId: "", brand: "" };
   if (!store) return empty;
   const sql = await getDatabaseClient();
