@@ -15,9 +15,10 @@ import {
   type LaunchSkuOverride,
   type LaunchTerm,
 } from "@/lib/ppc/campaign-launch";
+import type { NewCampSkuInfo } from "@/lib/ppc/new-camp-generator";
 import { exportCampaignLaunchBulksheet } from "@/lib/ppc/campaign-launch-bulksheet";
-import { listNewCampSkus } from "@/lib/ppc/new-camp-db";
-import { SB_FIELDS, SB_FIELD_LABELS, missingSbFields, sbFieldValue, type SbOverrides } from "@/lib/ppc/new-camp-fields";
+import { getStoreSbDefaults, listLaunchSkus } from "@/lib/ppc/new-camp-db";
+import { SB_FIELDS, SB_FIELD_LABELS, missingSbFields, sbFieldValue, withStoreSbDefaults, type SbOverrides } from "@/lib/ppc/new-camp-fields";
 import { formatYYYYMMDD } from "@/lib/ppc/sku-extractor";
 
 /** "20261117" → giữ nguyên nếu là ngày thật; sai định dạng → null. */
@@ -42,13 +43,14 @@ function parseSbOverrides(raw: unknown): SbOverrides {
 }
 
 /** strict (upload tự động): thiếu trường bắt buộc thì chặn; tải file thì ghi phần đang có. */
-async function attachSbCreatives(plan: LaunchPlan, fulfillment: "FBA" | "FBM", overrides: SbOverrides, strict: boolean): Promise<void> {
+async function attachSbCreatives(plan: LaunchPlan, infos: Map<string, NewCampSkuInfo>, overrides: SbOverrides, strict: boolean, storeName: string): Promise<void> {
   const sbCamps = plan.campaigns.filter((c) => c.adProduct === "SB");
   if (sbCamps.length === 0) return;
-  const infos = new Map((await listNewCampSkus(fulfillment)).map((x) => [x.sku.toUpperCase(), x]));
+  const storeDefaults = await getStoreSbDefaults(storeName);
   const missing: string[] = [];
   for (const camp of sbCamps) {
-    const info = infos.get(camp.sku.toUpperCase());
+    // Entity / Logo / Brand Name theo store dùng chung FBA và FBM (SKU không có trong BẢNG MÃ đang chọn vẫn có)
+    const info = withStoreSbDefaults(infos.get(camp.sku.toUpperCase()), camp.sku, storeDefaults);
     const override = overrides[camp.sku.toUpperCase()];
     const runs = { sb01: camp.runType === "SB01", sb05: camp.runType === "SB05" };
     const lack = missingSbFields(info, override, runs);
@@ -118,9 +120,20 @@ function parseSkuOverrides(raw: unknown): Record<string, LaunchSkuOverride> {
     if (strategy) o.biddingStrategy = strategy;
     if (typeof value.suffix === "string") o.suffix = value.suffix.trim();
     if (Number(value.commonBid) > 0) o.commonBid = Math.max(0.1, Number(value.commonBid));
+    if (value.trangThai === "Test" || value.trangThai === "Win" || value.trangThai === "Auto") o.trangThai = value.trangThai;
     overrides[sku] = o;
   }
   return overrides;
+}
+
+function parseNameEdits(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const name = typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 128) : "";
+    if (key && name) out[key.slice(0, 200)] = name;
+  }
+  return out;
 }
 
 function parseOptions(raw: Record<string, unknown> | undefined): LaunchOptions {
@@ -138,6 +151,8 @@ function parseOptions(raw: Record<string, unknown> | undefined): LaunchOptions {
     skuOverrides: parseSkuOverrides(raw?.skuOverrides),
     commonBid: Number(raw?.commonBid) > 0 ? Math.max(0.1, Number(raw?.commonBid)) : undefined,
     kwPlus: raw?.kwPlus === true,
+    trangThai: raw?.trangThai === "Test" || raw?.trangThai === "Win" ? raw.trangThai : "Auto",
+    nameEdits: parseNameEdits(raw?.nameEdits),
   };
 }
 
@@ -165,9 +180,20 @@ export async function POST(request: Request) {
       throw new ApiError("Chọn ít nhất 1 match type.", 400);
     }
 
+    // BẢNG MÃ đang chọn trước, SKU không có thì lấy bảng còn lại (FBA ↔ FBM): Phôi / Ngách / trạng thái cho tên camp, creative SB
+    const skuInfos = new Map((await listLaunchSkus(options.fulfillment === "FBM" ? "FBM" : "FBA")).map((x) => [x.sku.toUpperCase(), x]));
+    options.skuNames = Object.fromEntries(
+      [...new Set(terms.map((t) => t.sku))].map((sku) => {
+        const info = skuInfos.get(sku);
+        return [sku, { productType: info?.productType, niche: info?.niche, status: info?.status }];
+      }),
+    );
     const plan = buildLaunchPlan(terms, options);
     if (plan.campaigns.length === 0) throw new ApiError("Không có term nào phù hợp với dạng chạy đã chọn.", 400);
-    await attachSbCreatives(plan, options.fulfillment === "FBM" ? "FBM" : "FBA", parseSbOverrides(body?.sbOverrides), mode === "upload");
+    const names = plan.campaigns.map((c) => c.name.toLowerCase());
+    const dup = plan.campaigns.find((c, i) => names.indexOf(c.name.toLowerCase()) !== i);
+    if (dup) throw new ApiError(`Tên camp bị trùng: "${dup.name}". Sửa lại để mỗi camp một tên.`, 400);
+    await attachSbCreatives(plan, skuInfos, parseSbOverrides(body?.sbOverrides), mode === "upload", store.name);
 
     const buffer = await exportCampaignLaunchBulksheet(plan);
     const targetCount = countLaunchTargets(plan);

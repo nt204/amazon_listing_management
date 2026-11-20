@@ -2,7 +2,7 @@
 // và kho file keyword (thay SQLite kw_files).
 import { getDatabaseClient } from "@/lib/db";
 import type { NewCampSkuInfo } from "./new-camp-generator";
-import { BRAND_ENTITY_PATTERN, storeKey } from "./new-camp-fields";
+import { BRAND_ENTITY_PATTERN, storeKey, type StoreSbDefaults } from "./new-camp-fields";
 
 type SkuRow = {
   sku: string;
@@ -128,6 +128,45 @@ async function getStoreLogos(): Promise<Map<string, string>> {
     if (key && !map.has(key) && LOGO_PATTERN.test(r.logo)) map.set(key, r.logo);
   }
   return map;
+}
+
+/**
+ * Thông số SB theo store, dùng chung FBA và FBM: Entity / Logo đã lưu theo store (chưa lưu thì lấy giá trị nhiều SKU
+ * dùng nhất), Brand Name nhiều SKU dùng nhất — gom cả BẢNG MÃ FBA lẫn FBM.
+ */
+export async function getStoreSbDefaults(storeName: string): Promise<StoreSbDefaults> {
+  const store = storeKey(storeName);
+  const empty = { brandEntityId: "", brandLogoAssetId: "", brand: "" };
+  if (!store) return empty;
+  const sql = await getDatabaseClient();
+  const [entities, logos] = await Promise.all([getStoreBrandEntities(), getStoreLogos()]);
+  const top = async (col: "brand" | "brand_entity_id") => {
+    const rows = await sql<{ v: string }[]>`
+      SELECT BTRIM(m.${sql(col)}) AS v
+      FROM (
+        SELECT store_id, brand, brand_entity_id FROM accounting_sku_master WHERE deleted_at IS NULL
+        UNION ALL
+        SELECT store_id, brand, brand_entity_id FROM accounting_sku_master_fbm WHERE deleted_at IS NULL
+      ) m
+      JOIN stores s ON s.id = m.store_id
+      WHERE UPPER(BTRIM(s.name)) = ${store} AND BTRIM(COALESCE(m.${sql(col)}, '')) <> ''
+      GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1
+    `;
+    return rows[0]?.v || "";
+  };
+  const [brand, entityTop] = await Promise.all([top("brand"), entities.has(store) ? Promise.resolve("") : top("brand_entity_id")]);
+  return {
+    brandEntityId: entities.get(store) || (BRAND_ENTITY_PATTERN.test(entityTop.toUpperCase()) ? entityTop.toUpperCase() : ""),
+    brandLogoAssetId: logos.get(store) || "",
+    brand,
+  };
+}
+
+/** Lên camp từ search term: BẢNG MÃ đang chọn trước, SKU không có thì lấy từ bảng còn lại (FBA ↔ FBM). */
+export async function listLaunchSkus(primary: "FBA" | "FBM"): Promise<NewCampSkuInfo[]> {
+  const [main, other] = await Promise.all([listNewCampSkus(primary), listNewCampSkus(primary === "FBA" ? "FBM" : "FBA")]);
+  const seen = new Set(main.map((x) => x.sku.toUpperCase()));
+  return [...main, ...other.filter((x) => !seen.has(x.sku.toUpperCase()))];
 }
 
 export async function listNewCampSkus(loaiHinh: "FBA" | "FBM"): Promise<NewCampSkuInfo[]> {

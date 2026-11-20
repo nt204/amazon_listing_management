@@ -17,13 +17,15 @@ import {
   type LaunchMatchType,
   type LaunchRunType,
   type LaunchSkuOverride,
+  type LaunchCampaign,
+  type LaunchTrangThai,
 } from "@/lib/ppc/campaign-launch";
 import {
   isAsinProductTarget,
   formatYYYYMMDD,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
-import { SB_FIELD_LABELS, SB_FIELD_PLACEHOLDERS, missingSbFields, type SbField, type SbOverrides } from "@/lib/ppc/new-camp-fields";
+import { SB_FIELD_LABELS, SB_FIELD_PLACEHOLDERS, missingSbFields, withStoreSbDefaults, type SbField, type SbOverrides, type StoreSbDefaults } from "@/lib/ppc/new-camp-fields";
 import type { NewCampSkuInfo } from "@/lib/ppc/new-camp-generator";
 
 type BidRule = "cpc" | "cpc_pct";
@@ -38,6 +40,7 @@ interface LaunchSettings {
   bidValue: number;
   suffix: string;
   fulfillment: LaunchFulfillment;
+  trangThai: LaunchTrangThai;
 }
 
 const DEFAULT_SETTINGS: LaunchSettings = {
@@ -49,7 +52,13 @@ const DEFAULT_SETTINGS: LaunchSettings = {
   bidValue: 10,
   suffix: "",
   fulfillment: "FBA",
+  trangThai: "Auto",
 };
+const TRANG_THAI_OPTIONS: Array<{ value: LaunchTrangThai; label: string }> = [
+  { value: "Auto", label: "Auto (theo BẢNG MÃ)" },
+  { value: "Test", label: "Test" },
+  { value: "Win", label: "Win" },
+];
 
 interface LaunchItem {
   id: string;
@@ -115,6 +124,7 @@ function readSavedSettings(settingsKey: string): LaunchSettings | null {
     const parsedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
     if (parsedSettings.bidRule !== "cpc_pct") parsedSettings.bidRule = "cpc";
     if (parsedSettings.fulfillment !== "FBM") parsedSettings.fulfillment = "FBA";
+    if (!["Auto", "Test", "Win"].includes(parsedSettings.trangThai)) parsedSettings.trangThai = "Auto";
     return parsedSettings;
   } catch {
     return null;
@@ -198,12 +208,14 @@ export function PpcSearchTermLaunchPanel({
   const [items, setItems] = useState<LaunchItem[]>([]);
   const [commonBid, setCommonBid] = useState("");
   const [kwPlus, setKwPlus] = useState(false);
+  const [nameEdits, setNameEdits] = useState<Record<string, string>>({});
+  const [editingName, setEditingName] = useState<string | null>(null);
   const [skuOverrides, setSkuOverrides] = useState<Record<string, LaunchSkuOverride>>({});
   const [expandedSkus, setExpandedSkus] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<"export" | "upload" | null>(null);
   const [uploadStatus, setUploadStatus] = useState<{ jobId: string; status: string; progress?: number; error?: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [sbInfos, setSbInfos] = useState<{ type: LaunchFulfillment; map: Map<string, NewCampSkuInfo> } | null>(null);
+  const [sbInfos, setSbInfos] = useState<{ type: LaunchFulfillment; store: string; map: Map<string, NewCampSkuInfo>; storeDefaults: StoreSbDefaults | null } | null>(null);
   const [sbOverrides, setSbOverrides] = useState<SbOverrides>({});
 
   useEffect(() => () => {
@@ -237,6 +249,8 @@ export function PpcSearchTermLaunchPanel({
     setItems(buildItems(selectedRows, selectedSku));
     setCommonBid("");
     setKwPlus(false);
+    setNameEdits({});
+    setEditingName(null);
     setSkuOverrides({});
     setExpandedSkus(new Set());
     setUploadStatus(null);
@@ -304,23 +318,35 @@ export function PpcSearchTermLaunchPanel({
   const isSb = runType.adProduct === "SB";
 
   useEffect(() => {
-    if (!open || !isSb || sbInfos?.type === settings.fulfillment) return;
+    if (!open || (sbInfos?.type === settings.fulfillment && sbInfos.store === storeName)) return;
     const type = settings.fulfillment;
+    const store = storeName;
     let cancelled = false;
-    fetch(`/api/ppc/new-camp/skus?type=${type}`, { cache: "no-store" })
+    fetch(`/api/ppc/new-camp/skus?type=${type}&merge=1&store=${encodeURIComponent(store)}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((json) => {
         if (cancelled || !json.success) return;
-        setSbInfos({ type, map: new Map((json.data as NewCampSkuInfo[]).map((x) => [x.sku.toUpperCase(), x])) });
+        setSbInfos({
+          type,
+          store,
+          map: new Map((json.data as NewCampSkuInfo[]).map((x) => [x.sku.toUpperCase(), x])),
+          storeDefaults: (json.storeDefaults as StoreSbDefaults | null) ?? null,
+        });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [open, isSb, settings.fulfillment, sbInfos?.type]);
+  }, [open, settings.fulfillment, storeName, sbInfos?.type, sbInfos?.store]);
 
   const sbRuns = { sb01: runType.value === "SB01", sb05: runType.value === "SB05" };
-  const sbInfoOf = (sku: string) => (isSb && sbInfos?.type === settings.fulfillment ? sbInfos.map.get(sku.toUpperCase()) : undefined);
+  // SKU không có trong BẢNG MÃ đang chọn vẫn dùng Entity / Logo / Brand Name của store (chung FBA và FBM)
+  const sbRawInfoOf = (sku: string) => (isSb && sbInfos?.type === settings.fulfillment ? sbInfos.map.get(sku.toUpperCase()) : undefined);
+  const sbInfoOf = (sku: string) => {
+    if (!isSb || sbInfos?.type !== settings.fulfillment) return undefined;
+    const raw = sbInfos.map.get(sku.toUpperCase());
+    return sbInfos.storeDefaults ? withStoreSbDefaults(raw, sku, sbInfos.storeDefaults) : raw;
+  };
   const sbReady = isSb && sbInfos?.type === settings.fulfillment;
   // Trường BẢNG MÃ còn trống (hiện ô nhập); còn thiếu = chưa điền bổ sung
   const sbBlankFields = (sku: string): SbField[] => (sbReady ? missingSbFields(sbInfoOf(sku), undefined, sbRuns) : []);
@@ -361,16 +387,38 @@ export function PpcSearchTermLaunchPanel({
     skuOverrides,
     commonBid: Number(commonBid) > 0 ? Number(commonBid) : undefined,
     kwPlus: runType.target === "keyword" && kwPlus,
+    trangThai: settings.trangThai,
+    nameEdits,
+    skuNames: sbInfos?.type === settings.fulfillment
+      ? Object.fromEntries(
+        [...new Set(launchTerms.map((t) => t.sku.toUpperCase()))].map((sku) => {
+          const info = sbInfos.map.get(sku);
+          return [sku, { productType: info?.productType, niche: info?.niche, status: info?.status }];
+        }),
+      )
+      : undefined,
   };
   const plan = buildLaunchPlan(launchTerms, launchOptions);
-  const campaignsBySku = new Map<string, string[]>();
+  const campaignsBySku = new Map<string, LaunchCampaign[]>();
   for (const camp of plan.campaigns) {
     if (!campaignsBySku.has(camp.sku)) campaignsBySku.set(camp.sku, []);
-    campaignsBySku.get(camp.sku)!.push(camp.name);
+    campaignsBySku.get(camp.sku)!.push(camp);
   }
 
   const sbMissingSkus = isSb ? [...campaignsBySku.keys()].filter((sku) => sbMissing(sku).length > 0) : [];
   const sbLoading = isSb && sbInfos?.type !== settings.fulfillment;
+
+  const campNamesLower = plan.campaigns.map((c) => c.name.toLowerCase());
+  const dupCampaign = plan.campaigns.find((c, i) => campNamesLower.indexOf(c.name.toLowerCase()) !== i);
+  const setNameEdit = (camp: LaunchCampaign, value: string) => {
+    const name = value.replace(/\s+/g, " ").trim();
+    setNameEdits((prev) => {
+      const next = { ...prev };
+      if (!name || name === camp.defaultName) delete next[camp.key];
+      else next[camp.key] = name;
+      return next;
+    });
+  };
 
   const blocker =
     usableItems.length === 0
@@ -381,7 +429,9 @@ export function PpcSearchTermLaunchPanel({
           ? `Còn ${missingSkuCount} term chưa có SKU.`
           : sbLoading
             ? "Đang tải thông tin SB…"
-            : null;
+            : dupCampaign
+              ? `Tên camp bị trùng: ${dupCampaign.name}`
+              : null;
   const uploadBlocker = sbMissingSkus.length > 0 ? `${sbMissingSkus.length} SKU thiếu thông tin SB: tải file được, chưa upload tự động được.` : null;
 
   const renameSku = (fromSku: string, toSku: string) => {
@@ -768,6 +818,17 @@ export function PpcSearchTermLaunchPanel({
                     <input value={userName} onChange={(e) => updateUserName(e.target.value)} className={`${inputCls} w-20`} />
                   </label>
                   <label>
+                    <span className={labelCls}>Test / Win</span>
+                    <select
+                      value={settings.trangThai}
+                      onChange={(e) => updateSettings({ trangThai: e.target.value as LaunchTrangThai })}
+                      title="Auto: SKU FBA trạng thái Phát triển = Win, còn lại Test (FBM luôn Test)"
+                      className={`${inputCls} cursor-pointer`}
+                    >
+                      {TRANG_THAI_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </label>
+                  <label>
                     <span className={labelCls}>Ngày</span>
                     <input
                       value={dateStr}
@@ -841,7 +902,7 @@ export function PpcSearchTermLaunchPanel({
                           {!unknown && sbBlankFields(sku).length + sbBlankOptional(sku).length > 0 && (
                             <div className="mt-2 rounded-lg border border-rose-200 bg-white p-2.5">
                               <div className={`mb-1.5 text-xs font-semibold ${sbBlankFields(sku).length ? "text-rose-600" : "text-slate-500"}`}>
-                                {sbInfoOf(sku) ? "BẢNG MÃ thiếu thông tin SB" : `SKU không có trong BẢNG MÃ ${settings.fulfillment}`} · chỉ dùng cho lần này
+                                {sbRawInfoOf(sku) ? "BẢNG MÃ thiếu thông tin SB" : "SKU không có trong BẢNG MÃ FBA / FBM"} · chỉ dùng cho lần này
                               </div>
                               <div className="grid grid-cols-2 gap-2">
                                 {[...sbBlankFields(sku), ...sbBlankOptional(sku)].map((f) => {
@@ -911,6 +972,16 @@ export function PpcSearchTermLaunchPanel({
                                 </label>
                               )}
                               <label>
+                                <span className="mb-0.5 block text-[11px] text-slate-500">Test / Win</span>
+                                <select
+                                  value={override?.trangThai ?? settings.trangThai}
+                                  onChange={(e) => updateSkuOverride(sku, { trangThai: e.target.value as LaunchTrangThai })}
+                                  className={`${inputCls} py-1 text-xs cursor-pointer`}
+                                >
+                                  {TRANG_THAI_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                              </label>
+                              <label>
                                 <span className="mb-0.5 block text-[11px] text-slate-500">Bid chung ($)</span>
                                 <input
                                   type="number"
@@ -943,7 +1014,49 @@ export function PpcSearchTermLaunchPanel({
                           )}
                           {campNames.length > 0 && (
                             <div className="mt-1 space-y-0.5 font-mono text-[11px] leading-snug text-slate-500">
-                              {campNames.map((name) => <div key={name} className="break-all">{name}</div>)}
+                              {campNames.map((camp) => {
+                                const edited = nameEdits[camp.key] !== undefined;
+                                const dup = dupCampaign && camp.name.toLowerCase() === dupCampaign.name.toLowerCase();
+                                return editingName === camp.key ? (
+                                  <input
+                                    key={camp.key}
+                                    autoFocus
+                                    defaultValue={camp.name}
+                                    onBlur={(e) => {
+                                      setNameEdit(camp, e.target.value);
+                                      setEditingName(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                      if (e.key === "Escape") setEditingName(null);
+                                    }}
+                                    className="w-full rounded border border-indigo-400 bg-white px-1 py-0.5 font-mono text-[11px] text-slate-800 outline-none ring-2 ring-indigo-100"
+                                  />
+                                ) : (
+                                  <div key={camp.key} className="group flex items-start gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingName(camp.key)}
+                                      title="Bấm để sửa tên camp"
+                                      className={`min-w-0 cursor-text break-all rounded px-0.5 text-left hover:bg-white hover:ring-1 hover:ring-slate-200 ${
+                                        dup ? "text-rose-600" : edited ? "text-indigo-700" : ""
+                                      }`}
+                                    >
+                                      {camp.name}
+                                    </button>
+                                    {edited && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setNameEdit(camp, "")}
+                                        title={`Về tên tự đặt: ${camp.defaultName}`}
+                                        className="shrink-0 cursor-pointer rounded px-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                                      >
+                                        ↺
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>

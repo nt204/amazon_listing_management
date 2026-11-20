@@ -56,6 +56,41 @@ export function sbFieldValue(info: NewCampSkuInfo | undefined, override: Partial
   return (info?.[field] ?? "").trim();
 }
 
+/** Thông số SB theo store, dùng chung FBA và FBM (getStoreSbDefaults). */
+export interface StoreSbDefaults {
+  brandEntityId: string;
+  brandLogoAssetId: string;
+  brand: string;
+}
+
+/** Điền thông số store (Entity, Logo, Brand Name) còn trống; SKU không có trong BẢNG MÃ đang chọn vẫn có các trường này. */
+export function withStoreSbDefaults(info: NewCampSkuInfo | undefined, sku: string, d: StoreSbDefaults): NewCampSkuInfo {
+  const base: NewCampSkuInfo = info ?? {
+    sku,
+    productType: "",
+    niche: "",
+    picMkt: "",
+    brand: "",
+    brandEntityId: "",
+    creativeAsinsVideo: "",
+    creativeAsinsCollection: "",
+    videoMediaIds: "",
+    creativeHeadline: "",
+    brandLogoAssetId: "",
+    landingPageUrl: "",
+    storeName: "",
+    asin: "",
+    status: "",
+    mockupUrl: "",
+  };
+  return {
+    ...base,
+    brand: base.brand || d.brand,
+    brandEntityId: base.brandEntityId || d.brandEntityId,
+    brandLogoAssetId: base.brandLogoAssetId || d.brandLogoAssetId,
+  };
+}
+
 /** Trường bắt buộc còn thiếu của 1 SKU theo các dạng SB đang chọn. */
 export function missingSbFields(
   info: NewCampSkuInfo | undefined,
