@@ -9,7 +9,8 @@ import {
   NewCampInputError,
   applyNameEdits,
   buildCampaignZip,
-  writeGeneratedXlsx,
+  combineGeneratedFiles,
+  writeCombinedXlsx,
   planCampaigns,
   createKeywordWorkbook,
   createKeywordWorkbookParts,
@@ -431,7 +432,6 @@ export async function POST(request: Request) {
         groups.get(st.id)!.skus.push(sku);
       }
       const finalByKey = new Map(plan.map((c, i) => [c.key, finalNames[i]]));
-      const prefixOf: Array<[string, string]> = [["SP03 KW", "SP03|"], ["SB01 CK KW", "SB01|"], ["SB05 VIDEO", "SB05|"], ["SP04 Auto", "SP04|"], ["FL Asin", "FL|"]];
       const jobs: Array<{ id: string; fileName: string; campaigns: number; store: string }> = [];
       for (const { store, skus } of groups.values()) {
         const formG = { ...form, selectedSkus: skus };
@@ -439,10 +439,11 @@ export async function POST(request: Request) {
         const planG = planCampaigns(formG, infos, keywordParts, asins.length);
         applyNameEdits(filesG, planG, nameEdits);
         const cleanStore = store.name.replace(/[^A-Za-z0-9._-]+/g, "_");
-        for (const f of filesG) {
-          const keyPrefix = prefixOf.find(([pfx]) => f.fileName.startsWith(pfx))?.[1] ?? "";
-          const camps = planG.filter((c) => keyPrefix && c.key.startsWith(keyPrefix)).map((c) => ({ ...c, finalName: finalByKey.get(c.key) || c.name }));
-          const buffer = await writeGeneratedXlsx(f);
+        // Mỗi store 1 file gộp (sheet SP + sheet SB) → 1 job upload
+        if (filesG.length) {
+          const f = combineGeneratedFiles(filesG, formG);
+          const camps = planG.map((c) => ({ ...c, finalName: finalByKey.get(c.key) || c.name }));
+          const buffer = await writeCombinedXlsx(f);
           const jobId = crypto.randomUUID();
           const fileName = `NewCamp_${cleanStore}_${f.fileName.replace(/[^A-Za-z0-9._ -]+/g, "_")}`;
           const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
@@ -479,13 +480,10 @@ export async function POST(request: Request) {
       return withUploadHeaders(Response.json({ success: true, stores: [...groups.values()].map((g) => g.store.name), jobs }, { status: 202 }));
     }
 
-    // Trả từng file Excel riêng (không nén zip); output=zip vẫn giữ để tương thích
+    // Gộp cả lượt thành 1 file bulk (sheet SP + sheet SB); output=zip (từng file riêng) vẫn giữ để tương thích
     if (str(formData.get("output")) !== "zip") {
-      const out = await Promise.all(files.map(async (f) => ({
-        name: f.fileName,
-        rows: f.rows.length,
-        data: (await writeGeneratedXlsx(f)).toString("base64"),
-      })));
+      const combined = combineGeneratedFiles(files, form);
+      const out = [{ name: combined.fileName, rows: combined.rowCount, data: (await writeCombinedXlsx(combined)).toString("base64") }];
       return withUploadHeaders(Response.json({ success: true, files: out }, { headers: { "Cache-Control": "no-store" } }));
     }
 

@@ -953,8 +953,8 @@ export function PpcNewCampView() {
         const json = (await res.json()) as { stores: string[]; jobs: Array<{ id: string; fileName: string; campaigns: number; store: string }> };
         setUploadJobs({ stores: json.stores, jobs: json.jobs.map((j) => ({ ...j, status: "PENDING", progress: 25 })) });
         setNotices(uploadNotice ? [uploadNotice] : []);
+        // Giữ file keyword: thường lên tiếp lượt SKU khác với cùng bộ keyword
         setShowIssues(false);
-        resetKeyword();
         return;
       }
       // Tải từng file Excel riêng (không nén zip)
