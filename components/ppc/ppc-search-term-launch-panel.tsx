@@ -7,7 +7,8 @@ import {
   LAUNCH_BIDDING_STRATEGIES,
   LAUNCH_MATCH_TYPES,
   LAUNCH_RUN_TYPES,
-  buildLaunchPlan,
+  buildMultiLaunchPlan,
+  DEFAULT_RUN_BID_PCT,
   countLaunchTargets,
   isTermUsableForRunType,
   kwPlusVariant,
@@ -18,6 +19,7 @@ import {
   type LaunchRunType,
   type LaunchSkuOverride,
   type LaunchCampaign,
+  type LaunchRunConfig,
   type LaunchTrangThai,
 } from "@/lib/ppc/campaign-launch";
 import {
@@ -31,10 +33,16 @@ import type { NewCampSkuInfo } from "@/lib/ppc/new-camp-generator";
 type BidRule = "cpc" | "cpc_pct";
 const UNKNOWN_SKU = "UNKNOWN_SKU";
 
-interface LaunchSettings {
-  runType: LaunchRunType;
+interface RunSetting {
   matchTypes: Record<LaunchMatchType, boolean>;
   dailyBudget: number;
+  bidPct: number;
+}
+
+interface LaunchSettings {
+  /** Nhiều dạng chạy cùng lúc, mỗi dạng 1 cài đặt (match type, budget, % bid) */
+  runTypes: LaunchRunType[];
+  runSettings: Record<LaunchRunType, RunSetting>;
   biddingStrategy: LaunchBiddingStrategy;
   bidRule: BidRule;
   bidValue: number;
@@ -43,10 +51,15 @@ interface LaunchSettings {
   trangThai: LaunchTrangThai;
 }
 
+function defaultRunSettings(): Record<LaunchRunType, RunSetting> {
+  return Object.fromEntries(
+    LAUNCH_RUN_TYPES.map((t) => [t.value, { matchTypes: { exact: true, phrase: true, broad: true }, dailyBudget: 5, bidPct: DEFAULT_RUN_BID_PCT[t.value] }]),
+  ) as Record<LaunchRunType, RunSetting>;
+}
+
 const DEFAULT_SETTINGS: LaunchSettings = {
-  runType: "SP03",
-  matchTypes: { exact: true, phrase: true, broad: true },
-  dailyBudget: 5,
+  runTypes: ["SP03"],
+  runSettings: defaultRunSettings(),
   biddingStrategy: "Dynamic bids - down only",
   bidRule: "cpc",
   bidValue: 10,
@@ -121,7 +134,23 @@ function readSavedSettings(settingsKey: string): LaunchSettings | null {
   try {
     const saved = localStorage.getItem(settingsKey);
     if (!saved) return null;
-    const parsedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+    const raw = JSON.parse(saved);
+    const parsedSettings = { ...DEFAULT_SETTINGS, ...raw };
+    // Cài đặt cũ (1 dạng chạy): runType / matchTypes / dailyBudget
+    const validRun = (v: unknown): v is LaunchRunType => LAUNCH_RUN_TYPES.some((t) => t.value === v);
+    parsedSettings.runTypes = Array.isArray(raw.runTypes) ? raw.runTypes.filter(validRun) : validRun(raw.runType) ? [raw.runType] : ["SP03"];
+    const runSettings = defaultRunSettings();
+    for (const t of LAUNCH_RUN_TYPES) {
+      const savedRun = raw.runSettings?.[t.value];
+      if (savedRun) runSettings[t.value] = { ...runSettings[t.value], ...savedRun };
+      else if (raw.matchTypes || raw.dailyBudget) {
+        runSettings[t.value] = { ...runSettings[t.value], ...(raw.matchTypes ? { matchTypes: raw.matchTypes } : {}), ...(Number(raw.dailyBudget) > 0 ? { dailyBudget: Number(raw.dailyBudget) } : {}) };
+      }
+    }
+    parsedSettings.runSettings = runSettings;
+    delete parsedSettings.runType;
+    delete parsedSettings.matchTypes;
+    delete parsedSettings.dailyBudget;
     if (parsedSettings.bidRule !== "cpc_pct") parsedSettings.bidRule = "cpc";
     if (parsedSettings.fulfillment !== "FBM") parsedSettings.fulfillment = "FBA";
     if (!["Auto", "Test", "Win"].includes(parsedSettings.trangThai)) parsedSettings.trangThai = "Auto";
@@ -314,8 +343,15 @@ export function PpcSearchTermLaunchPanel({
     }
   };
 
-  const runType = launchRunType(settings.runType);
-  const isSb = runType.adProduct === "SB";
+  const selectedRuns = LAUNCH_RUN_TYPES.filter((t) => settings.runTypes.includes(t.value));
+  const runSetting = (v: LaunchRunType): RunSetting => settings.runSettings[v] ?? defaultRunSettings()[v];
+  const anyKeyword = selectedRuns.some((t) => t.target === "keyword");
+  const anySp = selectedRuns.some((t) => t.adProduct === "SP");
+  const isSb = selectedRuns.some((t) => t.adProduct === "SB");
+  const toggleRunType = (v: LaunchRunType) =>
+    updateSettings({ runTypes: settings.runTypes.includes(v) ? settings.runTypes.filter((x) => x !== v) : [...settings.runTypes, v] });
+  const updateRunSetting = (v: LaunchRunType, patch: Partial<RunSetting>) =>
+    updateSettings({ runSettings: { ...settings.runSettings, [v]: { ...runSetting(v), ...patch } } });
 
   useEffect(() => {
     if (!open || (sbInfos?.type === settings.fulfillment && sbInfos.store === storeName)) return;
@@ -339,7 +375,7 @@ export function PpcSearchTermLaunchPanel({
     };
   }, [open, settings.fulfillment, storeName, sbInfos?.type, sbInfos?.store]);
 
-  const sbRuns = { sb01: runType.value === "SB01", sb05: runType.value === "SB05" };
+  const sbRuns = { sb01: settings.runTypes.includes("SB01"), sb05: settings.runTypes.includes("SB05") };
   // SKU không có trong BẢNG MÃ đang chọn vẫn dùng Entity / Logo / Brand Name của store (chung FBA và FBM)
   const sbRawInfoOf = (sku: string) => (isSb && sbInfos?.type === settings.fulfillment ? sbInfos.map.get(sku.toUpperCase()) : undefined);
   const sbInfoOf = (sku: string) => {
@@ -354,8 +390,15 @@ export function PpcSearchTermLaunchPanel({
   const sbMissing = (sku: string): SbField[] => (sbReady ? missingSbFields(sbInfoOf(sku), sbOverrides[sku.toUpperCase()], sbRuns) : []);
   const setSbOverride = (sku: string, field: SbField, value: string) =>
     setSbOverrides((prev) => ({ ...prev, [sku.toUpperCase()]: { ...prev[sku.toUpperCase()], [field]: value } }));
-  const enabledMatchTypes = LAUNCH_MATCH_TYPES.filter((m) => settings.matchTypes[m.key]);
-  const usable = (it: LaunchItem) => isTermUsableForRunType(it.term, runType.value);
+  const launchRuns: LaunchRunConfig[] = selectedRuns.map((t) => ({
+    runType: t.value,
+    matchTypes: t.target === "keyword" ? LAUNCH_MATCH_TYPES.filter((m) => runSetting(t.value).matchTypes[m.key]).map((m) => m.key) : [],
+    dailyBudget: runSetting(t.value).dailyBudget,
+    bidPct: runSetting(t.value).bidPct,
+  }));
+  // Match type mặc định khi sửa riêng SKU: gộp các dạng keyword đang chọn
+  const enabledMatchTypes = LAUNCH_MATCH_TYPES.filter((m) => launchRuns.some((r) => r.matchTypes.includes(m.key)));
+  const usable = (it: LaunchItem) => selectedRuns.some((t) => isTermUsableForRunType(it.term, t.value));
   const usableItems = items.filter(usable);
   const missingSkuCount = usableItems.filter((it) => !it.sku.trim() || it.sku === UNKNOWN_SKU).length;
 
@@ -376,9 +419,7 @@ export function PpcSearchTermLaunchPanel({
     .filter((it) => it.sku.trim() && it.sku !== UNKNOWN_SKU)
     .map((it) => ({ term: it.term, sku: it.sku, bid: bidFor(it), clicks: it.clicks, spend: it.spend }));
   const launchOptions = {
-    runType: runType.value,
-    matchTypes: enabledMatchTypes.map((m) => m.key),
-    dailyBudget: settings.dailyBudget,
+    runs: launchRuns,
     biddingStrategy: settings.biddingStrategy,
     userName: userName.trim() || "Loan",
     dateStr,
@@ -386,7 +427,7 @@ export function PpcSearchTermLaunchPanel({
     fulfillment: settings.fulfillment,
     skuOverrides,
     commonBid: Number(commonBid) > 0 ? Number(commonBid) : undefined,
-    kwPlus: runType.target === "keyword" && kwPlus,
+    kwPlus: anyKeyword && kwPlus,
     trangThai: settings.trangThai,
     nameEdits,
     skuNames: sbInfos?.type === settings.fulfillment
@@ -398,7 +439,7 @@ export function PpcSearchTermLaunchPanel({
       )
       : undefined,
   };
-  const plan = buildLaunchPlan(launchTerms, launchOptions);
+  const plan = buildMultiLaunchPlan(launchTerms, launchOptions, launchRuns);
   const campaignsBySku = new Map<string, LaunchCampaign[]>();
   for (const camp of plan.campaigns) {
     if (!campaignsBySku.has(camp.sku)) campaignsBySku.set(camp.sku, []);
@@ -420,11 +461,14 @@ export function PpcSearchTermLaunchPanel({
     });
   };
 
+  const noMatchRun = launchRuns.find((r) => launchRunType(r.runType).target === "keyword" && r.matchTypes.length === 0);
   const blocker =
-    usableItems.length === 0
-      ? `Không có term nào phù hợp ${runType.label}.`
-      : runType.target === "keyword" && enabledMatchTypes.length === 0
-        ? "Chọn ít nhất 1 match type."
+    selectedRuns.length === 0
+      ? "Chọn ít nhất 1 dạng chạy."
+      : usableItems.length === 0
+      ? "Không có term nào phù hợp dạng chạy đã chọn."
+      : noMatchRun
+        ? `${launchRunType(noMatchRun.runType).label}: chọn ít nhất 1 match type.`
         : missingSkuCount > 0
           ? `Còn ${missingSkuCount} term chưa có SKU.`
           : sbLoading
@@ -679,7 +723,7 @@ export function PpcSearchTermLaunchPanel({
       {open && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/25" onClick={() => !busy && !uploading && setOpen(false)}>
           <div
-            className="flex h-full w-full max-w-[780px] flex-col bg-white shadow-2xl"
+            className="flex h-full w-full max-w-[960px] flex-col bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
@@ -698,16 +742,30 @@ export function PpcSearchTermLaunchPanel({
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              {/* Dạng chạy + match type */}
+              {/* Dạng chạy: chọn nhiều, mỗi dạng 1 hàng cài đặt */}
               <section className="border-b border-slate-100 px-6 py-4">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
-                  <select
-                    value={settings.runType}
-                    onChange={(e) => updateSettings({ runType: e.target.value as LaunchRunType })}
-                    className={`${inputCls} min-w-[200px] cursor-pointer font-semibold`}
-                  >
-                    {LAUNCH_RUN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+                  <div className="flex flex-wrap gap-1.5">
+                    {LAUNCH_RUN_TYPES.map((t) => {
+                      const on = settings.runTypes.includes(t.value);
+                      return (
+                        <button
+                          key={t.value}
+                          type="button"
+                          onClick={() => toggleRunType(t.value)}
+                          title={t.label}
+                          className={`rounded-lg border px-2.5 py-1.5 text-sm font-semibold cursor-pointer ${
+                            on ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                          }`}
+                        >
+                          {t.value}
+                          <span className={`ml-1 text-xs font-medium ${on ? "text-indigo-100" : "text-slate-400"}`}>
+                            {t.label.replace(/^\S+\s*/, "")}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                   <div className="flex rounded-lg border border-slate-200 p-0.5">
                     {(["FBA", "FBM"] as const).map((f) => (
                       <button
@@ -722,25 +780,7 @@ export function PpcSearchTermLaunchPanel({
                       </button>
                     ))}
                   </div>
-                  {runType.target === "keyword" && (
-                    <div className="flex gap-1.5">
-                      {LAUNCH_MATCH_TYPES.map((m) => (
-                        <button
-                          key={m.key}
-                          type="button"
-                          onClick={() => updateSettings({ matchTypes: { ...settings.matchTypes, [m.key]: !settings.matchTypes[m.key] } })}
-                          className={`rounded-lg border px-3 py-1.5 text-sm font-semibold cursor-pointer ${
-                            settings.matchTypes[m.key]
-                              ? "border-indigo-600 bg-indigo-50 text-indigo-700"
-                              : "border-slate-200 text-slate-400 hover:text-slate-600"
-                          }`}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {runType.target === "keyword" && (
+                  {anyKeyword && (
                     <label
                       className="ml-auto flex cursor-pointer items-center gap-1.5 text-sm font-semibold text-slate-600"
                       title='Thêm keyword "a+b+c" cho mỗi keyword nhiều từ'
@@ -750,25 +790,86 @@ export function PpcSearchTermLaunchPanel({
                     </label>
                   )}
                 </div>
+
+                {selectedRuns.length > 0 && (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-xs text-slate-500">
+                        <tr>
+                          <th className="px-3 py-1.5 text-left font-medium">Dạng chạy</th>
+                          <th className="px-2 py-1.5 text-left font-medium">Match type</th>
+                          <th className="px-2 py-1.5 text-left font-medium">Budget ($)</th>
+                          <th className="px-2 py-1.5 text-left font-medium" title="% so với bid ở cột Bid bên dưới (CPC hoặc bid đã nhập)">Bid (% bid gốc)</th>
+                          <th className="px-2 py-1.5 text-right font-medium">Camp</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {selectedRuns.map((t) => {
+                          const rs = runSetting(t.value);
+                          const campCount = plan.campaigns.filter((c) => c.runType === t.value).length;
+                          return (
+                            <tr key={t.value}>
+                              <td className="whitespace-nowrap px-3 py-1.5 font-semibold text-slate-800">{t.label}</td>
+                              <td className="px-2 py-1.5">
+                                {t.target === "keyword" ? (
+                                  <div className="flex gap-1">
+                                    {LAUNCH_MATCH_TYPES.map((m) => (
+                                      <button
+                                        key={m.key}
+                                        type="button"
+                                        onClick={() => updateRunSetting(t.value, { matchTypes: { ...rs.matchTypes, [m.key]: !rs.matchTypes[m.key] } })}
+                                        className={`rounded-md border px-2 py-0.5 text-xs font-semibold cursor-pointer ${
+                                          rs.matchTypes[m.key] ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-400 hover:text-slate-600"
+                                        }`}
+                                      >
+                                        {m.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-slate-400">{t.target === "asin" ? "Target ASIN" : "Auto"}</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  value={rs.dailyBudget}
+                                  onChange={(e) => updateRunSetting(t.value, { dailyBudget: Number(e.target.value) })}
+                                  className={`${inputCls} w-16 py-1`}
+                                />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="10"
+                                    max="500"
+                                    step="5"
+                                    value={rs.bidPct}
+                                    onChange={(e) => updateRunSetting(t.value, { bidPct: Number(e.target.value) })}
+                                    className={`${inputCls} w-16 py-1 text-right`}
+                                  />
+                                  <span className="text-xs text-slate-400">%</span>
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap px-2 py-1.5 text-right text-xs text-slate-500">{campCount}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </section>
 
               {/* Ngân sách, bid, tên campaign */}
               <section className="border-b border-slate-100 px-6 py-4">
                 <div className="flex flex-wrap items-end gap-x-3 gap-y-3">
-                  <label>
-                    <span className={labelCls}>Budget ($)</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={settings.dailyBudget}
-                      onChange={(e) => updateSettings({ dailyBudget: Number(e.target.value) })}
-                      className={`${inputCls} w-16`}
-                    />
-                  </label>
-                  {runType.adProduct === "SP" && (
+                  {anySp && (
                     <label>
-                      <span className={labelCls}>Bidding strategy</span>
+                      <span className={labelCls}>Bidding strategy (SP)</span>
                       <select
                         value={settings.biddingStrategy}
                         onChange={(e) => updateSettings({ biddingStrategy: e.target.value as LaunchBiddingStrategy })}
@@ -885,7 +986,7 @@ export function PpcSearchTermLaunchPanel({
                             {campNames.length > 0 ? (
                               <span className="ml-auto shrink-0 text-xs text-slate-400">{skuItems.length} term · {campNames.length} camp</span>
                             ) : (
-                              <span className="ml-auto shrink-0 text-xs font-medium text-amber-700">Không lên camp {runType.nameLabel}</span>
+                              <span className="ml-auto shrink-0 text-xs font-medium text-amber-700">Không có camp nào</span>
                             )}
                             {!unknown && (
                               <button
@@ -925,7 +1026,7 @@ export function PpcSearchTermLaunchPanel({
                           )}
                           {expanded && !unknown && (
                             <div className="mt-2 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-2.5">
-                              {runType.target === "keyword" && (
+                              {anyKeyword && (
                                 <div className="flex gap-1">
                                   {LAUNCH_MATCH_TYPES.map((m) => {
                                     const on = skuMatchTypes.includes(m.key);
@@ -954,12 +1055,14 @@ export function PpcSearchTermLaunchPanel({
                                   type="number"
                                   min="1"
                                   step="1"
-                                  value={override?.dailyBudget ?? settings.dailyBudget}
-                                  onChange={(e) => updateSkuOverride(sku, { dailyBudget: Number(e.target.value) })}
+                                  value={override?.dailyBudget ?? ""}
+                                  placeholder="Theo dạng"
+                                  title="Để trống: dùng Budget của từng dạng chạy ở trên"
+                                  onChange={(e) => updateSkuOverride(sku, { dailyBudget: Number(e.target.value) > 0 ? Number(e.target.value) : undefined })}
                                   className={`${inputCls} w-16 py-1 text-xs`}
                                 />
                               </label>
-                              {runType.adProduct === "SP" && (
+                              {anySp && (
                                 <label>
                                   <span className="mb-0.5 block text-[11px] text-slate-500">Bidding strategy</span>
                                   <select

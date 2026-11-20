@@ -7,11 +7,12 @@ import {
   LAUNCH_BIDDING_STRATEGIES,
   LAUNCH_MATCH_TYPES,
   LAUNCH_RUN_TYPES,
-  buildLaunchPlan,
+  buildMultiLaunchPlan,
   countLaunchTargets,
   launchRunType,
   type LaunchOptions,
   type LaunchPlan,
+  type LaunchRunConfig,
   type LaunchSkuOverride,
   type LaunchTerm,
 } from "@/lib/ppc/campaign-launch";
@@ -156,6 +157,27 @@ function parseOptions(raw: Record<string, unknown> | undefined): LaunchOptions {
   };
 }
 
+/** Nhiều dạng chạy cùng lúc (options.runs); client cũ chỉ gửi runType → 1 dạng. */
+function parseRuns(raw: Record<string, unknown> | undefined, options: LaunchOptions): LaunchRunConfig[] {
+  const list = Array.isArray(raw?.runs) ? (raw.runs as Array<Record<string, unknown>>) : null;
+  if (!list) return [{ runType: options.runType, matchTypes: options.matchTypes, dailyBudget: options.dailyBudget, bidPct: 100 }];
+  const seen = new Set<string>();
+  const runs: LaunchRunConfig[] = [];
+  for (const r of list) {
+    const runType = LAUNCH_RUN_TYPES.find((t) => t.value === r?.runType)?.value;
+    if (!runType || seen.has(runType)) continue;
+    seen.add(runType);
+    const pct = Number(r?.bidPct);
+    runs.push({
+      runType,
+      matchTypes: parseMatchTypes(r?.matchTypes),
+      dailyBudget: Number(r?.dailyBudget) > 0 ? Number(r.dailyBudget) : 5,
+      bidPct: pct >= 10 && pct <= 500 ? pct : 100,
+    });
+  }
+  return runs;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -174,11 +196,12 @@ export async function POST(request: Request) {
 
     const terms = parseTerms(body?.terms);
     const options = parseOptions(body?.options);
+    const runs = parseRuns(body?.options, options);
+    if (runs.length === 0) throw new ApiError("Chọn ít nhất 1 dạng chạy.", 400);
     if (terms.length === 0) throw new ApiError("Chưa có search term nào để lên camp.", 400);
     if (terms.some((t) => !t.sku || t.sku === "UNKNOWN_SKU")) throw new ApiError("Còn search term chưa có SKU.", 400);
-    if (launchRunType(options.runType).target === "keyword" && options.matchTypes.length === 0) {
-      throw new ApiError("Chọn ít nhất 1 match type.", 400);
-    }
+    const noMatch = runs.find((r) => launchRunType(r.runType).target === "keyword" && r.matchTypes.length === 0);
+    if (noMatch) throw new ApiError(`${launchRunType(noMatch.runType).label}: chọn ít nhất 1 match type.`, 400);
 
     // BẢNG MÃ đang chọn trước, SKU không có thì lấy bảng còn lại (FBA ↔ FBM): Phôi / Ngách / trạng thái cho tên camp, creative SB
     const skuInfos = new Map((await listLaunchSkus(options.fulfillment === "FBM" ? "FBM" : "FBA")).map((x) => [x.sku.toUpperCase(), x]));
@@ -188,7 +211,7 @@ export async function POST(request: Request) {
         return [sku, { productType: info?.productType, niche: info?.niche, status: info?.status }];
       }),
     );
-    const plan = buildLaunchPlan(terms, options);
+    const plan = buildMultiLaunchPlan(terms, options, runs);
     if (plan.campaigns.length === 0) throw new ApiError("Không có term nào phù hợp với dạng chạy đã chọn.", 400);
     const names = plan.campaigns.map((c) => c.name.toLowerCase());
     const dup = plan.campaigns.find((c, i) => names.indexOf(c.name.toLowerCase()) !== i);

@@ -280,6 +280,41 @@ export function buildLaunchPlan(terms: LaunchTerm[], options: LaunchOptions): La
   return { campaigns };
 }
 
+/** Cài đặt riêng 1 dạng chạy khi lên nhiều dạng cùng lúc; bidPct = % so với bid gốc (CPC / bid đã nhập). */
+export interface LaunchRunConfig {
+  runType: LaunchRunType;
+  matchTypes: LaunchMatchType[];
+  dailyBudget: number;
+  bidPct: number;
+}
+
+/** % bid mặc định so với bid gốc — như Lên Camp SKU Mới (SB01 80%, SB05 90%). */
+export const DEFAULT_RUN_BID_PCT: Record<LaunchRunType, number> = { SP03: 100, SP02: 100, SP04: 100, SD01: 100, SB01: 80, SB05: 90 };
+
+function scaleBid(bid: number, pct: number): number {
+  return Math.max(0.1, Math.round(bid * pct) / 100);
+}
+
+/** Dựng camp cho nhiều dạng chạy cùng lúc, gộp vào 1 plan (1 bulk file). */
+export function buildMultiLaunchPlan(terms: LaunchTerm[], options: Omit<LaunchOptions, "runType" | "matchTypes" | "dailyBudget">, runs: LaunchRunConfig[]): LaunchPlan {
+  const campaigns: LaunchCampaign[] = [];
+  for (const run of runs) {
+    const pct = run.bidPct > 0 ? run.bidPct : 100;
+    const plan = buildLaunchPlan(terms, { ...options, runType: run.runType, matchTypes: run.matchTypes, dailyBudget: run.dailyBudget });
+    for (const camp of plan.campaigns) {
+      if (pct !== 100) {
+        for (const g of camp.adGroups) {
+          g.defaultBid = scaleBid(g.defaultBid, pct);
+          g.keywords = g.keywords.map((k) => ({ ...k, bid: scaleBid(k.bid, pct) }));
+          g.productTargets = g.productTargets.map((t) => ({ ...t, bid: scaleBid(t.bid, pct) }));
+        }
+      }
+      campaigns.push(camp);
+    }
+  }
+  return { campaigns };
+}
+
 export function countLaunchTargets(plan: LaunchPlan): number {
   return plan.campaigns.reduce(
     (sum, c) => sum + c.adGroups.reduce((s, g) => s + g.keywords.length + g.productTargets.length, 0),
