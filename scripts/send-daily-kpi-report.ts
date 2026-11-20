@@ -660,7 +660,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
     ],
   };
 
-  // 2. BẢNG TỪNG TEAM & STORE: Kênh | Revenue | Units | Profit | Margin | TACoS | ACoS
+  // 2. BẢNG TỪNG TEAM & STORE: Kênh | Revenue | Profit | Units | Spend | Margin | TACoS | ACoS
   // Bên dưới mỗi team là "Nhận xét" (Toàn team thay bằng Team + số, chỉ nhận xét store biến động)
   const teamElements: Array<Record<string, any>> = [];
 
@@ -738,9 +738,9 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
         columns: [
           col("channel", "Kênh", "left"),
           col("revenue", "Revenue"),
+          col("profit", "Profit"),
           col("units", "Units"),
           col("spend", "Spend"),
-          col("profit", "Profit"),
           col("margin", "Margin"),
           col("tacos", "TACoS"),
           col("acos", "ACoS"),
