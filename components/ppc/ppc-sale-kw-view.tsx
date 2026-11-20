@@ -1827,7 +1827,7 @@ export function PpcSaleKwView({
               )}
 
               <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-slate-600" title="Ngày tháng năm định dạng YYYYMMDD">Ngày (YYYYMMDD):</span>
+                <span className="font-semibold text-slate-600">Ngày:</span>
                 <input
                   type="text"
                   maxLength={8}
@@ -1839,7 +1839,7 @@ export function PpcSaleKwView({
               </div>
 
               <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-slate-600">Ngân sách/camp:</span>
+                <span className="font-semibold text-slate-600">Budget:</span>
                 <div className="flex items-center">
                   <span className="text-slate-400 mr-1">$</span>
                   <input
