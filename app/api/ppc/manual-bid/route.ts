@@ -13,6 +13,8 @@ import {
 } from "@/lib/ppc/manual-bid-attribution";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import { loadSkuChannels } from "@/lib/ppc/sku-channels";
+import { getAccountingStoreForPpcStore } from "@/lib/ppc/sku-architecture-service";
+import { queryLiveStock } from "@/lib/accounting/live-inventory";
 
 export const runtime = "nodejs";
 
@@ -78,7 +80,16 @@ export async function GET(request: Request) {
         }
       }
       const skuRows = Array.from(agg.values());
-      const channelOf = await loadSkuChannels(store.id);
+      // Tồn real time (FBA + AWD, crawler kế toán 16h10) + giá trị tồn từng SKU — lỗi thì vẫn trả số liệu PPC.
+      const [channelOf, live] = await Promise.all([
+        loadSkuChannels(store.id),
+        getAccountingStoreForPpcStore(store.id)
+          .then((acc) => (acc ? queryLiveStock(acc.accountingStoreId) : null))
+          .catch((error) => {
+            console.warn("[ManualBid] Không đọc được tồn real time:", error);
+            return null;
+          }),
+      ]);
       const metrics = (targets: number, impressions: number, clicks: number, spend: number, sales: number, orders: number) => ({
         targets: Number(targets || 0),
         impressions: Number(impressions || 0),
@@ -107,9 +118,11 @@ export async function GET(request: Request) {
         success: true,
         hasChannels: channelOf.hasFbm,
         counts,
+        stockMeta: live ? { fbaAt: live.fbaAt, awdAt: live.awdAt, fbaLabel: live.fbaLabel, awdLabel: live.awdLabel } : null,
         items: pageRows.map((r) => ({
           sku: r.sku,
           channel: channelOf.get(r.sku),
+          stock: live?.bySku.get(r.sku.trim().toUpperCase()) ?? null,
           all: metrics(r.targets, r.impressions, r.clicks, r.spend, r.sales, r.orders),
           active: metrics(r.a_targets, r.a_impressions, r.a_clicks, r.a_spend, r.a_sales, r.a_orders),
         })),

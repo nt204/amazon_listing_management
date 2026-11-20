@@ -194,7 +194,7 @@ function skuChannelSelect(sql: Sql, channel: SkuChannel) {
  *   Giá trị tồn = Tồn × Giá TB năm (tồn âm tính 0).
  * Cần đi kèm skuStockValueJoins (alias asm = bảng mã).
  */
-function skuUnitCostSql(sql: Sql) {
+export function skuUnitCostSql(sql: Sql) {
   return sql`COALESCE(
     CASE WHEN ib.inbound_qty > 0 THEN ib.inbound_cost / ib.inbound_qty END,
     CASE WHEN od.basecost_dau_ky > 0 THEN od.basecost_dau_ky::float END,

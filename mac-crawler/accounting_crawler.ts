@@ -42,6 +42,11 @@ const MAX_HISTORICAL_ORDER_RETRIES = 3;
 const MAX_MISSING_FILE_CHECKS = 3;
 const ACCOUNTING_TASK_COUNT = 8;
 
+/** Thời gian chờ dao động ±30% quanh ms (người thật không thao tác đều từng mili-giây). */
+function jitter(ms: number, spread = 0.3): number {
+  return Math.round(ms * (1 - spread + Math.random() * 2 * spread));
+}
+
 import { ensureAmazonSession } from "./amazon_auth";
 
 function getVietnamDateParts(now = new Date()): { year: number; month: number; day: number; hour: number } {
@@ -295,6 +300,73 @@ function isSignInUrl(url: string): boolean {
 // LOGIC TẢI 6 FILE BÁO CÁO KẾ TOÁN (SELLER CENTRAL & ADVERTISING)
 // ============================================================================
 
+/**
+ * Tải kèm (không thuộc 8 file kế toán): AWD inventory report — tồn AWD real time.
+ * Trang Manage AWD inventory → nút "AWD Reports" → "AWD inventory report". File do trình duyệt tự tạo
+ * ngay (không phải chờ Amazon xếp hàng như reportcentral). Store không dùng AWD → không có nút → trả null.
+ */
+export async function downloadAwdInventoryReport(page: Page, downloadDir: string, targetDateStr: string): Promise<string | null> {
+  const url = "https://sellercentral.amazon.com/fba-inventory/gim/inventory-list?ref=fbacentral_nav_fba";
+  console.log(`  [Tồn AWD real time] Đang truy cập ${url}...`);
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+  if (isSignInUrl(page.url())) throw new Error("Seller Central chưa đăng nhập.");
+
+  const menuBtn = page.locator("text=AWD Reports").first();
+  const waitMenu = (timeout: number) => menuBtn.waitFor({ state: "visible", timeout }).then(() => true).catch(() => false);
+  let ready = await waitMenu(60000);
+  if (!ready) {
+    // Trang mở ở tab "Manage Amazon inventory" → chuyển sang tab AWD
+    const awdTab = page.locator("text=Manage AWD inventory").first();
+    if (await awdTab.count()) {
+      await awdTab.click({ timeout: 10000 }).catch(() => {});
+      ready = await waitMenu(45000);
+    }
+  }
+  if (!ready) {
+    if (isSignInUrl(page.url())) throw new Error("Seller Central chưa đăng nhập.");
+    console.log(`  [Tồn AWD real time] Không thấy nút "AWD Reports" → store không dùng AWD, bỏ qua.`);
+    return null;
+  }
+
+  await menuBtn.click({ timeout: 15000 });
+  await page.waitForTimeout(jitter(1000));
+  let item = page.locator('button[data-action="DOWNLOAD_INVENTORY_DATA"]').first();
+  if (!(await item.count())) item = page.locator("text=AWD inventory report").first();
+  const [download] = await Promise.all([
+    page.waitForEvent("download", { timeout: 120000 }),
+    item.click({ timeout: 15000 }),
+  ]);
+  const targetPath = path.join(downloadDir, `09_AwdInventory_${targetDateStr}.csv`);
+  await download.saveAs(targetPath);
+  if (!isDownloadedFileValid(targetPath)) throw new Error("File AWD inventory report rỗng.");
+  console.log(`  [Tồn AWD real time] ✅ Tải thành công: ${path.basename(targetPath)}`);
+  return targetPath;
+}
+
+/** Gửi file tồn real time lên Web App: FBA = File 06 (FBA Inventory), AWD = AWD inventory report. */
+export async function parseAndIngestLiveInventoryFile(filePath: string, store: StoreTarget, source: "FBA" | "AWD"): Promise<void> {
+  const webAppUrl = (process.env.WEB_APP_URL || "https://ncehub.net").replace(/\/$/, "");
+  const authToken = process.env.WEB_APP_AUTH_TOKEN?.trim();
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) return;
+  if (!authToken) throw new Error("Thiếu WEB_APP_AUTH_TOKEN; không thể nạp tồn real time.");
+  const storeId = await resolveVerifiedStoreId(store);
+
+  const formData = new FormData();
+  formData.append("file", new Blob([fs.readFileSync(filePath, "utf8")], { type: "text/csv" }), path.basename(filePath));
+  formData.append("store_id", storeId);
+  formData.append("source", source);
+  const res = await fetch(`${webAppUrl}/api/accounting/live-inventory`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+    body: formData,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`API nạp tồn ${source} lỗi HTTP ${res.status}: ${text.slice(0, 300)}`);
+  let message = "";
+  try { message = JSON.parse(text)?.message || ""; } catch {}
+  console.log(`  [Tồn ${source} real time] ✅ ${store.store_name}: ${message}`);
+}
+
 export interface AccountingFilesResult {
   storeName: string;
   targetDate: string;
@@ -393,7 +465,7 @@ export async function downloadFile01Portfolios(page: Page, downloadDir: string, 
   const url = "https://advertising.amazon.com/cm/portfolios";
   console.log(`  [File 01 - Portfolios] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(jitter(3000));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Trang Amazon Advertising yêu cầu đăng nhập.");
@@ -410,18 +482,18 @@ export async function downloadFile01Portfolios(page: Page, downloadDir: string, 
   const saveDateBtn = page.locator('#AACChromePortal button:has-text("Save")').first();
   await saveDateBtn.waitFor({ state: "visible", timeout: 10000 });
   await saveDateBtn.click();
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(jitter(2500));
 
   // Chọn 300 kết quả/trang nếu có
   try {
     const dropdownBtn = page.locator('button[data-e2e-id="dropdown"]').first();
     if (await dropdownBtn.isVisible({ timeout: 4000 })) {
       await dropdownBtn.click();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(jitter(1000));
       const opt300 = page.locator('button[data-e2e-id="dropdownItem"][value="300"]').first();
       if (await opt300.isVisible({ timeout: 3000 })) {
         await opt300.click();
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(jitter(2000));
       }
     }
   } catch { }
@@ -433,7 +505,7 @@ export async function downloadFile01Portfolios(page: Page, downloadDir: string, 
     await resetBtn.waitFor({ state: "visible", timeout: 10000 });
     await resetBtn.evaluate((el: HTMLElement) => el.click());
     console.log("  [File 01 - Portfolios] Đã click nút 'Reset' filter.");
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(jitter(2500));
   } catch {
     console.log("  [File 01 - Portfolios] Không tìm thấy nút 'Reset' (có thể không có filter nào đang bật), tiếp tục.");
   }
@@ -448,7 +520,7 @@ export async function downloadFile01Portfolios(page: Page, downloadDir: string, 
       await clearBtnXPath.evaluate((el: HTMLElement) => el.click());
       console.log("  [File 01 - Portfolios] Đã click nút Clear search terms.");
       cleared = true;
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(jitter(1500));
     }
 
     if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -458,7 +530,7 @@ export async function downloadFile01Portfolios(page: Page, downloadDir: string, 
         await searchInput.press("Enter");
         console.log(`  [File 01 - Portfolios] Đã xóa text trong ô tìm kiếm (trước đó là '${val}').`);
         cleared = true;
-        await page.waitForTimeout(1500);
+        await page.waitForTimeout(jitter(1500));
       }
     }
 
@@ -472,7 +544,7 @@ export async function downloadFile01Portfolios(page: Page, downloadDir: string, 
   await exportBtn.waitFor({ state: "visible", timeout: 20000 });
 
   console.log("  [File 01 - Portfolios] Đã tìm thấy nút Export. Chờ 10 giây để dữ liệu hoàn tất render trước khi bấm tải...");
-  await page.waitForTimeout(10000);
+  await page.waitForTimeout(jitter(10000));
 
   console.log(`  [File 01 - Portfolios] Đang nhấn nút Export và chờ tải file...`);
   const [download] = await Promise.all([
@@ -494,7 +566,7 @@ async function downloadFile02AllOrders(page: Page, downloadDir: string, targetDa
   const url = "https://sellercentral.amazon.com/reportcentral/FlatFileAllOrdersReport/1";
   console.log(`  [File 02 - All Orders] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(jitter(3500));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Seller Central chưa đăng nhập (đang ở màn hình Sign-In).");
@@ -536,7 +608,7 @@ async function downloadFile02AllOrders(page: Page, downloadDir: string, targetDa
   // Poll trạng thái báo cáo (tối đa ~3 phút)
   let isDone = false;
   for (let i = 0; i < 36; i++) {
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(jitter(5000));
     const statusResult = await page.evaluate(async (refId) => {
       const meta = document.querySelector('meta[name="anti-csrftoken-a2z"]') as HTMLMetaElement | null;
       const headers: Record<string, string> = meta?.content ? { "anti-csrftoken-a2z": meta.content } : {};
@@ -620,7 +692,7 @@ async function applyPaymentsDateRange(page: Page, dateFromStr: string, dateToStr
   if (await nativeSubmit.isVisible().catch(() => false)) {
     await nativeSubmit.click({ force: true }).catch(() => {});
   }
-  await page.waitForTimeout(6_000);
+  await page.waitForTimeout(jitter(6_000));
 
   const displayedValues = await page.evaluate(() =>
     Array.from(document.querySelectorAll("div.time-range-selection > kat-date-picker")).slice(0, 2).map((picker: any) => {
@@ -691,7 +763,7 @@ async function downloadFile03Returns(page: Page, downloadDir: string, targetDate
     "https://sellercentral.amazon.com/payments/event/view?accountType=PAYABLE&eventType=AffordabilityExpenseReversal&eventType=AmazonShippingReimbursement&eventType=FulfillmentFeeRefund&eventType=Refund&eventType=RetrochargeReversal&eventType=PerformanceBondRefund&resultsPerPage=10&pageNumber=1";
   console.log(`  [File 03 - Returns] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(jitter(3500));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Seller Central chưa đăng nhập.");
@@ -745,7 +817,7 @@ async function downloadFile04ServiceFees(page: Page, downloadDir: string, target
     "https://sellercentral.amazon.com/payments/event/view?accountType=PAYABLE&eventType=ProductAdsPayment&eventType=SellerDealPayment&eventType=SellerReviewEnrollmentPayment&eventType=SellerCouponPayment&eventType=ServiceFee&eventType=AmazonUpstreamProcessingFee&eventType=AmazonUpstreamStorageTransportationFee&eventType=StorageReservationBilling&eventType=STARStorageBilling&eventType=StandardFeeTransaction&eventType=EPRFeeChargeback&resultsPerPage=10&pageNumber=1";
   console.log(`  [File 04 - Service Fees] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(jitter(3500));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Seller Central chưa đăng nhập.");
@@ -816,7 +888,7 @@ async function downloadFile05Campaigns(page: Page, downloadDir: string, targetDa
   const url = "https://advertising.amazon.com/cm/portfolios";
   console.log(`  [File 05 - Ads Portfolios] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(jitter(3000));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Trang Amazon Advertising yêu cầu đăng nhập.");
@@ -841,18 +913,18 @@ async function downloadFile05Campaigns(page: Page, downloadDir: string, targetDa
   const saveDateBtn = page.locator('#AACChromePortal button:has-text("Save")').first();
   await saveDateBtn.waitFor({ state: "visible", timeout: 10000 });
   await saveDateBtn.click();
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(jitter(2500));
 
   // Chọn 300 kết quả/trang nếu có
   try {
     const dropdownBtn = page.locator('button[data-e2e-id="dropdown"]').first();
     if (await dropdownBtn.isVisible({ timeout: 4000 })) {
       await dropdownBtn.click();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(jitter(1000));
       const opt300 = page.locator('button[data-e2e-id="dropdownItem"][value="300"]').first();
       if (await opt300.isVisible({ timeout: 3000 })) {
         await opt300.click();
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(jitter(2000));
       }
     }
   } catch {}
@@ -863,13 +935,13 @@ async function downloadFile05Campaigns(page: Page, downloadDir: string, targetDa
     if (await resetBtn.isVisible({ timeout: 3000 })) await resetBtn.click();
     const clearSearchBtn = page.locator('#UCM-CM-APP\\:ALL_PORTFOLIOS\\:searchInput + button').first();
     if (await clearSearchBtn.isVisible({ timeout: 2000 })) await clearSearchBtn.click();
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(jitter(1500));
   } catch {}
 
   // Tìm nút Export
   const exportBtn = page.locator('button[data-e2e-id="export"]').first();
   await exportBtn.waitFor({ state: "visible", timeout: 15000 });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(jitter(2000));
 
   console.log(`  [File 05 - Ads Portfolios] Đang nhấn nút Export và chờ tải file...`);
   const [download] = await Promise.all([
@@ -890,7 +962,7 @@ async function downloadFile06Inventory(page: Page, downloadDir: string, targetDa
   const url = "https://sellercentral.amazon.com/reportcentral/MANAGE_INVENTORY_HEALTH/1";
   console.log(`  [File 06 - FBA Inventory] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(jitter(4000));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Seller Central chưa đăng nhập.");
@@ -901,7 +973,7 @@ async function downloadFile06Inventory(page: Page, downloadDir: string, targetDa
   if (await requestBtn.isVisible({ timeout: 10000 })) {
     await requestBtn.click();
     console.log(`  [File 06 - FBA Inventory] Đã click 'Request .txt Download'. Đang chờ nút Download...`);
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(jitter(4000));
   }
 
   // Script cũ chờ tối đa 5 phút để Amazon kết xuất file Inventory.
@@ -909,7 +981,7 @@ async function downloadFile06Inventory(page: Page, downloadDir: string, targetDa
   await tableDownloadBtn.waitFor({ state: "visible", timeout: 300000 });
 
   console.log(`  [File 06 - FBA Inventory] Đã thấy nút Download! Đang tải file...`);
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(jitter(2000));
 
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: 35000 }),
@@ -930,7 +1002,7 @@ async function downloadFile07Shipments(page: Page, downloadDir: string, targetDa
   const url = "https://sellercentral.amazon.com/gp/ssof/shipping-queue.html?sc_shipments_redirect=0#fbashipment";
   console.log(`  [File 07 - Shipments] Đang truy cập Shipping Queue: ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(jitter(4000));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Seller Central chưa đăng nhập.");
@@ -945,7 +1017,7 @@ async function downloadFile07Shipments(page: Page, downloadDir: string, targetDa
         if (header) header.click();
       }
     });
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(jitter(1500));
 
     await page.evaluate(() => {
       const dropdown = document.querySelector("#pagination-dropdown > kat-dropdown");
@@ -959,7 +1031,7 @@ async function downloadFile07Shipments(page: Page, downloadDir: string, targetDa
         }
       }
     });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(jitter(3000));
   } catch { }
 
   // 3. Kiểm tra Sort Arrow: Đảm bảo sắp xếp giảm dần (arrow-down) để lô hàng MỚI NHẤT luôn ở Trang 1
@@ -977,7 +1049,7 @@ async function downloadFile07Shipments(page: Page, downloadDir: string, targetDa
       } else {
         console.log(`  [File 07 - Shipments] Đang click đổi sắp xếp sang mới nhất (arrow-down)...`);
         await page.locator("#toggle-header-container, th[aria-sort='ascending'], th:has-text('Last updated'), th:has-text('Created')").first().click({ timeout: 5000 }).catch(() => {});
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(jitter(3000));
       }
     }
   } catch (e: any) {
@@ -989,7 +1061,7 @@ async function downloadFile07Shipments(page: Page, downloadDir: string, targetDa
     "#export-link-container a kat-link, #export-link-container a, button[aria-label*='Export'], button[aria-label*='download'], [data-testid='export-button']"
   ).first();
   await exportBtn.waitFor({ state: "visible", timeout: 15000 });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(jitter(1000));
 
   console.log(`  [File 07 - Shipments] Nhấn Export table data và chờ tải file...`);
   const [download] = await Promise.all([
@@ -1011,7 +1083,7 @@ export async function downloadFile08DcShipments(page: Page, downloadDir: string,
   const url = "https://sellercentral.amazon.com/amazonsell/dc-shipments?orderBy=UPDATE_TIME&isOrderAscending=false&pageSize=100&pageIndex=0";
   console.log(`  [File 08 - DC Shipments] Đang truy cập Distribution Center Shipments: ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(jitter(5000));
 
   if (isSignInUrl(page.url())) {
     throw new Error("Seller Central chưa đăng nhập.");
@@ -1054,7 +1126,7 @@ export async function downloadFile08DcShipments(page: Page, downloadDir: string,
       explicitEmptyPattern.source,
     ).catch(() => false);
     if (hasExplicitEmptyState) break;
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(jitter(1500));
   }
 
   if (!btnFound && hasExplicitEmptyState) {
@@ -1424,6 +1496,17 @@ export async function crawlAccountingForStore(
         label: "File 06 - FBA Inventory",
         filePrefix: "06_FbaInventory_",
         download: () => downloadFile06Inventory(page, storeDownloadDir, targetDateStr),
+        afterSuccess: async () => {
+          // Tồn FBA real time (Manual Bid…): lỗi chỉ cảnh báo, không làm File 06 bị tải lại.
+          const inventoryPath = result.files.file06_inventory;
+          if (inventoryPath) {
+            try {
+              await parseAndIngestLiveInventoryFile(inventoryPath, store, "FBA");
+            } catch (err: any) {
+              console.warn(`  ⚠️ [File 06 - FBA Inventory] Chưa nạp tồn FBA real time (${err?.message}).`);
+            }
+          }
+        },
       },
       {
         key: "file07_shipments",
@@ -1539,6 +1622,19 @@ export async function crawlAccountingForStore(
     }
 
     result.errors.push(...finalErrors.values(), ...supplementalErrors);
+
+    // Tải kèm: tồn AWD real time. Không tính vào 8 file kế toán; lỗi chỉ ghi log.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const awdPath = await downloadAwdInventoryReport(page, storeDownloadDir, targetDateStr);
+        if (awdPath) await parseAndIngestLiveInventoryFile(awdPath, store, "AWD");
+        break;
+      } catch (err: any) {
+        console.warn(`  ⚠️ [Tồn AWD real time] Lần ${attempt}/3 lỗi: ${err?.message}`);
+        if (isSignInUrl(page.url())) await ensureAmazonSession(page, store.store_name).catch(() => {});
+        if (attempt < 3) await page.waitForTimeout(jitter(5000));
+      }
+    }
 
   } finally {
     // ĐẢM BẢO 100% ĐÓNG TRÌNH DUYỆT VÀ PROFILE NGAY ĐỂ KHÔNG ĐẦY RAM

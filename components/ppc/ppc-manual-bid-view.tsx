@@ -55,10 +55,13 @@ type Row = ManualBidRow & { tier: ManualBidTier; acos: number | null };
 
 type SkuMetrics = { targets: number; impressions: number; clicks: number; spend: number; sales: number; orders: number };
 type SkuChannel = "FBA" | "FBM" | "";
-type SkuSummaryItem = { sku: string; channel?: SkuChannel; all: SkuMetrics; active: SkuMetrics };
+/** Tồn real time (crawler kế toán 16h10): mỗi kho = available + inbound + reserved; total = FBA + AWD. */
+type SkuStock = { fba: number; awd: number; inbound?: number; total: number; unitCost: number | null; value: number | null };
+type StockMeta = { fbaAt: string | null; awdAt: string | null; fbaLabel: string | null; awdLabel: string | null };
+type SkuSummaryItem = { sku: string; channel?: SkuChannel; all: SkuMetrics; active: SkuMetrics; stock?: SkuStock | null };
 type ChannelPage = "FBA" | "FBM" | "OTHER";
 type ChannelCounts = Record<ChannelPage, { all: number; active: number }>;
-type SkuSummary = { items: SkuSummaryItem[]; hasChannels: boolean; counts: ChannelCounts | null };
+type SkuSummary = { items: SkuSummaryItem[]; hasChannels: boolean; counts: ChannelCounts | null; stockMeta?: StockMeta | null };
 
 /** Dòng bảng SKU: số liệu cộng từ target (khớp màn target), thông tin phôi/ảnh/BE lấy từ tab Auto Bid. */
 type SkuRow = SkuMetrics & {
@@ -71,6 +74,11 @@ type SkuRow = SkuMetrics & {
   picMkt: string;
   mockupUrl: string | null;
   breakEvenAcos: number;
+  /** Tồn FBA + AWD (0 khi chưa có dữ liệu — xem stockInfo) */
+  stock: number;
+  /** Giá trị tồn = Tồn × Giá TB năm; 0 khi chưa có giá vốn */
+  stockValue: number;
+  stockInfo: SkuStock | null;
 };
 /** factor: hệ số đã gõ ở ô × (0.95 → hiện 95%); bid gõ tay thì không có. */
 /** delta: số cộng / trừ đã gõ ở ô ± (+0.1, -0.25). */
@@ -571,6 +579,7 @@ export function PpcManualBidView({
           items: Array.isArray(d?.items) ? d.items as SkuSummaryItem[] : [],
           hasChannels: Boolean(d?.hasChannels),
           counts: d?.counts ?? null,
+          stockMeta: d?.stockMeta ?? null,
         }));
       promise.catch(() => summaryCacheRef.current.delete(key));
       summaryCacheRef.current.set(key, { at: Date.now(), p: promise });
@@ -606,6 +615,9 @@ export function PpcManualBidView({
         picMkt: g?.picMkt || "",
         mockupUrl: g?.mockupUrl || null,
         breakEvenAcos: g?.breakEvenAcos || 0,
+        stock: it.stock?.total ?? 0,
+        stockValue: it.stock?.value ?? 0,
+        stockInfo: it.stock ?? null,
       };
     }).filter((r) => r.targets > 0);
   }, [summary, samePage, skuGroups, activeOnly]);
@@ -1359,6 +1371,7 @@ export function PpcManualBidView({
     return (
       <ManualBidSkuList
         rows={pageRows}
+        stockMeta={samePage ? summary?.stockMeta : null}
         searchAll={fetchChannel === "ALL"}
         onSearchingChange={setSearchingAll}
         refreshing={skuRefreshing}
@@ -2138,8 +2151,8 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
   );
 }
 
-type SkuSortKey = "sku" | "impressions" | "clicks" | "orders" | "spend" | "sales" | "acos";
-const SKU_SORT_KEYS: SkuSortKey[] = ["sku", "impressions", "clicks", "orders", "spend", "sales", "acos"];
+type SkuSortKey = "sku" | "impressions" | "clicks" | "orders" | "spend" | "sales" | "acos" | "stock" | "stockValue";
+const SKU_SORT_KEYS: SkuSortKey[] = ["sku", "impressions", "clicks", "orders", "spend", "sales", "acos", "stock", "stockValue"];
 const SKU_FILTER_STORAGE = "nce_manual_bid_sku_filter";
 
 function readSaved(): { filter?: Partial<SkuListFilter>; sort?: { key: SkuSortKey; dir: 1 | -1 } } | null {
@@ -2183,13 +2196,14 @@ export function RangeRow({ label, unit, value, onChange }: {
 const SKU_PAGE = 100;
 
 // Màn đầu: tất cả SKU của store, cùng nguồn số liệu với tab Đề xuất & Auto Bid. Bấm 1 dòng để chỉnh bid.
-function ManualBidSkuList({ rows, searchAll, onSearchingChange, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
+function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refreshing, onHoverSku, activeOnly, onToggleActive, actionQueue, selectedStore, skuTrends, onOpenSkuTrend, onOpen }: {
   /** Đang tìm trong cả store (bỏ qua trang FBA/FBM). */
   searchAll: boolean;
   onSearchingChange: (searching: boolean) => void;
   refreshing: boolean;
   onHoverSku: (sku: string) => void;
   rows: SkuRow[] | null;
+  stockMeta?: StockMeta | null;
   activeOnly: boolean;
   onToggleActive: () => void;
   actionQueue: PpcAction[];
@@ -2326,10 +2340,12 @@ function ManualBidSkuList({ rows, searchAll, onSearchingChange, refreshing, onHo
     });
   }, [baseFiltered, sort]);
 
+  const stockTitle = stockMetaTitle(stockMeta);
+
   const isFiltered = JSON.stringify({ ...filter, search: "" }) !== JSON.stringify({ ...EMPTY_SKU_FILTER, search: "" }) || search.trim() !== "";
 
-  const head = (key: SkuSortKey, label: string, align: "left" | "right" = "right") => (
-    <th className={`px-3 py-2.5 ${align === "right" ? "text-right" : "text-left"}`}>
+  const head = (key: SkuSortKey, label: string, align: "left" | "right" = "right", title?: string) => (
+    <th title={title} className={`px-3 py-2.5 ${align === "right" ? "text-right" : "text-left"}`}>
       <button
         type="button"
         onClick={() => setSort(sort.key === key ? { key, dir: (sort.dir * -1) as 1 | -1 } : { key, dir: key === "sku" ? 1 : -1 })}
@@ -2455,14 +2471,16 @@ function ManualBidSkuList({ rows, searchAll, onSearchingChange, refreshing, onHo
               {head("spend", "Spend")}
               {head("sales", "Sales")}
               {head("acos", "ACOS")}
+              {head("stock", "Tồn", "right", stockTitle)}
+              {head("stockValue", "Giá trị tồn", "right", stockTitle)}
               <th className="px-3 py-2.5 text-center">7 ngày</th>
             </tr>
           </thead>
           <tbody>
             {!rows ? (
-              <tr><td colSpan={9} className="p-0"><LoadingBlock bare /></td></tr>
+              <tr><td colSpan={11} className="p-0"><LoadingBlock bare /></td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={9} className="py-14 text-center text-slate-400">Không có SKU phù hợp.</td></tr>
+              <tr><td colSpan={11} className="py-14 text-center text-slate-400">Không có SKU phù hợp.</td></tr>
             ) : filtered.slice(0, limit).map((g) => {
               const tier = manualBidTier(g);
               const queued = queuedBySku.get(g.sku.toUpperCase()) || 0;
@@ -2501,6 +2519,7 @@ function ManualBidSkuList({ rows, searchAll, onSearchingChange, refreshing, onHo
                   <td className="px-3 py-1.5 text-right">
                     <AcosPill tier={tier} acos={g.sales > 0 ? g.acos : null} />
                   </td>
+                  <StockCells info={g.stockInfo} />
                   <td className="px-3 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
                     <SkuTrendSparkline
                       dailyTrend={skuTrends?.get(g.sku)}
@@ -2518,6 +2537,59 @@ function ManualBidSkuList({ rows, searchAll, onSearchingChange, refreshing, onHo
         {filtered.length > limit && <div ref={loadMoreRef}><LoadingBlock bare rows={2} /></div>}
       </div>
     </div>
+  );
+}
+
+function fmtStockTime(iso: string | null): string {
+  if (!iso) return "chưa có";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+}
+
+function stockMetaTitle(meta: StockMeta | null | undefined): string {
+  const base = "Tồn real time = kho FBA (available + inbound + reserved) + kho AWD (available + inbound + reserved).\nGiá trị tồn = Tồn × Giá TB năm (như Bảng mã).";
+  if (!meta) return `${base}\nChưa có dữ liệu tồn — crawler kế toán nạp lúc 16h10 mỗi ngày.`;
+  return `${base}\nNạp FBA: ${fmtStockTime(meta.fbaAt)}${meta.fbaLabel ? ` (file ${meta.fbaLabel})` : ""}\nNạp AWD: ${fmtStockTime(meta.awdAt)}${meta.awdLabel ? ` (file ${meta.awdLabel})` : ""}`;
+}
+
+/** 2 ô Tồn + Giá trị tồn của bảng SKU; rê chuột xem tồn từng kho. */
+function StockCells({ info }: { info: SkuStock | null }) {
+  if (!info) {
+    return (
+      <>
+        <td className="px-3 py-1.5 text-right text-slate-300" title="Không có trong file tồn FBA / AWD">—</td>
+        <td className="px-3 py-1.5 text-right text-slate-300">—</td>
+      </>
+    );
+  }
+  const costNote = info.unitCost != null ? `Giá TB năm $${info.unitCost.toFixed(2)}` : "Chưa có giá vốn trong Bảng mã";
+  const line = (label: string, value: number, cls = "text-slate-800") => (
+    <div className="flex justify-between gap-4">
+      <span className="text-slate-500">{label}</span>
+      <span className={`font-semibold tabular-nums ${cls}`}>{int(value)}</span>
+    </div>
+  );
+  return (
+    <>
+      <td className="group relative px-3 py-1.5 text-right tabular-nums">
+        <span className={`cursor-default font-semibold ${info.total > 0 ? "text-slate-800" : "text-rose-500"}`}>{int(info.total)}</span>
+        {/* Rê chuột: chi tiết từng kho + hàng đang đến */}
+        <div className="pointer-events-none absolute right-full top-1/2 z-30 mr-1 hidden w-48 -translate-y-1/2 space-y-1 rounded-lg border border-slate-200 bg-white p-2.5 text-left text-[12px] font-normal shadow-xl group-hover:block">
+          {line("FBA", info.fba)}
+          {line("AWD", info.awd)}
+          {(info.inbound ?? 0) > 0 && line("Hàng đang đến", info.inbound ?? 0, "text-sky-700")}
+          <div className="flex justify-between gap-4 border-t border-slate-100 pt-1">
+            <span className="font-semibold text-slate-700">Tổng</span>
+            <span className="font-bold tabular-nums text-slate-900">{int(info.total)}</span>
+          </div>
+          {(info.inbound ?? 0) > 0 && <div className="text-[10.5px] leading-snug text-slate-400">Hàng đang đến đã tính trong FBA / AWD.</div>}
+        </div>
+      </td>
+      <td className="px-3 py-1.5 text-right tabular-nums text-slate-600" title={costNote}>
+        {info.value != null ? money(info.value) : <span className="text-slate-300">—</span>}
+      </td>
+    </>
   );
 }
 

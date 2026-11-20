@@ -17,6 +17,8 @@ ITEMS=(
   "scripts/fbm_monthly_db.py:scripts/fbm_monthly_db.py"
   "mac-crawler/monthly_crawler.ts:monthly_crawler.ts"
   "mac-crawler/run_accounting_monthly.sh:run_accounting_monthly.sh"
+  # Crawler kế toán ngày 16h10 (gồm tải kèm tồn FBA/AWD real time)
+  "mac-crawler/accounting_crawler.ts:accounting_crawler.ts"
 )
 
 cd "$(dirname "$0")/.."
