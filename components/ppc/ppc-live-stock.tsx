@@ -2,7 +2,8 @@
 
 // Cột "Tồn" + "Giá trị tồn" real time (FBA + AWD) dùng chung cho tab Manual Bid, SKU, Đề xuất & Auto bid.
 // Nguồn: /api/ppc/live-stock (accounting_live_inventory, crawler kế toán nạp lúc 16h10 mỗi ngày).
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export type SkuStock = { fba: number; awd: number; inbound?: number; total: number; unitCost: number | null; value: number | null };
 export type StockMeta = { fbaAt: string | null; awdAt: string | null; fbaLabel: string | null; awdLabel: string | null };
@@ -55,8 +56,24 @@ export function useLiveStock(storeName: string | null | undefined): LiveStockDat
   return state && state.store === storeName ? state.data : null;
 }
 
-/** 2 ô Tồn + Giá trị tồn; rê chuột vào Tồn xem từng kho + hàng đang đến. */
+const POPUP_WIDTH = 192;
+
+/** 2 ô Tồn + Giá trị tồn; rê chuột vào một trong hai ô xem từng kho + hàng đang đến + giá vốn.
+ *  Popup vẽ qua portal (position: fixed) để header dính / khung cuộn của bảng không che (hàng đầu, hàng cuối). */
 export function StockCells({ info, cellClassName = "px-3 py-1.5" }: { info: SkuStock | null | undefined; cellClassName?: string }) {
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    if (!anchor) return;
+    // Cuộn bảng / trang thì toạ độ cũ sai → đóng popup
+    const close = () => setAnchor(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [anchor]);
+
   if (!info) {
     return (
       <>
@@ -72,24 +89,45 @@ export function StockCells({ info, cellClassName = "px-3 py-1.5" }: { info: SkuS
       <span className={`font-semibold tabular-nums ${cls}`}>{int(value)}</span>
     </div>
   );
+  // Chỉ 2 ô này bật popup (không dùng class "group" vì hàng bảng cũng có "group" → rê đâu trên hàng cũng hiện).
+  const show = (e: MouseEvent<HTMLTableCellElement>) => setAnchor(e.currentTarget.getBoundingClientRect());
+  const hide = () => setAnchor(null);
+
+  let popup: ReactNode = null;
+  if (anchor && typeof document !== "undefined") {
+    // Bên trái ô, đỉnh popup ngang đỉnh ô; ô ở nửa dưới màn hình thì lật lên (đáy popup ngang đáy ô).
+    const nearBottom = anchor.top > window.innerHeight * 0.6;
+    const left = Math.max(8, anchor.left - POPUP_WIDTH - 4);
+    const style: CSSProperties = nearBottom
+      ? { position: "fixed", left, bottom: window.innerHeight - anchor.bottom, width: POPUP_WIDTH }
+      : { position: "fixed", left, top: anchor.top, width: POPUP_WIDTH };
+    popup = createPortal(
+      <div
+        style={style}
+        className="pointer-events-none z-[1000] space-y-1 rounded-lg border border-slate-200 bg-white p-2.5 text-left text-[12px] font-normal normal-case tracking-normal shadow-xl"
+      >
+        {line("FBA", info.fba)}
+        {line("AWD", info.awd)}
+        {(info.inbound ?? 0) > 0 && line("Hàng đang đến", info.inbound ?? 0, "text-sky-700")}
+        <div className="flex justify-between gap-4 border-t border-slate-100 pt-1">
+          <span className="font-semibold text-slate-700">Tổng</span>
+          <span className="font-bold tabular-nums text-slate-900">{int(info.total)}</span>
+        </div>
+        {(info.inbound ?? 0) > 0 && <div className="text-[10.5px] leading-snug text-slate-400">Hàng đang đến đã tính trong FBA / AWD.</div>}
+        <div className="text-[10.5px] leading-snug text-slate-400">{costNote}</div>
+      </div>,
+      document.body,
+    );
+  }
   return (
     <>
-      <td className={`group relative ${cellClassName} text-right tabular-nums`}>
+      <td onMouseEnter={show} onMouseLeave={hide} className={`${cellClassName} text-right tabular-nums`}>
         <span className={`cursor-default font-semibold ${info.total > 0 ? "text-slate-800" : "text-rose-500"}`}>{int(info.total)}</span>
-        <div className="pointer-events-none absolute right-full top-1/2 z-30 mr-1 hidden w-48 -translate-y-1/2 space-y-1 rounded-lg border border-slate-200 bg-white p-2.5 text-left text-[12px] font-normal normal-case tracking-normal shadow-xl group-hover:block">
-          {line("FBA", info.fba)}
-          {line("AWD", info.awd)}
-          {(info.inbound ?? 0) > 0 && line("Hàng đang đến", info.inbound ?? 0, "text-sky-700")}
-          <div className="flex justify-between gap-4 border-t border-slate-100 pt-1">
-            <span className="font-semibold text-slate-700">Tổng</span>
-            <span className="font-bold tabular-nums text-slate-900">{int(info.total)}</span>
-          </div>
-          {(info.inbound ?? 0) > 0 && <div className="text-[10.5px] leading-snug text-slate-400">Hàng đang đến đã tính trong FBA / AWD.</div>}
-        </div>
       </td>
-      <td className={`${cellClassName} text-right tabular-nums text-slate-600`} title={costNote}>
+      <td onMouseEnter={show} onMouseLeave={hide} className={`${cellClassName} text-right tabular-nums text-slate-600`}>
         {info.value != null ? money(info.value) : <span className="text-slate-300">—</span>}
       </td>
+      {popup}
     </>
   );
 }
