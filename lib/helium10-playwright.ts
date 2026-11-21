@@ -482,6 +482,24 @@ async function fetchCerebroDirectApi(
     throw new Error("Không có từ khóa nào được trả về từ Helium 10 Cerebro cho ASIN này.");
   }
 
+  tableData = await fetchRemainingPages(tableData, pageSize, limit, async (page) => {
+    const res = await fetch(
+      `https://h10api.pacvue.com/rta/cerebro/v1/amazon/search/single/${searchId}/data?accountId=${accountId}&include-all=0&include-any=1&page=${page}&per_page=${pageSize}&sort=default`,
+      {
+        headers: {
+          authorization: "Bearer " + token,
+          "x-pacvue-token": "Bearer " + pacvueToken,
+          referer: `https://members.helium10.com/cerebro-new/find-by-product/amazon/view/${searchId}?accountId=${accountId}`,
+          accept: "application/json",
+        },
+        signal: AbortSignal.timeout(20000),
+      },
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    return Array.isArray(json?.data?.tableData) ? json.data.tableData : null;
+  });
+
   const keywords: Helium10KeywordItem[] = tableData.slice(0, limit).map((row) => {
     const rawVolume = typeof row.impressionExact30 === "number" ? row.impressionExact30 : (typeof row.searchVolume === "number" ? row.searchVolume : null);
     const rawCpc = typeof row.cpc === "number" ? (row.cpc > 50 ? row.cpc / 100 : row.cpc) : null;
@@ -503,6 +521,35 @@ async function fetchCerebroDirectApi(
   }).filter((k) => k.keyword.length > 0);
 
   return { keywords, asinMetadata };
+}
+
+/**
+ * Đọc tiếp các trang 2..n của một lượt Cerebro/Magnet đã tạo. H10 tính lượt khi TẠO search, đọc thêm trang không tốn lượt
+ * → trước đây chỉ đọc trang 1 (Cerebro 1.000 dòng cho cả 10 ASIN, Magnet 200) là bỏ phí phần lớn keyword.
+ * Dừng khi trang thiếu dòng, rỗng, lỗi, lặp lại trang trước (API bỏ qua tham số page) hoặc đủ maxRows.
+ */
+async function fetchRemainingPages(
+  firstPage: any[],
+  pageSize: number,
+  maxRows: number,
+  fetchPage: (page: number) => Promise<any[] | null>,
+): Promise<any[]> {
+  const rows = [...firstPage];
+  let last = firstPage;
+  for (let page = 2; rows.length < maxRows && last.length >= pageSize && page <= 50; page++) {
+    let next: any[] | null = null;
+    try {
+      next = await fetchPage(page);
+    } catch {
+      next = null;
+    }
+    if (!next || next.length === 0) break;
+    const firstKey = (row: any) => String(row?.phrase || row?.keyword || "");
+    if (firstKey(next[0]) === firstKey(last[0])) break;
+    rows.push(...next);
+    last = next;
+  }
+  return rows.slice(0, maxRows);
 }
 
 /**
@@ -574,6 +621,26 @@ async function fetchMagnetDirectApi(
     }
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  if (tableData.length > 0) {
+    tableData = await fetchRemainingPages(tableData, pageSize, limit, async (page) => {
+      const res = await fetch(
+        `https://h10api.pacvue.com/rta/magnet/v1/amazon/search/single/${searchId}/results?accountId=${accountId}&page=${page}&per_page=${pageSize}`,
+        {
+          headers: {
+            authorization: "Bearer " + token,
+            "x-pacvue-token": "Bearer " + pacvueToken,
+            referer: `https://members.helium10.com/magnet/search/single/${searchId}?accountId=${accountId}`,
+            accept: "application/json",
+          },
+          signal: AbortSignal.timeout(20000),
+        },
+      );
+      if (!res.ok) return null;
+      const json = await res.json();
+      return Array.isArray(json?.data?.tableData) ? json.data.tableData : null;
+    });
   }
 
   const rowsToProcess: any[] = [];

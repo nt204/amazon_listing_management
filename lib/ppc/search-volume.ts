@@ -23,7 +23,9 @@ const envInt = (name: string, fallback: number) => {
 
 const LOOKBACK_DAYS = envInt("PPC_SEARCH_VOLUME_LOOKBACK_DAYS", 60);
 const CEREBRO_ASINS_PER_CALL = Math.max(1, envInt("PPC_SEARCH_VOLUME_ASINS_PER_CALL", 10));
-const CEREBRO_ROWS_PER_CALL = 1000;
+// Số keyword tối đa đọc về mỗi lượt (nhiều trang, không tốn thêm lượt H10). 10 ASIN/lượt → ~1.000 keyword mỗi ASIN.
+const CEREBRO_ROWS_PER_CALL = Math.max(1000, envInt("PPC_SEARCH_VOLUME_CEREBRO_ROWS", 10000));
+const MAGNET_ROWS_PER_CALL = Math.max(200, envInt("PPC_SEARCH_VOLUME_MAGNET_ROWS", 2000));
 // Diamond: 300 Cerebro / 150 Magnet mỗi tháng
 const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET", 300);
 const MAGNET_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_MAGNET_MONTHLY_BUDGET", 150);
@@ -837,7 +839,7 @@ async function runSearchVolumeSync(
       const { marketplace, keyword } = splitMarketKey(key);
       if (!(await tick(`Magnet lượt ${index + 1}/${gapKeywords.length}: "${keyword}"...`))) return;
       try {
-        const result = await callHelium10(() => mineHelium10Keywords({ keyword, marketplace, limit: 200, directApiOnly: true }));
+        const result = await callHelium10(() => mineHelium10Keywords({ keyword, marketplace, limit: MAGNET_ROWS_PER_CALL, directApiOnly: true }));
         magnetCalls++;
         const { saved, withVolume } = await upsertVolumes(sql, marketplace, "helium10_magnet", result.keywords);
         keywordsUpserted += saved.length;
