@@ -3,6 +3,8 @@ import { loadChannelSeries, latestCompleteDate } from "@/lib/accounting/daily-bu
 import type { ChannelSeriesInput } from "@/lib/accounting/daily-report-analysis";
 import type { DashboardDay } from "@/lib/accounting/dashboard-totals";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
+import { listSkuWin, type SkuWinItem } from "@/lib/accounting/sku-win-db";
+import { listFbmSkuFixed } from "@/lib/accounting/fbm-financials-db";
 
 interface MetricSet {
   revenue: number;
@@ -175,14 +177,6 @@ const col = (name: string, display: string, align: "left" | "right" = "right") =
   width: "auto",
 });
 
-interface SkuWarning {
-  sku: string;
-  spend: number;
-  revenue: number;
-  tacos: number;
-  estProfit: number;
-}
-
 interface LargeServiceFee {
   storeId: string;
   storeName: string;
@@ -193,12 +187,13 @@ interface LargeServiceFee {
 interface ChannelDetail {
   teamDef: TeamDefinition;
   displayName: string;
+  storeId?: string;
+  isFbm: boolean;
   hasDataToday: boolean;
   today: MetricSet;
   yesterday: MetricSet;
   priorAvg: MetricSet;
   priorDaysCount: number;
-  warningSkus: SkuWarning[];
   serviceFees: LargeServiceFee[];
 }
 
@@ -247,97 +242,86 @@ async function loadLargeServiceFees(targetDate: string): Promise<Map<string, Lar
   return result;
 }
 
-// Lấy đúng 5 con SKU có lỗ lớn nhất và TACoS cao nhất toàn công ty, sau đó gán cảnh báo ở store tương ứng
-async function loadTopWarningSkus(targetDate: string): Promise<Map<string, SkuWarning[]>> {
-  const sql = await getDatabaseClient();
-  const result = new Map<string, SkuWarning[]>();
-
-  try {
-    const rows = await sql<Array<{
-      store_id: string;
-      channel: string;
-      sku: string;
-      revenue: number;
-      spend: number;
-      tacos: number;
-      est_loss: number;
-    }>>`
-      WITH orders_agg AS (
-        SELECT
-          o.store_id,
-          CASE WHEN o.fulfillment_channel = 'Merchant' THEN 'FBM' ELSE 'FBA' END AS channel,
-          UPPER(TRIM(o.sku)) AS sku,
-          SUM(COALESCE(o.item_price, 0) + COALESCE(o.shipping_price, 0) - COALESCE(o.item_promotion_discount, 0) - COALESCE(o.ship_promotion_discount, 0))::float AS revenue
-        FROM accounting_orders o
-        WHERE o.date = ${targetDate}::date
-          AND COALESCE(TRIM(o.sku), '') <> ''
-          AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
-        GROUP BY o.store_id, 2, 3
-      ),
-      ads_agg AS (
-        SELECT
-          a.store_id,
-          CASE WHEN UPPER(TRIM(a.loai)) = 'FBM' OR a.loai = '' THEN 'FBM' ELSE 'FBA' END AS channel,
-          UPPER(TRIM(COALESCE(NULLIF(a.sku, ''), a.portfolio))) AS sku,
-          SUM(COALESCE(a.spend, 0))::float AS spend
-        FROM accounting_ads a
-        WHERE a.date = ${targetDate}::date
-        GROUP BY a.store_id, 2, 3
-      ),
-      combined AS (
-        SELECT
-          COALESCE(a.store_id, o.store_id) AS store_id,
-          COALESCE(a.channel, o.channel) AS channel,
-          COALESCE(a.sku, o.sku) AS sku,
-          COALESCE(o.revenue, 0)::float AS revenue,
-          COALESCE(a.spend, 0)::float AS spend,
-          (COALESCE(o.revenue, 0) * 0.40 - COALESCE(a.spend, 0))::float AS est_loss,
-          CASE
-            WHEN COALESCE(o.revenue, 0) > 0 THEN (COALESCE(a.spend, 0) / o.revenue) * 100
-            WHEN COALESCE(a.spend, 0) > 0 THEN 999.0
-            ELSE 0
-          END::float AS tacos
-        FROM ads_agg a
-        FULL OUTER JOIN orders_agg o ON a.store_id = o.store_id AND a.channel = o.channel AND a.sku = o.sku
-        WHERE COALESCE(a.spend, 0) >= 15
-          AND (
-            (COALESCE(o.revenue, 0) > 0 AND (COALESCE(a.spend, 0) / o.revenue) * 100 >= 50)
-            OR COALESCE(o.revenue, 0) = 0
-          )
-          AND (COALESCE(o.revenue, 0) * 0.40 - COALESCE(a.spend, 0)) < -15
-      ),
-      ranked AS (
-        SELECT *,
-          ROW_NUMBER() OVER(PARTITION BY store_id, channel ORDER BY est_loss ASC) as store_rank
-        FROM combined
-      )
-      SELECT store_id, channel, sku, revenue, spend, tacos, est_loss
-      FROM ranked
-      WHERE store_rank <= 2
-      ORDER BY est_loss ASC
-      LIMIT 5;
-    `;
-
-    for (const r of rows) {
-      const key = `${r.store_id}:${r.channel}`;
-      const list = result.get(key) || [];
-      list.push({
-        sku: r.sku,
-        spend: Number(r.spend),
-        revenue: Number(r.revenue),
-        tacos: Number(r.tacos),
-        estProfit: Math.round(Number(r.est_loss)),
-      });
-      result.set(key, list);
-    }
-  } catch (err) {
-    console.warn("[Top Loss SKUs] Không thể truy vấn:", err);
-  }
-
-  return result;
+interface TeamSkuRow {
+  sku: string;
+  store: string;
+  revenue: number;
+  quantity: number;
+  profit: number;
+  margin: number;
+  tacos: number;
 }
 
-// Nhận xét từng store: đổi từ ACoS sang TACoS, đọc chỉ số thực tế, giải thích nguyên nhân và đính kèm SKU cảnh báo nếu store dính top loss
+// Số theo SKU trong ngày của 1 kênh — cùng nguồn với tab "Lọc SKU Win" (FBA) / "FBM Cố định" (FBM) trên web
+async function loadChannelSkus(storeId: string, isFbm: boolean, displayName: string, targetDate: string): Promise<TeamSkuRow[]> {
+  const list = isFbm ? listFbmSkuFixed : listSkuWin;
+  try {
+    const { items } = await list(storeId, {
+      startDate: targetDate,
+      endDate: targetDate,
+      status: "all",
+      skuType: "all",
+      sortField: "profit",
+      sortDirection: "desc",
+      limit: 100000,
+      includeAllTime: false,
+    });
+    return items
+      .filter((i: SkuWinItem) => i.revenue > 0 || i.quantity > 0 || i.ads_fee > 0)
+      .map((i: SkuWinItem) => ({
+        sku: i.sku,
+        store: displayName,
+        revenue: i.revenue,
+        quantity: i.quantity,
+        profit: i.profit,
+        margin: i.revenue > 0 ? (i.profit / i.revenue) * 100 : 0,
+        tacos: i.revenue > 0 ? (i.ads_fee / i.revenue) * 100 : 0,
+      }));
+  } catch (err) {
+    console.warn(`[Top SKU] Không thể tải SKU ${displayName}:`, err);
+    return [];
+  }
+}
+
+// Top SKU nằm trong khung thu gọn (bấm mới mở). Table của Lark không đặt được trong collapsible_panel,
+// nên dùng bảng markdown (card JSON 2.0): ô tự xuống dòng, SKU hiện đủ tên; > 5 dòng Lark tự chia trang.
+function skuPanel(title: string, rows: TeamSkuRow[]): Record<string, any> {
+  const header = "| SKU | Store | Revenue | Profit | Qty | Margin | TACoS |\n| :-- | :-- | --: | --: | --: | --: | --: |";
+  const lines = rows.map((r) =>
+    [
+      r.sku,
+      r.store,
+      fmtUsd(r.revenue),
+      r.profit < 0 ? red(fmtUsd(r.profit)) : blue(fmtUsd(r.profit)),
+      fmtCount(r.quantity),
+      r.revenue > 0 ? fmtPct(r.margin) : "—",
+      r.revenue > 0 ? fmtPct(r.tacos) : "—",
+    ].join(" | "),
+  );
+  return {
+    tag: "collapsible_panel",
+    expanded: false,
+    header: {
+      title: { tag: "markdown", content: title },
+      icon: { tag: "standard_icon", token: "down-small-ccm_outlined", size: "16px 16px" },
+      icon_position: "right",
+      icon_expanded_angle: -180,
+    },
+    border: { color: "grey", corner_radius: "5px" },
+    vertical_spacing: "8px",
+    padding: "4px 8px 4px 8px",
+    elements: [
+      {
+        tag: "markdown",
+        content: rows.length
+          ? `${header}\n${lines.map((l) => `| ${l} |`).join("\n")}`
+          : grey("Không có SKU phát sinh trong ngày."),
+      },
+    ],
+  };
+}
+
+// Nhận xét từng store: đọc chỉ số thực tế (TACoS), giải thích nguyên nhân, kèm Service Fee lớn nếu có
 function generateStoreComment(ch: ChannelDetail): string | null {
   if (!ch.hasDataToday || (ch.today.revenue === 0 && ch.today.quantity === 0)) return null;
   const t = ch.today;
@@ -360,17 +344,6 @@ function generateStoreComment(ch: ChannelDetail): string | null {
   const isTacosBig = Math.abs(dTacos) >= 3 || t.tacos >= 30;
   const isRefundSpike = t.returnCost >= 40 && dReturn >= 25 && refundMultiplier >= 1.4;
 
-  // Xây dựng chuỗi cảnh báo nếu store có SKU lọt top 5 lỗ toàn công ty (xuống dòng, icon cảnh báo, Profit âm, TACoS)
-  let warningSkuText = "";
-  if (ch.warningSkus && ch.warningSkus.length > 0) {
-    const lines = ch.warningSkus.map((s) => {
-      const profitFormatted = s.estProfit < 0 ? `-$${Math.abs(s.estProfit).toLocaleString("en-US")}` : `$${s.estProfit}`;
-      const tacosFormatted = s.revenue === 0 ? ">100%" : `${s.tacos.toFixed(1)}%`;
-      return `  ❗ **SKU lỗ:** \`${s.sku}\` (Profit ${profitFormatted}, TACoS ${tacosFormatted}, Spend $${Math.round(s.spend)}, Rev $${Math.round(s.revenue)})`;
-    });
-    warningSkuText = `\n${lines.join("\n")}`;
-  }
-
   // Xây dựng chuỗi cảnh báo nếu store bị trừ Service Fee >= $1,000
   let serviceFeeText = "";
   if (ch.serviceFees && ch.serviceFees.length > 0) {
@@ -380,11 +353,11 @@ function generateStoreComment(ch: ChannelDetail): string | null {
     serviceFeeText = `\n${feeLines.join("\n")}`;
   }
 
-  const fullWarningText = `${serviceFeeText}${warningSkuText}`;
+  const fullWarningText = serviceFeeText;
 
   // Nếu không có biến động lớn về tổng thể store
   if (!isProfitBig && !isRevBig && !isTacosBig && !isRefundSpike) {
-    // Nếu store bình thường nhưng dính con SKU hoặc Service Fee lớn thì cảnh báo
+    // Nếu store bình thường nhưng bị trừ Service Fee lớn thì cảnh báo
     if (fullWarningText) {
       return `🔹 **${ch.displayName}:** Nhìn chung ổn định.${fullWarningText}`;
     }
@@ -468,7 +441,29 @@ function generateStoreComment(ch: ChannelDetail): string | null {
   return `🔹 **${ch.displayName}:** Biến động so với TB ngày: ${issues.join(", ")}.${fullWarningText}`;
 }
 
-export async function generateDailyKpiReport(targetDate: string): Promise<{ card: Record<string, any>; success: boolean; date: string }> {
+// Link "Báo cáo ngày" trên web mở đúng store (tab FBA hoặc FBM theo ngày)
+const REPORT_BASE_URL = process.env.ACCOUNTING_REPORT_BASE_URL?.trim() || "https://ncehub.net";
+
+export function dailyReportStoreUrl(storeName: string, channel: "FBA" | "FBM"): string {
+  const params = new URLSearchParams({
+    view: "accounting",
+    store: storeName.toUpperCase(),
+    section: "financials",
+    subtab: channel === "FBM" ? "fbm" : "day",
+  });
+  return `${REPORT_BASE_URL}/?${params.toString()}`;
+}
+
+export interface DailyKpiReport {
+  /** Tin tổng công ty (giữ cho chỗ cũ chỉ đọc 1 card) */
+  card: Record<string, any>;
+  /** Mỗi tin 1 card: [tổng công ty, team 1, team 2, ...] — gửi lần lượt */
+  cards: Array<Record<string, any>>;
+  success: boolean;
+  date: string;
+}
+
+export async function generateDailyKpiReport(targetDate: string): Promise<DailyKpiReport> {
   const [y, m, d] = targetDate.split("-").map(Number);
   const targetD = new Date(Date.UTC(y, m - 1, d));
   const yesterdayD = new Date(targetD.getTime() - 86400000);
@@ -476,10 +471,9 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
   const monthStart = `${targetDate.slice(0, 7)}-01`;
 
   const sql = await getDatabaseClient();
-  const [channels, storeList, warningSkusMap, serviceFeesMap] = await Promise.all([
+  const [channels, storeList, serviceFeesMap] = await Promise.all([
     loadChannelSeries(targetDate, undefined, monthStart),
     sql<Array<{ id: string; name: string }>>`SELECT id, name FROM stores`,
-    loadTopWarningSkus(targetDate),
     loadLargeServiceFees(targetDate),
   ]);
 
@@ -525,12 +519,9 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
       priorAvg.acos = priorAvg.revenueAds > 0 ? (priorAvg.adsFee / priorAvg.revenueAds) * 100 : 0;
       priorAvg.tacos = priorAvg.revenue > 0 ? (priorAvg.adsFee / priorAvg.revenue) * 100 : 0;
 
-      // Tra cứu SKU dính cảnh báo TACoS cao của store này
       const isFbm = chDef.displayName.includes("FBM");
       const baseName = chDef.label.replace(/-FBA|-FBM/i, "").toUpperCase();
       const storeId = storeMap.get(baseName);
-      const warningKey = storeId ? `${storeId}:${isFbm ? "FBM" : "FBA"}` : "";
-      const warningSkus = warningSkusMap.get(warningKey) || [];
 
       // Phí dịch vụ (Service Fees) >= $1,000 của store
       const storeServiceFees = storeId ? (serviceFeesMap.get(storeId) || []) : [];
@@ -544,12 +535,13 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
       allChannelDetails.push({
         teamDef: team,
         displayName: chDef.displayName,
+        storeId,
+        isFbm,
         hasDataToday: hasData,
         today: todayM,
         yesterday: yestM,
         priorAvg,
         priorDaysCount: priorDays.length,
-        warningSkus,
         serviceFees: channelServiceFees,
       });
     }
@@ -660,9 +652,21 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
     ],
   };
 
-  // 2. BẢNG TỪNG TEAM & STORE: Kênh | Revenue | Profit | Units | Spend | Margin | TACoS | ACoS
+  const startDayStr = priorDayDates.length > 0 ? priorDayDates[0].slice(8, 10) : "01";
+  const endDayStr = priorDayDates.length > 0 ? priorDayDates[priorDayDates.length - 1].slice(8, 10) : targetDate.slice(8, 10);
+  const monthStr = targetDate.slice(5, 7);
+  const headerSubtitle = `So sánh với Hôm qua (${yestDdMm}) & TB các ngày trước (${startDayStr}/${monthStr} - ${endDayStr}/${monthStr})`;
+
+  // 2. BẢNG TỪNG TEAM & STORE (mỗi team 1 tin riêng): Kênh | Revenue | Profit | Units | Spend | Margin | TACoS | ACoS
   // Bên dưới mỗi team là "Nhận xét" (Toàn team thay bằng Team + số, chỉ nhận xét store biến động)
-  const teamElements: Array<Record<string, any>> = [];
+  const teamCards: Array<Record<string, any>> = [];
+  // Số theo SKU trong ngày của mọi kênh (để lấy Top 10 Profit cao / thấp nhất của từng team)
+  const skusByChannel = new Map<ChannelDetail, TeamSkuRow[]>();
+  await Promise.all(
+    allChannelDetails.map(async (ch) => {
+      skusByChannel.set(ch, ch.storeId ? await loadChannelSkus(ch.storeId, ch.isFbm, ch.displayName, targetDate) : []);
+    }),
+  );
 
   for (const team of TEAMS) {
     const teamChannels = allChannelDetails.filter((c) => c.teamDef.id === team.id);
@@ -720,16 +724,31 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
       if (comment) storeComments.push(comment);
     }
 
+    // Nhận xét team ở trên, rồi tới các store cần chú ý
     const commentBlockContent = storeComments.length > 0
-      ? `${teamSummaryLine}\n${storeComments.join("\n")}`
+      ? `${teamSummaryLine}\n\n⚠️ **Store cần chú ý:**\n${storeComments.join("\n")}`
       : teamSummaryLine;
 
-    teamElements.push(
-      { tag: "hr" },
-      {
-        tag: "markdown",
-        content: `**${team.name.toUpperCase()} (${team.lead.toUpperCase()})**`,
-      },
+    // Top 10 SKU Profit cao nhất (tốt) và 10 SKU Profit thấp nhất (cần chú ý) của cả team
+    const teamSkus = teamChannels.flatMap((c) => skusByChannel.get(c) || []);
+    const topGood = [...teamSkus].sort((a, b) => b.profit - a.profit).slice(0, 10);
+    const goodSet = new Set(topGood);
+    const topBad = teamSkus.filter((r) => !goodSet.has(r)).sort((a, b) => a.profit - b.profit).slice(0, 10);
+    const skuElements: Array<Record<string, any>> = [
+      skuPanel("🏆 **Top 10 SKU tốt**", topGood),
+    ];
+    if (topBad.length) {
+      skuElements.push(skuPanel("🚨 **Top 10 SKU cần chú ý**", topBad));
+    }
+
+    // Link Báo cáo ngày trên web cho từng kênh của team (FBA → tab FBA theo ngày, FBM → tab FBM theo ngày)
+    const reportLinks = team.channels.map((chDef) => {
+      const isFbm = /-FBM$/i.test(chDef.label);
+      const storeName = chDef.label.replace(/-FBA|-FBM/i, "");
+      return `[${chDef.displayName}](${dailyReportStoreUrl(storeName, isFbm ? "FBM" : "FBA")})`;
+    });
+
+    const teamElements: Array<Record<string, any>> = [
       {
         tag: "table",
         page_size: Math.min(teamTableRows.length, 10),
@@ -750,13 +769,27 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
       {
         tag: "markdown",
         content: commentBlockContent,
-      }
-    );
-  }
+      },
+      { tag: "hr" },
+      ...skuElements,
+      { tag: "hr" },
+      {
+        tag: "markdown",
+        content: `🔗 **Báo cáo ngày:** ${reportLinks.join(" · ")}`,
+      },
+    ];
 
-  const startDayStr = priorDayDates.length > 0 ? priorDayDates[0].slice(8, 10) : "01";
-  const endDayStr = priorDayDates.length > 0 ? priorDayDates[priorDayDates.length - 1].slice(8, 10) : targetDate.slice(8, 10);
-  const monthStr = targetDate.slice(5, 7);
+    teamCards.push({
+      schema: "2.0",
+      config: { width_mode: "fill" },
+      header: {
+        template: "blue",
+        title: { tag: "plain_text", content: `${team.name.toUpperCase()} (${team.lead.toUpperCase()}) · NGÀY ${targetDdMm}` },
+        subtitle: { tag: "plain_text", content: headerSubtitle },
+      },
+      body: { elements: teamElements },
+    });
+  }
 
   const card = {
     schema: "2.0",
@@ -764,10 +797,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
     header: {
       template: "blue",
       title: { tag: "plain_text", content: `BÁO CÁO KINH DOANH NGÀY ${targetDdMm}` },
-      subtitle: {
-        tag: "plain_text",
-        content: `So sánh với Hôm qua (${yestDdMm}) & TB các ngày trước (${startDayStr}/${monthStr} - ${endDayStr}/${monthStr})`,
-      },
+      subtitle: { tag: "plain_text", content: headerSubtitle },
     },
     body: {
       elements: [
@@ -776,13 +806,13 @@ export async function generateDailyKpiReport(targetDate: string): Promise<{ card
           content: `**TỔNG CÔNG TY**`,
         },
         companyTable,
-        ...teamElements,
       ],
     },
   };
 
   return {
     card,
+    cards: [card, ...teamCards],
     success: true,
     date: targetDate,
   };
@@ -804,16 +834,28 @@ async function main() {
       console.error("Lỗi: Không tìm thấy webhook URL để gửi Lark!");
       process.exit(1);
     }
-    console.log(`Đang gửi báo cáo vào Lark webhook...`);
-    const res = await sendLarkWebhookNotification(webhookUrl, { card: report.card });
-    if (res.sent) {
-      console.log("✅ Đã gửi BÁO CÁO VÀO LARK THÀNH CÔNG!");
-    } else {
-      console.error("❌ Gửi Lark thất bại:", res.reason);
+    // --team "Team 2": chỉ gửi tin của team đó (xem thử)
+    const teamIdx = args.indexOf("--team");
+    const teamFilter = teamIdx >= 0 ? args[teamIdx + 1]?.trim().toUpperCase() : "";
+    const toSend = teamFilter
+      ? report.cards.filter((c) => String(c.header?.title?.content || "").toUpperCase().startsWith(`${teamFilter} `))
+      : report.cards;
+    if (!toSend.length) {
+      console.error(`Không tìm thấy tin của team "${teamFilter}".`);
       process.exit(1);
     }
+    console.log(`Đang gửi ${toSend.length} tin báo cáo vào Lark webhook...`);
+    for (const [i, card] of toSend.entries()) {
+      const res = await sendLarkWebhookNotification(webhookUrl, { card });
+      if (!res.sent) {
+        console.error(`❌ Gửi Lark thất bại ở tin ${i + 1}/${toSend.length}:`, res.reason);
+        process.exit(1);
+      }
+    }
+    console.log("✅ Đã gửi BÁO CÁO VÀO LARK THÀNH CÔNG!");
   } else {
-    console.log("Card elements count:", report.card.body.elements.length);
+    if (args.includes("--json")) console.log(JSON.stringify(report.cards, null, 2));
+    console.log("Số tin:", report.cards.length, "· elements:", report.cards.map((c) => c.body.elements.length).join(", "));
   }
   process.exit(0);
 }

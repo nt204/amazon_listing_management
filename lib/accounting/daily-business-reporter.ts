@@ -43,6 +43,8 @@ type ReportRecipient = { receiveId: string; receiveIdType: string };
 
 export interface DailyReportPreview {
   card: Record<string, unknown>;
+  /** Các tin gửi đi theo thứ tự: tổng công ty, rồi từng team */
+  cards: Array<Record<string, unknown>>;
   text: string;
   analysis: DailyReportAnalysis;
 }
@@ -410,10 +412,14 @@ export async function reportDailyBusinessData(
   const text = buildTeamReportText(teamReport, cardOptions);
   // Gửi đi dùng mẫu Báo cáo KPI ngày (scripts/send-daily-kpi-report.ts, mẫu chốt 2026-11-18).
   // Mẫu mới lỗi thì báo lỗi, không gửi bù bằng mẫu cũ.
+  // Mỗi tin 1 card: tổng công ty, rồi từng team (kèm link Báo cáo ngày của store)
   let card: Record<string, unknown>;
+  let cards: Array<Record<string, unknown>>;
   try {
     const { generateDailyKpiReport } = await import("@/scripts/send-daily-kpi-report");
-    card = (await generateDailyKpiReport(latestDate)).card;
+    const report = await generateDailyKpiReport(latestDate);
+    card = report.card;
+    cards = report.cards;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`[DailyReport] Lỗi lập Báo cáo KPI ngày ${latestDate}:`, err);
@@ -425,7 +431,7 @@ export async function reportDailyBusinessData(
       success: true,
       reportedDate: latestDate,
       message: `Xem trước báo cáo ngày ${displayDate(latestDate)} cho ${new Set(channels.map((c) => c.storeName)).size} store (chưa gửi).`,
-      preview: { card, text, analysis },
+      preview: { card, cards, text, analysis },
     };
   }
 
@@ -438,20 +444,24 @@ export async function reportDailyBusinessData(
     `;
   }
 
-  // 5. Gửi card Lark (card lỗi thì notifyLarkEventBestEffort gửi bản text)
+  // 5. Gửi card Lark lần lượt từng tin (card lỗi thì notifyLarkEventBestEffort gửi bản text)
   if (options.recipient) {
-    await sendLarkCardNotification(card, options.recipient);
+    for (const c of cards) await sendLarkCardNotification(c, options.recipient);
   } else {
     const webhookUrl = process.env.LARK_ACCOUNTING_WEBHOOK_URL?.trim() || process.env.LARK_WEBHOOK_URL?.trim();
     if (webhookUrl) {
+      let sentCount = 0;
       try {
-        await sendLarkCardNotification(card, { receiveId: webhookUrl, receiveIdType: "webhook" });
+        for (const c of cards) {
+          await sendLarkCardNotification(c, { receiveId: webhookUrl, receiveIdType: "webhook" });
+          sentCount++;
+        }
       } catch (whErr) {
         console.error("[DailyReport] Lỗi gửi qua Webhook:", whErr);
         const reason = whErr instanceof Error ? whErr.message : String(whErr);
-        await sendLarkTextNotification(`⚠️ Gửi Báo cáo KPI ngày ${displayDate(latestDate)} lỗi: ${reason}`, { receiveId: webhookUrl, receiveIdType: "webhook" }).catch(() => {});
-        if (isAutomatic) {
-          // Trả lại trạng thái trước đó để lượt cron sau gửi lại
+        await sendLarkTextNotification(`⚠️ Gửi Báo cáo KPI ngày ${displayDate(latestDate)} lỗi ở tin ${sentCount + 1}/${cards.length}: ${reason}`, { receiveId: webhookUrl, receiveIdType: "webhook" }).catch(() => {});
+        if (isAutomatic && sentCount === 0) {
+          // Chưa gửi được tin nào: trả lại trạng thái trước đó để lượt cron sau gửi lại (đã gửi 1 phần thì không gửi lại, tránh trùng)
           await sql`
             INSERT INTO app_settings (key, value, updated_at)
             VALUES (${settingKey}, ${sql.json(lastState)}, NOW())
@@ -461,11 +471,13 @@ export async function reportDailyBusinessData(
         return { success: false, reportedDate: latestDate, message: `Gửi Báo cáo KPI ngày ${displayDate(latestDate)} qua Lark lỗi: ${reason}` };
       }
     } else {
-      await notifyLarkEventBestEffort(
-        { teamId: scope.teamId, actorId: "system" },
-        "accounting",
-        { card, fallbackText: `Báo cáo KPI ngày ${displayDate(latestDate)}: không hiển thị được card, xem trên web.` },
-      );
+      for (const c of cards) {
+        await notifyLarkEventBestEffort(
+          { teamId: scope.teamId, actorId: "system" },
+          "accounting",
+          { card: c, fallbackText: `Báo cáo KPI ngày ${displayDate(latestDate)}: không hiển thị được card, xem trên web.` },
+        );
+      }
     }
   }
 

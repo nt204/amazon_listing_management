@@ -100,13 +100,17 @@ export function FinancialsWorkspace({ subTab }: { subTab?: string }) {
   const activeTab: FinancialsSubTab = tabByGroup[group] ?? GROUP_TABS[group][0];
 
   // Tab FBM / FBM cố định chỉ dành cho store có team FBM: theo dõi store đang chọn (dùng chung giữa các tab)
-  const [storeInfo, setStoreInfo] = useState<Map<string, { id: string; team?: string; access?: StoreAccessInfo }> | null>(null);
+  const [storeInfo, setStoreInfo] = useState<Map<string, { id: string; name?: string; team?: string; access?: StoreAccessInfo }> | null>(null);
   const [selectedStoreId, setSelectedStoreId] = useState("");
+  // Link ?store=<TÊN STORE> (vd từ Báo cáo ngày trên Lark): chọn store đó trước khi mở bảng
+  const [storeParam, setStoreParam] = useState(() =>
+    typeof window !== "undefined" ? new URL(window.location.href).searchParams.get("store")?.trim() || "" : "",
+  );
   useEffect(() => {
     let ignore = false;
     fetch("/api/accounting/stores")
       .then((res) => (res.ok ? res.json() : { stores: [] }))
-      .then((data: { stores?: { id: string; team?: string; access?: StoreAccessInfo }[] }) => {
+      .then((data: { stores?: { id: string; name?: string; team?: string; access?: StoreAccessInfo }[] }) => {
         if (!ignore) setStoreInfo(new Map((data.stores || []).map((s) => [s.id, s])));
       })
       .catch(() => {
@@ -122,6 +126,21 @@ export function FinancialsWorkspace({ subTab }: { subTab?: string }) {
       window.removeEventListener("storage", syncStore);
     };
   }, []);
+  useEffect(() => {
+    if (!storeParam || storeInfo == null) return;
+    const wanted = storeParam.toUpperCase();
+    const match = [...storeInfo.values()].find((s) => s.name?.trim().toUpperCase() === wanted);
+    if (match) {
+      window.localStorage.setItem("acc_selected_store_id", match.id);
+      setSelectedStoreId(match.id);
+      window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: match.id }));
+    }
+    // Bỏ ?store khỏi URL để lần tải lại sau giữ store người dùng tự chọn
+    const url = new URL(window.location.href);
+    url.searchParams.delete("store");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    setStoreParam("");
+  }, [storeParam, storeInfo]);
   const selectedStore = storeInfo?.get(selectedStoreId);
   const showFbmTabs = storeInfo != null && storeHasTeam(selectedStore?.team, "FBM") && storeCanView(selectedStore, "FBM");
   // Phân quyền kế toán: người chỉ được xem FBM (team FBM) không thấy nhóm tab FBA
@@ -221,6 +240,7 @@ export function FinancialsWorkspace({ subTab }: { subTab?: string }) {
 
       {/* CONTENT PANELS: Mount ONLY active tab to isolate performance and eliminate background lag */}
       <div className="flex-1 overflow-hidden relative">
+        {storeParam ? null : (
         <AccountingViewTransition transitionKey={visibleTab} className="h-full w-full">
           {visibleTab === "fba" && <FbaDailyView key="fba" />}
           {visibleTab === "weekly" && <WeeklyReportView key="weekly" />}
@@ -231,6 +251,7 @@ export function FinancialsWorkspace({ subTab }: { subTab?: string }) {
           {visibleTab === "sku_monthly_fbm" && <SkuMonthlyView key="sku_monthly_fbm" channel="fbm" />}
           {visibleTab === "fbm_fixed" && <SkuWinView key="fbm_fixed" variant="fbm_fixed" />}
         </AccountingViewTransition>
+        )}
       </div>
     </div>
   );
