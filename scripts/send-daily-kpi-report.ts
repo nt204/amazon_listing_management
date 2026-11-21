@@ -459,6 +459,8 @@ export interface DailyKpiReport {
   card: Record<string, any>;
   /** Mỗi tin 1 card: [tổng công ty, team 1, team 2, ...] — gửi lần lượt */
   cards: Array<Record<string, any>>;
+  /** Tin của từng team kèm mã team (TEAMS[].id: "FBA 1", "FBM"...) để gửi vào nhóm Lark riêng của team */
+  teamCards: Array<{ teamId: string; teamName: string; card: Record<string, any> }>;
   success: boolean;
   date: string;
 }
@@ -659,7 +661,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
 
   // 2. BẢNG TỪNG TEAM & STORE (mỗi team 1 tin riêng): Kênh | Revenue | Profit | Units | Spend | Margin | TACoS | ACoS
   // Bên dưới mỗi team là "Nhận xét" (Toàn team thay bằng Team + số, chỉ nhận xét store biến động)
-  const teamCards: Array<Record<string, any>> = [];
+  const teamCards: Array<{ teamId: string; teamName: string; card: Record<string, any> }> = [];
   // Số theo SKU trong ngày của mọi kênh (để lấy Top 10 Profit cao / thấp nhất của từng team)
   const skusByChannel = new Map<ChannelDetail, TeamSkuRow[]>();
   await Promise.all(
@@ -779,7 +781,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       },
     ];
 
-    teamCards.push({
+    teamCards.push({ teamId: team.id, teamName: team.name, card: {
       schema: "2.0",
       config: { width_mode: "fill" },
       header: {
@@ -788,7 +790,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         subtitle: { tag: "plain_text", content: headerSubtitle },
       },
       body: { elements: teamElements },
-    });
+    } });
   }
 
   const card = {
@@ -812,7 +814,8 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
 
   return {
     card,
-    cards: [card, ...teamCards],
+    cards: [card, ...teamCards.map((t) => t.card)],
+    teamCards,
     success: true,
     date: targetDate,
   };

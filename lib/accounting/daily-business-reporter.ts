@@ -224,6 +224,64 @@ async function loadTeamLeads(teamId: string): Promise<Record<string, string>> {
 }
 
 /**
+ * Webhook nhóm Lark riêng của từng team, lưu ở app_settings `daily_report_team_webhooks:<teamId>`
+ * dạng {"FBA 1": "https://open.larksuite.com/open-apis/bot/v2/hook/...", "FBM": "..."} (khoá = TEAMS[].id
+ * trong scripts/send-daily-kpi-report.ts). Nhóm tổng vẫn nhận mọi tin qua LARK_ACCOUNTING_WEBHOOK_URL.
+ */
+async function loadTeamWebhooks(teamId: string): Promise<Record<string, string>> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<Array<{ value: unknown }>>`
+    SELECT value FROM app_settings
+    WHERE key IN (${`daily_report_team_webhooks:${teamId}`}, 'daily_report_team_webhooks:default')
+    ORDER BY (key = ${`daily_report_team_webhooks:${teamId}`}) DESC
+    LIMIT 1
+  `;
+  const raw = rows[0]?.value;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .filter(([, url]) => typeof url === "string" && url.trim().startsWith("https://"))
+        .map(([team, url]) => [team.trim().toUpperCase(), (url as string).trim()]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Gửi tin của từng team vào nhóm Lark của team đó. Team lỗi không chặn team khác; lỗi được báo vào nhóm tổng.
+ */
+async function sendTeamCards(
+  teamId: string,
+  teamCards: Array<{ teamId: string; teamName: string; card: Record<string, unknown> }>,
+  date: string,
+  mainWebhookUrl: string | undefined,
+): Promise<string[]> {
+  const webhooks = await loadTeamWebhooks(teamId);
+  const failures: string[] = [];
+  for (const t of teamCards) {
+    const url = webhooks[t.teamId.trim().toUpperCase()];
+    if (!url) continue;
+    try {
+      await sendLarkCardNotification(t.card, { receiveId: url, receiveIdType: "webhook" });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[DailyReport] Lỗi gửi tin ${t.teamName} vào nhóm team:`, err);
+      failures.push(`${t.teamName}: ${reason}`);
+    }
+  }
+  if (failures.length && mainWebhookUrl) {
+    await sendLarkTextNotification(
+      `⚠️ Báo cáo KPI ngày ${displayDate(date)}: gửi vào nhóm team lỗi — ${failures.join("; ")}`,
+      { receiveId: mainWebhookUrl, receiveIdType: "webhook" },
+    ).catch(() => {});
+  }
+  return failures;
+}
+
+/**
  * Danh sách store active từ mac-crawler/stores.json (hoặc stores.json ở root).
  * Chỉ các store enabled=true mới được tính vào tiêu chí đủ điều kiện gửi báo cáo Lark tự động.
  */
@@ -415,11 +473,13 @@ export async function reportDailyBusinessData(
   // Mỗi tin 1 card: tổng công ty, rồi từng team (kèm link Báo cáo ngày của store)
   let card: Record<string, unknown>;
   let cards: Array<Record<string, unknown>>;
+  let teamCards: Array<{ teamId: string; teamName: string; card: Record<string, unknown> }>;
   try {
     const { generateDailyKpiReport } = await import("@/scripts/send-daily-kpi-report");
     const report = await generateDailyKpiReport(latestDate);
     card = report.card;
     cards = report.cards;
+    teamCards = report.teamCards;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`[DailyReport] Lỗi lập Báo cáo KPI ngày ${latestDate}:`, err);
@@ -481,6 +541,13 @@ export async function reportDailyBusinessData(
     }
   }
 
+  // 6. Nhóm tổng đã nhận đủ; giờ gửi tin từng team vào nhóm Lark riêng của team (chỉ khi gửi cho nhóm, không gửi cho 1 người)
+  let teamFailures: string[] = [];
+  if (!options.recipient) {
+    const mainWebhookUrl = process.env.LARK_ACCOUNTING_WEBHOOK_URL?.trim() || process.env.LARK_WEBHOOK_URL?.trim();
+    teamFailures = await sendTeamCards(scope.teamId, teamCards, latestDate, mainWebhookUrl);
+  }
+
   if (options.force && !options.recipient) {
     // Gửi ép (force) không đi qua bước chiếm ngày ở trên nên ghi lại ngày đã báo cáo ở đây
     await sql`
@@ -498,7 +565,7 @@ export async function reportDailyBusinessData(
   return {
     success: true,
     reportedDate: latestDate,
-    message: `Đã gửi báo cáo kinh doanh ngày ${displayDate(latestDate)} cho ${new Set(channels.map((c) => c.storeName)).size} store qua Lark bot${missingSuffix}.`,
+    message: `Đã gửi báo cáo kinh doanh ngày ${displayDate(latestDate)} cho ${new Set(channels.map((c) => c.storeName)).size} store qua Lark bot${missingSuffix}${teamFailures.length ? ` · lỗi gửi nhóm team: ${teamFailures.join("; ")}` : ""}.`,
   };
 }
 
