@@ -101,6 +101,94 @@ export function canonicalStoreName(value?: string | null): string {
   return cleaned;
 }
 
+type SkuTrendPoint = { date: string; spend: number; sales: number; orders: number; clicks: number };
+
+/**
+ * Spend / Sales / Orders / Clicks theo ngày (30 ngày tới ngày báo cáo mới nhất) của từng store + SKU,
+ * từ ppc_search_terms DAILY (SP + SB). SKU gom như /api/ppc/sku-target-breakdown: sku, trống thì portfolio_name.
+ * Khoá "<STORE PPC>|<SKU>"; thêm "*|<SKU>" (cộng mọi store) cho SKU không có tên store.
+ */
+async function loadSearchTermDailyTrend(skus: PpcSkuPerformance[]): Promise<Map<string, SkuTrendPoint[]>> {
+  const result = new Map<string, SkuTrendPoint[]>();
+  const skuList = Array.from(new Set(skus.map((s) => s.sku.toUpperCase().trim()))).filter(Boolean);
+  if (skuList.length === 0) return result;
+  const storeNames = Array.from(new Set(skus.map((s) => (s.storeName || "").toUpperCase().trim()).filter(Boolean)));
+  const anyWithoutStore = skus.some((s) => !(s.storeName || "").trim());
+  try {
+    const sql = await getDatabaseClient();
+    const stores = await sql<{ id: string; name: string }[]>`
+      SELECT id, upper(trim(name)) AS name FROM ppc_stores
+      WHERE ${anyWithoutStore || storeNames.length === 0} OR upper(trim(name)) IN ${sql(storeNames.length ? storeNames : [""])}
+    `;
+    if (stores.length === 0) return result;
+    const storeIds = stores.map((s) => s.id);
+    const nameById = new Map(stores.map((s) => [s.id, s.name]));
+
+    const maxRow = await sql<{ max_date: string | null }[]>`
+      SELECT MAX(report_date)::text AS max_date FROM ppc_search_terms
+      WHERE store_id IN ${sql(storeIds)} AND report_granularity = 'DAILY'
+        AND report_date >= CURRENT_DATE - 60
+    `;
+    const latest = maxRow[0]?.max_date;
+    if (!latest) return result;
+    const [y, m, d] = latest.split("-").map(Number);
+    const days: string[] = [];
+    for (let i = 29; i >= 0; i--) days.push(new Date(Date.UTC(y, m - 1, d - i)).toISOString().slice(0, 10));
+
+    const rows = await sql<{ store_id: string; sku: string; date: string; spend: string; sales: string; orders: number; clicks: number }[]>`
+      SELECT
+        t.store_id,
+        upper(trim(COALESCE(NULLIF(t.sku, ''), t.portfolio_name))) AS sku,
+        t.report_date::text AS date,
+        COALESCE(SUM(t.spend), 0)::numeric AS spend,
+        COALESCE(SUM(t.sales), 0)::numeric AS sales,
+        COALESCE(SUM(t.orders), 0)::integer AS orders,
+        COALESCE(SUM(t.clicks), 0)::integer AS clicks
+      FROM ppc_search_terms t
+      WHERE t.store_id IN ${sql(storeIds)}
+        AND t.report_granularity = 'DAILY'
+        AND t.report_start_date = t.report_end_date
+        AND t.report_date BETWEEN ${days[0]}::date AND ${latest}::date
+        AND upper(trim(COALESCE(NULLIF(t.sku, ''), t.portfolio_name))) IN ${sql(skuList)}
+      GROUP BY 1, 2, 3
+    `;
+
+    const raw = new Map<string, Map<string, SkuTrendPoint>>();
+    const add = (key: string, r: (typeof rows)[number]) => {
+      let byDate = raw.get(key);
+      if (!byDate) raw.set(key, (byDate = new Map()));
+      const cur = byDate.get(r.date) || { date: r.date, spend: 0, sales: 0, orders: 0, clicks: 0 };
+      cur.spend += Number(r.spend || 0);
+      cur.sales += Number(r.sales || 0);
+      cur.orders += Number(r.orders || 0);
+      cur.clicks += Number(r.clicks || 0);
+      byDate.set(r.date, cur);
+    };
+    for (const r of rows) {
+      add(`${nameById.get(r.store_id) || ""}|${r.sku}`, r);
+      add(`*|${r.sku}`, r);
+    }
+    for (const [key, byDate] of raw) {
+      result.set(
+        key,
+        days.map((date) => {
+          const v = byDate.get(date);
+          return {
+            date,
+            spend: Math.round((v?.spend ?? 0) * 100) / 100,
+            sales: Math.round((v?.sales ?? 0) * 100) / 100,
+            orders: v?.orders ?? 0,
+            clicks: v?.clicks ?? 0,
+          };
+        }),
+      );
+    }
+  } catch (err) {
+    console.warn("Không tải được trend 30 ngày từ Search Term:", err);
+  }
+  return result;
+}
+
 export async function enrichSkuPerformanceWithAccounting(
   skus: PpcSkuPerformance[],
 ): Promise<PpcSkuPerformance[]> {
@@ -130,7 +218,13 @@ export async function enrichSkuPerformanceWithAccounting(
           .filter((id): id is string => Boolean(id))
       : Array.from(accStoreMap.values());
 
-    if (relevantStoreIds.length === 0) return skus;
+    // Trend 30 ngày theo SKU: lấy báo cáo Search Term theo ngày của PPC (cùng nguồn với bảng "Spend / đơn theo target"),
+    // không lấy accounting_ads bên Kế toán. PPC tải lại khoảng ngày gần đây mỗi đêm nên đơn ghi nhận trễ được cập nhật.
+    const trendBySku = await loadSearchTermDailyTrend(skus);
+    const trendOf = (s: PpcSkuPerformance) =>
+      trendBySku.get(`${(s.storeName || "").toUpperCase().trim() || "*"}|${s.sku.toUpperCase().trim()}`) || [];
+
+    if (relevantStoreIds.length === 0) return skus.map((s) => ({ ...s, dailyTrend: trendOf(s) }));
 
     const accItems = await sql<any[]>`
       SELECT store_id, sku, product_type, loai, asin, fnsku, mockup, mockup_url, brand, status, niche, pic_mkt
@@ -164,106 +258,6 @@ export async function enrichSkuPerformanceWithAccounting(
       // Ignore cross store query error
     }
 
-    // 30-day daily trend enrichment from accounting_ads
-    const skuList = Array.from(new Set(skus.map((s) => s.sku.toUpperCase().trim()))).filter(Boolean);
-    const trendBySku = new Map<string, Array<{ date: string; spend: number; sales: number; orders: number; clicks: number }>>();
-    if (skuList.length > 0) {
-      try {
-        const maxDateRow = await sql<{ max_date: string }[]>`
-          SELECT MAX(date)::text as max_date FROM accounting_ads WHERE date >= (CURRENT_DATE - INTERVAL '60 days')
-        `;
-        const latestDateStr = maxDateRow[0]?.max_date;
-        if (latestDateStr) {
-          const [year, month, day] = latestDateStr.split("-").map(Number);
-          const daysList: string[] = [];
-          for (let i = 29; i >= 0; i--) {
-            const d = new Date(Date.UTC(year, month - 1, day - i));
-            daysList.push(d.toISOString().slice(0, 10));
-          }
-          const minDateStr = daysList[0];
-
-          const trendRows = relevantStoreIds.length > 0
-            ? await sql<{
-                sku: string;
-                date: string;
-                spend: string;
-                sales: string;
-                orders: number;
-                clicks: number;
-              }[]>`
-                SELECT 
-                  upper(trim(sku)) as sku,
-                  date::text as date,
-                  COALESCE(SUM(spend), 0)::numeric as spend,
-                  COALESCE(SUM(sales), 0)::numeric as sales,
-                  COALESCE(SUM(orders), 0)::integer as orders,
-                  COALESCE(SUM(clicks), 0)::integer as clicks
-                FROM accounting_ads
-                WHERE date >= ${minDateStr}::date
-                  AND date <= ${latestDateStr}::date
-                  AND store_id IN ${sql(relevantStoreIds)}
-                  AND upper(trim(sku)) IN ${sql(skuList)}
-                GROUP BY upper(trim(sku)), date
-                ORDER BY date ASC
-              `
-            : await sql<{
-                sku: string;
-                date: string;
-                spend: string;
-                sales: string;
-                orders: number;
-                clicks: number;
-              }[]>`
-                SELECT 
-                  upper(trim(sku)) as sku,
-                  date::text as date,
-                  COALESCE(SUM(spend), 0)::numeric as spend,
-                  COALESCE(SUM(sales), 0)::numeric as sales,
-                  COALESCE(SUM(orders), 0)::integer as orders,
-                  COALESCE(SUM(clicks), 0)::integer as clicks
-                FROM accounting_ads
-                WHERE date >= ${minDateStr}::date
-                  AND date <= ${latestDateStr}::date
-                  AND upper(trim(sku)) IN ${sql(skuList)}
-                GROUP BY upper(trim(sku)), date
-                ORDER BY date ASC
-              `;
-
-          const rawBySku = new Map<string, Map<string, { spend: number; sales: number; orders: number; clicks: number }>>();
-          for (const r of trendRows) {
-            let m = rawBySku.get(r.sku);
-            if (!m) {
-              m = new Map();
-              rawBySku.set(r.sku, m);
-            }
-            m.set(r.date, {
-              spend: Math.round(Number(r.spend || 0) * 100) / 100,
-              sales: Math.round(Number(r.sales || 0) * 100) / 100,
-              orders: Number(r.orders || 0),
-              clicks: Number(r.clicks || 0),
-            });
-          }
-
-          for (const skuCode of skuList) {
-            const m = rawBySku.get(skuCode);
-            const fullDays = daysList.map((d) => {
-              const val = m?.get(d);
-              return {
-                date: d,
-                spend: val?.spend ?? 0,
-                sales: val?.sales ?? 0,
-                orders: val?.orders ?? 0,
-                clicks: val?.clicks ?? 0,
-              };
-            });
-            trendBySku.set(skuCode, fullDays);
-          }
-        }
-      } catch (err) {
-        console.warn("Could not enrich 30-day trend from accounting_ads:", err);
-      }
-    }
-
     return skus.map((s) => {
       const skuKey = s.sku.toUpperCase().trim();
       const ppcName = (s.storeName || "").toUpperCase().trim();
@@ -271,7 +265,7 @@ export async function enrichSkuPerformanceWithAccounting(
       const accStoreId = accStoreMap.get(accName);
       const accSameStore = accStoreId ? itemMap.get(`${accStoreId}::${skuKey}`) : null;
       const cross = crossStoreMap.get(skuKey);
-      const dailyTrend = trendBySku.get(skuKey) || [];
+      const dailyTrend = trendOf(s);
 
       if (!accSameStore && !cross) {
         return {
