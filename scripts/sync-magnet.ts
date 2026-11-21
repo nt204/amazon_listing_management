@@ -73,6 +73,7 @@ async function main() {
       LEFT JOIN keyword_search_volumes kv ON kv.keyword_norm = lower(trim(st.customer_search_term))
       WHERE kv.search_volume IS NULL
         AND st.customer_search_term ~* '^[a-zA-Z0-9 ]+$'
+        AND st.customer_search_term !~* '^b[0-9a-z]{9}$'
         AND length(trim(st.customer_search_term)) >= 3
       GROUP BY lower(trim(st.customer_search_term))
     )
