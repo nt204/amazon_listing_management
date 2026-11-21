@@ -147,19 +147,19 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
     });
   };
 
-  // Table zoom
+  // Table zoom — mặc định 100%. Khóa lưu đổi sang _v2 để mọi người về lại 100% (bỏ mức zoom 90% cũ đã lưu).
   const [zoomLevel, setZoomLevel] = useState<number>(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("acc_fba_daily_zoom");
-      return saved ? Number(saved) : 90;
+      const saved = Number(localStorage.getItem("acc_fba_daily_zoom_v2"));
+      return saved >= 70 && saved <= 120 ? saved : 100;
     }
-    return 90;
+    return 100;
   });
 
   const handleZoomChange = (delta: number) => {
     setZoomLevel((prev) => {
       const next = Math.min(120, Math.max(70, prev + delta));
-      localStorage.setItem("acc_fba_daily_zoom", String(next));
+      localStorage.setItem("acc_fba_daily_zoom_v2", String(next));
       return next;
     });
   };

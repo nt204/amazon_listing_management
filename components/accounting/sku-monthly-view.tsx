@@ -98,7 +98,7 @@ function buildSearchMatcher(query: string): ((item: SkuMonthlyItem) => boolean) 
     return groups.some((words) => words.every((word) => haystack.includes(word)));
   };
 }
-const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom";
+const SKU_MONTHLY_ZOOM_STORAGE_KEY = "acc_sku_monthly_zoom_v2";
 
 function formatCurrency(val: number | null | undefined): string {
   if (val == null || isNaN(val)) return "—";
@@ -180,13 +180,13 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
   const [error, setError] = useState<string | null>(null);
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMonthlyItem | null>(null);
 
-  // Table zoom
+  // Table zoom — mặc định 100% (khóa lưu _v2: bỏ mức zoom 90% cũ đã lưu để mọi người về lại 100%)
   const [zoomLevel, setZoomLevel] = useState<number>(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(SKU_MONTHLY_ZOOM_STORAGE_KEY);
-      return saved ? Number(saved) : 90;
+      const saved = Number(localStorage.getItem(SKU_MONTHLY_ZOOM_STORAGE_KEY));
+      return saved >= 70 && saved <= 120 ? saved : 100;
     }
-    return 90;
+    return 100;
   });
 
   const handleZoomChange = (delta: number) => {
