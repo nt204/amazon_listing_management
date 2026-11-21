@@ -49,12 +49,23 @@ async function upsertVolumes(
       INSERT INTO keyword_search_volumes ${sql(rows.slice(i, i + 500))}
       ON CONFLICT (marketplace, keyword_norm) DO UPDATE SET
         keyword = EXCLUDED.keyword,
-        search_volume = EXCLUDED.search_volume,
-        search_volume_trend = EXCLUDED.search_volume_trend,
-        cpc = EXCLUDED.cpc,
-        competing_products = EXCLUDED.competing_products,
-        source = EXCLUDED.source,
-        fetched_at = NOW()
+        search_volume = CASE
+          WHEN EXCLUDED.search_volume IS NOT NULL AND EXCLUDED.search_volume > 0 THEN EXCLUDED.search_volume
+          ELSE COALESCE(keyword_search_volumes.search_volume, EXCLUDED.search_volume)
+        END,
+        search_volume_trend = COALESCE(EXCLUDED.search_volume_trend, keyword_search_volumes.search_volume_trend),
+        cpc = COALESCE(EXCLUDED.cpc, keyword_search_volumes.cpc),
+        competing_products = COALESCE(EXCLUDED.competing_products, keyword_search_volumes.competing_products),
+        source = CASE
+          WHEN EXCLUDED.search_volume IS NOT NULL AND EXCLUDED.search_volume > 0 THEN EXCLUDED.source
+          WHEN keyword_search_volumes.search_volume IS NOT NULL AND keyword_search_volumes.search_volume > 0 THEN keyword_search_volumes.source
+          ELSE EXCLUDED.source
+        END,
+        fetched_at = CASE
+          WHEN EXCLUDED.search_volume IS NOT NULL AND EXCLUDED.search_volume > 0 THEN NOW()
+          WHEN keyword_search_volumes.search_volume IS NOT NULL AND keyword_search_volumes.search_volume > 0 THEN keyword_search_volumes.fetched_at
+          ELSE NOW()
+        END
     `;
   }
   return Array.from(byKeyword.keys());
@@ -71,10 +82,11 @@ async function main() {
       SELECT lower(trim(st.customer_search_term)) AS kw, SUM(st.spend) AS total_spend
       FROM ppc_search_terms st
       LEFT JOIN keyword_search_volumes kv ON kv.keyword_norm = lower(trim(st.customer_search_term))
-      WHERE kv.search_volume IS NULL
-        AND st.customer_search_term ~* '^[a-zA-Z0-9 ]+$'
-        AND st.customer_search_term !~* '^b[0-9a-z]{9}$'
-        AND length(trim(st.customer_search_term)) >= 3
+      WHERE (kv.search_volume IS NULL OR kv.search_volume = 0)
+        AND st.customer_search_term !~* '^(close-match|loose-match|substitutes|complements)$'
+        AND st.customer_search_term !~* '^[bB][0-9a-zA-Z]{9}$'
+        AND st.customer_search_term !~* '^[a-zA-Z0-9_-]+='
+        AND length(trim(st.customer_search_term)) >= 2
       GROUP BY lower(trim(st.customer_search_term))
     )
     SELECT kw, ROUND(total_spend::numeric, 2)::float AS spend 

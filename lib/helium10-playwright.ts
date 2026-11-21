@@ -28,6 +28,7 @@ export interface Helium10MiningOptions {
 
 export interface Helium10KeywordItem {
   keyword: string;
+  asin?: string | null;
   search_volume: number | null;
   iq_score: number | null;
   cpc: number | null;
@@ -484,9 +485,11 @@ async function fetchCerebroDirectApi(
   const keywords: Helium10KeywordItem[] = tableData.slice(0, limit).map((row) => {
     const rawVolume = typeof row.impressionExact30 === "number" ? row.impressionExact30 : (typeof row.searchVolume === "number" ? row.searchVolume : null);
     const rawCpc = typeof row.cpc === "number" ? (row.cpc > 50 ? row.cpc / 100 : row.cpc) : null;
+    const currentAsin = row.currentAsin || row.asin || null;
 
     return {
       keyword: String(row.phrase || row.keyword || "").trim(),
+      asin: currentAsin ? String(currentAsin).trim().toUpperCase() : null,
       search_volume: rawVolume,
       iq_score: typeof row.iq === "number" ? Math.round(row.iq) : (typeof row.iq_score === "number" ? Math.round(row.iq_score) : null),
       cpc: rawCpc,
@@ -784,15 +787,20 @@ export async function mineHelium10Keywords(
       ) {
         try {
           const json = await response.json();
+          const seed = json?.data?.seedKeyword || json?.data?.seedKeywordData;
           const list =
             json?.data?.tableData ||
             json?.data?.items ||
             json?.data?.list ||
             json?.keywords ||
-            (Array.isArray(json?.data) ? json.data : null);
+            (Array.isArray(json?.data) ? json.data : []);
 
-          if (Array.isArray(list) && list.length > 0) {
-            interceptedKeywordsList = list;
+          const combined: unknown[] = [];
+          if (seed && typeof seed === "object") combined.push(seed);
+          if (Array.isArray(list)) combined.push(...list);
+
+          if (combined.length > 0) {
+            interceptedKeywordsList = combined;
           }
         } catch {}
       }
@@ -822,6 +830,7 @@ export async function mineHelium10Keywords(
     if (interceptedKeywordsList.length > 0) {
       extractedKeywords = interceptedKeywordsList.slice(0, limit).map((row: any) => ({
         keyword: String(row.phrase || row.keyword || "").trim(),
+        asin: (row.currentAsin || row.asin) ? String(row.currentAsin || row.asin).trim().toUpperCase() : null,
         search_volume: typeof row.impressionExact30 === "number" ? row.impressionExact30 : (typeof row.searchVolume === "number" ? row.searchVolume : null),
         iq_score: typeof row.iq === "number" ? Math.round(row.iq) : null,
         cpc: typeof row.cpc === "number" ? (row.cpc > 50 ? row.cpc / 100 : row.cpc) : null,

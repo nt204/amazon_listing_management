@@ -37,7 +37,7 @@ const STALE_RUN_MINUTES = envInt("PPC_SEARCH_VOLUME_STALE_MINUTES", 15);
 const MAX_ASIN_ATTEMPTS = 4;
 const MAX_CONSECUTIVE_FAILURES = 5;
 
-const NON_KEYWORD_TARGETS = /^(close-match|loose-match|substitutes|complements)$|asin|category|^b0[a-z0-9]{8}$|=/;
+const NON_KEYWORD_TARGETS = /^(close-match|loose-match|substitutes|complements)$|^asin(=|-)|^category(=|-)|^[bB][0-9a-zA-Z]{9}$|[=<>]/i;
 
 /** Chuẩn hóa keyword để khớp giữa Amazon Ads (có "+" ở broad modifier) và Helium 10. */
 export function normalizeKeyword(raw: string | null | undefined): string {
@@ -290,6 +290,7 @@ async function findFreshKeywords(sql: Sql, keywords: string[], marketplace: stri
       WHERE marketplace = ${marketplace}
         AND keyword_norm IN ${sql(chunk)}
         AND fetched_at >= date_trunc('month', NOW())
+        AND search_volume IS NOT NULL
     `;
     for (const row of rows) fresh.add(row.keyword_norm);
   }
@@ -399,12 +400,23 @@ async function upsertVolumes(sql: Sql, marketplace: string, source: string, item
       INSERT INTO keyword_search_volumes ${sql(rows.slice(i, i + 500))}
       ON CONFLICT (marketplace, keyword_norm) DO UPDATE SET
         keyword = EXCLUDED.keyword,
-        search_volume = EXCLUDED.search_volume,
-        search_volume_trend = EXCLUDED.search_volume_trend,
-        cpc = EXCLUDED.cpc,
-        competing_products = EXCLUDED.competing_products,
-        source = EXCLUDED.source,
-        fetched_at = NOW()
+        search_volume = CASE
+          WHEN EXCLUDED.search_volume IS NOT NULL AND EXCLUDED.search_volume > 0 THEN EXCLUDED.search_volume
+          ELSE COALESCE(keyword_search_volumes.search_volume, EXCLUDED.search_volume)
+        END,
+        search_volume_trend = COALESCE(EXCLUDED.search_volume_trend, keyword_search_volumes.search_volume_trend),
+        cpc = COALESCE(EXCLUDED.cpc, keyword_search_volumes.cpc),
+        competing_products = COALESCE(EXCLUDED.competing_products, keyword_search_volumes.competing_products),
+        source = CASE
+          WHEN EXCLUDED.search_volume IS NOT NULL AND EXCLUDED.search_volume > 0 THEN EXCLUDED.source
+          WHEN keyword_search_volumes.search_volume IS NOT NULL AND keyword_search_volumes.search_volume > 0 THEN keyword_search_volumes.source
+          ELSE EXCLUDED.source
+        END,
+        fetched_at = CASE
+          WHEN EXCLUDED.search_volume IS NOT NULL AND EXCLUDED.search_volume > 0 THEN NOW()
+          WHEN keyword_search_volumes.search_volume IS NOT NULL AND keyword_search_volumes.search_volume > 0 THEN keyword_search_volumes.fetched_at
+          ELSE NOW()
+        END
     `;
   }
   return Array.from(byKeyword.keys());
@@ -435,10 +447,11 @@ async function upsertRankings(
   for (const item of items) {
     const keyword_norm = normalizeKeyword(item.keyword);
     if (!keyword_norm) continue;
-    const key = `${marketplace}:${primaryAsin}:${keyword_norm}`;
+    const targetAsin = (item.asin && item.asin.trim().toUpperCase()) || primaryAsin;
+    const key = `${marketplace}:${targetAsin}:${keyword_norm}`;
     rowMap.set(key, {
       marketplace,
-      asin: primaryAsin,
+      asin: targetAsin,
       keyword_norm,
       keyword: item.keyword,
       organic_rank: item.organic_rank ?? null,
@@ -458,7 +471,10 @@ async function upsertRankings(
         keyword = EXCLUDED.keyword,
         organic_rank = EXCLUDED.organic_rank,
         sponsored_rank = EXCLUDED.sponsored_rank,
-        search_volume = EXCLUDED.search_volume,
+        search_volume = CASE
+          WHEN EXCLUDED.search_volume IS NOT NULL AND EXCLUDED.search_volume > 0 THEN EXCLUDED.search_volume
+          ELSE COALESCE(ppc_asin_keyword_rankings.search_volume, EXCLUDED.search_volume)
+        END,
         cpc = EXCLUDED.cpc,
         cpr = EXCLUDED.cpr,
         source = EXCLUDED.source,
