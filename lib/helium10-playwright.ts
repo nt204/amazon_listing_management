@@ -546,6 +546,7 @@ async function fetchMagnetDirectApi(
 
   // 2. Poll and retrieve keyword table data
   let tableData: any[] = [];
+  let seedKeywordData: any = null;
   const pageSize = Math.min(Math.max(limit, 50), 200);
 
   for (let attempt = 1; attempt <= 15; attempt++) {
@@ -562,6 +563,7 @@ async function fetchMagnetDirectApi(
 
     if (dataRes.ok) {
       const dataJson = await dataRes.json();
+      seedKeywordData = dataJson?.data?.seedKeyword || dataJson?.data?.seedKeywordData || seedKeywordData;
       if (Array.isArray(dataJson?.data?.tableData) && dataJson.data.tableData.length > 0) {
         tableData = dataJson.data.tableData;
         break;
@@ -571,11 +573,17 @@ async function fetchMagnetDirectApi(
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
-  if (tableData.length === 0) {
+  const rowsToProcess: any[] = [];
+  if (seedKeywordData && (seedKeywordData.phrase || seedKeywordData.keyword)) {
+    rowsToProcess.push(seedKeywordData);
+  }
+  rowsToProcess.push(...tableData);
+
+  if (rowsToProcess.length === 0) {
     throw new Error("Không có từ khóa nào được trả về từ Helium 10 Magnet cho cụm từ khóa này.");
   }
 
-  const keywords: Helium10KeywordItem[] = tableData.slice(0, limit).map((row) => {
+  const keywords: Helium10KeywordItem[] = rowsToProcess.slice(0, limit).map((row) => {
     const rawVolume = typeof row.impressionExact30 === "number" ? row.impressionExact30 : (typeof row.searchVolume === "number" ? row.searchVolume : null);
     const rawCpc = typeof row.cpc === "number" ? (row.cpc > 50 ? row.cpc / 100 : row.cpc) : null;
 
