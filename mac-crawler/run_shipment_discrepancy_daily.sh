@@ -39,7 +39,7 @@ trap cleanup EXIT
 cd "$SCRIPT_DIR"
 
 # Nếu truyền tham số store (ví dụ: FASTPEACE) thì chạy store đó.
-# Nếu không truyền gì (chạy tự động 2h sáng) thì chạy --all cho tất cả các store.
+# Nếu không truyền gì (chạy tự động 02:00 sáng thứ 2 hằng tuần) thì chạy --all cho tất cả các store.
 if [ -n "$1" ]; then
   echo "[Runner] Chạy quét riêng cho Store: $1..."
   npx tsx shipment_discrepancy_crawler.ts --store "$1"
