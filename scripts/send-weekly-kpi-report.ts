@@ -731,7 +731,8 @@ async function main() {
       process.exit(1);
     }
     // Nhóm Lark riêng của từng team: chỉ nhận card của team đó. Team lỗi không chặn team khác; lỗi báo vào nhóm tổng.
-    const teamWebhooks = await loadTeamWebhooks();
+    // --chi-nhom-tong: chỉ gửi vào nhóm tổng (xem thử)
+    const teamWebhooks = args.includes("--chi-nhom-tong") ? {} : await loadTeamWebhooks();
     const failures: string[] = [];
     for (const t of teamCards) {
       const url = teamWebhooks[t.teamId];
