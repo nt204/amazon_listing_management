@@ -701,7 +701,8 @@ async function main() {
       return reportFilters.some((f) => c.includes(f) || f.includes(c));
     };
 
-    const targetMonth = monthArg && /^\d{4}-\d{2}$/.test(monthArg) ? monthArg : lastMonthStr;
+    // Lệnh từ web/hàng đợi gửi --date=YYYY-MM-01 (cột target_date kiểu date) → lấy YYYY-MM; trước đây rơi về tháng trước
+    const targetMonth = monthArg && /^\d{4}-\d{2}(-\d{2})?$/.test(monthArg) ? monthArg.slice(0, 7) : lastMonthStr;
     const isPreviousMonth = targetMonth === lastMonthStr;
 
     const allStores = getStoreList();
