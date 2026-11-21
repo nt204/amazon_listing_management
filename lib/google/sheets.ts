@@ -56,12 +56,25 @@ export function parseSpreadsheetId(url: string): string | null {
   return match?.[1] ?? null;
 }
 
+// Google giới hạn số lượt đọc / phút cho mỗi tài khoản bot (HTTP 429 "Quota exceeded … per minute").
+// Gặp lỗi này thì đợi rồi đọc lại, tổng đợi ~65s để qua cửa sổ 1 phút của Google.
+const QUOTA_RETRY_DELAYS_MS = [20_000, 45_000];
+
 async function sheetsGet<T>(path: string): Promise<T> {
   const token = await getAccessToken();
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (res.status !== 429 || attempt >= QUOTA_RETRY_DELAYS_MS.length) break;
+    const retryAfterSec = Number(res.headers.get("retry-after"));
+    const waitMs = retryAfterSec > 0 ? Math.min(retryAfterSec * 1000, 60_000) : QUOTA_RETRY_DELAYS_MS[attempt];
+    console.warn(`[GoogleSheets] Hết lượt đọc / phút, đợi ${Math.round(waitMs / 1000)}s rồi đọc lại (lần ${attempt + 1})`);
+    await res.body?.cancel().catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
   if (res.status === 403 || res.status === 404) {
     throw new ApiError(
       `Không mở được Google Sheet. Hãy chia sẻ sheet (quyền Người xem) cho ${getServiceAccountEmail()} rồi thử lại.`,
