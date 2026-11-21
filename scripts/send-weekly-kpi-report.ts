@@ -182,6 +182,7 @@ function col(name: string, displayName: string, align: "left" | "right" = "right
 // Cấu hình Teams & Store khớp chuẩn hệ thống
 const TEAMS_CONFIG = [
   {
+    id: "FBA 1", // khoá webhook nhóm team ở app_settings daily_report_team_webhooks
     name: "Team 1",
     teamTag: "FBA TEAM 1",
     lead: "Quỳnh",
@@ -191,6 +192,7 @@ const TEAMS_CONFIG = [
     ],
   },
   {
+    id: "FBA 2", // khoá webhook nhóm team ở app_settings daily_report_team_webhooks
     name: "Team 2",
     teamTag: "FBA TEAM 2",
     lead: "Trường",
@@ -201,6 +203,7 @@ const TEAMS_CONFIG = [
     ],
   },
   {
+    id: "FBA 3", // khoá webhook nhóm team ở app_settings daily_report_team_webhooks
     name: "Team 3",
     teamTag: "FBA TEAM 3",
     lead: "Loan",
@@ -210,6 +213,7 @@ const TEAMS_CONFIG = [
     ],
   },
   {
+    id: "FBM", // khoá webhook nhóm team ở app_settings daily_report_team_webhooks
     name: "Team FBM",
     teamTag: "FBM",
     lead: "Đức",
@@ -594,6 +598,8 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   }
 
   // 3. TÁCH RIÊNG TỪNG TEAM & STORE (GẮN CHẶT VỚI KPI)
+  // Mỗi team còn có 1 card riêng (teamCards) để gửi vào nhóm Lark của team
+  const teamCards: Array<{ teamId: string; teamName: string; card: Record<string, any> }> = [];
   for (const team of TEAMS_CONFIG) {
     const teamStoreRows: any[] = [];
     const teamComments: string[] = [];
@@ -699,13 +705,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     const teamSummaryLine = `📌 **Nhận xét ${team.name}:** ${kpiTeamText}`;
     const commentBlockContent = teamComments.length > 0 ? `${teamSummaryLine}\n${teamComments.join("\n")}` : teamSummaryLine;
 
-    elements.push(
-      { tag: "hr" },
-      {
-        tag: "markdown",
-        content: `**${team.name.toUpperCase()} (${team.lead.toUpperCase()})**`,
-      },
-      {
+    const teamTable = {
         tag: "table",
         page_size: Math.min(teamStoreRows.length, 10),
         row_height: "low",
@@ -723,12 +723,33 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
           col("paceMonth", "% Đạt Tháng"),
         ],
         rows: teamStoreRows,
-      },
+      };
+    const teamComment = { tag: "markdown", content: commentBlockContent };
+
+    elements.push(
+      { tag: "hr" },
       {
         tag: "markdown",
-        content: commentBlockContent,
-      }
+        content: `**${team.name.toUpperCase()} (${team.lead.toUpperCase()})**`,
+      },
+      teamTable,
+      teamComment,
     );
+
+    teamCards.push({
+      teamId: team.id,
+      teamName: team.name,
+      card: {
+        schema: "2.0",
+        config: { width_mode: "fill" },
+        header: {
+          template: "orange",
+          title: { tag: "plain_text", content: `📊 ${team.name.toUpperCase()} (${team.lead.toUpperCase()}) — BÁO CÁO ${week.label.toUpperCase()}` },
+          subtitle: { tag: "plain_text", content: `Kỳ ${week.startDate} đến ${week.endDate} • Đã chốt số liệu` },
+        },
+        body: { elements: [teamTable, teamComment] },
+      },
+    });
   }
 
   const card = {
@@ -750,7 +771,22 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     },
   };
 
-  return { card, week, report };
+  return { card, teamCards, week, report };
+}
+
+/** Webhook nhóm Lark của từng team — dùng chung cấu hình với Báo cáo KPI ngày. */
+async function loadTeamWebhooks(): Promise<Record<string, string>> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<Array<{ value: unknown }>>`
+    SELECT value FROM app_settings WHERE key = 'daily_report_team_webhooks:default' LIMIT 1
+  `;
+  const raw = rows[0]?.value;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
 }
 
 async function main() {
@@ -759,7 +795,7 @@ async function main() {
   const dateArg = args.find((a) => a.startsWith("--date="))?.split("=")[1];
 
   console.log(`Đang lập báo cáo KPI tuần (mốc: ${dateArg || "Thứ 7 gần nhất"})...`);
-  const { card, week } = await generateWeeklyKpiReport(dateArg);
+  const { card, teamCards, week } = await generateWeeklyKpiReport(dateArg);
 
   if (isPingLark) {
     const webhookUrl = process.env.LARK_ACCOUNTING_WEBHOOK_URL;
@@ -774,6 +810,26 @@ async function main() {
     } else {
       console.error(`❌ Gửi Lark thất bại:`, res.reason);
       process.exit(1);
+    }
+    // Nhóm Lark riêng của từng team: chỉ nhận card của team đó. Team lỗi không chặn team khác; lỗi báo vào nhóm tổng.
+    const teamWebhooks = await loadTeamWebhooks();
+    const failures: string[] = [];
+    for (const t of teamCards) {
+      const url = teamWebhooks[t.teamId];
+      if (!url) continue;
+      try {
+        await sendLarkWebhookNotification(url, { card: t.card });
+        console.log(`✅ Đã gửi báo cáo tuần ${t.teamName} vào nhóm team`);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        console.error(`❌ Gửi báo cáo tuần ${t.teamName} vào nhóm team lỗi:`, reason);
+        failures.push(`${t.teamName}: ${reason}`);
+      }
+    }
+    if (failures.length) {
+      await sendLarkWebhookNotification(webhookUrl, {
+        text: `⚠️ Báo cáo tuần ${week.label}: gửi vào nhóm team lỗi — ${failures.join("; ")}`,
+      }).catch(() => {});
     }
   } else {
     console.log("Xem trước Card tuần:");
