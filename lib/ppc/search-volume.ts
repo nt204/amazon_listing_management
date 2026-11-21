@@ -51,6 +51,16 @@ export function normalizeKeyword(raw: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Khóa khớp lỏng: bỏ dấu nháy. Amazon ghi "mother's gifts", Helium 10 thường trả "mothers gifts" (có lúc giữ dấu nháy)
+ * → khớp nguyên văn trước, không có số thì khớp theo khóa này. Phải trùng bộ ký tự với kw_loose() (migration 162).
+ */
+export function looseKeyword(norm: string): string {
+  return norm.replace(/['’‘`´]/g, "");
+}
+
+const hasVolume = (value: number | null | undefined) => typeof value === "number" && value > 0;
+
 export function isKeywordTarget(raw: string | null | undefined): boolean {
   const keyword = normalizeKeyword(raw);
   return keyword.length > 0 && !NON_KEYWORD_TARGETS.test(keyword);
@@ -69,21 +79,37 @@ export async function getKeywordVolumes(
 ): Promise<Map<string, KeywordVolume>> {
   const norms = Array.from(new Set(keywords.filter(isKeywordTarget).map(normalizeKeyword)));
   if (norms.length === 0) return new Map();
+  const looses = Array.from(new Set(norms.map(looseKeyword)));
   const rows = await sql<Array<{
     keyword_norm: string;
+    loose: string;
     search_volume: number | null;
     search_volume_trend: string | null;
     fetched_at: string;
   }>>`
-    SELECT keyword_norm, search_volume, search_volume_trend, fetched_at::text
+    SELECT keyword_norm, kw_loose(keyword_norm) AS loose, search_volume, search_volume_trend, fetched_at::text
     FROM keyword_search_volumes
-    WHERE marketplace = ${marketplace} AND keyword_norm IN ${sql(norms)}
+    WHERE marketplace = ${marketplace} AND kw_loose(keyword_norm) IN ${sql(looses)}
   `;
-  return new Map(rows.map((row) => [row.keyword_norm, {
-    searchVolume: row.search_volume,
-    searchVolumeTrend: row.search_volume_trend === null ? null : Number(row.search_volume_trend),
-    fetchedAt: row.fetched_at,
-  }]));
+  const exact = new Map(rows.map((row) => [row.keyword_norm, row]));
+  const bestLoose = new Map<string, typeof rows[number]>();
+  for (const row of rows) {
+    if (!hasVolume(row.search_volume)) continue;
+    const current = bestLoose.get(row.loose);
+    if (!current || (row.search_volume as number) > (current.search_volume as number)) bestLoose.set(row.loose, row);
+  }
+  const result = new Map<string, KeywordVolume>();
+  for (const norm of norms) {
+    const exactRow = exact.get(norm);
+    const row = exactRow && hasVolume(exactRow.search_volume) ? exactRow : bestLoose.get(looseKeyword(norm)) ?? exactRow;
+    if (!row) continue;
+    result.set(norm, {
+      searchVolume: row.search_volume,
+      searchVolumeTrend: row.search_volume_trend === null ? null : Number(row.search_volume_trend),
+      fetchedAt: row.fetched_at,
+    });
+  }
+  return result;
 }
 
 /**
@@ -115,6 +141,8 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
   const asinOf = (item: T) => (item.asin || "").trim().toUpperCase();
   const asins = Array.from(new Set(items.map(asinOf).filter(Boolean)));
   const norms = Array.from(new Set(items.filter((i) => asinOf(i)).map((i) => normalizeKeyword(options.keywordOf(i))).filter(Boolean)));
+  const looses = Array.from(new Set(norms.map(looseKeyword)));
+  // Khóa nguyên văn "asin:keyword" ưu tiên; "asin:~loose" là dự phòng khi chỉ khác dấu nháy
   const rankMap = new Map<string, { organicRank: number | null; sponsoredRank: number | null }>();
 
   if (asins.length > 0 && norms.length > 0) {
@@ -127,13 +155,14 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
       }>>`
         SELECT asin, keyword_norm, organic_rank, sponsored_rank
         FROM ppc_asin_keyword_rankings
-        WHERE marketplace = ${mp} AND asin IN ${sql(asins)} AND keyword_norm IN ${sql(norms)}
+        WHERE marketplace = ${mp} AND asin IN ${sql(asins)} AND kw_loose(keyword_norm) IN ${sql(looses)}
       `;
       for (const row of rankRows) {
-        rankMap.set(`${row.asin}:${row.keyword_norm}`, {
-          organicRank: row.organic_rank,
-          sponsoredRank: row.sponsored_rank,
-        });
+        const rank = { organicRank: row.organic_rank, sponsoredRank: row.sponsored_rank };
+        rankMap.set(`${row.asin}:${row.keyword_norm}`, rank);
+        const looseKey = `${row.asin}:~${looseKeyword(row.keyword_norm)}`;
+        const current = rankMap.get(looseKey);
+        if (!current || (current.organicRank == null && row.organic_rank != null)) rankMap.set(looseKey, rank);
       }
     } catch {}
   }
@@ -149,7 +178,8 @@ export async function attachSearchVolumes<T extends { impressions: number; asin?
       : null;
 
     const asin = asinOf(item);
-    const rankInfo = asin ? rankMap.get(`${asin}:${kwNorm}`) : undefined;
+    const exactRank = asin ? rankMap.get(`${asin}:${kwNorm}`) : undefined;
+    const rankInfo = exactRank?.organicRank != null ? exactRank : (asin ? rankMap.get(`${asin}:~${looseKeyword(kwNorm)}`) : undefined) ?? exactRank;
 
     return {
       ...item,
@@ -284,22 +314,24 @@ async function collectKeywordSpend(sql: Sql, storeIds: string[]) {
   return spendByKeyword;
 }
 
+/** Keyword (nguyên văn trong danh sách) đã có volume tháng này — khớp cả bản chỉ khác dấu nháy. */
 async function findFreshKeywords(sql: Sql, keywords: string[], marketplace: string) {
-  const fresh = new Set<string>();
-  for (let i = 0; i < keywords.length; i += 5000) {
-    const chunk = keywords.slice(i, i + 5000);
-    const rows = await sql<Array<{ keyword_norm: string }>>`
-      SELECT keyword_norm FROM keyword_search_volumes
+  const freshLoose = new Set<string>();
+  const looses = Array.from(new Set(keywords.map(looseKeyword)));
+  for (let i = 0; i < looses.length; i += 5000) {
+    const chunk = looses.slice(i, i + 5000);
+    const rows = await sql<Array<{ loose: string }>>`
+      SELECT kw_loose(keyword_norm) AS loose FROM keyword_search_volumes
       WHERE marketplace = ${marketplace}
-        AND keyword_norm IN ${sql(chunk)}
+        AND kw_loose(keyword_norm) IN ${sql(chunk)}
         AND fetched_at >= date_trunc('month', NOW())
         -- Đã có volume, hoặc Magnet đã tra trong tháng mà H10 không có số (miss) → không tra lại tới tháng sau.
         -- Volume rỗng/0 từ Cerebro vẫn được Magnet tra bù.
         AND (search_volume > 0 OR source = 'helium10_magnet_miss')
     `;
-    for (const row of rows) fresh.add(row.keyword_norm);
+    for (const row of rows) freshLoose.add(row.loose);
   }
-  return fresh;
+  return new Set(keywords.filter((keyword) => freshLoose.has(looseKeyword(keyword))));
 }
 
 type AsinQueueRow = { asin: string; attempts: number; done: boolean; failed: boolean };
@@ -673,6 +705,13 @@ async function runSearchVolumeSync(
   // Keyword được khóa "marketplace|keyword" vì cùng một keyword ở 2 chợ là 2 volume khác nhau.
   const spendByKeyword = new Map<string, number>();
   const missing = new Set<string>();
+  // Một keyword H10 có volume → xoá mọi keyword đang thiếu chỉ khác dấu nháy ("mothers gifts" lấp "mother's gifts")
+  const missingByLoose = new Map<string, Set<string>>();
+  const markCovered = (marketplace: string, keyword: string) => {
+    const looseKey = marketKey(marketplace, looseKeyword(keyword));
+    for (const key of missingByLoose.get(looseKey) ?? []) missing.delete(key);
+    missingByLoose.delete(looseKey);
+  };
   const batches: Array<{ asins: string[]; attempts: number; marketplace: Marketplace }> = [];
   let asinsTotal = 0;
   let asinsDone = 0;
@@ -682,7 +721,11 @@ async function runSearchVolumeSync(
     for (const [keyword, value] of spend) {
       const key = marketKey(marketplace, keyword);
       spendByKeyword.set(key, value);
-      if (!fresh.has(keyword)) missing.add(key);
+      if (!fresh.has(keyword)) {
+        missing.add(key);
+        const looseKey = marketKey(marketplace, looseKeyword(keyword));
+        missingByLoose.set(looseKey, (missingByLoose.get(looseKey) ?? new Set()).add(key));
+      }
     }
     if (magnetOnly) continue;
     const queue = await loadAsinQueue(sql, storeIds, marketplace);
@@ -754,7 +797,7 @@ async function runSearchVolumeSync(
       const { saved, withVolume } = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
       await upsertRankings(sql, marketplace, batch.asins, result.keywords);
       keywordsUpserted += saved.length;
-      for (const keyword of withVolume) missing.delete(marketKey(marketplace, keyword));
+      for (const keyword of withVolume) markCovered(marketplace, keyword);
       await saveAsinCheckpoint(sql, marketplace, batch.asins, { ok: true, keywordCount: saved.length });
       asinsQueried += batch.asins.length;
       asinsDone += batch.asins.length;
@@ -789,6 +832,8 @@ async function runSearchVolumeSync(
       .sort((a, b) => (spendByKeyword.get(b) || 0) - (spendByKeyword.get(a) || 0))
       .slice(0, magnetAllowance);
     for (const [index, key] of gapKeywords.entries()) {
+      // Lượt Magnet trước có thể đã lấp keyword này (từ liên quan / chỉ khác dấu nháy) → không tốn lượt
+      if (!missing.has(key)) continue;
       const { marketplace, keyword } = splitMarketKey(key);
       if (!(await tick(`Magnet lượt ${index + 1}/${gapKeywords.length}: "${keyword}"...`))) return;
       try {
@@ -796,7 +841,7 @@ async function runSearchVolumeSync(
         magnetCalls++;
         const { saved, withVolume } = await upsertVolumes(sql, marketplace, "helium10_magnet", result.keywords);
         keywordsUpserted += saved.length;
-        for (const item of withVolume) missing.delete(marketKey(marketplace, item));
+        for (const item of withVolume) markCovered(marketplace, item);
         if (missing.has(key)) {
           // Helium 10 không có volume cho keyword này → lưu null để không tra lại trong tháng
           await upsertVolumes(sql, marketplace, "helium10_magnet_miss", [{
