@@ -712,18 +712,21 @@ async function main() {
       console.error("Lỗi: Không tìm thấy webhook URL (LARK_ACCOUNTING_WEBHOOK_URL)!");
       process.exit(1);
     }
-    console.log(`Đang gửi báo cáo tuần ${week.label} vào Lark webhook...`);
-    const res = await sendLarkWebhookNotification(webhookUrl, { card });
-    if (res.sent) {
-      console.log(`✅ Đã gửi BÁO CÁO TUẦN VÀO LARK THÀNH CÔNG!`);
-    } else {
-      console.error(`❌ Gửi Lark thất bại:`, res.reason);
-      process.exit(1);
-    }
-    // Nhóm tổng nhận tiếp card từng team (như Báo cáo KPI ngày)
-    for (const t of teamCards) {
-      await sendLarkWebhookNotification(webhookUrl, { card: t.card });
-      console.log(`✅ Đã gửi báo cáo tuần ${t.teamName} vào nhóm tổng`);
+    // --chi-nhom-team: bỏ qua nhóm tổng, chỉ gửi vào nhóm từng team (gửi bù)
+    if (!args.includes("--chi-nhom-team")) {
+      console.log(`Đang gửi báo cáo tuần ${week.label} vào Lark webhook...`);
+      const res = await sendLarkWebhookNotification(webhookUrl, { card });
+      if (res.sent) {
+        console.log(`✅ Đã gửi BÁO CÁO TUẦN VÀO LARK THÀNH CÔNG!`);
+      } else {
+        console.error(`❌ Gửi Lark thất bại:`, res.reason);
+        process.exit(1);
+      }
+      // Nhóm tổng nhận tiếp card từng team (như Báo cáo KPI ngày)
+      for (const t of teamCards) {
+        await sendLarkWebhookNotification(webhookUrl, { card: t.card });
+        console.log(`✅ Đã gửi báo cáo tuần ${t.teamName} vào nhóm tổng`);
+      }
     }
     // Nhóm Lark riêng của từng team: chỉ nhận card của team đó. Team lỗi không chặn team khác; lỗi báo vào nhóm tổng.
     // --chi-nhom-tong: chỉ gửi vào nhóm tổng (xem thử)
