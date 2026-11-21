@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { getDatabaseClient } from "@/lib/db";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
+import { buildAsinSkuMap, resolvePortfolioSku } from "@/lib/accounting/ads-portfolio-sku";
 
 export interface AdsItem {
   id: string;
@@ -342,11 +343,13 @@ export async function parseAdsBuffer(
 
   // Fetch known SKUs & PICs from accounting_sku_master for intelligent mapping
   const sql = await getDatabaseClient();
-  const knownSkus = await sql<{ sku: string; pic_mkt: string; loai: string; status: string }[]>`
-    SELECT sku, COALESCE(pic_mkt, '') as pic_mkt, COALESCE(loai, '') as loai, COALESCE(status, '') as status
+  const knownSkus = await sql<{ sku: string; asin: string | null; pic_mkt: string; loai: string; status: string }[]>`
+    SELECT sku, asin, COALESCE(pic_mkt, '') as pic_mkt, COALESCE(loai, '') as loai, COALESCE(status, '') as status
     FROM accounting_sku_master
     WHERE store_id = ${storeId} AND sku IS NOT NULL AND sku != ''
   `;
+  // Portfolio đặt nhầm ASIN thay SKU ở chữ cuối → tra ra SKU
+  const asinToSku = buildAsinSkuMap(knownSkus);
 
   const skuMap = new Map<string, { pic_mkt: string; loai: string; status: string }>();
   for (const item of knownSkus) {
@@ -470,6 +473,7 @@ export async function parseAdsBuffer(
                     }
                   }
 
+                  sku = resolvePortfolioSku(sku, asinToSku);
                   const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
                   if (!loai) loai = matchedMaster?.loai || "";
                   if (!mktPic) {
@@ -638,6 +642,7 @@ export async function parseAdsBuffer(
         }
       }
 
+      sku = resolvePortfolioSku(sku, asinToSku);
       const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
       if (!loai) loai = matchedMaster?.loai || "";
       if (!mktPic) {
@@ -778,6 +783,7 @@ export async function parseAdsBuffer(
         }
       }
 
+      sku = resolvePortfolioSku(sku, asinToSku);
       const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
       if (!loai) loai = matchedMaster?.loai || "";
       if (!mktPic) {

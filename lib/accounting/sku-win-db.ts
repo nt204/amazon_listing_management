@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
 import { monthlyBasecostJoin, returnsEffectiveCte } from "@/lib/accounting/workbook-parity-sql";
+import { asinSkuMapSql } from "@/lib/accounting/ads-portfolio-sku";
 
 export interface SkuWinItem {
   id: string;
@@ -208,13 +209,19 @@ export async function listSkuWin(
     -- Workbook: SUMIFS(ADS!L, ADS!B, "*"&SKU&"*") — portfolio chứa SKU, không lọc Loại
     -- Gộp ads theo portfolio trước rồi mới so chuỗi với SKU (so trên bytea): cùng kết quả với
     -- strpos(LOWER(portfolio), LOWER(sku)) trên từng dòng ads nhưng không phải so từng dòng.
+    -- Portfolio đặt nhầm ASIN thay SKU ở chữ cuối: khớp thêm chữ cuối = ASIN của SKU (ASIN chỉ thuộc 1 SKU).
     ads_sku_keys AS MATERIALIZED (
-      SELECT DISTINCT sku, convert_to(LOWER(sku), 'UTF8') as sku_key
-      FROM accounting_sku_master
-      WHERE store_id = ${storeId} AND deleted_at IS NULL
+      SELECT k.sku, convert_to(LOWER(k.sku), 'UTF8') as sku_key,
+        COALESCE(array_agg(DISTINCT LOWER(m.asin_key)) FILTER (WHERE m.asin_key IS NOT NULL), '{}') as asin_keys
+      FROM accounting_sku_master k
+      LEFT JOIN (${asinSkuMapSql(sql, "fba", [storeId])}) m ON m.sku_key = UPPER(TRIM(k.sku))
+      WHERE k.store_id = ${storeId} AND k.deleted_at IS NULL
+      GROUP BY k.sku
     ),
     ads_portfolio AS MATERIALIZED (
-      SELECT convert_to(LOWER(portfolio), 'UTF8') as portfolio_key, SUM(spend) as spend, SUM(sales) as sales
+      SELECT convert_to(LOWER(portfolio), 'UTF8') as portfolio_key,
+        substring(LOWER(portfolio) from '([^ ]*)$') as tail_key,
+        SUM(spend) as spend, SUM(sales) as sales
       FROM accounting_ads ad
       WHERE store_id = ${storeId}
         ${hasDateFilter ? sql`AND ad.date >= ${startDate}::date AND ad.date <= ${endDate}::date` : sql``}
@@ -226,7 +233,7 @@ export async function listSkuWin(
         SUM(p.spend) as total_spend,
         SUM(p.sales) as total_ad_sales
       FROM ads_sku_keys k
-      JOIN ads_portfolio p ON position(k.sku_key in p.portfolio_key) > 0
+      JOIN ads_portfolio p ON position(k.sku_key in p.portfolio_key) > 0 OR p.tail_key = ANY(k.asin_keys)
       GROUP BY k.sku
     ),
     ${returnsEffectiveCte(
@@ -291,7 +298,9 @@ export async function listSkuWin(
       GROUP BY o.sku
     ),
     ads_portfolio_compare AS MATERIALIZED (
-      SELECT convert_to(LOWER(portfolio), 'UTF8') as portfolio_key, SUM(spend) as spend
+      SELECT convert_to(LOWER(portfolio), 'UTF8') as portfolio_key,
+        substring(LOWER(portfolio) from '([^ ]*)$') as tail_key,
+        SUM(spend) as spend
       FROM accounting_ads
       WHERE store_id = ${storeId}
         AND date >= ${compareStartDate}::date AND date <= ${compareEndDate}::date
@@ -300,7 +309,7 @@ export async function listSkuWin(
     ads_compare AS (
       SELECT k.sku, SUM(p.spend) as compare_spend
       FROM ads_sku_keys k
-      JOIN ads_portfolio_compare p ON position(k.sku_key in p.portfolio_key) > 0
+      JOIN ads_portfolio_compare p ON position(k.sku_key in p.portfolio_key) > 0 OR p.tail_key = ANY(k.asin_keys)
       GROUP BY k.sku
     )
     ` : sql``}

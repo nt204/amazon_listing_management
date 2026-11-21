@@ -43,6 +43,7 @@ import {
   INBOUND_HEADER_MAP,
   CHECK_SHIPMENT_HEADER_MAP,
 } from "./inventory-db";
+import { buildAsinSkuMap, resolvePortfolioSku } from "@/lib/accounting/ads-portfolio-sku";
 
 export function extractCellVal(val: any): any {
   if (val == null) return null;
@@ -250,12 +251,14 @@ export async function importUnifiedAccountingExcel(
   }
 
   // Chuẩn bị SKU Master & Store Metadata trước cho Ads, Return, Inbound & Basecost
-  const skuMasters = await sql<{ id: string; sku: string; brand: string | null; product_type: string | null; mockup: string | null; loai: string | null; pic_mkt: string | null; status: string | null; basecost_tb: string | null }[]>`
-    SELECT id, sku, brand, product_type, mockup, loai, pic_mkt, status, basecost_tb::text
+  const skuMasters = await sql<{ id: string; sku: string; asin: string | null; brand: string | null; product_type: string | null; mockup: string | null; loai: string | null; pic_mkt: string | null; status: string | null; basecost_tb: string | null }[]>`
+    SELECT id, sku, asin, brand, product_type, mockup, loai, pic_mkt, status, basecost_tb::text
     FROM accounting_sku_master
     WHERE store_id = ${storeId} AND deleted_at IS NULL
   `;
   const skuMap = new Map<string, { id: string | null; brand: string; productType: string; loai: string; pic_mkt: string; pic: string; status: string; basecost: number; mockup?: string | null }>();
+  // Portfolio Ads đặt nhầm ASIN thay SKU ở chữ cuối → tra ra SKU
+  const asinToSku = buildAsinSkuMap(skuMasters);
   for (const s of skuMasters) {
     const skuKey = s.sku.trim().toUpperCase();
     skuMap.set(skuKey, {
@@ -461,6 +464,7 @@ export async function importUnifiedAccountingExcel(
               }
             }
 
+            sku = resolvePortfolioSku(sku, asinToSku);
             const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
             if (!loai) loai = matchedMaster?.loai || "";
             if (!mktPic) mktPic = matchedMaster?.pic_mkt || portfolio.split(/\s+/)[0] || "";

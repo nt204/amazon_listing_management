@@ -25,6 +25,7 @@ import {
   type PendingBidItem,
   type PendingPpcAction,
 } from "./lark-conversation-memory";
+import { asinSkuMapSql, portfolioTailSql } from "@/lib/accounting/ads-portfolio-sku";
 
 const LARK_APPROVER = "Lark Bot AI";
 const RECOMMENDATION_CACHE_TTL_SECONDS = RECOMMENDATION_REDIS_TTL_SECONDS;
@@ -983,7 +984,10 @@ export async function getSkuInsight(
           SELECT ((${endDate}::date - date) / 7) AS week, SUM(spend) AS ads_spend, SUM(sales) AS ads_sales
           FROM accounting_ads
           WHERE store_id = ${accounting.accountingStoreId}
-            AND strpos(LOWER(portfolio), LOWER(${sku})) > 0
+            AND (strpos(LOWER(portfolio), LOWER(${sku})) > 0
+              OR ${portfolioTailSql(sql)} IN (
+                SELECT x.asin_key FROM (${asinSkuMapSql(sql, "fba", [accounting.accountingStoreId])}) x WHERE x.sku_key = UPPER(TRIM(${sku}))
+              ))
             AND date BETWEEN ${trendStart}::date AND ${endDate}::date
           GROUP BY 1
         )

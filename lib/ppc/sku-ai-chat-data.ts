@@ -13,6 +13,7 @@ import {
 } from "./sku-architecture-service";
 import { SKU_CHAT_CVR_TARGET_PCT } from "./sku-ai-chat-skill";
 import type { PpcRecommendation } from "./types";
+import { asinSkuMapSql, portfolioTailSql } from "@/lib/accounting/ads-portfolio-sku";
 
 /**
  * Nguồn dữ liệu riêng của AI chat theo SKU. Chỉ dùng thư viện lõi của web
@@ -175,7 +176,10 @@ async function loadAccounting(ctx: SkuChatScope) {
         SELECT ((${endDate}::date - date) / 7) AS week, SUM(spend) AS ads_spend, SUM(sales) AS ads_sales
         FROM accounting_ads
         WHERE store_id = ${storeId}
-          AND strpos(LOWER(portfolio), LOWER(${ctx.sku})) > 0
+          AND (strpos(LOWER(portfolio), LOWER(${ctx.sku})) > 0
+            OR ${portfolioTailSql(sql)} IN (
+              SELECT x.asin_key FROM (${asinSkuMapSql(sql, "fba", [storeId])}) x WHERE x.sku_key = UPPER(TRIM(${ctx.sku}))
+            ))
           AND date BETWEEN ${trendStart}::date AND ${endDate}::date
         GROUP BY 1
       )

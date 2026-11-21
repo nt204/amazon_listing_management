@@ -4,6 +4,7 @@ import { getDatabaseClient } from "@/lib/db";
 import { getExcelWeekNum, type FbaDailyItem, type FbaDailyStats } from "@/lib/accounting/fba-daily-db";
 import type { ListSkuWinOptions, SkuWinItem, SkuWinStats } from "@/lib/accounting/sku-win-db";
 import { excludeSupersededDeferredReturns } from "@/lib/accounting/workbook-parity-sql";
+import { asinSkuMapSql, portfolioTailSql } from "@/lib/accounting/ads-portfolio-sku";
 
 // Tab FBM / FBM CỐ ĐỊNH của Financials: tái hiện workbook "FBM - <STORE> - KẾ TOÁN TỔNG HỢP".
 // Nguồn: Orders (fulfillment_channel = 'Merchant') = 'Orders -FBM', BẢNG MÃ FBM (accounting_sku_master_fbm),
@@ -211,16 +212,28 @@ export async function listFbmDaily(
   `,
     // ADS gộp theo ngày + SKU (chữ cuối Portfolio) rồi lọc Loại FBM bằng Set ở JS: join thẳng với bảng mã trong SQL
     // bị planner ước lượng 1 dòng thành nested loop, tách chuỗi Portfolio hàng triệu lần (store nhỏ mất >10s).
+    // Chữ cuối là ASIN (portfolio đặt nhầm ASIN thay SKU) thì tra BẢNG MÃ FBM ra SKU.
     sql<{ date_str: string; sku_key: string; spend: number; sales: number; orders: number; clicks: number }[]>`
-      SELECT to_char(date, 'YYYY-MM-DD') AS date_str,
-        UPPER(substring(COALESCE(portfolio, '') from '([^ ]*)$')) AS sku_key,
-        SUM(COALESCE(spend, 0))::float AS spend,
-        SUM(COALESCE(sales, 0))::float AS sales,
-        SUM(COALESCE(orders, 0))::float AS orders,
-        SUM(COALESCE(clicks, 0))::float AS clicks
-      FROM accounting_ads
-      WHERE store_id = ${storeId}
-        AND date < CURRENT_DATE ${dateRangeCondition(sql, "date", startDate, endDate)}
+      WITH by_tail AS (
+        SELECT date, ${portfolioTailSql(sql)} AS tail,
+          SUM(COALESCE(spend, 0)) AS spend,
+          SUM(COALESCE(sales, 0)) AS sales,
+          SUM(COALESCE(orders, 0)) AS orders,
+          SUM(COALESCE(clicks, 0)) AS clicks
+        FROM accounting_ads
+        WHERE store_id = ${storeId}
+          AND date < CURRENT_DATE ${dateRangeCondition(sql, "date", startDate, endDate)}
+        GROUP BY 1, 2
+      ),
+      asin_sku AS (${asinSkuMapSql(sql, "fbm", [storeId])})
+      SELECT to_char(t.date, 'YYYY-MM-DD') AS date_str,
+        COALESCE(m.sku_key, t.tail) AS sku_key,
+        SUM(t.spend)::float AS spend,
+        SUM(t.sales)::float AS sales,
+        SUM(t.orders)::float AS orders,
+        SUM(t.clicks)::float AS clicks
+      FROM by_tail t
+      LEFT JOIN asin_sku m ON m.asin_key = t.tail
       GROUP BY 1, 2
     `,
     // SKU có doanh thu FBM nhưng không có trong BẢNG MÃ FBM (workbook ra #N/A): AMZ Fee / Basecost dự phòng = 0.
@@ -408,12 +421,20 @@ async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, en
     -- Ads của SKU = portfolio có CHỮ CUỐI đúng bằng SKU (như tab FBM theo ngày: chữ cuối Portfolio → BẢNG MÃ FBM).
     -- Trước đây so "portfolio chứa SKU" nên SKU nằm gọn trong SKU khác (PNLEP1015CM07C ⊂ CPNLEP1015CM07C) bị cộng
     -- Ads của cả portfolio kia → Ads FBM bị tính lặp (EVERPHANT 1–14/11: dư ~615$).
-    portfolio_ads AS (
-      SELECT UPPER(substring(COALESCE(portfolio, '') from '([^ ]*)$')) AS sku_tail,
+    -- Chữ cuối là ASIN (portfolio đặt nhầm ASIN thay SKU) thì tra BẢNG MÃ FBM ra SKU.
+    portfolio_ads_raw AS (
+      SELECT ${portfolioTailSql(sql)} AS tail,
         SUM(COALESCE(spend, 0)) AS spend,
         SUM(COALESCE(sales, 0)) AS sales
       FROM accounting_ads
       WHERE store_id = ${storeId} ${dateRangeCondition(sql, "date", startDate, endDate)}
+      GROUP BY 1
+    ),
+    portfolio_asin_sku AS (${asinSkuMapSql(sql, "fbm", [storeId])}),
+    portfolio_ads AS (
+      SELECT COALESCE(m.sku_key, r.tail) AS sku_tail, SUM(r.spend) AS spend, SUM(r.sales) AS sales
+      FROM portfolio_ads_raw r
+      LEFT JOIN portfolio_asin_sku m ON m.asin_key = r.tail
       GROUP BY 1
     ),
     sku_ads AS (
