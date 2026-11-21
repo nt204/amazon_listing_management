@@ -237,6 +237,27 @@ async function downloadMonthlyPortfolios(
     }
   } catch {}
 
+  // Xoá ô tìm kiếm (Reset filter không xoá chữ trong ô search). EKASPEEK còn sót "HONN1007BBB01C" → file chỉ 2 dòng.
+  // Giống bước 2 của File 01 trong accounting_crawler.ts.
+  try {
+    const clearSearchBtn = page.locator("xpath=//input[@id='UCM-CM-APP:ALL_PORTFOLIOS:searchInput']/following-sibling::button").first();
+    const searchInput = page.locator("input[id='UCM-CM-APP:ALL_PORTFOLIOS:searchInput']").first();
+    if (await clearSearchBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
+      await clearSearchBtn.evaluate((el: HTMLElement) => el.click());
+      console.log("  [Ads Portfolios Tháng] Đã click nút Clear search terms.");
+      await page.waitForTimeout(1500);
+    }
+    if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      const val = await searchInput.inputValue().catch(() => "");
+      if (val.trim()) {
+        await searchInput.fill("");
+        await searchInput.press("Enter");
+        console.log(`  [Ads Portfolios Tháng] Đã xoá chữ trong ô tìm kiếm (trước đó là '${val}').`);
+        await page.waitForTimeout(2500);
+      }
+    }
+  } catch {}
+
   // Click Export
   const exportBtn = page.locator('button[data-e2e-id="export"]').first();
   await exportBtn.waitFor({ state: "visible", timeout: 20000 });
