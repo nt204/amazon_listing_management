@@ -644,17 +644,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     const skuPanels = [skuPanel("🏆 **Top 10 SKU tốt**", topGood, "Không có SKU phát sinh trong tuần.")];
     if (topBad.length) skuPanels.push(skuPanel("🚨 **Top 10 SKU cần chú ý**", topBad));
 
-    elements.push(
-      { tag: "hr" },
-      {
-        tag: "markdown",
-        content: `**${team.name.toUpperCase()} (${team.lead.toUpperCase()})**`,
-      },
-      teamTable,
-      teamComment,
-      ...skuPanels,
-    );
-
+    // Card tổng chỉ gồm tổng quan + đánh giá; mỗi team 1 card riêng (Lark giới hạn số bảng trong 1 card)
     teamCards.push({
       teamId: team.id,
       teamName: team.name,
@@ -729,6 +719,11 @@ async function main() {
     } else {
       console.error(`❌ Gửi Lark thất bại:`, res.reason);
       process.exit(1);
+    }
+    // Nhóm tổng nhận tiếp card từng team (như Báo cáo KPI ngày)
+    for (const t of teamCards) {
+      await sendLarkWebhookNotification(webhookUrl, { card: t.card });
+      console.log(`✅ Đã gửi báo cáo tuần ${t.teamName} vào nhóm tổng`);
     }
     // Nhóm Lark riêng của từng team: chỉ nhận card của team đó. Team lỗi không chặn team khác; lỗi báo vào nhóm tổng.
     // --chi-nhom-tong: chỉ gửi vào nhóm tổng (xem thử)
