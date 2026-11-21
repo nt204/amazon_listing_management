@@ -26,7 +26,9 @@ import {
   CheckIcon,
   MegaphoneIcon,
   PercentIcon,
+  QuestionIcon,
   ShoppingBagIcon,
+  SparkleIcon,
   StorefrontIcon,
   TargetIcon,
   UsersThreeIcon,
@@ -35,6 +37,12 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 import type { Store } from "@/lib/accounting/types";
+import { AgentChatPanel, type AgentChatRequest } from "@/components/agents/agent-chat-panel";
+
+// AI đối soát kế toán (nút "Hỏi AI", nút "?" trên thẻ KPI, panel chat) đang TẠM ẨN.
+// Bật lại: đặt NEXT_PUBLIC_AI_RECONCILIATION=1 trong .env rồi build / khởi động lại. API /api/agents/* vẫn giữ nguyên.
+const AI_RECONCILIATION_ENABLED = process.env.NEXT_PUBLIC_AI_RECONCILIATION === "1";
+import { DataQualityBanner } from "@/components/accounting/data-quality-banner";
 import type {
   AccountingDashboardData,
   DashboardSeriesPoint,
@@ -372,6 +380,8 @@ interface KpiDef {
   format: (v: number) => string;
   ratio: number | null;
   negativeRed?: boolean;
+  /** Mã chỉ số trong danh mục của AI đối soát (lib/metrics/accounting/definitions.ts). */
+  metricId?: string;
 }
 
 // Mỗi chỉ số 1 màu nhấn nhẹ: chỉ tô ô icon, thẻ giữ nền trắng cho dễ đọc số.
@@ -391,11 +401,14 @@ function KpiCard({
   delay,
   showDelta,
   compareLabel,
+  onAsk,
 }: {
   kpi: KpiDef;
   delay: number;
   showDelta: boolean;
   compareLabel: string;
+  /** Bấm "?" để hỏi AI đối soát về con số này. */
+  onAsk?: () => void;
 }) {
   const KpiIcon = kpi.icon;
   const formatted = kpi.format(kpi.value);
@@ -415,11 +428,24 @@ function KpiCard({
     >
       <div className="min-w-0">
         <div className="flex items-center justify-between gap-1.5">
-          <span
-            title={kpi.label}
-            className="truncate text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-500 @min-[180px]:text-[11.5px]"
-          >
-            {kpi.label}
+          <span className="flex min-w-0 items-center gap-1">
+            <span
+              title={kpi.label}
+              className="truncate text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-500 @min-[180px]:text-[11.5px]"
+            >
+              {kpi.label}
+            </span>
+            {onAsk && (
+              <button
+                type="button"
+                onClick={onAsk}
+                title={`Hỏi AI: ${kpi.label} từ đâu ra, vì sao thay đổi?`}
+                aria-label={`Hỏi AI về ${kpi.label}`}
+                className="shrink-0 cursor-pointer rounded-full text-slate-300 opacity-60 transition-[color,opacity] hover:text-indigo-600 hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                <QuestionIcon size={13} weight="bold" />
+              </button>
+            )}
           </span>
           <span
             className={`hidden h-6 w-6 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset @min-[140px]:flex @min-[180px]:h-7 @min-[180px]:w-7 ${ACCENTS[kpi.accent]}`}
@@ -1795,6 +1821,7 @@ export function AccountingDashboardView() {
     const cards: KpiDef[] = [
       {
         id: "revenue",
+        metricId: "revenue",
         label: "Revenue",
         accent: "emerald",
         icon: CurrencyDollarIcon,
@@ -1804,6 +1831,7 @@ export function AccountingDashboardView() {
       },
       {
         id: "orders",
+        metricId: "orders",
         label: "Orders",
         accent: "indigo",
         icon: ShoppingBagIcon,
@@ -1813,6 +1841,7 @@ export function AccountingDashboardView() {
       },
       {
         id: "profit",
+        metricId: "profit",
         label: "Profit",
         accent: "emerald",
         icon: CoinsIcon,
@@ -1823,6 +1852,7 @@ export function AccountingDashboardView() {
       },
       {
         id: "margin",
+        metricId: "margin",
         label: "Margin",
         accent: "rose",
         icon: PercentIcon,
@@ -1833,6 +1863,7 @@ export function AccountingDashboardView() {
       },
       {
         id: "ads",
+        metricId: "adsFee",
         label: "Ad Spend",
         accent: "sky",
         icon: MegaphoneIcon,
@@ -1842,6 +1873,7 @@ export function AccountingDashboardView() {
       },
       {
         id: "tacos",
+        metricId: "tacos",
         label: "TACOS",
         accent: "amber",
         icon: ChartPieSliceIcon,
@@ -1851,6 +1883,7 @@ export function AccountingDashboardView() {
       },
       {
         id: "acos",
+        metricId: "acos",
         label: "ACOS",
         accent: "cyan",
         icon: TargetIcon,
@@ -1863,6 +1896,7 @@ export function AccountingDashboardView() {
     if (data.payout) {
       cards.push({
         id: "payout",
+        metricId: "payout",
         label: "Payout",
         accent: "teal",
         icon: BankIcon,
@@ -1925,9 +1959,83 @@ export function AccountingDashboardView() {
       : dateRange;
   const dataClamped = Boolean(data?.period.endDate && dateRange.endDate && data.period.endDate < dateRange.endDate);
 
+  // AI đối soát kế toán: panel ghim bên phải (Dashboard vẫn xem / bấm được). Bấm "?" trên thẻ KPI → hỏi về số đó
+  // trong cuộc chat đang mở; câu tự gõ gửi kèm store / team / kỳ đang xem.
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentRequest, setAgentRequest] = useState<AgentChatRequest | null>(null);
+  const agentRequestSeq = useRef(0);
+  const agentContext = useMemo(() => {
+    if (!data) return null;
+    const preview = (comparePreview as Partial<Record<CompareBase, string>>)[compareBase ?? "prev"];
+    const cmp =
+      compareBase && data.previous && !compareEmpty
+        ? `${compareLabel(compareBase, periodUnit)}${preview ? ` (${preview})` : ""}`
+        : undefined;
+    return {
+      page: "Dashboard kế toán",
+      ...(validSelectedIds.length ? { storeIds: validSelectedIds, storeNames: data.stores.map((s) => s.name) } : {}),
+      ...(selectedTeam ? { team: selectedTeam } : {}),
+      startDate: data.period.startDate,
+      endDate: data.period.endDate,
+      ...(cmp ? { compareLabel: cmp } : {}),
+    };
+  }, [data, validSelectedIds, selectedTeam, compareBase, compareEmpty, comparePreview, periodUnit]);
+  const agentChips = agentContext
+    ? [
+        agentContext.startDate ? `${shortDate(agentContext.startDate)} – ${shortDate(agentContext.endDate)}` : "Toàn thời gian",
+        agentContext.storeNames?.length ? agentContext.storeNames.join(", ") : "Tất cả store",
+        ...(agentContext.team ? [`Team ${agentContext.team}`] : []),
+      ]
+    : [];
+  const askAgentAboutKpi = (kpi: KpiDef) => {
+    if (!agentContext || !kpi.metricId) return;
+    setAgentOpen(true);
+    setAgentRequest({
+      id: ++agentRequestSeq.current,
+      question: `${kpi.label} = ${kpi.format(kpi.value)}: số này được tính thế nào, từng khoản lấy từ dữ liệu nào${
+        agentContext.compareLabel ? `, và vì sao thay đổi so với ${agentContext.compareLabel}` : ""
+      }?`,
+      context: { ...agentContext, metricId: kpi.metricId, metricLabel: kpi.label, displayedValue: kpi.format(kpi.value) },
+    });
+  };
+  const askAgent = (question: string) => {
+    setAgentOpen(true);
+    setAgentRequest({ id: ++agentRequestSeq.current, question, context: agentContext });
+  };
+
   return (
     // Lưu ý: html font-size = 13px nên mốc container theo rem bị co lại; các mốc bố cục chính dùng px.
-    <div className="relative h-full overflow-y-auto bg-slate-50">
+    // Panel AI mở trên màn rộng: chừa chỗ bên phải để panel không che số.
+    <div className={`relative h-full overflow-y-auto bg-slate-50 ${AI_RECONCILIATION_ENABLED && agentOpen ? "min-[1180px]:pr-[488px]" : ""}`}>
+      {AI_RECONCILIATION_ENABLED && agentOpen && agentContext && (
+        <AgentChatPanel
+          agent="accounting-reconciliation"
+          title="AI đối soát kế toán"
+          contextChips={agentChips}
+          context={agentContext}
+          request={agentRequest}
+          banner={
+            agentContext.startDate ? (
+              <DataQualityBanner
+                startDate={agentContext.startDate}
+                endDate={agentContext.endDate}
+                storeIds={agentContext.storeIds}
+                team={agentContext.team}
+                onAsk={askAgent}
+              />
+            ) : null
+          }
+          suggestions={[
+            "Số liệu kỳ này có chỗ nào sai không, sai ở đâu?",
+            "Vì sao lợi nhuận kỳ này tăng / giảm so với kỳ trước?",
+            "Store nào đang kéo Margin xuống?",
+            "SKU nào lỗ nhiều nhất kỳ này, vì sao?",
+            "Payout khác Profit ở điểm nào?",
+          ]}
+          footnote="AI chỉ đọc số liệu, không sửa dữ liệu. Số trong câu trả lời lấy từ đúng công thức của Dashboard."
+          onClose={() => setAgentOpen(false)}
+        />
+      )}
       {/* Thanh tiến trình mảnh khi đang tải lại */}
       <div className={`sticky top-0 z-30 h-0.5 overflow-hidden transition-opacity duration-300 ${loading && data ? "opacity-100" : "opacity-0"}`}>
         <div className="acc-progress h-full w-1/3 rounded-full bg-indigo-500" />
@@ -2251,6 +2359,18 @@ export function AccountingDashboardView() {
                 presets={OVERVIEW_DATE_PRESETS}
               />
             </div>
+            {AI_RECONCILIATION_ENABLED && (
+            <button
+              type="button"
+              onClick={() => setAgentOpen((v) => !v)}
+              disabled={!data}
+              title="Hỏi AI đối soát: số nào từ đâu ra, vì sao tăng / giảm"
+              className="flex h-[34px] shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 text-[12px] font-bold text-indigo-700 shadow-2xs transition-colors hover:border-indigo-300 hover:bg-indigo-100 disabled:cursor-default disabled:opacity-50"
+            >
+              <SparkleIcon size={14} weight="fill" />
+              Hỏi AI
+            </button>
+            )}
             <button
               type="button"
               onClick={refresh}
@@ -2296,6 +2416,7 @@ export function AccountingDashboardView() {
                   delay={i * 30}
                   showDelta={Boolean(data.previous) && !compareEmpty}
                   compareLabel={compareBase ? compareLabel(compareBase, periodUnit) : ""}
+                  onAsk={AI_RECONCILIATION_ENABLED && kpi.metricId ? () => askAgentAboutKpi(kpi) : undefined}
                 />
               ))}
             </div>
