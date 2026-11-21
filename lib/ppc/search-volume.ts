@@ -23,8 +23,9 @@ const envInt = (name: string, fallback: number) => {
 
 const LOOKBACK_DAYS = envInt("PPC_SEARCH_VOLUME_LOOKBACK_DAYS", 60);
 const CEREBRO_ASINS_PER_CALL = Math.max(1, envInt("PPC_SEARCH_VOLUME_ASINS_PER_CALL", 10));
-// Số keyword tối đa đọc về mỗi lượt (nhiều trang, không tốn thêm lượt H10). 10 ASIN/lượt → ~1.000 keyword mỗi ASIN.
-const CEREBRO_ROWS_PER_CALL = Math.max(1000, envInt("PPC_SEARCH_VOLUME_CEREBRO_ROWS", 10000));
+// Số keyword tối đa đọc về mỗi lượt (nhiều trang, không tốn thêm lượt H10). Trước đây chỉ 1.000 dòng cho 10 ASIN →
+// 1.457 lượt tháng 11 dừng đúng ở 998–1.000 dòng, keyword target như "gift fo wife" ở trang sau bị bỏ.
+const CEREBRO_ROWS_PER_CALL = Math.max(1000, envInt("PPC_SEARCH_VOLUME_CEREBRO_ROWS", 30000));
 const MAGNET_ROWS_PER_CALL = Math.max(200, envInt("PPC_SEARCH_VOLUME_MAGNET_ROWS", 2000));
 // Diamond: 300 Cerebro / 150 Magnet mỗi tháng
 const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET", 300);
@@ -471,6 +472,8 @@ async function upsertRankings(
   marketplace: string,
   asins: string[],
   items: Helium10KeywordItem[],
+  // Rank chỉ hiển thị cho keyword đang chạy ads → chỉ lưu keyword có spend (khóa looseKeyword), tránh phình bảng
+  keepLoose?: Set<string>,
 ) {
   if (asins.length === 0 || items.length === 0) return;
   // Rank là của MỘT ASIN. Lượt nhiều ASIN chỉ ghi rank khi H10 cho biết dòng thuộc ASIN nào (và ASIN đó nằm trong lượt);
@@ -494,6 +497,7 @@ async function upsertRankings(
   for (const item of items) {
     const keyword_norm = normalizeKeyword(item.keyword);
     if (!keyword_norm) continue;
+    if (keepLoose && !keepLoose.has(looseKeyword(keyword_norm))) continue;
     const itemAsin = item.asin ? item.asin.trim().toUpperCase() : null;
     const targetAsin = itemAsin && batchAsins.has(itemAsin) ? itemAsin : singleAsin;
     if (!targetAsin) {
@@ -735,6 +739,12 @@ async function runSearchVolumeSync(
     asinsTotal += queue.length;
     asinsDone += queue.filter((row) => row.done).length;
   }
+  const spendLooseByMarket = new Map<string, Set<string>>();
+  for (const key of spendByKeyword.keys()) {
+    const { marketplace, keyword } = splitMarketKey(key);
+    if (!spendLooseByMarket.has(marketplace)) spendLooseByMarket.set(marketplace, new Set());
+    spendLooseByMarket.get(marketplace)!.add(looseKeyword(keyword));
+  }
   const missingBefore = missing.size;
   const keywordsTotal = spendByKeyword.size;
 
@@ -797,7 +807,7 @@ async function runSearchVolumeSync(
       }));
       cerebroCalls++;
       const { saved, withVolume } = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
-      await upsertRankings(sql, marketplace, batch.asins, result.keywords);
+      await upsertRankings(sql, marketplace, batch.asins, result.keywords, spendLooseByMarket.get(marketplace));
       keywordsUpserted += saved.length;
       for (const keyword of withVolume) markCovered(marketplace, keyword);
       await saveAsinCheckpoint(sql, marketplace, batch.asins, { ok: true, keywordCount: saved.length });
