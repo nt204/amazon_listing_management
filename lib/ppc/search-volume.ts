@@ -29,7 +29,8 @@ const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET"
 const MAGNET_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_MAGNET_MONTHLY_BUDGET", 150);
 // 0 = không giới hạn: chạy tới khi quét hết ASIN hoặc hết hạn mức tháng (checkpoint giữ phần còn lại)
 const CEREBRO_PER_RUN = envInt("PPC_SEARCH_VOLUME_CEREBRO_PER_RUN", 0);
-const MAGNET_PER_RUN = envInt("PPC_SEARCH_VOLUME_MAGNET_PER_RUN", 25);
+// 0 = không giới hạn mỗi lần chạy: dùng hết phần hạn mức Magnet còn lại của tháng (cron chỉ chạy 1 lần/tháng)
+const MAGNET_PER_RUN = envInt("PPC_SEARCH_VOLUME_MAGNET_PER_RUN", 0);
 const CALL_DELAY_MS = envInt("PPC_SEARCH_VOLUME_CALL_DELAY_MS", 1500);
 // Không có heartbeat trong khoảng này → coi như process đã chết (1 lượt Cerebro chậm nhất ~4 phút)
 const STALE_RUN_MINUTES = envInt("PPC_SEARCH_VOLUME_STALE_MINUTES", 15);
@@ -37,7 +38,9 @@ const STALE_RUN_MINUTES = envInt("PPC_SEARCH_VOLUME_STALE_MINUTES", 15);
 const MAX_ASIN_ATTEMPTS = 4;
 const MAX_CONSECUTIVE_FAILURES = 5;
 
-const NON_KEYWORD_TARGETS = /^(close-match|loose-match|substitutes|complements)$|^asin(=|-)|^category(=|-)|^[bB][0-9a-zA-Z]{9}$|[=<>]/i;
+// Target không phải keyword: auto target, biểu thức asin=/category=/asin-expanded=, ASIN trần (luôn bắt đầu "B0").
+// Không dùng ^b[a-z0-9]{9}$: khớp nhầm từ thường 10 ký tự như "bridesmaid", "basketball".
+const NON_KEYWORD_TARGETS = /^(close-match|loose-match|substitutes|complements)$|^(asin|category)(-[a-z]+)?=|^b0[a-z0-9]{8}$|[=<>]/i;
 
 /** Chuẩn hóa keyword để khớp giữa Amazon Ads (có "+" ở broad modifier) và Helium 10. */
 export function normalizeKeyword(raw: string | null | undefined): string {
@@ -290,7 +293,9 @@ async function findFreshKeywords(sql: Sql, keywords: string[], marketplace: stri
       WHERE marketplace = ${marketplace}
         AND keyword_norm IN ${sql(chunk)}
         AND fetched_at >= date_trunc('month', NOW())
-        AND search_volume IS NOT NULL
+        -- Đã có volume, hoặc Magnet đã tra trong tháng mà H10 không có số (miss) → không tra lại tới tháng sau.
+        -- Volume rỗng/0 từ Cerebro vẫn được Magnet tra bù.
+        AND (search_volume > 0 OR source = 'helium10_magnet_miss')
     `;
     for (const row of rows) fresh.add(row.keyword_norm);
   }
@@ -419,8 +424,13 @@ async function upsertVolumes(sql: Sql, marketplace: string, source: string, item
         END
     `;
   }
-  return Array.from(byKeyword.keys());
+  const withVolume = Array.from(byKeyword)
+    .filter(([, item]) => typeof item.search_volume === "number" && item.search_volume > 0)
+    .map(([keyword]) => keyword);
+  return { saved: Array.from(byKeyword.keys()), withVolume };
 }
+
+let loggedUnknownAsinRow = false;
 
 async function upsertRankings(
   sql: Sql,
@@ -429,7 +439,10 @@ async function upsertRankings(
   items: Helium10KeywordItem[],
 ) {
   if (asins.length === 0 || items.length === 0) return;
-  const primaryAsin = asins[0]; // Primary ASIN the rank is anchored to
+  // Rank là của MỘT ASIN. Lượt nhiều ASIN chỉ ghi rank khi H10 cho biết dòng thuộc ASIN nào (và ASIN đó nằm trong lượt);
+  // không biết thì bỏ qua, tránh gán rank của ASIN khác cho asins[0] như trước.
+  const batchAsins = new Set(asins.map((a) => a.trim().toUpperCase()));
+  const singleAsin = asins.length === 1 ? asins[0].trim().toUpperCase() : null;
   const rows: Array<{
     marketplace: string;
     asin: string;
@@ -447,7 +460,15 @@ async function upsertRankings(
   for (const item of items) {
     const keyword_norm = normalizeKeyword(item.keyword);
     if (!keyword_norm) continue;
-    const targetAsin = (item.asin && item.asin.trim().toUpperCase()) || primaryAsin;
+    const itemAsin = item.asin ? item.asin.trim().toUpperCase() : null;
+    const targetAsin = itemAsin && batchAsins.has(itemAsin) ? itemAsin : singleAsin;
+    if (!targetAsin) {
+      if (!loggedUnknownAsinRow) {
+        loggedUnknownAsinRow = true;
+        console.warn(`[Search Volume] Cerebro ${asins.length} ASIN: dòng không rõ ASIN (asin=${item.asin ?? "null"}), bỏ qua rank.`);
+      }
+      continue;
+    }
     const key = `${marketplace}:${targetAsin}:${keyword_norm}`;
     rowMap.set(key, {
       marketplace,
@@ -549,7 +570,18 @@ async function markStaleRuns(sql: Sql) {
 }
 
 /** Tạo run (chặn chạy song song vì dùng chung 1 phiên Helium 10). Trả về hàm thực thi để chạy nền. */
-export async function startSearchVolumeSync(input: { teamId: string; storeName: string; actorId?: string }) {
+/**
+ * mode "magnet": bỏ qua Cerebro, chỉ dùng Magnet lấp keyword thiếu volume có spend cao nhất (scripts/sync-magnet.ts).
+ * magnetLimit: tối đa bấy nhiêu lượt Magnet cho lần chạy này (vẫn không vượt hạn mức tháng).
+ */
+export type SearchVolumeSyncOptions = { mode?: "full" | "magnet"; magnetLimit?: number };
+
+export async function startSearchVolumeSync(input: {
+  teamId: string;
+  storeName: string;
+  actorId?: string;
+} & SearchVolumeSyncOptions) {
+  const mode = input.mode || "full";
   const sql = await getDatabaseClient();
   const stores = await resolveStores(sql, input.teamId, input.storeName);
   const scopeStoreId = runScopeStoreId(input.storeName, stores);
@@ -559,7 +591,8 @@ export async function startSearchVolumeSync(input: { teamId: string; storeName: 
   if (running) throw new ApiError("Đang có một lượt đồng bộ Search Volume chạy. Vui lòng đợi lượt đó xong.", 409);
 
   const usage = await monthlyUsage(sql);
-  if (usage.cerebro >= CEREBRO_MONTHLY_BUDGET && usage.magnet >= MAGNET_MONTHLY_BUDGET) {
+  const magnetExhausted = usage.magnet >= MAGNET_MONTHLY_BUDGET;
+  if (magnetExhausted && (mode === "magnet" || usage.cerebro >= CEREBRO_MONTHLY_BUDGET)) {
     throw new ApiError(
       `Đã dùng hết hạn mức Helium 10 dành cho đồng bộ tháng này (Cerebro ${usage.cerebro}/${CEREBRO_MONTHLY_BUDGET}, Magnet ${usage.magnet}/${MAGNET_MONTHLY_BUDGET}).`,
       429,
@@ -593,7 +626,7 @@ export async function startSearchVolumeSync(input: { teamId: string; storeName: 
 
   const execute = async () => {
     try {
-      await runSearchVolumeSync(sql, run.id, stores, usage);
+      await runSearchVolumeSync(sql, run.id, stores, usage, { mode, magnetLimit: input.magnetLimit });
     } catch (error) {
       console.error("[Search Volume] Sync failed:", error);
       await sql`
@@ -633,7 +666,9 @@ async function runSearchVolumeSync(
   runId: string,
   stores: Array<{ id: string; name: string; marketplace: string }>,
   usage: { cerebro: number; magnet: number },
+  options: SearchVolumeSyncOptions = {},
 ) {
+  const magnetOnly = options.mode === "magnet";
   // Mỗi marketplace quét riêng (ASIN / keyword tra đúng chợ); store cùng marketplace gộp chung 1 hàng đợi theo spend.
   // Keyword được khóa "marketplace|keyword" vì cùng một keyword ở 2 chợ là 2 volume khác nhau.
   const spendByKeyword = new Map<string, number>();
@@ -649,6 +684,7 @@ async function runSearchVolumeSync(
       spendByKeyword.set(key, value);
       if (!fresh.has(keyword)) missing.add(key);
     }
+    if (magnetOnly) continue;
     const queue = await loadAsinQueue(sql, storeIds, marketplace);
     for (const batch of buildAsinBatches(queue)) batches.push({ ...batch, marketplace });
     asinsTotal += queue.length;
@@ -691,10 +727,13 @@ async function runSearchVolumeSync(
   if (!(await tick(`Cần quét ${asinsTotal - asinsDone}/${asinsTotal} ASIN, ${missingBefore.toLocaleString()}/${keywordsTotal.toLocaleString()} keyword chưa có volume...`))) return;
 
   // 1. Cerebro: quét hết ASIN đang chạy ads (kể cả khi keyword đã đủ volume, để có Organic/Sponsored Rank)
+  // cerebroExhausted = Cerebro hết lượt trong tháng → tháng này không quét thêm được, Magnet vẫn nên lấp phần thiếu.
+  let cerebroExhausted = false;
   let consecutiveFailures = 0;
   for (const [index, batch] of batches.entries()) {
     if (usage.cerebro + cerebroCalls >= CEREBRO_MONTHLY_BUDGET) {
       stopReason = `Hết hạn mức Cerebro tháng (${CEREBRO_MONTHLY_BUDGET} lượt), sẽ chạy tiếp từ checkpoint.`;
+      cerebroExhausted = true;
       break;
     }
     if (CEREBRO_PER_RUN > 0 && cerebroCalls >= CEREBRO_PER_RUN) {
@@ -712,10 +751,10 @@ async function runSearchVolumeSync(
         directApiOnly: true,
       }));
       cerebroCalls++;
-      const saved = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
+      const { saved, withVolume } = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
       await upsertRankings(sql, marketplace, batch.asins, result.keywords);
       keywordsUpserted += saved.length;
-      for (const keyword of saved) missing.delete(marketKey(marketplace, keyword));
+      for (const keyword of withVolume) missing.delete(marketKey(marketplace, keyword));
       await saveAsinCheckpoint(sql, marketplace, batch.asins, { ok: true, keywordCount: saved.length });
       asinsQueried += batch.asins.length;
       asinsDone += batch.asins.length;
@@ -724,7 +763,10 @@ async function runSearchVolumeSync(
       const errMsg = error instanceof Error ? error.message : String(error);
       // Phiên hỏng / mất kết nối: không phải lỗi ASIN → không trừ lượt, không đánh dấu ASIN, giữ checkpoint
       stopReason = helium10StopReason(error);
-      if (stopReason) break;
+      if (stopReason) {
+        cerebroExhausted = isQuotaExhaustedError(error);
+        break;
+      }
       cerebroCalls++;
       errors.push(`Cerebro ${batch.asins[0]}: ${errMsg}`);
       await saveAsinCheckpoint(sql, marketplace, batch.asins, { ok: false, error: errMsg });
@@ -737,9 +779,12 @@ async function runSearchVolumeSync(
     await sleep(CALL_DELAY_MS);
   }
 
-  // 2. Magnet lấp keyword còn thiếu có spend cao nhất — chỉ khi Cerebro đã quét hết ASIN (Cerebro có thể tự lấp)
-  if (!stopReason) {
-    const magnetAllowance = Math.min(MAGNET_PER_RUN, Math.max(0, MAGNET_MONTHLY_BUDGET - usage.magnet));
+  // 2. Magnet lấp keyword còn thiếu có spend cao nhất — khi Cerebro đã quét hết ASIN (Cerebro có thể tự lấp),
+  //    hoặc Cerebro đã hết lượt tháng (không còn cách nào khác để lấp). Lỗi phiên / kết nối → không chạy.
+  if (!stopReason || cerebroExhausted) {
+    const magnetRemaining = Math.max(0, MAGNET_MONTHLY_BUDGET - usage.magnet);
+    const perRunCaps = [MAGNET_PER_RUN, options.magnetLimit ?? 0].filter((cap) => cap > 0);
+    const magnetAllowance = Math.min(magnetRemaining, ...perRunCaps);
     const gapKeywords = Array.from(missing)
       .sort((a, b) => (spendByKeyword.get(b) || 0) - (spendByKeyword.get(a) || 0))
       .slice(0, magnetAllowance);
@@ -749,9 +794,9 @@ async function runSearchVolumeSync(
       try {
         const result = await callHelium10(() => mineHelium10Keywords({ keyword, marketplace, limit: 200, directApiOnly: true }));
         magnetCalls++;
-        const saved = await upsertVolumes(sql, marketplace, "helium10_magnet", result.keywords);
+        const { saved, withVolume } = await upsertVolumes(sql, marketplace, "helium10_magnet", result.keywords);
         keywordsUpserted += saved.length;
-        for (const item of saved) missing.delete(marketKey(marketplace, item));
+        for (const item of withVolume) missing.delete(marketKey(marketplace, item));
         if (missing.has(key)) {
           // Helium 10 không có volume cho keyword này → lưu null để không tra lại trong tháng
           await upsertVolumes(sql, marketplace, "helium10_magnet_miss", [{
@@ -762,8 +807,11 @@ async function runSearchVolumeSync(
         }
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        stopReason = helium10StopReason(error);
-        if (stopReason) break;
+        const magnetStop = helium10StopReason(error);
+        if (magnetStop) {
+          stopReason = stopReason ? `${stopReason} Magnet: ${magnetStop}` : magnetStop;
+          break;
+        }
         magnetCalls++;
         errors.push(`Magnet "${keyword}": ${errMsg}`);
       }
