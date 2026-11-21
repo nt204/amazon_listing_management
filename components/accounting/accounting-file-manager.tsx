@@ -453,7 +453,7 @@ export function AccountingFileManager() {
             type="button"
             onClick={() => setShowSheetLinks(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-semibold text-indigo-700 shadow-2xs hover:bg-indigo-100 transition cursor-pointer"
-            title="Dán link Google Sheet Inventory cho các store (tự đồng bộ 4:00 sáng)"
+            title="Dán link Google Sheet Inventory cho các store (tự đồng bộ 4:00 và 16:00 mỗi ngày)"
           >
             <LinkSimple size={14} weight="bold" />
             Link Google Sheet

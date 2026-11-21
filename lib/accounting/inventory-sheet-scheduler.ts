@@ -3,10 +3,12 @@ import "server-only";
 import { getDatabaseClient } from "@/lib/db";
 import { listSheetLinks, syncAllSheetLinks } from "@/lib/accounting/inventory-sheet-sync";
 
-// Lịch đồng bộ Google Sheet → Inventory mỗi sáng (mặc định 4:00 sáng giờ Việt Nam, trước giờ làm để sáng ra đã có số liệu mới).
-// Tắt bằng INVENTORY_SHEET_SYNC_SCHEDULE=off; đổi giờ bằng INVENTORY_SHEET_SYNC_HOUR.
-// Mỗi ngày chỉ chạy 1 lần kể cả khi nhiều server cùng chạy (khóa bằng bảng inventory_sheet_schedule_runs);
-// server bật sau giờ hẹn vẫn chạy bù trong ngày.
+// Lịch đồng bộ Google Sheet → Inventory mỗi ngày 2 lần, mặc định 4:00 sáng và 16:00 chiều giờ Việt Nam
+// (sáng ra đã có số liệu mới; chiều cập nhật lại phần sheet sửa trong ngày).
+// Tắt bằng INVENTORY_SHEET_SYNC_SCHEDULE=off; đổi giờ bằng INVENTORY_SHEET_SYNC_HOURS (vd "4,16"),
+// vẫn nhận INVENTORY_SHEET_SYNC_HOUR cũ (1 giờ duy nhất).
+// Mỗi khung giờ chỉ chạy 1 lần kể cả khi nhiều server cùng chạy (khóa bằng bảng inventory_sheet_schedule_runs);
+// server bật sau giờ hẹn vẫn chạy bù khung giờ gần nhất trong ngày.
 
 const TIME_ZONE = "Asia/Ho_Chi_Minh";
 const CHECK_INTERVAL_MS = 60_000;
@@ -17,6 +19,16 @@ const globalForScheduler = globalThis as typeof globalThis & {
   inventorySheetScheduler?: NodeJS.Timeout;
   inventorySheetSchedulerOwner?: symbol;
 };
+
+/** Các giờ chạy trong ngày (giờ VN), tăng dần, bỏ trùng. */
+export function inventorySheetSyncHours(): number[] {
+  const raw = process.env.INVENTORY_SHEET_SYNC_HOURS ?? process.env.INVENTORY_SHEET_SYNC_HOUR ?? "4,16";
+  const hours = raw
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((hour) => Number.isInteger(hour) && hour >= 0 && hour <= 23);
+  return hours.length ? [...new Set(hours)].sort((a, b) => a - b) : [4, 16];
+}
 
 function vietnamNow() {
   const parts = Object.fromEntries(
@@ -35,15 +47,16 @@ function vietnamNow() {
 }
 
 async function runIfDue() {
-  const hour = Number(process.env.INVENTORY_SHEET_SYNC_HOUR ?? 4);
   const now = vietnamNow();
-  if (now.hour < hour) return;
+  // Khung giờ gần nhất đã tới; khung đã bỏ lỡ trước đó không chạy bù riêng (khung sau đọc lại toàn bộ sheet).
+  const slot = inventorySheetSyncHours().filter((hour) => hour <= now.hour).pop();
+  if (slot === undefined) return;
 
   // Chưa có link nào thì chưa chốt lượt chạy của ngày, để link lưu sau đó vẫn được chạy trong ngày.
   if ((await listSheetLinks()).length === 0) return;
 
   const sql = await getDatabaseClient();
-  const runKey = `daily:${now.date}`;
+  const runKey = `daily:${now.date}@${String(slot).padStart(2, "0")}`;
   const claimed = await sql<{ run_key: string }[]>`
     INSERT INTO inventory_sheet_schedule_runs (run_key) VALUES (${runKey})
     ON CONFLICT (run_key) DO NOTHING
@@ -66,7 +79,7 @@ export function getInventorySheetSchedulerStatus() {
   return {
     enabled: process.env.INVENTORY_SHEET_SYNC_SCHEDULE !== "off",
     running: Boolean(globalForScheduler.inventorySheetScheduler),
-    hour: Number(process.env.INVENTORY_SHEET_SYNC_HOUR ?? 4),
+    hours: inventorySheetSyncHours(),
   };
 }
 

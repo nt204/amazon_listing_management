@@ -52,7 +52,13 @@ export const PART_LABELS: Record<SheetType, string> = {
 export interface SheetLinksResponse {
   links: SheetLink[];
   service_account_email: string | null;
-  schedule: { enabled: boolean; running: boolean; hour: number };
+  schedule: { enabled: boolean; running: boolean; hours: number[] };
+}
+
+/** "4:00 và 16:00" — các giờ tự đồng bộ trong ngày (server cũ chưa trả hours thì coi là 4:00 và 16:00). */
+export function formatSyncHours(hours: number[] | undefined): string {
+  const list = hours?.length ? hours : [4, 16];
+  return list.map((hour) => `${hour}:00`).join(" và ");
 }
 
 export type SheetSyncOutcome = LinkSyncOutcome & { skipped?: boolean };
@@ -517,7 +523,7 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
               {schedule?.enabled && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/60">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Tự động {schedule.hour ?? 4}:00 sáng
+                  Tự động {formatSyncHours(schedule.hours)}
                 </span>
               )}
             </div>

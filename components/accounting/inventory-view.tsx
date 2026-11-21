@@ -127,6 +127,7 @@ import {
   confirmForceSync,
   describeLinkOutcome,
   describeSyncResult,
+  formatSyncHours,
   requestSheetSync,
   useSheetLinks,
 } from "./inventory-sheet-links-modal";
@@ -7580,7 +7581,7 @@ function InventoryViewInner() {
                       </button>
                     </div>
                     <p className="text-[11px] text-slate-500">
-                      Link được lưu cho store và tự đồng bộ mỗi sáng {sheetLinksQuery.data?.schedule.hour ?? 4}:00 cùng Bảng Mã FBM. Hệ thống tự tìm tab{" "}
+                      Link được lưu cho store và tự đồng bộ mỗi ngày lúc {formatSyncHours(sheetLinksQuery.data?.schedule.hours)} cùng Bảng Mã FBM. Hệ thống tự tìm tab{" "}
                       {isFbmBaseCost ? <>&quot;ĐẦU VÀO FBM PW&quot;</> : <>&quot;FBM_&lt;Store&gt;&quot;</>}. Sheet cần chia sẻ quyền <strong>Người xem</strong> cho:
                     </p>
                     {sheetLinksQuery.data?.service_account_email ? (
