@@ -242,7 +242,7 @@ async function loadLargeServiceFees(targetDate: string): Promise<Map<string, Lar
   return result;
 }
 
-interface TeamSkuRow {
+export interface TeamSkuRow {
   sku: string;
   store: string;
   revenue: number;
@@ -252,13 +252,19 @@ interface TeamSkuRow {
   tacos: number;
 }
 
-// Số theo SKU trong ngày của 1 kênh — cùng nguồn với tab "Lọc SKU Win" (FBA) / "FBM Cố định" (FBM) trên web
-async function loadChannelSkus(storeId: string, isFbm: boolean, displayName: string, targetDate: string): Promise<TeamSkuRow[]> {
+// Số theo SKU của 1 kênh trong khoảng ngày (mặc định 1 ngày) — cùng nguồn với tab "Lọc SKU Win" (FBA) / "FBM Cố định" (FBM)
+export async function loadChannelSkus(
+  storeId: string,
+  isFbm: boolean,
+  displayName: string,
+  targetDate: string,
+  endDate: string = targetDate,
+): Promise<TeamSkuRow[]> {
   const list = isFbm ? listFbmSkuFixed : listSkuWin;
   try {
     const { items } = await list(storeId, {
       startDate: targetDate,
-      endDate: targetDate,
+      endDate,
       status: "all",
       skuType: "all",
       sortField: "profit",
@@ -285,7 +291,7 @@ async function loadChannelSkus(storeId: string, isFbm: boolean, displayName: str
 
 // Top SKU nằm trong khung thu gọn (bấm mới mở). Table của Lark không đặt được trong collapsible_panel,
 // nên dùng bảng markdown (card JSON 2.0): ô tự xuống dòng, SKU hiện đủ tên; > 5 dòng Lark tự chia trang.
-function skuPanel(title: string, rows: TeamSkuRow[]): Record<string, any> {
+export function skuPanel(title: string, rows: TeamSkuRow[], emptyText = "Không có SKU phát sinh trong ngày."): Record<string, any> {
   const header = "| SKU | Store | Revenue | Profit | Qty | Margin | TACoS |\n| :-- | :-- | --: | --: | --: | --: | --: |";
   const lines = rows.map((r) =>
     [
@@ -315,7 +321,7 @@ function skuPanel(title: string, rows: TeamSkuRow[]): Record<string, any> {
         tag: "markdown",
         content: rows.length
           ? `${header}\n${lines.map((l) => `| ${l} |`).join("\n")}`
-          : grey("Không có SKU phát sinh trong ngày."),
+          : grey(emptyText),
       },
     ],
   };

@@ -3,6 +3,7 @@ import { getWeeklyReport, type WeeklyBrandRow, type WeeklyReport, type WeeklyMet
 import { daysInMonthOf, weekSegmentOf, previousWeekSegment, type WeekSegment } from "@/lib/accounting/weekly-report-periods";
 import { kpiRatio, kpiTone } from "@/lib/accounting/kpi-progress";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
+import { loadChannelSkus, skuPanel, type TeamSkuRow } from "@/scripts/send-daily-kpi-report";
 
 interface PaceContext {
   dim: number;
@@ -32,14 +33,6 @@ interface GroupSummary {
   targetedRows: number;
   revenue: MetricProgress | null;
   profit: MetricProgress | null;
-}
-
-interface SkuWarning {
-  sku: string;
-  spend: number;
-  revenue: number;
-  tacos: number;
-  estLoss: number;
 }
 
 interface ServiceFeeItem {
@@ -225,85 +218,6 @@ const TEAMS_CONFIG = [
   },
 ];
 
-// Query top SKU lỗ trong tuần
-async function loadTopWarningSkusWeek(startDate: string, endDate: string): Promise<Map<string, SkuWarning[]>> {
-  const sql = await getDatabaseClient();
-  const result = new Map<string, SkuWarning[]>();
-  try {
-    const rows = await sql<Array<{
-      store_id: string;
-      channel: string;
-      sku: string;
-      revenue: number;
-      spend: number;
-      tacos: number;
-      est_loss: number;
-    }>>`
-      WITH orders_agg AS (
-        SELECT
-          o.store_id,
-          CASE WHEN o.fulfillment_channel = 'Merchant' THEN 'FBM' ELSE 'FBA' END AS channel,
-          UPPER(TRIM(o.sku)) AS sku,
-          SUM(COALESCE(o.item_price, 0) + COALESCE(o.shipping_price, 0) - COALESCE(o.item_promotion_discount, 0) - COALESCE(o.ship_promotion_discount, 0))::float AS revenue
-        FROM accounting_orders o
-        WHERE o.date BETWEEN ${startDate}::date AND ${endDate}::date
-          AND COALESCE(TRIM(o.sku), '') <> ''
-          AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
-        GROUP BY o.store_id, 2, 3
-      ),
-      ads_agg AS (
-        SELECT
-          a.store_id,
-          CASE WHEN UPPER(TRIM(a.loai)) = 'FBM' OR a.loai = '' THEN 'FBM' ELSE 'FBA' END AS channel,
-          UPPER(TRIM(COALESCE(NULLIF(a.sku, ''), a.portfolio))) AS sku,
-          SUM(COALESCE(a.spend, 0))::float AS spend
-        FROM accounting_ads a
-        WHERE a.date BETWEEN ${startDate}::date AND ${endDate}::date
-        GROUP BY a.store_id, 2, 3
-      ),
-      joined AS (
-        SELECT
-          COALESCE(o.store_id, a.store_id) AS store_id,
-          COALESCE(o.channel, a.channel) AS channel,
-          COALESCE(o.sku, a.sku) AS sku,
-          COALESCE(o.revenue, 0)::float AS revenue,
-          COALESCE(a.spend, 0)::float AS spend,
-          CASE
-            WHEN COALESCE(o.revenue, 0) > 0 THEN (COALESCE(a.spend, 0) / o.revenue) * 100
-            ELSE 999
-          END AS tacos,
-          ((COALESCE(o.revenue, 0) * 0.45) - COALESCE(a.spend, 0))::float AS est_loss
-        FROM orders_agg o
-        FULL OUTER JOIN ads_agg a
-          ON o.store_id = a.store_id
-         AND o.channel = a.channel
-         AND o.sku = a.sku
-      )
-      SELECT store_id, channel, sku, revenue, spend, tacos, est_loss
-      FROM joined
-      WHERE est_loss < -50
-        AND tacos > 50
-        AND spend >= 50
-      ORDER BY est_loss ASC
-      LIMIT 10
-    `;
-    for (const r of rows) {
-      const key = `${r.store_id}|${r.channel}`;
-      if (!result.has(key)) result.set(key, []);
-      result.get(key)!.push({
-        sku: r.sku,
-        spend: r.spend,
-        revenue: r.revenue,
-        tacos: r.tacos,
-        estLoss: r.est_loss,
-      });
-    }
-  } catch (err) {
-    console.error("[WarningSKU] Lỗi query SKU tuần:", err);
-  }
-  return result;
-}
-
 // Query khoản phí Service Fee trừ >= $1,000 trong tuần (đã loại phí ads)
 async function loadLargeServiceFeesWeek(startDate: string, endDate: string): Promise<Map<string, ServiceFeeItem[]>> {
   const sql = await getDatabaseClient();
@@ -347,7 +261,6 @@ function generateWeeklyStoreComment(
   displayName: string,
   targetWeek: number,
   paceWeek: number | null,
-  warningSkus: SkuWarning[] = [],
   serviceFees: ServiceFeeItem[] = []
 ): string {
   // 0. Nếu không có dữ liệu
@@ -373,22 +286,13 @@ function generateWeeklyStoreComment(
     kpiPrefix = `(Chưa có KPI) `;
   }
 
-  let warningSkuText = "";
-  if (warningSkus.length > 0) {
-    const skuLines = warningSkus.map((s) => {
-      const tacosStr = s.tacos > 100 ? ">100%" : `${s.tacos.toFixed(1)}%`;
-      return `  ❗ **SKU lỗ:** \`${s.sku}\` (Profit -${fmtUsd(Math.abs(s.estLoss))}, TACoS ${tacosStr}, Spend ${fmtUsd(s.spend)}, Rev ${fmtUsd(s.revenue)})`;
-    });
-    warningSkuText = `\n${skuLines.join("\n")}`;
-  }
-
   let serviceFeeText = "";
   if (serviceFees.length > 0) {
     const feeLines = serviceFees.map((f) => `  ❗ **Service Fee:** ${f.name} ${fmtUsd(f.amount, 2)}`);
     serviceFeeText = `\n${feeLines.join("\n")}`;
   }
 
-  const fullWarningText = `${serviceFeeText}${warningSkuText}`;
+  const fullWarningText = serviceFeeText;
 
   // 1. Profit sụt giảm sâu (<= -20%)
   if (dProfitPct <= -20) {
@@ -493,10 +397,18 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const allProPaceWeek = targetAllProWeek > 0 ? (totalAll.cur.profit / targetAllProWeek) * 100 : null;
   const allProPaceMonth = fullAllProTarget > 0 ? (totalAll.mtd.profit / fullAllProTarget) * 100 : null;
 
-  // Load SKU lỗ & Service Fees trong tuần
-  const [warningSkusMap, serviceFeesMap] = await Promise.all([
-    loadTopWarningSkusWeek(week.startDate, week.endDate),
+  // Service Fees trong tuần + số theo SKU cả tuần của từng kênh (Top 10 SKU tốt / cần chú ý của mỗi team)
+  const skusByChannel = new Map<string, TeamSkuRow[]>();
+  const [serviceFeesMap] = await Promise.all([
     loadLargeServiceFeesWeek(week.startDate, week.endDate),
+    ...TEAMS_CONFIG.flatMap((team) =>
+      team.stores.map(async (stDef) => {
+        const b = allBrands.find((x) => x.storeName.toUpperCase() === stDef.name && x.channel.toUpperCase() === stDef.channel);
+        if (!b) return;
+        const rows = await loadChannelSkus(b.storeId, stDef.channel === "FBM", stDef.label, week.startDate, week.endDate);
+        skusByChannel.set(`${stDef.name}|${stDef.channel}`, rows);
+      }),
+    ),
   ]);
 
   // --- DỰNG LARK CARD ---
@@ -646,7 +558,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       });
 
       // Nhận xét store (GẮN VỚI KPI)
-      const storeWarnings = b ? warningSkusMap.get(`${b.storeId}|${stDef.channel}`) || [] : [];
       const rawStoreFees = b ? serviceFeesMap.get(b.storeId) || [] : [];
       const storeFees = rawStoreFees.filter((f) => {
         const isFbaFee = f.name.toLowerCase().includes("fba") || f.name.toLowerCase().includes("storage");
@@ -659,7 +570,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         displayName,
         storeWeekProTarget,
         storePaceWeek,
-        storeWarnings,
         storeFees
       );
       if (comment) teamComments.push(comment);
@@ -726,6 +636,14 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       };
     const teamComment = { tag: "markdown", content: commentBlockContent };
 
+    // Top 10 SKU Profit cao nhất (tốt) và thấp nhất (cần chú ý) của cả team trong tuần — khung bấm để xem như báo cáo ngày
+    const teamSkus = team.stores.flatMap((st) => skusByChannel.get(`${st.name}|${st.channel}`) || []);
+    const topGood = [...teamSkus].sort((x, y) => y.profit - x.profit).slice(0, 10);
+    const goodSet = new Set(topGood);
+    const topBad = teamSkus.filter((r) => !goodSet.has(r)).sort((x, y) => x.profit - y.profit).slice(0, 10);
+    const skuPanels = [skuPanel("🏆 **Top 10 SKU tốt**", topGood, "Không có SKU phát sinh trong tuần.")];
+    if (topBad.length) skuPanels.push(skuPanel("🚨 **Top 10 SKU cần chú ý**", topBad));
+
     elements.push(
       { tag: "hr" },
       {
@@ -734,6 +652,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       },
       teamTable,
       teamComment,
+      ...skuPanels,
     );
 
     teamCards.push({
@@ -747,7 +666,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
           title: { tag: "plain_text", content: `📊 ${team.name.toUpperCase()} (${team.lead.toUpperCase()}) — BÁO CÁO ${week.label.toUpperCase()}` },
           subtitle: { tag: "plain_text", content: `Kỳ ${week.startDate} đến ${week.endDate} • Đã chốt số liệu` },
         },
-        body: { elements: [teamTable, teamComment] },
+        body: { elements: [teamTable, teamComment, ...skuPanels] },
       },
     });
   }
