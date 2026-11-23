@@ -2,6 +2,7 @@ import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/l
 import { getDatabaseClient } from "@/lib/db";
 import { invalidateCachePattern } from "@/lib/redis";
 import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
+import { notifyAutoDecreaseUploadTelegram } from "@/lib/ppc/auto-decrease";
 
 export const runtime = "nodejs";
 
@@ -176,19 +177,25 @@ export async function PATCH(request: Request) {
         ? ` (SKU: ${jobRecord.skus.slice(0, 3).join(", ")}${jobRecord.skus.length > 3 ? ` +${jobRecord.skus.length - 3}` : ""})`
         : "";
 
+      const resultLines = [
+        `${statusIcon} **Kết quả Upload Bulk PPC: ${featureName}**`,
+        `• Store: ${storeName}`,
+        `• File: ${jobRecord.file_name || "bulk-upload.xlsx"}`,
+        `• Trạng thái: ${statusText}`,
+        jobRecord.action_count ? `• Số hành động: ${jobRecord.action_count}${skuText}` : "",
+        body?.result_summary ? `• Tóm tắt kết quả Amazon Ads:\n${String(body.result_summary).slice(0, 500)}` : "",
+      ].filter(Boolean);
       await notifyLarkEventBestEffort(
         { teamId: actor.teamId, actorId: jobRecord.created_by || actor.userId },
         "ppc",
-        [
-          `${statusIcon} **Kết quả Upload Bulk PPC: ${featureName}**`,
-          `• Store: ${storeName}`,
-          `• File: ${jobRecord.file_name || "bulk-upload.xlsx"}`,
-          `• Trạng thái: ${statusText}`,
-          jobRecord.action_count ? `• Số hành động: ${jobRecord.action_count}${skuText}` : "",
-          body?.result_summary ? `• Tóm tắt kết quả Amazon Ads:\n${String(body.result_summary).slice(0, 500)}` : "",
-        ].filter(Boolean),
+        resultLines,
         { ppcStoreId: jobRecord.store_id },
       );
+      // Job của lô Auto giảm Bid → báo thêm qua Telegram cho người đã xác nhận (kênh tạm khi Lark hết quota).
+      if (jobRecord.created_by) {
+        await notifyAutoDecreaseUploadTelegram(jobId, actor.teamId, jobRecord.created_by, resultLines)
+          .catch((error) => console.warn("[auto-decrease] Báo kết quả upload qua Telegram lỗi:", error));
+      }
     }
     return Response.json({ success: true, job: rows[0] });
   } catch (error) {

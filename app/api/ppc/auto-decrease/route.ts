@@ -1,7 +1,7 @@
 // Auto giảm bid có xác nhận qua Lark (lib/ppc/auto-decrease.ts):
-//   GET  ?storeName=  → cài đặt + bộ đếm + các lô gần đây của store
-//   PUT  { storeName, enabled, scope, skus, waitDays, minBid, cooldownDays } → lưu cài đặt
-//   POST { action: "confirm" | "snooze", batchId, recIds? } → duyệt / hoãn một lô từ web
+//   GET  ?storeName=  → cấu hình + bộ đếm + các lô gần đây của CHÍNH người đang đăng nhập
+//   PUT  { storeName, enabled, scope, skus, waitDays, minBid, cooldownDays } → lưu cấu hình của chính mình
+//   POST { action: "confirm" | "snooze", batchId, recIds? } → duyệt / hoãn lô của chính mình từ web
 import { ApiError, authorize, dataScope, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import {
@@ -13,6 +13,9 @@ import {
   saveAutoDecreaseSettings,
   snoozeAutoDecreaseBatch,
   autoDecreaseHour,
+  autoDecreaseChannels,
+  listTelegramRecipients,
+  listOtherAutoDecreaseConfigs,
 } from "@/lib/ppc/auto-decrease";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 
@@ -44,20 +47,27 @@ export async function GET(request: Request) {
   try {
     const actor = await authorize(request, "read", "ppc");
     const store = await findStore(actor.teamId, new URL(request.url).searchParams.get("storeName") || "");
-    const settings = await getAutoDecreaseSettings(store.id);
-    const [streaks, batches, recipients, editable] = await Promise.all([
-      getAutoDecreaseStreakSummary(store.id, settings.waitDays),
-      listAutoDecreaseBatches(store.id),
-      listAutoDecreaseRecipients(actor.teamId, store.id),
+    // Mỗi người chỉ thấy / sửa cấu hình và lô của chính mình.
+    const settings = await getAutoDecreaseSettings(store.id, actor.userId);
+    const channels = autoDecreaseChannels();
+    const [streaks, batches, larkRecipients, telegramRecipients, editable, others] = await Promise.all([
+      getAutoDecreaseStreakSummary(store.id, actor.userId, settings.waitDays),
+      listAutoDecreaseBatches(store.id, actor.userId),
+      channels.lark ? listAutoDecreaseRecipients(actor.teamId, store.id, actor.userId) : Promise.resolve([]),
+      channels.telegram ? listTelegramRecipients(actor.teamId, store.id, actor.userId) : Promise.resolve([]),
       canAct(actor.teamId, actor.userId, store.id),
+      listOtherAutoDecreaseConfigs(store.id, actor.userId),
     ]);
     return Response.json({
       store,
       settings,
       streaks,
       batches,
-      // Chỉ tên người nhận; không trả về open_id / email.
-      recipients: recipients.map((r) => ({ actorId: r.actor_id, name: r.display_name })),
+      // Kênh mà CHÍNH người này sẽ nhận thông báo.
+      myChannels: [...(larkRecipients.length ? ["Lark"] : []), ...(telegramRecipients.length ? ["Telegram"] : [])],
+      // Người khác đang bật cấu hình cho store này (để báo trùng SKU).
+      others: others.map((o) => ({ name: o.name, scope: o.scope, skus: o.skus })),
+      channels,
       notifyHour: autoDecreaseHour(),
       canEdit: editable,
     });
@@ -75,8 +85,7 @@ export async function PUT(request: Request) {
     if (body.scope === "SKUS" && body.enabled === true && Array.isArray(body.skus) && body.skus.length === 0) {
       throw new ApiError("Chọn ít nhất 1 SKU, hoặc chuyển phạm vi sang Tất cả SKU.", 400);
     }
-    // updated_by lưu tên hiển thị để màn cài đặt ghi "sửa lần cuối bởi ...".
-    const settings = await saveAutoDecreaseSettings({ ...dataScope(actor), actorId: actor.displayName || actor.userId }, store.id, {
+    const settings = await saveAutoDecreaseSettings(dataScope(actor), store.id, {
       enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
       scope: body.scope === "ALL" || body.scope === "SKUS" ? body.scope : undefined,
       skus: body.skus === undefined ? undefined : (body.skus as string[]),

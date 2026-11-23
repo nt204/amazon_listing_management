@@ -22,6 +22,17 @@ import type { PendingBidItem, PendingPpcAction } from "@/lib/accounting/lark-con
 import type { PpcRecommendation } from "./types";
 import { loadFullStoreRecommendations } from "./auto-bid-prewarm";
 import { assertActorPpcStoreActionAccess } from "./store-user-access";
+import {
+  answerTelegramCallback,
+  editTelegramHtml,
+  editTelegramKeyboard,
+  escapeHtml,
+  getTelegramLink,
+  isTelegramActionConfigured,
+  resolveTelegramActor,
+  sendTelegramHtml,
+  type InlineKeyboard,
+} from "@/lib/telegram-action-bot";
 
 const TIME_ZONE = "Asia/Ho_Chi_Minh";
 const RECOMMENDATION_DAYS = 30;
@@ -45,13 +56,13 @@ export const AUTO_DECREASE_SNOOZE = "AUTO_DECREASE_SNOOZE";
 
 export interface AutoDecreaseSettings {
   storeId: string;
+  actorId: string;
   enabled: boolean;
   scope: "ALL" | "SKUS";
   skus: string[];
   waitDays: number;
   minBid: number;
   cooldownDays: number;
-  updatedBy: string | null;
   updatedAt: string | null;
 }
 
@@ -66,37 +77,50 @@ export const DEFAULT_AUTO_DECREASE_SETTINGS = {
 
 interface SettingsRow {
   store_id: string;
+  actor_id: string;
   enabled: boolean;
   scope: "ALL" | "SKUS";
   skus: string[];
   wait_days: number;
   min_bid: string;
   cooldown_days: number;
-  updated_by: string | null;
   updated_at: Date | null;
 }
 
-function toSettings(storeId: string, row?: SettingsRow): AutoDecreaseSettings {
-  if (!row) return { storeId, ...DEFAULT_AUTO_DECREASE_SETTINGS, updatedBy: null, updatedAt: null };
+function toSettings(storeId: string, actorId: string, row?: SettingsRow): AutoDecreaseSettings {
+  if (!row) return { storeId, actorId, ...DEFAULT_AUTO_DECREASE_SETTINGS, updatedAt: null };
   return {
     storeId,
+    actorId,
     enabled: row.enabled,
     scope: row.scope,
     skus: row.skus || [],
     waitDays: row.wait_days,
     minBid: Number(row.min_bid),
     cooldownDays: row.cooldown_days,
-    updatedBy: row.updated_by,
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
   };
 }
 
-export async function getAutoDecreaseSettings(storeId: string): Promise<AutoDecreaseSettings> {
+/** Cấu hình của một người cho một store (chưa cấu hình → mặc định, đang tắt). */
+export async function getAutoDecreaseSettings(storeId: string, actorId: string): Promise<AutoDecreaseSettings> {
   const sql = await getDatabaseClient();
   const rows = await sql<SettingsRow[]>`
-    SELECT * FROM ppc_auto_decrease_settings WHERE store_id = ${storeId} LIMIT 1
+    SELECT * FROM ppc_auto_decrease_settings WHERE store_id = ${storeId} AND actor_id = ${actorId} LIMIT 1
   `;
-  return toSettings(storeId, rows[0]);
+  return toSettings(storeId, actorId, rows[0]);
+}
+
+/** Cấu hình đang bật của những người khác trong store (để báo trùng SKU). */
+export async function listOtherAutoDecreaseConfigs(storeId: string, exceptActorId: string) {
+  const sql = await getDatabaseClient();
+  return sql<Array<{ actorId: string; name: string; scope: "ALL" | "SKUS"; skus: string[] }>>`
+    SELECT s.actor_id AS "actorId", COALESCE(u.display_name, s.actor_id) AS name, s.scope, s.skus
+    FROM ppc_auto_decrease_settings s
+    LEFT JOIN app_users u ON u.team_id = s.team_id AND u.user_id = s.actor_id
+    WHERE s.store_id = ${storeId} AND s.actor_id <> ${exceptActorId} AND s.enabled = TRUE
+    ORDER BY name
+  `;
 }
 
 export function normalizeSkuList(input: unknown): string[] {
@@ -107,9 +131,9 @@ export function normalizeSkuList(input: unknown): string[] {
 export async function saveAutoDecreaseSettings(
   scope: DataScope,
   storeId: string,
-  input: Partial<Omit<AutoDecreaseSettings, "storeId" | "updatedBy" | "updatedAt">>,
+  input: Partial<Omit<AutoDecreaseSettings, "storeId" | "actorId" | "updatedAt">>,
 ): Promise<AutoDecreaseSettings> {
-  const current = await getAutoDecreaseSettings(storeId);
+  const current = await getAutoDecreaseSettings(storeId, scope.actorId);
   const clamp = (value: unknown, min: number, max: number, fallback: number) => {
     const n = Number(value);
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
@@ -118,30 +142,33 @@ export async function saveAutoDecreaseSettings(
     enabled: input.enabled ?? current.enabled,
     scope: input.scope === "ALL" || input.scope === "SKUS" ? input.scope : current.scope,
     skus: input.skus !== undefined ? normalizeSkuList(input.skus) : current.skus,
-    waitDays: Math.round(clamp(input.waitDays, 1, 30, current.waitDays)),
-    minBid: Math.round(clamp(input.minBid, 0.02, 50, current.minBid) * 100) / 100,
-    cooldownDays: Math.round(clamp(input.cooldownDays, 0, 60, current.cooldownDays)),
+    waitDays: input.waitDays === undefined ? current.waitDays : Math.round(clamp(input.waitDays, 1, 30, current.waitDays)),
+    minBid: input.minBid === undefined ? current.minBid : Math.round(clamp(input.minBid, 0.02, 50, current.minBid) * 100) / 100,
+    cooldownDays: input.cooldownDays === undefined ? current.cooldownDays : Math.round(clamp(input.cooldownDays, 0, 60, current.cooldownDays)),
   };
-  if (input.waitDays === undefined) next.waitDays = current.waitDays;
-  if (input.minBid === undefined) next.minBid = current.minBid;
-  if (input.cooldownDays === undefined) next.cooldownDays = current.cooldownDays;
 
   const sql = await getDatabaseClient();
   await sql`
     INSERT INTO ppc_auto_decrease_settings (
-      store_id, team_id, enabled, scope, skus, wait_days, min_bid, cooldown_days, updated_by, updated_at
+      store_id, actor_id, team_id, enabled, scope, skus, wait_days, min_bid, cooldown_days, updated_at
     ) VALUES (
-      ${storeId}, ${scope.teamId}, ${next.enabled}, ${next.scope}, ${next.skus}, ${next.waitDays},
-      ${next.minBid}, ${next.cooldownDays}, ${scope.actorId}, NOW()
+      ${storeId}, ${scope.actorId}, ${scope.teamId}, ${next.enabled}, ${next.scope}, ${next.skus}, ${next.waitDays},
+      ${next.minBid}, ${next.cooldownDays}, NOW()
     )
-    ON CONFLICT (store_id) DO UPDATE SET
+    ON CONFLICT (store_id, actor_id) DO UPDATE SET
       enabled = EXCLUDED.enabled, scope = EXCLUDED.scope, skus = EXCLUDED.skus, wait_days = EXCLUDED.wait_days,
-      min_bid = EXCLUDED.min_bid,
-      cooldown_days = EXCLUDED.cooldown_days, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+      min_bid = EXCLUDED.min_bid, cooldown_days = EXCLUDED.cooldown_days, updated_at = NOW()
   `;
-  // Tắt tính năng → bỏ bộ đếm, bật lại thì đếm từ đầu (không gửi ngay lô cũ tích luỹ từ trước).
-  if (!next.enabled) await sql`DELETE FROM ppc_auto_decrease_streaks WHERE store_id = ${storeId}`;
-  return getAutoDecreaseSettings(storeId);
+  if (!next.enabled) {
+    // Tắt → bỏ các lần hoãn của người này; store không còn ai bật thì bỏ luôn bộ đếm (bật lại đếm từ đầu).
+    await sql`DELETE FROM ppc_auto_decrease_snoozes WHERE store_id = ${storeId} AND actor_id = ${scope.actorId}`;
+    await sql`
+      DELETE FROM ppc_auto_decrease_streaks
+      WHERE store_id = ${storeId}
+        AND NOT EXISTS (SELECT 1 FROM ppc_auto_decrease_settings WHERE store_id = ${storeId} AND enabled = TRUE)
+    `;
+  }
+  return getAutoDecreaseSettings(storeId, scope.actorId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -297,7 +324,16 @@ export async function updateDecreaseStreaks(storeId: string, recs: PpcRecommenda
           current_bid numeric, recommended_bid numeric
         )
         ON CONFLICT (store_id, rec_id) DO UPDATE SET
-          seen_days = CASE WHEN s.last_seen_date < EXCLUDED.last_seen_date THEN s.seen_days + 1 ELSE s.seen_days END,
+          -- Bid trong báo cáo khác hôm trước = có người đã chỉnh (kể cả sửa thẳng trên Amazon Ads, không qua
+          -- NCE Hub) → đếm lại từ đầu. Cùng ngày dữ liệu thì không cộng thêm.
+          seen_days = CASE
+            WHEN s.current_bid IS DISTINCT FROM EXCLUDED.current_bid THEN 1
+            WHEN s.last_seen_date < EXCLUDED.last_seen_date THEN s.seen_days + 1
+            ELSE s.seen_days END,
+          first_seen_date = CASE WHEN s.current_bid IS DISTINCT FROM EXCLUDED.current_bid
+            THEN EXCLUDED.last_seen_date ELSE s.first_seen_date END,
+          first_seen_at = CASE WHEN s.current_bid IS DISTINCT FROM EXCLUDED.current_bid
+            THEN NOW() ELSE s.first_seen_at END,
           last_seen_date = GREATEST(s.last_seen_date, EXCLUDED.last_seen_date),
           target_id = EXCLUDED.target_id, campaign_id = EXCLUDED.campaign_id,
           sku = EXCLUDED.sku, keyword = EXCLUDED.keyword,
@@ -320,6 +356,15 @@ export async function updateDecreaseStreaks(storeId: string, recs: PpcRecommenda
           WHERE a.store_id = s.store_id AND a.target_id = s.target_id
             AND a.status <> 'SUPERSEDED'
             AND a.created_at >= s.first_seen_at
+        )
+    `;
+    // Lần hoãn hết hiệu lực khi target đã đếm lại từ đầu sau lúc hoãn (bid đổi / hết đề xuất / có người xử lý).
+    await tx`
+      DELETE FROM ppc_auto_decrease_snoozes z
+      WHERE z.store_id = ${storeId}
+        AND NOT EXISTS (
+          SELECT 1 FROM ppc_auto_decrease_streaks s
+          WHERE s.store_id = z.store_id AND s.rec_id = z.rec_id AND s.first_seen_at <= z.created_at
         )
     `;
   });
@@ -394,9 +439,11 @@ export async function selectAutoDecreaseCandidates(
     first_seen_date: Date | string;
     snoozed_until: Date | string | null;
   }>>`
-    SELECT rec_id, seen_days, first_seen_date, snoozed_until
-    FROM ppc_auto_decrease_streaks
-    WHERE store_id = ${store.id}
+    SELECT s.rec_id, s.seen_days, s.first_seen_date, z.snoozed_until
+    FROM ppc_auto_decrease_streaks s
+    LEFT JOIN ppc_auto_decrease_snoozes z
+      ON z.store_id = s.store_id AND z.rec_id = s.rec_id AND z.actor_id = ${settings.actorId}
+    WHERE s.store_id = ${store.id}
   `;
   const streakById = new Map(streaks.map((row) => [row.rec_id, row]));
 
@@ -404,6 +451,7 @@ export async function selectAutoDecreaseCandidates(
     if (!isDecrease(rec) || !inScope(settings, rec.sku)) return false;
     const streak = streakById.get(rec.id);
     if (!streak) return false;
+    // Hoãn là của riêng người cấu hình này.
     if (streak.snoozed_until && toDateString(streak.snoozed_until) >= today) return false;
     return options.ignoreWaitDays || streak.seen_days >= settings.waitDays;
   });
@@ -463,8 +511,11 @@ interface Recipient {
   receive_id_type: string;
 }
 
-/** Người phụ trách store nhận thẻ: đã kết nối Lark cá nhân, bật thông báo PPC, được phân quyền nhận action của store. */
-export async function listAutoDecreaseRecipients(teamId: string, storeId: string): Promise<Recipient[]> {
+/**
+ * Lark của CHÍNH người đã cấu hình (người đó vẫn phải được phân quyền phụ trách store).
+ * Không cần bật mục "PPC" trong cài đặt Lark: tự cấu hình Auto giảm Bid đã là đăng ký nhận.
+ */
+export async function listAutoDecreaseRecipients(teamId: string, storeId: string, actorId: string): Promise<Recipient[]> {
   const sql = await getDatabaseClient();
   return sql<Recipient[]>`
     SELECT connection.actor_id, app_user.display_name, connection.receive_id, connection.receive_id_type
@@ -473,13 +524,9 @@ export async function listAutoDecreaseRecipients(teamId: string, storeId: string
       ON app_user.team_id = access.team_id AND app_user.user_id = access.actor_id AND app_user.status = 'approved'
     JOIN lark_user_connections connection
       ON connection.team_id = access.team_id AND connection.actor_id = access.actor_id AND connection.enabled = TRUE
-    LEFT JOIN lark_notification_preferences preference
-      ON preference.team_id = access.team_id AND preference.actor_id = access.actor_id AND preference.category = 'ppc'
-    WHERE access.team_id = ${teamId} AND access.store_id = ${storeId}
+    WHERE access.team_id = ${teamId} AND access.store_id = ${storeId} AND access.actor_id = ${actorId}
       AND access.receive_action_notifications = TRUE
-      AND COALESCE(preference.personal_enabled, FALSE) = TRUE
       AND connection.receive_id <> ''
-    ORDER BY app_user.display_name
   `;
 }
 
@@ -666,11 +713,13 @@ interface BatchRow {
   id: string;
   team_id: string;
   store_id: string;
+  /** Người cấu hình — chủ lô, người duy nhất được duyệt / hoãn. */
+  actor_id: string;
   run_date: Date | string;
   status: string;
   item_count: number;
   items: AutoDecreaseItem[];
-  recipients: Array<{ actorId: string; name: string; sent: boolean; error?: string }>;
+  recipients: Array<{ actorId: string; name: string; channel?: "lark" | "telegram"; sent: boolean; error?: string }>;
   decided_by: string | null;
   decided_by_name: string | null;
   decided_at: Date | null;
@@ -680,6 +729,8 @@ interface BatchRow {
 
 export interface StoreRunResult {
   store: string;
+  /** Người cấu hình của lô (mỗi người một lô). */
+  actor?: string;
   status: "SENT" | "SEND_FAILED" | "NO_ITEMS" | "NO_RECIPIENTS" | "ALREADY_SENT" | "NO_SNAPSHOT" | "ERROR";
   items?: number;
   recipients?: number;
@@ -688,83 +739,136 @@ export interface StoreRunResult {
   error?: string;
 }
 
+/**
+ * Một store: cập nhật bộ đếm (dùng chung) một lần, rồi tạo lô + gửi thông báo riêng cho từng người cấu hình.
+ * actorIds = những người cần chạy (lịch 9h: mọi người đang bật; script thử: 1 người).
+ */
 export async function runAutoDecreaseForStore(
   store: StoreRow,
-  options: { ignoreWaitDays?: boolean; replaceToday?: boolean; onlyActorId?: string } = {},
-): Promise<StoreRunResult> {
-  const settings = await getAutoDecreaseSettings(store.id);
+  actorIds: string[],
+  options: { ignoreWaitDays?: boolean; replaceToday?: boolean } = {},
+): Promise<StoreRunResult[]> {
   const today = vietnamNow().date;
-  const sql = await getDatabaseClient();
-
   const snapshotDate = await activeSnapshotDate(store.id);
-  if (!snapshotDate) return { store: store.name, status: "NO_SNAPSHOT" };
+  if (!snapshotDate) return [{ store: store.name, status: "NO_SNAPSHOT" }];
 
   const { recs, skuInfo } = await loadRecommendationData(store);
   await updateDecreaseStreaks(store.id, recs, snapshotDate);
-  const items = await selectAutoDecreaseCandidates(store, settings, recs, today, { ...options, skuInfo });
-  if (items.length === 0) return { store: store.name, status: "NO_ITEMS" };
 
-  let recipients = await listAutoDecreaseRecipients(store.team_id, store.id);
-  if (options.onlyActorId) recipients = recipients.filter((r) => r.actor_id === options.onlyActorId);
-  // Chạy thử cho 1 người mà người đó không đủ điều kiện nhận → không tạo lô (lô thật vẫn tạo dù không ai nhận Lark).
-  if (options.onlyActorId && recipients.length === 0) return { store: store.name, status: "NO_RECIPIENTS", items: items.length };
+  const results: StoreRunResult[] = [];
+  for (const actorId of actorIds) {
+    try {
+      results.push(await runForActor(store, actorId, { recs, skuInfo, snapshotDate, today }, options));
+    } catch (error) {
+      console.error(`[auto-decrease] ${store.name} / ${actorId} lỗi:`, error);
+      results.push({ store: store.name, actor: actorId, status: "ERROR", error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
+}
+
+async function runForActor(
+  store: StoreRow,
+  actorId: string,
+  data: { recs: PpcRecommendation[]; skuInfo: Map<string, SkuCardInfo>; snapshotDate: string; today: string },
+  options: { ignoreWaitDays?: boolean; replaceToday?: boolean },
+): Promise<StoreRunResult> {
+  const { recs, skuInfo, snapshotDate, today } = data;
+  const sql = await getDatabaseClient();
+  const settings = await getAutoDecreaseSettings(store.id, actorId);
+  const base = { store: store.name, actor: actorId };
+
+  // Người cấu hình phải còn quyền phụ trách store (bị gỡ quyền → không tạo lô, không gửi).
+  try {
+    await assertActorPpcStoreActionAccess(store.team_id, actorId, store.id);
+  } catch {
+    return { ...base, status: "NO_RECIPIENTS", error: "Không còn quyền phụ trách store" };
+  }
+
+  const items = await selectAutoDecreaseCandidates(store, settings, recs, today, { ignoreWaitDays: options.ignoreWaitDays, skuInfo });
+  if (items.length === 0) return { ...base, status: "NO_ITEMS" };
+
+  const channels = autoDecreaseChannels();
+  const larkRecipients = channels.lark ? await listAutoDecreaseRecipients(store.team_id, store.id, actorId) : [];
+  const telegramRecipients = channels.telegram ? await listTelegramRecipients(store.team_id, store.id, actorId) : [];
+  const recipientCount = larkRecipients.length + telegramRecipients.length;
 
   if (options.replaceToday) {
     await sql`
       DELETE FROM ppc_auto_decrease_batches
-      WHERE store_id = ${store.id} AND run_date = ${today}::date AND status IN ('PENDING', 'EXPIRED')
+      WHERE store_id = ${store.id} AND actor_id = ${actorId} AND run_date = ${today}::date AND status IN ('PENDING', 'EXPIRED')
     `;
   }
   const inserted = await sql<Array<{ id: string }>>`
-    INSERT INTO ppc_auto_decrease_batches (team_id, store_id, run_date, item_count, items)
-    VALUES (${store.team_id}, ${store.id}, ${today}::date, ${items.length}, ${sql.json(items as never)})
-    ON CONFLICT (store_id, run_date) DO NOTHING
+    INSERT INTO ppc_auto_decrease_batches (team_id, store_id, actor_id, run_date, item_count, items)
+    VALUES (${store.team_id}, ${store.id}, ${actorId}, ${today}::date, ${items.length}, ${sql.json(items as never)})
+    ON CONFLICT (store_id, actor_id, run_date) DO NOTHING
     RETURNING id
   `;
-  if (!inserted[0]) return { store: store.name, status: "ALREADY_SENT", items: items.length };
+  if (!inserted[0]) return { ...base, status: "ALREADY_SENT", items: items.length };
   const batchId = inserted[0].id;
 
-  const card = buildAutoDecreaseCard({ batchId, storeName: store.name, runDate: today, snapshotDate, items, settings });
-  const sends = await Promise.allSettled(
-    recipients.map((r) => sendLarkCardNotification(card, { receiveId: r.receive_id, receiveIdType: r.receive_id_type })),
-  );
-  const recipientLog = recipients.map((r, idx) => {
-    const res = sends[idx];
-    const sent = res.status === "fulfilled" && res.value.sent;
-    const error = res.status === "rejected"
-      ? (res.reason instanceof Error ? res.reason.message : String(res.reason))
-      : sent ? undefined : "Lark chưa cấu hình";
-    return { actorId: r.actor_id, name: r.display_name, sent, ...(error ? { error } : {}) };
-  });
+  const cardInput: BatchCardInput = { batchId, storeName: store.name, runDate: today, snapshotDate, items, settings };
+  const errorText = (reason: unknown) => (reason instanceof Error ? reason.message : String(reason));
+  const recipientLog: BatchRow["recipients"] = [];
+
+  if (larkRecipients.length) {
+    const card = buildAutoDecreaseCard(cardInput);
+    const sends = await Promise.allSettled(
+      larkRecipients.map((r) => sendLarkCardNotification(card, { receiveId: r.receive_id, receiveIdType: r.receive_id_type })),
+    );
+    larkRecipients.forEach((r, idx) => {
+      const res = sends[idx];
+      const sent = res.status === "fulfilled" && res.value.sent;
+      const error = res.status === "rejected" ? errorText(res.reason) : sent ? undefined : "Lark chưa cấu hình";
+      recipientLog.push({ actorId: r.actor_id, name: r.display_name, channel: "lark", sent, ...(error ? { error } : {}) });
+    });
+  }
+  if (telegramRecipients.length) {
+    const message = buildTelegramBatchMessage(cardInput);
+    for (const r of telegramRecipients) {
+      try {
+        const messageId = await sendTelegramHtml(r.chat_id, message.html, message.keyboard);
+        await sql`
+          INSERT INTO ppc_auto_decrease_telegram_messages (batch_id, chat_id, message_id, actor_id)
+          VALUES (${batchId}, ${r.chat_id}, ${messageId}, ${r.actor_id})
+          ON CONFLICT (batch_id, chat_id) DO UPDATE SET message_id = EXCLUDED.message_id
+        `;
+        recipientLog.push({ actorId: r.actor_id, name: r.display_name, channel: "telegram", sent: true });
+      } catch (error) {
+        recipientLog.push({ actorId: r.actor_id, name: r.display_name, channel: "telegram", sent: false, error: errorText(error) });
+      }
+    }
+  }
+
   await sql`
     UPDATE ppc_auto_decrease_batches SET recipients = ${sql.json(recipientLog)}, updated_at = NOW()
     WHERE id = ${batchId}
   `;
   const sentCount = recipientLog.filter((r) => r.sent).length;
   for (const r of recipientLog) {
-    if (r.error) console.warn(`[auto-decrease] Gửi Lark cho ${r.name} lỗi: ${r.error}`);
+    if (r.error) console.warn(`[auto-decrease] Gửi ${r.channel} cho ${r.name} lỗi: ${r.error}`);
   }
   if (sentCount === 0) {
-    // Không ai nhận được thẻ (Lark lỗi / hết quota / chưa ai kết nối) → vẫn giữ lô để duyệt trên web.
+    // Chưa gửi được (Lark lỗi / chưa kết nối Telegram…) → vẫn giữ lô để người đó duyệt trên web.
     return {
-      store: store.name, status: recipients.length ? "SEND_FAILED" : "NO_RECIPIENTS", items: items.length,
-      recipients: recipients.length, sent: 0, batchId,
-      error: recipientLog.map((r) => `${r.name}: ${r.error}`).join("; ") || "Chưa có người nhận Lark",
+      ...base, status: recipientCount ? "SEND_FAILED" : "NO_RECIPIENTS", items: items.length,
+      recipients: recipientCount, sent: 0, batchId,
+      error: recipientLog.map((r) => `${r.channel}: ${r.error}`).join("; ") || "Chưa kết nối Telegram / Lark",
     };
   }
-  return { store: store.name, status: "SENT", items: items.length, recipients: recipients.length, sent: sentCount, batchId };
+  return { ...base, status: "SENT", items: items.length, recipients: recipientCount, sent: sentCount, batchId };
 }
 
 export async function runAutoDecreaseDaily(): Promise<StoreRunResult[]> {
   const sql = await getDatabaseClient();
-  const stores = await sql<StoreRow[]>`
-    SELECT s.id::text AS id, s.name, s.team_id
+  const configs = await sql<Array<StoreRow & { actor_id: string }>>`
+    SELECT s.id::text AS id, s.name, s.team_id, settings.actor_id
     FROM ppc_auto_decrease_settings settings
-    JOIN ppc_stores s ON s.id = settings.store_id
+    JOIN ppc_stores s ON s.id = settings.store_id AND s.team_id = settings.team_id
     WHERE settings.enabled = TRUE
-    ORDER BY s.name
+    ORDER BY s.name, settings.actor_id
   `;
-  const results: StoreRunResult[] = [];
   // Tiến trình chết giữa lúc tạo file (deploy / restart) → lô kẹt CONFIRMING: đánh dấu lỗi để người dùng biết.
   await sql`
     UPDATE ppc_auto_decrease_batches
@@ -772,14 +876,21 @@ export async function runAutoDecreaseDaily(): Promise<StoreRunResult[]> {
         result = jsonb_build_object('uploaded', false, 'error', 'Bị gián đoạn khi đang tạo file Bulk (server khởi động lại) — xem Hàng đợi / Lịch sử Auto Upload.')
     WHERE status = 'CONFIRMING' AND decided_at < NOW() - INTERVAL '30 minutes'
   `;
-  // Sáng nay có lượt mới → mọi lô cũ chưa ai bấm hết hạn, không để 2 lô cùng chờ duyệt cho một store.
+  // Sáng nay có lượt mới → mọi lô cũ chưa ai bấm hết hạn, không để 2 lô cùng chờ duyệt.
   await sql`
     UPDATE ppc_auto_decrease_batches SET status = 'EXPIRED', updated_at = NOW()
     WHERE status = 'PENDING' AND run_date < ${vietnamNow().date}::date
   `;
-  for (const store of stores) {
+  const byStore = new Map<string, { store: StoreRow; actors: string[] }>();
+  for (const row of configs) {
+    const entry = byStore.get(row.id) ?? { store: { id: row.id, name: row.name, team_id: row.team_id }, actors: [] };
+    entry.actors.push(row.actor_id);
+    byStore.set(row.id, entry);
+  }
+  const results: StoreRunResult[] = [];
+  for (const { store, actors } of byStore.values()) {
     try {
-      results.push(await runAutoDecreaseForStore(store));
+      results.push(...await runAutoDecreaseForStore(store, actors));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[auto-decrease] ${store.name} lỗi:`, error);
@@ -880,25 +991,29 @@ function toBatchView(row: BatchRow): AutoDecreaseBatchView {
   };
 }
 
-export async function listAutoDecreaseBatches(storeId: string, limit = 7): Promise<AutoDecreaseBatchView[]> {
+/** Lô của chính một người (mỗi người chỉ thấy và duyệt lô của mình). */
+export async function listAutoDecreaseBatches(storeId: string, actorId: string, limit = 7): Promise<AutoDecreaseBatchView[]> {
   const sql = await getDatabaseClient();
   const rows = await sql<BatchRow[]>`
     SELECT * FROM ppc_auto_decrease_batches
-    WHERE store_id = ${storeId}
+    WHERE store_id = ${storeId} AND actor_id = ${actorId}
     ORDER BY run_date DESC, created_at DESC
     LIMIT ${limit}
   `;
   return rows.map(toBatchView);
 }
 
-/** Bộ đếm hiện tại của store (để màn cài đặt hiển thị "đang theo dõi"). */
-export async function getAutoDecreaseStreakSummary(storeId: string, waitDays: number) {
+/** Bộ đếm của store (chung) + số target người này đang hoãn. */
+export async function getAutoDecreaseStreakSummary(storeId: string, actorId: string, waitDays: number) {
   const sql = await getDatabaseClient();
   const rows = await sql<Array<{ tracked: number; ready: number; snoozed: number }>>`
     SELECT COUNT(*)::int AS tracked,
-           COUNT(*) FILTER (WHERE seen_days >= ${waitDays})::int AS ready,
-           COUNT(*) FILTER (WHERE snoozed_until IS NOT NULL AND snoozed_until >= ${vietnamNow().date}::date)::int AS snoozed
-    FROM ppc_auto_decrease_streaks WHERE store_id = ${storeId}
+           COUNT(*) FILTER (WHERE s.seen_days >= ${waitDays})::int AS ready,
+           COUNT(z.rec_id) FILTER (WHERE z.snoozed_until >= ${vietnamNow().date}::date)::int AS snoozed
+    FROM ppc_auto_decrease_streaks s
+    LEFT JOIN ppc_auto_decrease_snoozes z
+      ON z.store_id = s.store_id AND z.rec_id = s.rec_id AND z.actor_id = ${actorId}
+    WHERE s.store_id = ${storeId}
   `;
   return rows[0] || { tracked: 0, ready: 0, snoozed: 0 };
 }
@@ -936,10 +1051,14 @@ async function claimBatch(
   batchId: string,
   actor: DecisionActor,
   nextStatus: "CONFIRMING" | "SNOOZED",
-  via: "lark" | "web",
+  via: DecisionVia,
 ): Promise<DecisionOutcome> {
   const batch = await loadBatch(batchId);
   if (!batch || batch.team_id !== actor.teamId) return { ok: false, message: "Không tìm thấy lô giảm bid.", status: 404 };
+  // Lô là của người đã cấu hình: chỉ người đó được duyệt / hoãn.
+  if (batch.actor_id !== actor.actorId) {
+    return { ok: false, message: "Lô này thuộc cấu hình của người khác, bạn không duyệt được.", status: 403 };
+  }
   try {
     await assertActorPpcStoreActionAccess(batch.team_id, actor.actorId, batch.store_id);
   } catch {
@@ -962,23 +1081,36 @@ async function claimBatch(
     return { ok: false, message: latest ? alreadyDecidedMessage(latest) : "Lô không còn tồn tại.", status: 409 };
   }
   const stores = await sql<Array<{ name: string }>>`SELECT name FROM ppc_stores WHERE id = ${batch.store_id} LIMIT 1`;
-  return { ok: true, batch: claimed[0], storeName: stores[0]?.name || "" };
+  const storeName = stores[0]?.name || "";
+  if (nextStatus === "CONFIRMING") {
+    syncTelegramInBackground(claimed[0], storeName, `⏳ Đang giảm bid — ${storeName}`,
+      `Xác nhận bởi <b>${escapeHtml(actor.displayName)}</b> (${VIA_LABEL[via]}). Đang kiểm tra lại và tạo file Bulk…`);
+  }
+  return { ok: true, batch: claimed[0], storeName };
 }
 
-export async function snoozeAutoDecreaseBatch(batchId: string, actor: DecisionActor, via: "lark" | "web") {
+export type DecisionVia = "lark" | "web" | "telegram";
+const VIA_LABEL: Record<DecisionVia, string> = { lark: "Lark", web: "web", telegram: "Telegram" };
+
+export async function snoozeAutoDecreaseBatch(batchId: string, actor: DecisionActor, via: DecisionVia) {
   const claim = await claimBatch(batchId, actor, "SNOOZED", via);
   if (!claim.ok) return claim;
   const until = addDays(vietnamNow().date, SNOOZE_DAYS - 1);
   const sql = await getDatabaseClient();
-  const recIds = (claim.batch.items || []).map((item) => item.recId);
+  const snoozes = (claim.batch.items || []).map((item) => ({ rec_id: item.recId }));
+  // Hoãn chỉ có hiệu lực với người bấm (người khác cấu hình cùng SKU vẫn nhận bình thường).
   await sql`
-    UPDATE ppc_auto_decrease_streaks SET snoozed_until = ${until}::date, updated_at = NOW()
-    WHERE store_id = ${claim.batch.store_id} AND rec_id = ANY(${recIds})
+    INSERT INTO ppc_auto_decrease_snoozes (store_id, actor_id, rec_id, snoozed_until)
+    SELECT ${claim.batch.store_id}::uuid, ${actor.actorId}, r.rec_id, ${until}::date
+    FROM jsonb_to_recordset(${sql.json(snoozes)}::jsonb) AS r(rec_id text)
+    ON CONFLICT (store_id, actor_id, rec_id) DO UPDATE SET snoozed_until = EXCLUDED.snoozed_until, created_at = NOW()
   `;
   await sql`
     UPDATE ppc_auto_decrease_batches SET result = ${sql.json({ snoozedUntil: until })}, updated_at = NOW()
     WHERE id = ${batchId}
   `;
+  syncTelegramInBackground(claim.batch, claim.storeName, `⏸️ Đã hoãn — ${claim.storeName}`,
+    `Hoãn bởi <b>${escapeHtml(actor.displayName)}</b> (${VIA_LABEL[via]}) tới hết ngày ${viDate(until)}. Không có bid nào bị thay đổi.`);
   return { ...claim, snoozedUntil: until };
 }
 
@@ -1000,7 +1132,7 @@ export interface ConfirmResult {
 export async function confirmAutoDecreaseBatch(
   batchId: string,
   actor: DecisionActor,
-  via: "lark" | "web",
+  via: DecisionVia,
   selectedRecIds?: string[],
 ): Promise<DecisionOutcome | { ok: true; batch: BatchRow; storeName: string; result: ConfirmResult }> {
   const claim = await claimBatch(batchId, actor, "CONFIRMING", via);
@@ -1017,6 +1149,14 @@ async function runClaimedBatch(
 ): Promise<{ ok: true; batch: BatchRow; storeName: string; result: ConfirmResult }> {
   const batchId = batch.id;
   const sql = await getDatabaseClient();
+  const finish = (result: ConfirmResult) => {
+    const who = `bởi <b>${escapeHtml(actor.displayName)}</b>`;
+    syncTelegramInBackground(batch, storeName,
+      result.uploaded ? `✅ Đã giảm bid — ${storeName}` : `🔴 Giảm bid lỗi — ${storeName}`,
+      result.uploaded
+        ? `Xác nhận ${who}: ${result.actionCount} target đã xếp hàng upload lên Amazon${result.skipped.length ? `, bỏ qua ${result.skipped.length} target do dữ liệu đổi` : ""}.`
+        : `Xác nhận ${who} nhưng chưa upload được: ${escapeHtml(result.error || "lỗi không xác định")}`);
+  };
 
   try {
     const result = await executeBatch(batch, storeName, actor, selectedRecIds);
@@ -1026,6 +1166,7 @@ async function runClaimedBatch(
       SET status = ${status}, result = ${sql.json(result as never)}, updated_at = NOW()
       WHERE id = ${batchId}
     `;
+    finish(result);
     return { ok: true, batch: { ...batch, status }, storeName, result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1035,6 +1176,7 @@ async function runClaimedBatch(
       SET status = 'FAILED', result = ${sql.json(result as never)}, updated_at = NOW()
       WHERE id = ${batchId}
     `;
+    finish(result);
     return { ok: true, batch: { ...batch, status: "FAILED" }, storeName, result };
   }
 }
@@ -1045,7 +1187,7 @@ async function executeBatch(
   actor: DecisionActor,
   selectedRecIds?: string[],
 ): Promise<ConfirmResult> {
-  const settings = await getAutoDecreaseSettings(batch.store_id);
+  const settings = await getAutoDecreaseSettings(batch.store_id, batch.actor_id);
   const store: StoreRow = { id: batch.store_id, name: storeName, team_id: batch.team_id };
   const recs = await loadRecommendations(store);
   const recById = new Map(recs.map((rec) => [rec.id, rec]));
@@ -1236,4 +1378,252 @@ export async function handleAutoDecreaseCardAction(
     note: `Xác nhận bởi **${actor.displayName}**. Đang tính lại theo dữ liệu mới nhất và tạo file Bulk; kết quả sẽ gửi riêng cho bạn.`,
   });
   return { toast: { type: "success", content: "Đã nhận xác nhận, đang tạo file Bulk…" }, card: { type: "raw", data: card } };
+}
+
+/* ------------------------------------------------------------------ */
+/* Telegram (@nce_ppc_action_bot) — kênh tạm khi Lark hết quota          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * PPC_AUTO_DECREASE_CHANNEL = lark | telegram | both | none. Mặc định: both nếu đã cấu hình bot Telegram, không thì lark.
+ * none = tạo lô bình thường nhưng không gửi tin cho ai (chạy thử / test; lô vẫn duyệt được trên web).
+ */
+export function autoDecreaseChannels(): { lark: boolean; telegram: boolean } {
+  const raw = (process.env.PPC_AUTO_DECREASE_CHANNEL || "").trim().toLowerCase();
+  const telegramReady = isTelegramActionConfigured();
+  if (raw === "none") return { lark: false, telegram: false };
+  if (raw === "lark") return { lark: true, telegram: false };
+  if (raw === "telegram") return { lark: false, telegram: telegramReady };
+  return { lark: true, telegram: telegramReady };
+}
+
+interface TelegramRecipient {
+  actor_id: string;
+  display_name: string;
+  chat_id: string;
+}
+
+/** Telegram (bot action) của CHÍNH người đã cấu hình; người đó vẫn phải được phân quyền phụ trách store. */
+export async function listTelegramRecipients(teamId: string, storeId: string, actorId: string): Promise<TelegramRecipient[]> {
+  const sql = await getDatabaseClient();
+  return sql<TelegramRecipient[]>`
+    SELECT link.actor_id, app_user.display_name, link.chat_id
+    FROM ppc_store_user_access access
+    JOIN app_users app_user
+      ON app_user.team_id = access.team_id AND app_user.user_id = access.actor_id AND app_user.status = 'approved'
+    JOIN ppc_telegram_links link
+      ON link.team_id = access.team_id AND link.actor_id = access.actor_id AND link.enabled = TRUE
+    WHERE access.team_id = ${teamId} AND access.store_id = ${storeId} AND access.actor_id = ${actorId}
+      AND access.receive_action_notifications = TRUE
+  `;
+}
+
+const TG_CONFIRM = "adc"; // bấm "Xác nhận giảm" → hỏi lại
+const TG_CONFIRM_SURE = "adk"; // "Chắc chắn" → chạy
+const TG_BACK = "adb"; // "Quay lại"
+const TG_SNOOZE = "ads"; // "Hoãn"
+const TELEGRAM_TEXT_LIMIT = 3900; // Telegram tối đa 4096 ký tự
+
+function telegramMainKeyboard(batchId: string, storeName: string): InlineKeyboard {
+  return [
+    [{ text: "✅ Xác nhận giảm", callback_data: `${TG_CONFIRM}:${batchId}` }],
+    [
+      { text: `⏸️ Hoãn ${SNOOZE_DAYS} ngày`, callback_data: `${TG_SNOOZE}:${batchId}` },
+      { text: "🔍 Xem chi tiết", url: detailUrl(storeName) },
+    ],
+  ];
+}
+
+/** Tin nhắn Telegram (HTML): giống thẻ Lark bản gọn — mỗi target 1 dòng, tên SKU là link. */
+export function buildTelegramBatchMessage(input: BatchCardInput, resolved?: { title: string; note: string }) {
+  const sum = summarizeBatch(input.items);
+  const bySku = new Map<string, AutoDecreaseItem[]>();
+  for (const item of input.items) bySku.set(item.sku || "N/A", [...(bySku.get(item.sku || "N/A") || []), item]);
+  const skuGroups = [...bySku.entries()].sort(
+    (a, b) => b[1].reduce((s, i) => s + i.spend, 0) - a[1].reduce((s, i) => s + i.spend, 0),
+  );
+  const e = escapeHtml;
+  const head = [
+    `<b>${e(resolved?.title || `🔻 Đề xuất giảm Bid — ${input.storeName}`)}</b>`,
+    `<i>${viDate(input.runDate)} · Auto giảm Bid</i>`,
+    "",
+    `<b>${sum.targets} target · ${sum.skus} SKU</b>${resolved ? "" : ` chờ ≥ ${input.settings.waitDays} ngày chưa xử lý`}`,
+    `Bid TB ${usd(sum.avgOld)} → <b>${usd(sum.avgNew)}</b> (${sum.avgPct}%) · Spend 30N ${usd(sum.spend)} · ACOS ${pct(sum.acos)}`,
+  ].join("\n");
+  const foot = resolved
+    ? `\n${resolved.note}`
+    : "\nXác nhận → kiểm tra lại rồi đẩy Bulk lên Amazon · Không bấm → bid giữ nguyên";
+
+  const blocks: string[] = [];
+  let shown = 0;
+  let length = head.length + foot.length + 200;
+  outer: for (const [sku, items] of skuGroups) {
+    const first = items[0];
+    const meta = [first.productType, first.breakEvenAcos ? `BE ${pct(first.breakEvenAcos)}` : ""].filter(Boolean).join(" · ");
+    const lines = [`📦 <a href="${e(skuUrl(input.storeName, sku))}">${e(sku)}</a>${meta ? ` · ${e(meta)}` : ""}`];
+    for (const item of items) {
+      if (shown >= CARD_MAX_TARGETS) break outer;
+      const perf = item.orders > 0 ? `ACOS ${pct(item.acos)}` : `${item.clicks} click, 0 đơn`;
+      const line = `• ${e(item.keyword.slice(0, 45))} — ${usd(item.currentBid)} → <b>${usd(item.finalBid)}</b> (${item.changePct}%) · ${perf}`;
+      if (length + line.length + lines.join("\n").length > TELEGRAM_TEXT_LIMIT) break outer;
+      lines.push(line);
+      shown++;
+    }
+    if (lines.length > 1) {
+      blocks.push(lines.join("\n"));
+      length += lines.join("\n").length + 2;
+    }
+  }
+  const hidden = input.items.length - shown;
+  if (hidden > 0) blocks.push(`… và ${hidden} target khác → <a href="${e(detailUrl(input.storeName))}">xem đủ trên web</a>`);
+
+  return {
+    html: `${head}\n\n${blocks.join("\n\n")}\n${foot}`,
+    keyboard: resolved ? [[{ text: "🔍 Xem chi tiết", url: detailUrl(input.storeName) }]] : telegramMainKeyboard(input.batchId, input.storeName),
+  };
+}
+
+/** Sửa tin Telegram của mọi người nhận lô này sang trạng thái mới (không còn nút bấm). */
+async function syncTelegramMessages(batch: BatchRow, storeName: string, title: string, note: string) {
+  if (!isTelegramActionConfigured()) return;
+  const sql = await getDatabaseClient();
+  const rows = await sql<Array<{ chat_id: string; message_id: string }>>`
+    SELECT chat_id, message_id FROM ppc_auto_decrease_telegram_messages WHERE batch_id = ${batch.id}
+  `;
+  if (!rows.length) return;
+  const message = buildTelegramBatchMessage({
+    batchId: batch.id, storeName, runDate: toDateString(batch.run_date), snapshotDate: null,
+    items: batch.items || [], settings: { waitDays: 0, minBid: 0 },
+  }, { title, note });
+  await Promise.allSettled(rows.map((row) => editTelegramHtml(row.chat_id, Number(row.message_id), message.html, message.keyboard)));
+}
+
+function syncTelegramInBackground(batch: BatchRow, storeName: string, title: string, note: string) {
+  void syncTelegramMessages(batch, storeName, title, note)
+    .catch((error) => console.warn("[auto-decrease] Sửa tin Telegram lỗi:", error instanceof Error ? error.message : error));
+}
+
+function telegramResultHtml(storeName: string, actor: DecisionActor, result: ConfirmResult) {
+  const e = escapeHtml;
+  const applied = result.applied || [];
+  const lines = result.uploaded
+    ? [
+      `🟢 <b>Đã xếp hàng giảm bid — ${e(storeName)}</b>`,
+      `${result.actionCount} target · xác nhận bởi ${e(actor.displayName)}`,
+      `File Bulk: <code>${e(result.fileName || "—")}</code>. Mac mini đang đẩy lên Amazon Ads.`,
+      ...(applied.length ? ["", "<b>Thay đổi đã duyệt:</b>", ...applied.slice(0, 25).map(
+        (a, i) => `${i + 1}. ${e(a.keyword.slice(0, 50))} (${e(a.sku)}) · ${usd(a.from)} → <b>${usd(a.to)}</b> (${a.changePct}%)`,
+      )] : []),
+      applied.length > 25 ? `… và ${applied.length - 25} target khác.` : "",
+    ]
+    : [
+      `🔴 <b>Giảm bid chưa thực hiện được — ${e(storeName)}</b>`,
+      e(result.error || "Lỗi không xác định"),
+      result.actionCount ? `${result.actionCount} thay đổi đã nằm trong Hàng đợi Auto Bid trên web, có thể upload lại ở đó.` : "",
+    ];
+  if (result.skipped.length) {
+    lines.push("", `<b>Bỏ qua ${result.skipped.length} target</b> (dữ liệu đã thay đổi):`,
+      ...result.skipped.slice(0, 10).map((s) => `• ${e(s.keyword.slice(0, 50))}: ${e(s.reason)}`));
+  }
+  return lines.filter((l) => l !== "").join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/** Lượt bấm nút trên tin Telegram của bot action. */
+export async function handleAutoDecreaseTelegramCallback(input: {
+  callbackId: string;
+  data: string;
+  chatId: string;
+  fromId: string;
+  messageId: number;
+}) {
+  const [kind, batchId] = input.data.split(":");
+  if (![TG_CONFIRM, TG_CONFIRM_SURE, TG_BACK, TG_SNOOZE].includes(kind) || !/^[0-9a-f-]{36}$/i.test(batchId || "")) {
+    await answerTelegramCallback(input.callbackId, "Nút không hợp lệ.");
+    return;
+  }
+  // Chat riêng: chat_id = id người bấm. Khác nhau = tin bị chuyển tiếp / lạ → từ chối.
+  if (input.chatId !== input.fromId) {
+    await answerTelegramCallback(input.callbackId, "Chỉ người nhận tin mới được thao tác.", true);
+    return;
+  }
+  const linked = await resolveTelegramActor(input.chatId);
+  if (!linked) {
+    await answerTelegramCallback(input.callbackId, "Telegram này chưa liên kết tài khoản NCE Hub.", true);
+    return;
+  }
+  const actor: DecisionActor = linked;
+  const batch = await loadBatch(batchId);
+  if (!batch || batch.team_id !== actor.teamId) {
+    await answerTelegramCallback(input.callbackId, "Không tìm thấy lô giảm bid.", true);
+    return;
+  }
+  const stores = await (await getDatabaseClient())<Array<{ name: string }>>`SELECT name FROM ppc_stores WHERE id = ${batch.store_id} LIMIT 1`;
+  const storeName = stores[0]?.name || "";
+
+  if (kind === TG_CONFIRM || kind === TG_BACK) {
+    if (batch.status !== "PENDING") {
+      await answerTelegramCallback(input.callbackId, alreadyDecidedMessage(batch), true);
+      return;
+    }
+    if (kind === TG_BACK) {
+      await editTelegramKeyboard(input.chatId, input.messageId, telegramMainKeyboard(batch.id, storeName));
+      await answerTelegramCallback(input.callbackId, "Đã huỷ, bid chưa đổi.");
+      return;
+    }
+    const sum = summarizeBatch(batch.items || []);
+    await editTelegramKeyboard(input.chatId, input.messageId, [
+      [{ text: `✅ Chắc chắn giảm ${sum.targets} target`, callback_data: `${TG_CONFIRM_SURE}:${batch.id}` }],
+      [{ text: "↩️ Quay lại", callback_data: `${TG_BACK}:${batch.id}` }],
+    ]);
+    const biggest = sum.biggest;
+    await answerTelegramCallback(
+      input.callbackId,
+      `Giảm bid ${sum.targets} target (${sum.skus} SKU), TB ${usd(sum.avgOld)} → ${usd(sum.avgNew)}`
+        + (biggest ? `. Nhiều nhất: ${biggest.keyword.slice(0, 30)} ${biggest.changePct}%` : "")
+        + ". Bấm “Chắc chắn” để đẩy lên Amazon.",
+      true,
+    );
+    return;
+  }
+
+  if (kind === TG_SNOOZE) {
+    const outcome = await snoozeAutoDecreaseBatch(batchId, actor, "telegram");
+    await answerTelegramCallback(input.callbackId, outcome.ok ? `Đã hoãn ${SNOOZE_DAYS} ngày.` : outcome.message, !outcome.ok);
+    return;
+  }
+
+  // TG_CONFIRM_SURE
+  const claim = await claimBatch(batchId, actor, "CONFIRMING", "telegram");
+  if (!claim.ok) {
+    await answerTelegramCallback(input.callbackId, claim.message, true);
+    return;
+  }
+  await answerTelegramCallback(input.callbackId, "Đã nhận xác nhận, đang tạo file Bulk…");
+  void runClaimedBatch(claim.batch, claim.storeName, actor)
+    .then((outcome) => sendTelegramHtml(input.chatId, telegramResultHtml(outcome.storeName, actor, outcome.result)))
+    .catch((error) => console.error(`[auto-decrease] Xác nhận lô ${batchId} (Telegram) lỗi:`, error));
+}
+
+/** Tin thử để người dùng kiểm tra đã liên kết đúng. */
+export async function sendTelegramTestMessage(teamId: string, actorId: string) {
+  const link = await getTelegramLink(teamId, actorId);
+  if (!link?.enabled) throw new Error("Bạn chưa kết nối Telegram.");
+  await sendTelegramHtml(link.chatId, "🔔 <b>Tin thử</b> từ NCE Hub — Auto giảm Bid.\nĐã kết nối đúng, sáng 9h bạn sẽ nhận đề xuất giảm bid ở đây.");
+}
+
+/** Mac mini báo kết quả upload: nếu job thuộc một lô Auto giảm Bid thì gửi thêm qua Telegram cho người xác nhận. */
+export async function notifyAutoDecreaseUploadTelegram(jobId: string, teamId: string, actorId: string, lines: string[]) {
+  if (!autoDecreaseChannels().telegram) return;
+  const sql = await getDatabaseClient();
+  const batches = await sql<Array<{ id: string }>>`
+    SELECT id FROM ppc_auto_decrease_batches
+    WHERE team_id = ${teamId} AND result->>'jobId' = ${jobId} LIMIT 1
+  `;
+  if (!batches[0]) return;
+  const link = await getTelegramLink(teamId, actorId);
+  if (!link?.enabled) return;
+  const html = lines
+    .map((line) => escapeHtml(line).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"))
+    .join("\n");
+  await sendTelegramHtml(link.chatId, html);
 }

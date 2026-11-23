@@ -1,9 +1,11 @@
 -- Auto giảm bid (lib/ppc/auto-decrease.ts): target có đề xuất GIẢM bid liên tục N ngày dữ liệu mà chưa ai xử lý
--- → 9h sáng (giờ VN) gửi thẻ Lark cá nhân cho người phụ trách store → bấm Xác nhận mới tạo Bulk và đẩy lên Amazon.
+-- → 9h sáng (giờ VN) gửi thông báo cá nhân cho NGƯỜI ĐÃ CẤU HÌNH → bấm Xác nhận mới tạo Bulk và đẩy lên Amazon.
+-- Mỗi người tự cấu hình cho từng store; người không cấu hình không nhận gì.
 
--- Cài đặt theo store (dùng chung cho tab Đề xuất & Auto Bid).
+-- Cấu hình của từng người cho từng store.
 CREATE TABLE IF NOT EXISTS ppc_auto_decrease_settings (
-  store_id UUID PRIMARY KEY REFERENCES ppc_stores(id) ON DELETE CASCADE,
+  store_id UUID NOT NULL REFERENCES ppc_stores(id) ON DELETE CASCADE,
+  actor_id TEXT NOT NULL,
   team_id TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT FALSE,
   -- ALL = mọi SKU của store; SKUS = chỉ các SKU trong danh sách skus.
@@ -14,13 +16,14 @@ CREATE TABLE IF NOT EXISTS ppc_auto_decrease_settings (
   min_bid NUMERIC(10, 2) NOT NULL DEFAULT 0.10 CHECK (min_bid >= 0.02),
   -- Target có chỉnh bid (bất kỳ nguồn nào) trong chừng này ngày thì bỏ qua để đủ thời gian quan sát.
   cooldown_days INTEGER NOT NULL DEFAULT 7 CHECK (cooldown_days BETWEEN 0 AND 60),
-  updated_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (store_id, actor_id)
 );
 
 -- Mỗi target đang có đề xuất giảm bid: đã thấy liên tục bao nhiêu ngày dữ liệu (report_end_date của snapshot 30 ngày).
--- Đề xuất biến mất / đổi hướng / có người xử lý → xoá dòng, đếm lại từ đầu.
+-- Dùng chung cho mọi người (là dữ kiện của target). Đề xuất biến mất / đổi hướng / có người xử lý / bid bị đổi
+-- → đếm lại từ đầu.
 CREATE TABLE IF NOT EXISTS ppc_auto_decrease_streaks (
   store_id UUID NOT NULL REFERENCES ppc_stores(id) ON DELETE CASCADE,
   rec_id TEXT NOT NULL,
@@ -34,17 +37,27 @@ CREATE TABLE IF NOT EXISTS ppc_auto_decrease_streaks (
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   current_bid NUMERIC(10, 2),
   recommended_bid NUMERIC(10, 2),
-  -- Người dùng bấm "Hoãn" trên Lark: không nhắc lại target này tới hết ngày này.
-  snoozed_until DATE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (store_id, rec_id)
 );
 
--- Mỗi store mỗi ngày tối đa một lô (một thẻ Lark gửi cho mọi người phụ trách store).
+-- "Hoãn" của từng người: không nhắc lại target này cho người đó tới hết ngày snoozed_until.
+-- Bộ đếm của target bắt đầu lại sau lúc hoãn (bid đổi, hết đề xuất…) thì lần hoãn tự hết hiệu lực.
+CREATE TABLE IF NOT EXISTS ppc_auto_decrease_snoozes (
+  store_id UUID NOT NULL REFERENCES ppc_stores(id) ON DELETE CASCADE,
+  actor_id TEXT NOT NULL,
+  rec_id TEXT NOT NULL,
+  snoozed_until DATE NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (store_id, actor_id, rec_id)
+);
+
+-- Mỗi người mỗi store mỗi ngày tối đa một lô, chỉ gửi cho người đó và chỉ người đó duyệt / hoãn.
 CREATE TABLE IF NOT EXISTS ppc_auto_decrease_batches (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   team_id TEXT NOT NULL,
   store_id UUID NOT NULL REFERENCES ppc_stores(id) ON DELETE CASCADE,
+  actor_id TEXT NOT NULL,
   run_date DATE NOT NULL,
   status TEXT NOT NULL DEFAULT 'PENDING'
     CHECK (status IN ('PENDING', 'CONFIRMING', 'DONE', 'FAILED', 'SNOOZED', 'EXPIRED')),
@@ -59,11 +72,11 @@ CREATE TABLE IF NOT EXISTS ppc_auto_decrease_batches (
   result JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (store_id, run_date)
+  UNIQUE (store_id, actor_id, run_date)
 );
 
-CREATE INDEX IF NOT EXISTS ppc_auto_decrease_batches_store_recent_idx
-  ON ppc_auto_decrease_batches (store_id, run_date DESC);
+CREATE INDEX IF NOT EXISTS ppc_auto_decrease_batches_actor_recent_idx
+  ON ppc_auto_decrease_batches (store_id, actor_id, run_date DESC);
 
 -- Khoá lượt chạy 9h mỗi ngày (nhiều tiến trình cùng chạy thì chỉ một tiến trình làm).
 CREATE TABLE IF NOT EXISTS ppc_auto_decrease_runs (

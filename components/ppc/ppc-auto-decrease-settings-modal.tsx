@@ -30,7 +30,7 @@ interface Settings {
   waitDays: number;
   minBid: number;
   cooldownDays: number;
-  updatedBy: string | null;
+  actorId: string;
   updatedAt: string | null;
 }
 
@@ -56,7 +56,7 @@ interface Batch {
   status: string;
   itemCount: number;
   items: BatchItem[];
-  recipients: Array<{ name: string; sent: boolean; error?: string }>;
+  recipients: Array<{ name: string; channel?: string; sent: boolean; error?: string }>;
   decidedByName: string | null;
   decidedAt: string | null;
   result: {
@@ -73,7 +73,10 @@ interface Snapshot {
   settings: Settings;
   streaks: { tracked: number; ready: number; snoozed: number };
   batches: Batch[];
-  recipients: Array<{ actorId: string; name: string }>;
+  /** Kênh mà chính mình sẽ nhận (Telegram / Lark). */
+  myChannels: string[];
+  /** Người khác đang bật cấu hình ở store này. */
+  others: Array<{ name: string; scope: "ALL" | "SKUS"; skus: string[] }>;
   notifyHour: number;
   canEdit: boolean;
 }
@@ -87,6 +90,104 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
   EXPIRED: { label: "Hết hạn", className: "bg-slate-100 text-slate-500 border-slate-200" },
 };
 
+/** Kết nối Telegram cá nhân với bot action (nhận tin 9h + bấm Xác nhận / Hoãn ngay trên Telegram). */
+function TelegramConnect({ onChange }: { onChange?: () => void }) {
+  const [state, setState] = useState<{
+    configured: boolean;
+    botUsername: string | null;
+    link: { username: string | null; name: string | null; enabled: boolean } | null;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const refresh = useCallback(async () => {
+    const res = await fetch("/api/ppc/auto-decrease/telegram");
+    if (res.ok) setState(await res.json());
+  }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => void refresh(), 0);
+    return () => clearTimeout(timer);
+  }, [refresh]);
+  // Đang chờ người dùng bấm Start trong Telegram → hỏi lại trạng thái vài giây một lần.
+  const [waiting, setWaiting] = useState(false);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => void refresh(), 3000);
+    const stop = setTimeout(() => setWaiting(false), 15 * 60_000);
+    return () => { clearInterval(timer); clearTimeout(stop); };
+  }, [waiting, refresh]);
+  const linked = Boolean(state?.link?.enabled);
+  useEffect(() => {
+    if (!linked || !waiting) return;
+    const timer = setTimeout(() => { setWaiting(false); setMsg("Đã kết nối."); onChange?.(); }, 0);
+    return () => clearTimeout(timer);
+  }, [linked, waiting, onChange]);
+
+  if (!state?.configured) return null;
+
+  const call = async (method: "POST" | "DELETE", body?: object) => {
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/ppc/auto-decrease/telegram", {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Lỗi");
+      return json;
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const btn = "rounded-md border border-slate-200 px-2 py-0.5 font-bold text-slate-700 hover:bg-slate-50 cursor-pointer disabled:opacity-50";
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span>Telegram của tôi:</span>
+      {linked ? (
+        <>
+          <span className="font-semibold text-emerald-700">
+            đã kết nối{state.link?.username ? ` @${state.link.username}` : state.link?.name ? ` (${state.link.name})` : ""}
+          </span>
+          <button type="button" className={btn} disabled={busy}
+            onClick={async () => { if (await call("POST", { action: "test" })) setMsg("Đã gửi tin thử."); }}>
+            Gửi thử
+          </button>
+          <button type="button" className={btn} disabled={busy}
+            onClick={async () => { if (await call("DELETE")) { setMsg("Đã ngắt."); void refresh(); onChange?.(); } }}>
+            Ngắt
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="rounded-md bg-sky-600 px-2 py-0.5 font-bold text-white hover:bg-sky-700 cursor-pointer disabled:opacity-50"
+          disabled={busy}
+          onClick={async () => {
+            // Mở tab trước (trình duyệt chặn popup mở sau await), rồi gán link.
+            const tab = window.open("about:blank", "_blank");
+            const json = await call("POST", { action: "link" });
+            if (json?.url) {
+              if (tab) tab.location.href = json.url;
+              else window.location.href = json.url;
+              setWaiting(true);
+              setMsg("Bấm Start trong Telegram để hoàn tất…");
+            } else tab?.close();
+          }}
+        >
+          Kết nối Telegram{state.botUsername ? ` (@${state.botUsername})` : ""}
+        </button>
+      )}
+      {msg && <span className="text-slate-500">{msg}</span>}
+    </div>
+  );
+}
+
 function AutoDecreaseHelp({ notifyHour }: { notifyHour: number }) {
   const hour = `${String(notifyHour).padStart(2, "0")}:00`;
   return (
@@ -94,7 +195,9 @@ function AutoDecreaseHelp({ notifyHour }: { notifyHour: number }) {
       <div>
         <div className="mb-1 font-black text-slate-900">Cách hoạt động</div>
         <ol className="list-decimal space-y-0.5 pl-4">
-          <li>Mỗi ngày có dữ liệu mới, hệ thống đếm số ngày liên tiếp mỗi target có đề xuất <b>giảm bid</b>.</li>
+          <li>Mỗi ngày có dữ liệu mới, hệ thống đếm số ngày liên tiếp mỗi target có đề xuất <b>giảm bid</b>.
+            Đếm lại từ đầu khi: hết đề xuất giảm, có người duyệt / bỏ qua trên NCE Hub, hoặc <b>bid đã bị đổi</b>
+            (kể cả sửa thẳng trên Amazon Ads).</li>
           <li>Đủ số ngày ở mục <b>Chờ chưa action</b> mà chưa ai xử lý → {hour} sáng gửi thẻ Lark cá nhân.</li>
           <li>Bấm <b>Xác nhận giảm</b> → hệ thống tính lại theo dữ liệu mới nhất, tạo file Bulk và Mac mini đẩy lên Amazon. Kết quả upload báo về Lark của người bấm.</li>
           <li>Bấm <b>Hoãn 3 ngày</b> → không nhắc lại các target đó trong 3 ngày.</li>
@@ -116,11 +219,13 @@ function AutoDecreaseHelp({ notifyHour }: { notifyHour: number }) {
         <p>Đề xuất giảm không còn · bid hiện tại đã khác lúc gửi thẻ · target vừa được chỉnh hoặc đang chờ upload.</p>
       </div>
       <div>
-        <div className="mb-1 font-black text-slate-900">Ai nhận thẻ và được duyệt</div>
+        <div className="mb-1 font-black text-slate-900">Mỗi người tự cấu hình</div>
         <p>
-          Người được phân quyền <b>phụ trách store</b> (Phân quyền Store → nhận thông báo action), đã kết nối Lark cá nhân
-          và bật thông báo PPC. Thẻ gửi riêng từng người; một người xác nhận là xong cho cả lô.
-          Có thể bỏ chọn từng target ở mục <b>Lô thông báo gần đây</b> bên dưới (nút <b>Xem chi tiết</b> trên thẻ mở thẳng màn này).
+          Cấu hình ở đây là <b>của riêng bạn</b>. Chỉ người đã bật cấu hình mới nhận thông báo, và chỉ cho các SKU
+          trong cấu hình của mình; chỉ bạn duyệt / hoãn được lô của bạn. Cần được phân quyền <b>phụ trách store</b>
+          (Phân quyền Store → nhận thông báo action) và <b>Kết nối Telegram</b> (hoặc Lark) để nhận tin.
+          Chưa kết nối thì lô vẫn hiện ở mục <b>Lô thông báo gần đây</b> để duyệt trên web (bỏ chọn được từng target).
+          Hai người chọn trùng SKU: ai xác nhận trước thì target được giảm, lô của người kia tự bỏ qua target đó.
         </p>
       </div>
     </div>
@@ -284,7 +389,7 @@ export function PpcAutoDecreaseSettingsModal({
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-base font-black text-slate-900">Cài đặt Auto giảm Bid</h2>
+                <h2 className="text-base font-black text-slate-900">Auto giảm Bid của tôi</h2>
                 <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-black text-indigo-800">{selectedStore}</span>
               </div>
             </div>
@@ -429,6 +534,24 @@ export function PpcAutoDecreaseSettingsModal({
                     )}
                   </div>
                 )}
+                {(() => {
+                  // Trùng phạm vi với người khác: ai xác nhận trước thì target được giảm, lô người kia tự bỏ qua target đó.
+                  const mine = new Set(draft.skus);
+                  const overlaps = data.others
+                    .map((o) => {
+                      if (o.scope === "ALL" || draft.scope === "ALL") return { name: o.name, label: o.scope === "ALL" ? "tất cả SKU" : `${o.skus.length} SKU` };
+                      const shared = o.skus.filter((s) => mine.has(s));
+                      return shared.length ? { name: o.name, label: shared.slice(0, 5).join(", ") + (shared.length > 5 ? ` +${shared.length - 5}` : "") } : null;
+                    })
+                    .filter((o): o is { name: string; label: string } => o !== null);
+                  if (!overlaps.length) return null;
+                  return (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      Trùng với cấu hình của: {overlaps.map((o) => <span key={o.name}><b>{o.name}</b> ({o.label}) </span>)}
+                      — ai xác nhận trước thì target được giảm, lô của người kia tự bỏ qua target đó.
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Thông số */}
@@ -461,11 +584,12 @@ export function PpcAutoDecreaseSettingsModal({
                 <div className="space-y-0.5 text-xs text-slate-500">
                   <div className="flex items-center gap-1.5">
                     <LarkBell size={13} weight="bold" />
-                    Lark {String(data.notifyHour).padStart(2, "0")}:00 →{" "}
-                    {data.recipients.length
-                      ? <span className="font-semibold text-slate-700">{data.recipients.map((r) => r.name).join(", ")}</span>
-                      : <span className="font-semibold text-rose-700">chưa có người nhận</span>}
+                    {String(data.notifyHour).padStart(2, "0")}:00 gửi riêng cho bạn qua{" "}
+                    {data.myChannels.length
+                      ? <span className="font-semibold text-slate-700">{data.myChannels.join(" + ")}</span>
+                      : <span className="font-semibold text-rose-700">— chưa kết nối (lô vẫn hiện ở đây để duyệt)</span>}
                   </div>
+                  <TelegramConnect onChange={() => void load()} />
                   <div>
                     Theo dõi <b>{data.streaks.tracked}</b> · đủ ngày <b>{data.streaks.ready}</b>
                     {data.streaks.snoozed ? <> · hoãn <b>{data.streaks.snoozed}</b></> : null}
@@ -496,9 +620,9 @@ export function PpcAutoDecreaseSettingsModal({
                         {batch.status === "PENDING" && !batch.recipients.some((r) => r.sent) && (
                           <span
                             className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800"
-                            title={batch.recipients.map((r) => `${r.name}: ${r.error || "chưa gửi"}`).join("\n") || "Chưa có người nhận Lark"}
+                            title={batch.recipients.map((r) => `${r.name}${r.channel ? ` (${r.channel})` : ""}: ${r.error || "chưa gửi"}`).join("\n") || "Chưa có người nhận"}
                           >
-                            Lark chưa gửi được — duyệt tại đây
+                            Chưa gửi được thông báo — duyệt tại đây
                           </span>
                         )}
                         {batch.result?.error && (
