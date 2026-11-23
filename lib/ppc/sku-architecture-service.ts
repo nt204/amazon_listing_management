@@ -2932,6 +2932,34 @@ export async function cancelAutoUploadJob(logId: string, teamId: string): Promis
   });
 }
 
+/**
+ * "Upload lại" một lượt đã thất bại: đưa chính job đó về hàng chờ Mac mini và dùng lại file
+ * đã lưu trên R2. Không tạo file mới từ hàng đợi action, vì sau khi xuất file các action đã
+ * chuyển sang EXPORTED nên không còn trong hàng đợi.
+ */
+export async function requeueFailedAutoUploadJob(
+  logId: string,
+  teamId: string,
+): Promise<{ id: string; storeId: string; fileName: string } | null> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ id: string; store_id: string; file_name: string }[]>`
+    UPDATE ppc_auto_upload_logs
+    SET status = 'PENDING', stage = 'FILE_READY', progress_pct = 25,
+        error_message = NULL, result_summary = NULL, amazon_upload_id = NULL,
+        worker_id = NULL, lease_token = NULL, lease_expires_at = NULL,
+        heartbeat_at = NULL, completed_at = NULL, duration_ms = NULL,
+        updated_at = NOW()
+    WHERE id = ${logId} AND team_id = ${teamId}
+      -- Chỉ khi file chưa tới được Amazon (không có upload id); lượt Amazon đã nhận thì upload
+      -- lại cả file có thể tạo trùng campaign/keyword.
+      AND status = 'FAILED' AND amazon_upload_id IS NULL
+      AND file_status = 'SUCCESS' AND r2_key IS NOT NULL
+    RETURNING id, store_id, file_name
+  `;
+  if (!rows.length) return null;
+  return { id: rows[0].id, storeId: rows[0].store_id, fileName: rows[0].file_name };
+}
+
 
 export async function executeAutoUploadZeroSpendActions(
   storeId: string,

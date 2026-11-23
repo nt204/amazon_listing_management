@@ -914,17 +914,12 @@ export function PpcActionQueueDrawer({
     if (!reuploadTarget) return;
     try {
       setIsReuploading(true);
-      const actionIds = Array.isArray((reuploadTarget as any).actionIds) && (reuploadTarget as any).actionIds.length > 0
-        ? (reuploadTarget as any).actionIds
-        : (detailActionItems.length > 0 ? detailActionItems.map((a) => a.id) : undefined);
-
+      // Đưa chính lượt thất bại về hàng chờ, dùng lại file đã lưu (các action đã EXPORTED
+      // nên không còn trong hàng đợi để xuất file mới).
       const res = await fetch("/api/ppc/auto-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          storeId: reuploadTarget.storeId || storeId,
-          actionIds,
-        }),
+        body: JSON.stringify({ retryJobId: reuploadTarget.id }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -1877,7 +1872,7 @@ export function PpcActionQueueDrawer({
                     {displayedAutoLogs.map((log) => {
                       const statusMeta = getAutoUploadStatusMeta(log.status);
                       const matchedBulk = bulkHistory.find((b) => b.fileName === log.fileName);
-                      const canReupload = log.fileStatus !== "FAILED" && ["FAILED", "PARTIAL_SUCCESS", "RESULT_TIMEOUT"].includes(log.status);
+                      const canReupload = log.fileStatus !== "FAILED" && log.status === "FAILED";
                       const isPending = log.status === "PENDING";
                       const fileStatusMeta = getFileCreationStatusMeta(log.fileStatus);
                       const FileStatusIcon = fileStatusMeta.icon;
@@ -2709,7 +2704,7 @@ export function PpcActionQueueDrawer({
                 )}
 
                 {selectedRunDetail.type === "AUTO" &&
-                  ["FAILED", "PARTIAL_SUCCESS", "RESULT_TIMEOUT"].includes(selectedRunDetail.status) && (
+                  selectedRunDetail.status === "FAILED" && (
                     <button
                       type="button"
                       onClick={() => {

@@ -7,6 +7,7 @@ import {
   executeAutoUploadZeroSpendActions,
   getAutoUploadDetails,
   getAutoUploadLogs,
+  requeueFailedAutoUploadJob,
   resolveStoreId,
 } from "@/lib/ppc/sku-architecture-service";
 import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
@@ -66,11 +67,36 @@ export async function POST(request: Request) {
     enforceRequestSize(request);
 
     const body = await request.json().catch(() => ({}));
+    const sql = await getDatabaseClient();
+
+    // Upload lại một lượt thất bại: dùng lại đúng file đã lưu trên R2.
+    const retryJobId = typeof body?.retryJobId === "string" ? body.retryJobId.trim() : "";
+    if (retryJobId) {
+      const jobRows = await sql<{ store_id: string }[]>`
+        SELECT store_id FROM ppc_auto_upload_logs
+        WHERE id = ${retryJobId} AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (!jobRows.length) throw new ApiError("Không tìm thấy lượt upload cần chạy lại.", 404);
+      await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, jobRows[0].store_id);
+      const requeued = await requeueFailedAutoUploadJob(retryJobId, actor.teamId);
+      if (!requeued) {
+        throw new ApiError(
+          "Chỉ upload lại được lượt thất bại mà file chưa tới Amazon. Lượt này đang chạy, đã xong, hoặc Amazon đã nhận file — hãy xuất file mới từ hàng đợi để tránh tạo trùng.",
+          409,
+        );
+      }
+      return Response.json({
+        success: true,
+        data: requeued,
+        message: `Đã đưa ${requeued.fileName} vào hàng chờ, Mac mini sẽ upload lại.`,
+      }, { status: 202 });
+    }
+
     const { searchParams } = new URL(request.url);
     const storeTarget = (body?.storeId || body?.storeName || searchParams.get("storeId") || searchParams.get("storeName") || "").trim();
     const actionIds = Array.isArray(body?.actionIds) ? body.actionIds : undefined;
     const allowAllSkus = body?.allowAllSkus === true || (Array.isArray(actionIds) && actionIds.length > 0);
-    const sql = await getDatabaseClient();
 
     let finalStoreId: string;
 
