@@ -86,7 +86,13 @@ function summarize(rows: WeeklyBrandRow[], ctx: PaceContext): GroupSummary {
 }
 
 const sumTarget = (a: WeeklyBrandRow["target"], b: WeeklyBrandRow["target"]): WeeklyBrandRow["target"] =>
-  a || b ? { revenue: (a?.revenue ?? 0) + (b?.revenue ?? 0), profit: (a?.profit ?? 0) + (b?.profit ?? 0) } : null;
+  a || b
+    ? {
+        revenue: (a?.revenue ?? 0) + (b?.revenue ?? 0),
+        profit: (a?.profit ?? 0) + (b?.profit ?? 0),
+        quantity: (a?.quantity ?? 0) + (b?.quantity ?? 0),
+      }
+    : null;
 
 function brandOfGroup(b: WeeklyBrandRow, g: "all" | "win" | "test"): WeeklyBrandRow {
   if (g === "win") return b;
@@ -382,15 +388,12 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   };
 
   // 1. Dữ liệu SKU WIN (để hiện Top KPI Cards & Overview Table)
-  const totalWin = summarize(brands, ctx);
   // % Đạt Tháng = lũy kế ÷ Target tới ngày có số liệu (Target tháng × ngày ÷ số ngày tháng), giống cột
   // "% đạt Target (lũy kế)" trên Web. Trước đây chia cho cả Target tháng nên giữa tháng chỉ ra ~1/2.
   const monthPace = (mtd: number, monthTarget: number) =>
     monthTarget > 0 ? (mtd / ((monthTarget * ctx.day) / dim)) * 100 : null;
 
-  const fullRevTarget = totalWin.revenue?.month.full ?? 0;
 
-  const fullProTarget = totalWin.profit?.month.full ?? 0;
 
   // 2. Dữ liệu SKU ALL (Win + Test)
   const allBrands = brands.map((b) => brandOfGroup(b, "all"));
@@ -418,42 +421,45 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const toWeekEnd = (monthTarget: number) => (monthTarget * ctx.day) / dim;
   const fullPct = (mtd: number, monthTarget: number) => (monthTarget > 0 ? (mtd / monthTarget) * 100 : null);
 
-  // Bảng Tổng quan (SKU Win, như thẻ Tổng quan trên Web): Tuần này | Lũy kế tuần (1→hết tuần) | Mục tiêu tháng |
+  // Bảng Tổng quan (Win + Test, như bảng Team/Brand chế độ All trên Web): Tuần này | Lũy kế tuần (1→hết tuần) | Mục tiêu tháng |
   // % đạt tháng (lũy kế ÷ mục tiêu cả tháng) | Còn lại tháng (mục tiêu − lũy kế, giá trị).
-  const fullQtyTarget = brands.reduce((acc, b) => acc + (b.target?.quantity ?? 0), 0);
-  const cur = totalWin.cur;
-  const mtdW = totalWin.mtd;
+  const totalAll = summarize(allBrands, ctx);
+  const allRevTarget = totalAll.revenue?.month.full ?? 0;
+  const allProTarget = totalAll.profit?.month.full ?? 0;
+  const allQtyTarget = allBrands.reduce((acc, b) => acc + (b.target?.quantity ?? 0), 0);
+  const cur = totalAll.cur;
+  const mtdW = totalAll.mtd;
   const remain = (target: number, mtd: number, fmt: (v: number) => string) => {
     if (target <= 0) return "—";
     const left = target - mtd;
     return left > 0 ? fmt(left) : green(`Đã vượt ${fmt(-left)}`);
   };
   const usd0 = (v: number) => fmtUsd(v);
-  const targetMargin = div(fullProTarget, fullRevTarget);
+  const targetMargin = div(allProTarget, allRevTarget);
   const overviewRows = [
     {
       metric: "**Revenue**",
       week: `**${fmtUsd(cur.revenue)}**`,
       mtd: fmtUsd(mtdW.revenue),
-      target: fullRevTarget > 0 ? fmtUsd(fullRevTarget) : "—",
-      pace: fmtPaceTone(fullPct(mtdW.revenue, fullRevTarget)),
-      remain: remain(fullRevTarget, mtdW.revenue, usd0),
+      target: allRevTarget > 0 ? fmtUsd(allRevTarget) : "—",
+      pace: fmtPaceTone(fullPct(mtdW.revenue, allRevTarget)),
+      remain: remain(allRevTarget, mtdW.revenue, usd0),
     },
     {
       metric: "**Profit**",
       week: `**${fmtUsd(cur.profit)}**`,
       mtd: fmtUsd(mtdW.profit),
-      target: fullProTarget > 0 ? fmtUsd(fullProTarget) : "—",
-      pace: fmtPaceTone(fullPct(mtdW.profit, fullProTarget)),
-      remain: remain(fullProTarget, mtdW.profit, usd0),
+      target: allProTarget > 0 ? fmtUsd(allProTarget) : "—",
+      pace: fmtPaceTone(fullPct(mtdW.profit, allProTarget)),
+      remain: remain(allProTarget, mtdW.profit, usd0),
     },
     {
       metric: "**Units**",
       week: `**${fmtInt(cur.quantity)}**`,
       mtd: fmtInt(mtdW.quantity),
-      target: fullQtyTarget > 0 ? fmtInt(fullQtyTarget) : "—",
-      pace: fmtPaceTone(fullPct(mtdW.quantity, fullQtyTarget)),
-      remain: remain(fullQtyTarget, mtdW.quantity, (v) => fmtInt(v)),
+      target: allQtyTarget > 0 ? fmtInt(allQtyTarget) : "—",
+      pace: fmtPaceTone(fullPct(mtdW.quantity, allQtyTarget)),
+      remain: remain(allQtyTarget, mtdW.quantity, (v) => fmtInt(v)),
     },
     {
       metric: "**Margin**",
@@ -476,7 +482,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   elements.push(
     {
       tag: "markdown",
-      content: `### 📌 TỔNG QUAN HIỆU QUẢ KINH DOANH TUẦN (SKU Win)`,
+      content: `### 📌 TỔNG QUAN HIỆU QUẢ KINH DOANH TUẦN (Win + Test)`,
     },
     {
       tag: "table",
@@ -486,7 +492,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       columns: [
         col("metric", "Chỉ số", "left"),
         col("week", "Tuần này"),
-        col("mtd", `Lũy kế tuần (1-${ctx.day}/${Number(week.endDate.slice(5, 7))})`),
+        col("mtd", "Lũy kế tuần"),
         col("target", "Mục tiêu tháng"),
         col("pace", "% Đạt tháng"),
         col("remain", "Còn lại tháng"),
