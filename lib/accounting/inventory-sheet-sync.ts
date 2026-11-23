@@ -522,10 +522,15 @@ async function writeSkuRecords(
   for (const [key, record] of bySku) {
     // BẢNG MÃ FBA: ô trống trên sheet (cột có trên sheet) → xóa trống trên web cho y như sheet; cột sheet không có thì
     // không có trong record nên giữ nguyên. Trừ ASIN (còn bổ sung từ báo cáo Amazon) và ảnh mockup (lấy từ Trello).
-    // BẢNG MÃ FBM giữ cách cũ: ô trống giữ giá trị đang có.
+    // BẢNG MÃ FBM: ô trống giữ giá trị đang có, TRỪ các cột cấu thành giá vốn (Basecost / Shipping fee / Add shipping fee):
+    // Total = tổng 3 cột này (cột tính sẵn trong DB) nên sheet xóa ô nào thì web cũng xóa, không thì giá vốn FBM kẹt số cũ.
     const fields = Object.fromEntries(
       Object.entries(record).filter(
-        ([field, value]) => allowed.has(field) && (value != null || (channel === "fba" && !KEEP_WHEN_BLANK.has(field))),
+        ([field, value]) =>
+          allowed.has(field) &&
+          (value != null ||
+            (channel === "fba" && !KEEP_WHEN_BLANK.has(field)) ||
+            (channel !== "fba" && FBM_CLEAR_WHEN_BLANK.has(field))),
       ),
     ) as Row;
     const current = existingByKey.get(key);
@@ -586,6 +591,9 @@ async function writeSkuRecords(
 
 /** BẢNG MÃ FBA: các cột ô trống trên sheet vẫn giữ giá trị đang có trên web */
 const KEEP_WHEN_BLANK = new Set(["asin", "mockup", "mockup_url"]);
+
+/** BẢNG MÃ FBM: các cột giá vốn — ô trống trên sheet thì xóa trống trên web (Total = Basecost + Shipping + Add shipping) */
+const FBM_CLEAR_WHEN_BLANK = new Set(["basecost", "shipping_fee", "add_shipping_fee"]);
 
 /** Bảng mã: chỉ tự xóa SKU thiếu trên sheet khi số thiếu ≤ tỷ lệ này so với số SKU đang có */
 const MAX_MISSING_DELETE_RATIO = 0.5;
