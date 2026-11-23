@@ -249,6 +249,26 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     return left > 0 ? fmt(left) : green(`Đã vượt ${fmt(-left)}`);
   };
   const usd0 = (v: number) => fmtUsd(v);
+  // Tiến độ KPI của card team: Revenue / Units / Profit, lũy kế 1 → hết tuần so với Target cả tháng
+  type KpiMetric = "revenue" | "quantity" | "profit";
+  const KPI_METRICS: { key: KpiMetric; label: string; fmt: (v: number) => string }[] = [
+    { key: "revenue", label: "Revenue", fmt: usd0 },
+    { key: "quantity", label: "Units", fmt: (v) => fmtInt(v) },
+    { key: "profit", label: "Profit", fmt: usd0 },
+  ];
+  /** 1 dòng bảng Tiến độ KPI: mỗi chỉ số "lũy kế / Target tháng" + "% đạt tháng" (store không có target → "—") */
+  const kpiRow = (name: string, mtd: Record<KpiMetric, number>, target: Partial<Record<KpiMetric, number>> | null, bold = false) => {
+    const b = (t: string) => (bold && t !== "—" ? `**${t}**` : t);
+    const row: Record<string, string> = { channel: b(name) };
+    for (const m of KPI_METRICS) {
+      const v = mtd[m.key];
+      const t = target?.[m.key] ?? 0;
+      const actual = v >= 0 ? m.fmt(v) : red(m.fmt(v));
+      row[`${m.key}Mtd`] = b(t > 0 ? `${actual} / ${m.fmt(t)}` : actual);
+      row[`${m.key}Pace`] = t > 0 ? b(fmtPaceTone(fullPct(v, t))) : "—";
+    }
+    return row;
+  };
   const targetMargin = div(allProTarget, allRevTarget);
   const overviewRows = [
     {
@@ -331,10 +351,11 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const teamCards: Array<{ teamId: string; teamName: string; card: Record<string, any> }> = [];
   for (const team of TEAMS_CONFIG) {
     const teamStoreRows: any[] = [];
-    const teamKpiRows: any[] = [];
+    // Bảng 2 — Tiến độ KPI: 1 bảng, mỗi store 1 dòng, mỗi chỉ số (Revenue / Units / Profit) 1 cặp cột
+    const kpiRows: any[] = [];
     let teamCurTotal = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
-    let teamMtdProfit = 0;
-    let teamTargetProMonth = 0;
+    let teamMtd = { ...ZERO };
+    const teamTarget: Record<KpiMetric, number> = { revenue: 0, quantity: 0, profit: 0 };
 
     for (const stDef of team.stores) {
       const b = allBrands.find(
@@ -344,10 +365,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       const mtd = b?.mtd || ZERO;
 
       teamCurTotal = add(teamCurTotal, cur);
-      teamMtdProfit += mtd.profit;
-
-      const storeMonthProTarget = b?.target?.profit ?? 0;
-      teamTargetProMonth += storeMonthProTarget;
+      teamMtd = add(teamMtd, mtd);
 
       const hasData = cur.revenue > 0 || cur.quantity > 0 || cur.profit !== 0;
       const margin = cur.revenue > 0 ? (cur.profit / cur.revenue) * 100 : 0;
@@ -366,13 +384,8 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         tacos: hasData ? fmtPct(tacos / 100) : "—",
       });
       // Bảng 2 — Tiến độ KPI (lũy kế từ đầu tháng tới hết tuần so với Target cả tháng)
-      teamKpiRows.push({
-        channel: displayName,
-        mtdProfit: mtd.profit >= 0 ? fmtUsd(mtd.profit) : red(fmtUsd(mtd.profit)),
-        target: storeMonthProTarget > 0 ? fmtUsd(storeMonthProTarget) : "—",
-        pace: storeMonthProTarget > 0 ? fmtPaceTone(fullPct(mtd.profit, storeMonthProTarget)) : "—",
-        remain: remain(storeMonthProTarget, mtd.profit, usd0),
-      });
+      for (const m of KPI_METRICS) teamTarget[m.key] += b?.target?.[m.key] ?? 0;
+      kpiRows.push(kpiRow(displayName, mtd, b?.target ?? null));
 
     }
 
@@ -389,13 +402,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       margin: `**${fmtPct(teamMargin / 100)}**`,
       tacos: `**${fmtPct(teamTacos / 100)}**`,
     });
-    teamKpiRows.push({
-      channel: `**Tổng ${team.name}**`,
-      mtdProfit: `**${fmtUsd(teamMtdProfit)}**`,
-      target: teamTargetProMonth > 0 ? `**${fmtUsd(teamTargetProMonth)}**` : "—",
-      pace: teamTargetProMonth > 0 ? `**${fmtPaceTone(fullPct(teamMtdProfit, teamTargetProMonth))}**` : "—",
-      remain: `**${remain(teamTargetProMonth, teamMtdProfit, usd0)}**`,
-    });
+    kpiRows.push(kpiRow(`Tổng ${team.name}`, teamMtd, teamTarget, true));
 
     const teamTable = {
         tag: "table",
@@ -414,19 +421,16 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         rows: teamStoreRows,
       };
     const teamKpiTable = {
-        tag: "table",
-        page_size: Math.min(teamKpiRows.length, 10),
-        row_height: "low",
-        header_style: TABLE_HEADER,
-        columns: [
-          col("channel", "Store", "left"),
-          col("mtdProfit", "Profit lũy kế tuần"),
-          col("target", "Target tháng"),
-          col("pace", "% Đạt tháng"),
-          col("remain", "Còn lại"),
-        ],
-        rows: teamKpiRows,
-      };
+      tag: "table",
+      page_size: Math.min(kpiRows.length, 10),
+      row_height: "low",
+      header_style: TABLE_HEADER,
+      columns: [
+        col("channel", "Store", "left"),
+        ...KPI_METRICS.flatMap((m) => [col(`${m.key}Mtd`, `${m.label} lũy kế / Target`), col(`${m.key}Pace`, `% ${m.label}`)]),
+      ],
+      rows: kpiRows,
+    };
 
 
     // Card tổng chỉ gồm tổng quan + đánh giá; mỗi team 1 card riêng (Lark giới hạn số bảng trong 1 card)
@@ -445,7 +449,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
           elements: [
             { tag: "markdown", content: "**📈 1. Hiệu suất kinh doanh tuần**" },
             teamTable,
-            { tag: "markdown", content: "**🎯 2. Tiến độ KPI tháng (Profit)**" },
+            { tag: "markdown", content: "**🎯 2. Tiến độ KPI tháng (lũy kế đến hết tuần / Target tháng)**" },
             teamKpiTable,
           ],
         },
@@ -538,21 +542,24 @@ async function main() {
         console.error(`❌ Gửi Lark thất bại:`, res.reason);
         process.exit(1);
       }
-      // Nhóm tổng nhận tiếp card từng team (như Báo cáo KPI ngày)
-      for (const t of teamCards) {
-        await sendLarkWebhookNotification(webhookUrl, { card: t.card });
-        console.log(`✅ Đã gửi báo cáo tuần ${t.teamName} vào nhóm tổng`);
-      }
+      // Nhóm tổng chỉ nhận card Tổng quan; card từng team chỉ gửi vào nhóm Lark của team đó (bên dưới)
     }
     // Nhóm Lark riêng của từng team: chỉ nhận card của team đó. Team lỗi không chặn team khác; lỗi báo vào nhóm tổng.
-    // --chi-nhom-tong: chỉ gửi vào nhóm tổng (xem thử)
+    // --chi-nhom-tong: chỉ gửi card Tổng quan vào nhóm tổng, không gửi nhóm team (xem thử)
     const teamWebhooks = args.includes("--chi-nhom-tong") ? {} : await loadTeamWebhooks();
     const failures: string[] = [];
     for (const t of teamCards) {
       const url = teamWebhooks[t.teamId];
-      if (!url) continue;
+      if (!url) {
+        if (!args.includes("--chi-nhom-tong")) {
+          console.warn(`⚠️ ${t.teamName} chưa có webhook nhóm team — không gửi card team`);
+          failures.push(`${t.teamName}: chưa cấu hình webhook nhóm team`);
+        }
+        continue;
+      }
       try {
-        await sendLarkWebhookNotification(url, { card: t.card });
+        const res = await sendLarkWebhookNotification(url, { card: t.card });
+        if (!res.sent) throw new Error(res.reason || "Lark từ chối");
         console.log(`✅ Đã gửi báo cáo tuần ${t.teamName} vào nhóm team`);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
