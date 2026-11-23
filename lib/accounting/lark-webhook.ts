@@ -189,11 +189,23 @@ function extractText(content: string | undefined): string {
 
 export type LarkCardActionResult =
   | { status: "queued" | "duplicate" | "ignored" }
-  | { status: "forbidden" };
+  | { status: "forbidden" }
+  | { status: "response"; response: Record<string, unknown> };
 
 export async function processLarkCardAction(data: LarkCardActionEvent): Promise<LarkCardActionResult> {
   const value = data.action?.value || {};
   const actionType = value.action;
+
+  // Thẻ "Auto giảm Bid" lúc 9h (lib/ppc/auto-decrease.ts): không gắn với phiên hội thoại, quyền xét theo người bấm.
+  if (actionType === "AUTO_DECREASE_CONFIRM" || actionType === "AUTO_DECREASE_SNOOZE") {
+    const batchId = typeof value.batchId === "string" ? value.batchId : "";
+    if (!batchId) return { status: "ignored" };
+    const { handleAutoDecreaseCardAction } = await import("@/lib/ppc/auto-decrease");
+    const operatorIds = [
+      data.operator?.open_id, data.operator?.user_id, data.operator?.union_id, data.open_id,
+    ].filter((id): id is string => Boolean(id));
+    return { status: "response", response: await handleAutoDecreaseCardAction(actionType, batchId, operatorIds) };
+  }
   const sessionId = typeof value.sessionId === "string" ? value.sessionId : "";
   const chatId = data.context?.open_chat_id || data.open_chat_id;
 
@@ -224,6 +236,7 @@ export async function processLarkCardAction(data: LarkCardActionEvent): Promise<
 }
 
 export function cardActionToast(result: LarkCardActionResult) {
+  if (result.status === "response") return result.response;
   if (result.status === "forbidden") {
     return { toast: { type: "warning", content: "Chỉ người đã yêu cầu mới được xác nhận thao tác này." } };
   }

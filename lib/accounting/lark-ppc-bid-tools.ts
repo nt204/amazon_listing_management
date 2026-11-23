@@ -333,7 +333,12 @@ TUYỆT ĐỐI KHÔNG báo "đã cập nhật bid" ở bước này.`,
 /**
  * Thực thi sau khi người dùng xác nhận: duyệt vào hàng đợi rồi tạo file Bulk + xếp hàng Auto Upload.
  */
-export async function executeConfirmBidAction(action: PendingPpcAction) {
+export async function executeConfirmBidAction(
+  action: PendingPpcAction,
+  // approver: tên ghi vào ppc_actions.approved_by; createdBy: user id ghi vào log upload (worker báo kết quả về Lark người này).
+  options: { approver?: string; createdBy?: string } = {},
+) {
+  const approver = options.approver || LARK_APPROVER;
   const items = action.bidItems || [];
   if (items.length === 0) throw new Error("Không có đề xuất bid nào để thực thi.");
 
@@ -349,10 +354,10 @@ export async function executeConfirmBidAction(action: PendingPpcAction) {
     items.map((item) => ({
       recommendation: item.recommendation,
       userFinalBid: item.finalBid ?? undefined,
-      approvedBy: LARK_APPROVER,
+      approvedBy: approver,
       decisionSource: item.bidSource,
     })),
-    LARK_APPROVER,
+    approver,
   );
 
   const recommendationIds = items.map((item) => item.recommendation.id);
@@ -361,7 +366,7 @@ export async function executeConfirmBidAction(action: PendingPpcAction) {
     WHERE store_id = ${action.storeId}
       AND recommendation_id = ANY(${recommendationIds})
       AND status = 'APPROVED'
-      AND approved_by = ${LARK_APPROVER}
+      AND approved_by = ${approver}
       AND approved_at >= ${startedAt}
   `;
   const actionIds = actionRows.map((row) => row.id);
@@ -381,8 +386,8 @@ export async function executeConfirmBidAction(action: PendingPpcAction) {
   try {
     const upload = await executeAutoUploadZeroSpendActions(action.storeId, actionIds, teamId, {
       allowAllSkus: true,
-      createdBy: LARK_APPROVER,
-      approvedBy: LARK_APPROVER,
+      createdBy: options.createdBy || LARK_APPROVER,
+      approvedBy: approver,
     });
     return {
       uploaded: true,

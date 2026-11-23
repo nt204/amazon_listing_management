@@ -1831,6 +1831,8 @@ export function evaluateRowWithRuleEngine(
     sales: row.sales,
     orders: row.orders,
     cpc: row.clicks > 0 ? Number((row.spend / row.clicks).toFixed(2)) : (row.cpc || 0),
+    // Báo cáo không có bid thật → currentBid là CPC / min bid thay thế (Auto giảm bid bỏ qua các target này).
+    ...(row.bid && row.bid > 0 ? {} : { currentBidIsFallback: true }),
     createdAt: new Date().toISOString(),
   };
 }
@@ -2738,6 +2740,10 @@ export async function reExportBulkFile(bulkExportId: string): Promise<{ buffer: 
       }
       resolve(Buffer.concat(chunks));
     });
+    proc.on("error", (error) => reject(new Error(`Không chạy được python3 để tạo Bulksheet: ${error.message}`)));
+    // Python chết sớm (thiếu thư viện...) → ghi stdin báo EPIPE; không bắt thì sập cả tiến trình Node.
+    // Lỗi thật được báo ở "close" kèm stderr.
+    proc.stdin.on("error", () => {});
 
     proc.stdin.write(JSON.stringify(actionsForPython));
     proc.stdin.end();

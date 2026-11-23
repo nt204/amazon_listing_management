@@ -34,6 +34,7 @@ import {
   Target,
   Sparkle,
   UserCircle,
+  GearSix,
 } from "@phosphor-icons/react";
 import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
@@ -49,6 +50,7 @@ import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcSkuStatusBadge, PpcSkuStatusFilter } from "./ppc-sku-status";
 import { getSkuStatus, type SkuStatusFilter } from "@/lib/ppc/sku-status";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
+import { PpcAutoDecreaseSettingsModal } from "./ppc-auto-decrease-settings-modal";
 import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
 import { MockupHoverZoom } from "./ppc-manual-bid-view";
 import { PpcMetricRangeFilter } from "./ppc-metric-range-filter";
@@ -320,6 +322,31 @@ export function PpcSkuRecommendationGroupView({
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
   const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
   const [showOutcomesModal, setShowOutcomesModal] = useState(false);
+  // Cài đặt Auto giảm Bid; thẻ Lark "Xem chi tiết" mở thẳng bằng ?autoDecrease=1
+  const [showAutoDecreaseModal, setShowAutoDecreaseModal] = useState(false);
+  useEffect(() => {
+    if (new URL(window.location.href).searchParams.get("autoDecrease") !== "1") return;
+    // Xoá tham số đúng lúc mở (StrictMode chạy effect 2 lần: lần 1 bị huỷ hẹn giờ, lần 2 vẫn thấy tham số).
+    const timer = setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("autoDecrease");
+      window.history.replaceState(window.history.state, "", url.toString());
+      setShowAutoDecreaseModal(true);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+  const autoDecreaseSkuOptions = useMemo(
+    () => [...groups]
+      .sort((a, b) => (b.decreaseCount || 0) - (a.decreaseCount || 0) || b.spend - a.spend)
+      .map((g) => ({
+        sku: g.sku.toUpperCase(),
+        mockupUrl: g.mockupUrl,
+        productType: g.productType,
+        decreaseCount: g.decreaseCount || 0,
+        spend: g.spend || 0,
+      })),
+    [groups],
+  );
   // Max Bid nhập tay trong Block A: null = đang không sửa
   const [maxBidDraft, setMaxBidDraft] = useState<string | null>(null);
   const [isSavingMaxBid, setIsSavingMaxBid] = useState(false);
@@ -1481,6 +1508,17 @@ export function PpcSkuRecommendationGroupView({
           {/* Right: Aggregates & Action Button */}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             {recColumnPicker}
+
+            {/* Cài đặt Auto giảm Bid (báo Lark 9h, xác nhận mới upload) */}
+            <button
+              type="button"
+              onClick={() => setShowAutoDecreaseModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 transition cursor-pointer shadow-2xs shrink-0"
+              title="Auto giảm bid: đề xuất giảm chưa xử lý N ngày → báo Lark 9h → xác nhận mới đẩy Bulk lên Amazon"
+            >
+              <GearSix size={14} weight="bold" />
+              <span>Auto giảm Bid</span>
+            </button>
 
             {/* Nút Kết Quả Auto Bid */}
             <button
@@ -2936,6 +2974,13 @@ export function PpcSkuRecommendationGroupView({
         isOpen={showOutcomesModal}
         onClose={() => setShowOutcomesModal(false)}
         selectedStore={selectedStore}
+      />
+
+      <PpcAutoDecreaseSettingsModal
+        isOpen={showAutoDecreaseModal}
+        onClose={() => setShowAutoDecreaseModal(false)}
+        selectedStore={selectedStore}
+        skuOptions={autoDecreaseSkuOptions}
       />
 
       {/* Modal AI Reviewer Phản Biện */}

@@ -14,5 +14,7 @@ export async function register() {
     startManualBidPrewarm(getDatabaseClient);
     const { startAutoBidPrewarm } = await import("@/lib/ppc/auto-bid-prewarm");
     startAutoBidPrewarm();
+    const { startAutoDecreaseScheduler } = await import("@/lib/ppc/auto-decrease");
+    startAutoDecreaseScheduler();
   }
 }

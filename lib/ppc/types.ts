@@ -177,6 +177,8 @@ export interface PpcRecommendation {
   searchVolumeTrend?: number | null;
   organicRank?: number | null;
   sponsoredRank?: number | null;
+  /** true = báo cáo không có bid thật của target, currentBid đang là CPC / min bid thay thế. */
+  currentBidIsFallback?: boolean;
   createdAt: string;
 }
 

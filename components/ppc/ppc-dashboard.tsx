@@ -565,6 +565,18 @@ export function PpcDashboard({
 
   // SKU-First Architecture state
   const [targetSkuToOpen, setTargetSkuToOpen] = useState<string | null>(null);
+  // Link "?openSku=SKU" (thẻ Lark Auto giảm Bid) → mở thẳng chi tiết SKU trên tab Đề xuất & Auto Bid.
+  useEffect(() => {
+    const sku = new URL(window.location.href).searchParams.get("openSku")?.trim().toUpperCase();
+    if (!sku) return;
+    const timer = setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("openSku");
+      window.history.replaceState(window.history.state, "", url.toString());
+      setTargetSkuToOpen(sku);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
   const [skuSubView, setSkuSubView] = useState<"economics" | "performance">("performance");
   const [syncingAccounting, setSyncingAccounting] = useState(false);
   const [skuEconomicsList, setSkuEconomicsList] = useState<SkuEconomics[]>([]);
