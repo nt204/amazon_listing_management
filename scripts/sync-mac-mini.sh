@@ -19,6 +19,8 @@ ITEMS=(
   "mac-crawler/run_accounting_monthly.sh:run_accounting_monthly.sh"
   # Crawler kế toán ngày 16h10 (gồm tải kèm tồn FBA/AWD real time)
   "mac-crawler/accounting_crawler.ts:accounting_crawler.ts"
+  # Cuối pipeline kế toán ngày: gọi /api/accounting/financials/report-daily/after-crawl gửi Báo cáo KPI ngày
+  "mac-crawler/run_accounting_daily.sh:run_accounting_daily.sh"
 )
 
 cd "$(dirname "$0")/.."

@@ -16,6 +16,9 @@ export async function POST(request: NextRequest) {
       const file = formData.get("file") as File | null;
       const storeId = formData.get("store_id") as string | null;
       const coverage = normalizeImportCoverage(formData.get("coverage_start"), formData.get("coverage_end"));
+      // Crawler Mac mini gửi cờ này: báo cáo ngày được gửi 1 lần ở cuối pipeline (sau khi nạp đủ Orders,
+      // Returns, Service Fees, Ads của mọi store), không gửi giữa chừng sau từng file Orders.
+      const deferDailyReport = formData.get("defer_daily_report") === "1";
 
       if (!storeId) {
         return NextResponse.json({ error: "Missing store_id" }, { status: 400 });
@@ -39,7 +42,7 @@ export async function POST(request: NextRequest) {
       const result = await batchUpsertOrders(storeId, parsedOrders, { snapshot: "dates", coverage });
 
       // Tự động kiểm tra và gửi báo cáo kinh doanh ngày qua Lark nếu các Store đã đủ dữ liệu
-      void triggerDailyReportCheckAfterImport().catch(() => {});
+      if (!deferDailyReport) void triggerDailyReportCheckAfterImport().catch(() => {});
 
       return NextResponse.json({
         success: true,

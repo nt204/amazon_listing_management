@@ -747,10 +747,15 @@ export function parseDailyReportDetailRequest(message: string, today = new Date(
  * Tự động kích hoạt kiểm tra và gửi báo cáo kinh doanh ngày qua Lark sau mỗi lần nạp file đơn hàng / dữ liệu.
  * Chạy bất đồng bộ an toàn (best-effort), không làm chậm hoặc lỗi luồng nạp file chính.
  */
-export async function triggerDailyReportCheckAfterImport(teamId: string = "default"): Promise<void> {
+export async function triggerDailyReportCheckAfterImport(
+  teamId: string = "default",
+  targetDate?: string,
+): Promise<{ success: boolean; reportedDate: string | null; message: string } | null> {
+  let outcome: { success: boolean; reportedDate: string | null; message: string } | null = null;
   try {
     const scope: DataScope = { teamId, actorId: "system" };
-    const result = await reportDailyBusinessData(scope);
+    const result = await reportDailyBusinessData(scope, targetDate ? { targetDate } : {});
+    outcome = { success: result.success, reportedDate: result.reportedDate, message: result.message };
     if (result.success && result.reportedDate) {
       console.log(`[Auto Daily Report] Đã tự động gửi báo cáo ngày ${result.reportedDate} qua Lark: ${result.message}`);
     } else {
@@ -769,6 +774,7 @@ export async function triggerDailyReportCheckAfterImport(teamId: string = "defau
       console.warn("[Lark Alerts] Lỗi khi gửi cảnh báo bất thường:", err);
     }
   }
+  return outcome;
 }
 
 /**

@@ -143,6 +143,18 @@ if [ -f "$SCRIPT_DIR/upload_accounting_r2.ts" ]; then
   "$TSX_BIN" "$SCRIPT_DIR/upload_accounting_r2.ts" "--date=$ACCOUNTING_RUN_DATE" || echo "⚠️ Đồng bộ R2 gặp lỗi, file vẫn được lưu an toàn tại máy Mac."
 fi
 
+# 5. Báo cáo ngày qua Lark: gọi 1 lần khi mọi file của mọi store đã nạp xong (server tự kiểm tra đủ
+#    100% store và không gửi trùng ngày đã gửi). Lỗi ở bước này không làm hỏng lượt crawl.
+if [ -n "${WEB_APP_AUTH_TOKEN:-}" ]; then
+  echo ""
+  echo ">>> [Lark] Kiểm tra & gửi Báo cáo KPI ngày $ACCOUNTING_RUN_DATE..."
+  curl -sS --max-time 300 -X POST "${WEB_APP_URL:-https://ncehub.net}/api/accounting/financials/report-daily/after-crawl" \
+    -H "Authorization: Bearer $WEB_APP_AUTH_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"targetDate\": \"$ACCOUNTING_RUN_DATE\"}" || echo "⚠️ Gọi báo cáo ngày lỗi; lượt crawl vẫn hoàn tất."
+  echo ""
+fi
+
 echo ""
 echo "######################################################################"
 echo "### TIẾN TRÌNH TẢI BÁO CÁO KẾ TOÁN ĐÃ HOÀN TẤT THÀNH CÔNG!"

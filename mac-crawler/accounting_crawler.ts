@@ -1217,6 +1217,8 @@ export async function parseAndIngestOrderFile(filePath: string, store: StoreTarg
   if (!reportDate) throw new Error(`Không xác định được ngày báo cáo từ tên file ${path.basename(filePath)}.`);
   formData.append("coverage_start", reportDate);
   formData.append("coverage_end", reportDate);
+  // Báo cáo ngày gửi 1 lần ở cuối run_accounting_daily.sh (sau khi nạp đủ mọi file của mọi store)
+  formData.append("defer_daily_report", "1");
 
   const res = await fetch(`${webAppUrl.replace(/\/$/, "")}/api/accounting/orders/import`, {
     method: "POST",
