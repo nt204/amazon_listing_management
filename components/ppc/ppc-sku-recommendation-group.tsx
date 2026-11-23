@@ -41,10 +41,13 @@ import {
   type PpcAction,
 } from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation, PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
+import type { SkuCampaignStat, SkuTargetStat } from "@/lib/ppc/sku-campaign-stats";
 import type { AiReviewerExecutionResult } from "@/lib/ppc/ai-reviewer";
 import { PpcPagination } from "./ppc-pagination";
 import { PpcOrganicRankCell, PpcSearchVolumeCell, PpcSponsoredRankCell } from "./ppc-search-volume";
 import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
+import { PpcSkuStatusBadge, PpcSkuStatusFilter } from "./ppc-sku-status";
+import { getSkuStatus, type SkuStatusFilter } from "@/lib/ppc/sku-status";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
 import { MockupHoverZoom } from "./ppc-manual-bid-view";
@@ -91,10 +94,9 @@ interface PpcSkuRecommendationGroupProps {
 }
 
 interface SkuCampaignStatsResponse {
-  campaigns: Array<{ campaignId: string; campaignName: string; campaignState: string; clicks: number; spend: number; sales: number; orders: number }>;
-  targets: Array<{ campaignId: string; campaignName: string; targetId: string; keyword: string; matchType: string; state: string; bid: number; clicks: number; spend: number; sales: number; orders: number }>;
+  campaigns: SkuCampaignStat[];
+  targets: SkuTargetStat[];
 }
-type SkuTargetStat = SkuCampaignStatsResponse["targets"][number];
 
 const normName = (v?: string | null) => (v || "").replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -273,6 +275,7 @@ export function PpcSkuRecommendationGroupView({
   onOpenSkuTrend,
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [skuStatusFilter, setSkuStatusFilter] = useState<SkuStatusFilter>("ALL");
   const [recTable, setRecTable] = useState<HTMLTableElement | null>(null);
   const recColumnPicker = usePpcColumnVisibility(recTable, "sku_recommendations", actor);
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
@@ -335,6 +338,7 @@ export function PpcSkuRecommendationGroupView({
       setRecentlyApprovedIds(new Set());
       setRuleExplanationModal(null);
       setSearchTerm("");
+      setSkuStatusFilter("ALL");
       setSelectedPhôi("ALL");
       setSelectedNiche("ALL");
       setQuickFilter("ALL");
@@ -743,6 +747,8 @@ export function PpcSkuRecommendationGroupView({
   // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const filteredGroups = useMemo(() => {
     const result = pageGroups.filter((g) => {
+      if (skuStatusFilter !== "ALL" && getSkuStatus(g.skuStatus) !== skuStatusFilter) return false;
+
       // 1. Search term
       if (searchTerm) {
         const q = searchTerm.toLowerCase().trim();
@@ -848,7 +854,7 @@ export function PpcSkuRecommendationGroupView({
       const numB = typeof valB === "number" ? valB : 0;
       return sortOrder === "asc" ? numA - numB : numB - numA;
     });
-  }, [pageGroups, searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder, liveStock]);
+  }, [pageGroups, searchTerm, skuStatusFilter, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder, liveStock]);
 
   const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -859,7 +865,7 @@ export function PpcSkuRecommendationGroupView({
     // Filters and sorting describe a new result set; show it from the first page.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder, channelPage]);
+  }, [searchTerm, skuStatusFilter, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, parsedRanges, sortField, sortOrder, channelPage]);
 
   const selectedVisibleSkuCount = filteredGroups.reduce(
     (count, group) => count + (selectedSkus.has(group.sku) ? 1 : 0),
@@ -993,6 +999,7 @@ export function PpcSkuRecommendationGroupView({
         spend: actual ? actual.spend : spend,
         sales: actual ? actual.sales : sales,
         orders: actual ? actual.orders : orders,
+        impressions: actual?.impressions,
         clicks: actual ? actual.clicks : clicks,
         otherTargets,
       };
@@ -1288,6 +1295,7 @@ export function PpcSkuRecommendationGroupView({
 
   const isFilterActive =
     searchTerm !== "" ||
+    skuStatusFilter !== "ALL" ||
     selectedPhôi !== "ALL" ||
     selectedNiche !== "ALL" ||
     selectedPic !== "ALL" ||
@@ -1337,6 +1345,8 @@ export function PpcSkuRecommendationGroupView({
                 </button>
               )}
             </div>
+
+            <PpcSkuStatusFilter value={skuStatusFilter} onChange={setSkuStatusFilter} />
 
             {/* Trang FBA / FBM / Khác (giống tab Manual Bid) */}
             {hasChannels && (
@@ -1444,6 +1454,7 @@ export function PpcSkuRecommendationGroupView({
                 type="button"
                 onClick={() => {
                   setSearchTerm("");
+                  setSkuStatusFilter("ALL");
                   setSelectedPhôi("ALL");
                   setSelectedNiche("ALL");
                   setSelectedPic("ALL");
@@ -1854,7 +1865,10 @@ export function PpcSkuRecommendationGroupView({
                       )}
                     </td>
                     <td className="py-2.5 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition col-primary">
-                      {group.sku}
+                      <span className="inline-flex items-center gap-1.5">
+                        {group.sku}
+                        <PpcSkuStatusBadge status={group.skuStatus} />
+                      </span>
                     </td>
                     <td className="py-3 px-3 text-slate-700 font-medium">
                       {group.productType || "—"}
@@ -2016,6 +2030,7 @@ export function PpcSkuRecommendationGroupView({
                       }`}
                     >
                       {selectedSkuGroup.sku}
+                      <PpcSkuStatusBadge status={selectedSkuGroup.skuStatus} />
                       <Sparkle size={14} weight="fill" className="text-violet-500" />
                     </button>
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700">
@@ -2431,6 +2446,7 @@ export function PpcSkuRecommendationGroupView({
 
                             <div className="flex items-center gap-5 text-xs">
                               {[
+                                { label: "Impressions", value: cg.impressions?.toLocaleString() ?? "—" },
                                 { label: "Clicks", value: String(cg.clicks) },
                                 { label: "Orders", value: String(cg.orders) },
                                 { label: "Spend", value: `$${cg.spend.toFixed(2)}` },
@@ -2467,7 +2483,7 @@ export function PpcSkuRecommendationGroupView({
                           {/* Target table */}
                           {isExpanded && (
                             // Màn rộng: không tạo khung cuộn ngang để dòng tiêu đề cột dính được khi cuộn dọc
-                            <div className="overflow-x-auto lg:overflow-x-visible border-t border-slate-100">
+                            <div className="overflow-x-auto xl:overflow-x-visible border-t border-slate-100">
                               <table className="w-full text-left text-xs">
                                 {/* Dòng tiêu đề cột dính ngay dưới tiêu đề campaign (--camp-h) cho tới khi hết campaign */}
                                 <thead className="text-slate-500 text-[11px] font-semibold border-b border-slate-100 [&_th]:sticky [&_th]:top-[var(--camp-h,0px)] [&_th]:z-10 [&_th]:bg-slate-50 [&_th]:shadow-[inset_0_-2px_0_#000]">
@@ -2477,6 +2493,7 @@ export function PpcSkuRecommendationGroupView({
                                     <th className="py-2.5 px-2 text-right" title="Search Volume tháng (Helium 10)">SV</th>
                                     <th className="py-2.5 px-2 text-center whitespace-nowrap" title="Organic Rank">Org</th>
                                     <th className="py-2.5 px-2 text-center whitespace-nowrap" title="Sponsored Rank">SP</th>
+                                    <th className="py-2.5 px-2 text-right" title={`Impressions ${recommendationWindowDays} ngày`}>Impressions</th>
                                     <th className="py-2.5 px-2 text-right" title={`Clicks ${recommendationWindowDays} ngày`}>Clicks</th>
                                     <th className="py-2.5 px-2 text-right" title={`Orders ${recommendationWindowDays} ngày`}>Orders</th>
                                     <th className="py-2.5 px-2 text-right" title={`Spend ${recommendationWindowDays} ngày`}>Spend</th>
@@ -2545,6 +2562,7 @@ export function PpcSkuRecommendationGroupView({
                                         />
                                         <PpcOrganicRankCell className="py-2.5 px-2" organicRank={rec.organicRank} />
                                         <PpcSponsoredRankCell className="py-2.5 px-2" sponsoredRank={rec.sponsoredRank} />
+                                        <td className={`py-2.5 px-2 text-right font-mono ${rec.impressions ? "text-slate-700" : "text-slate-300"}`}>{rec.impressions?.toLocaleString() ?? "—"}</td>
                                         <td className={`py-2.5 px-2 text-right font-mono ${rec.clicks ? "text-slate-700" : "text-slate-300"}`}>{rec.clicks || 0}</td>
                                         <td className={`py-2.5 px-2 text-right font-mono ${rec.orders ? "text-slate-900 font-bold" : "text-slate-300"}`}>{rec.orders || 0}</td>
                                         <td className={`py-2.5 px-2 text-right font-mono whitespace-nowrap ${rec.spend ? "text-slate-700" : "text-slate-300"}`}>${(rec.spend || 0).toFixed(2)}</td>
@@ -2611,7 +2629,7 @@ export function PpcSkuRecommendationGroupView({
                                       {isFocused && (
                                         <tr className="bg-indigo-50/40">
                                           <td></td>
-                                          <td colSpan={13} className="px-2 pb-3 pt-1">
+                                          <td colSpan={14} className="px-2 pb-3 pt-1">
                                             <div className="flex flex-wrap items-start gap-3">
                                               <div className="flex-1 min-w-[280px] text-[11px] leading-relaxed">
                                                 <span className="font-semibold text-slate-500">Lý do: </span>
@@ -2654,7 +2672,7 @@ export function PpcSkuRecommendationGroupView({
                                   {cg.otherTargets.length > 0 && (
                                     <tr className="bg-slate-50/80">
                                       <td></td>
-                                      <td colSpan={13} className="px-2 py-1.5 text-[11px] font-semibold text-slate-500">
+                                      <td colSpan={14} className="px-2 py-1.5 text-[11px] font-semibold text-slate-500">
                                         Target không có đề xuất (giữ nguyên bid) — số {recommendationWindowDays} ngày
                                       </td>
                                     </tr>
@@ -2670,6 +2688,7 @@ export function PpcSkuRecommendationGroupView({
                                         </div>
                                       </td>
                                       <td className="py-2 px-2" colSpan={3}></td>
+                                      <td className={`py-2 px-2 text-right font-mono ${t.impressions ? "text-slate-700" : "text-slate-300"}`}>{t.impressions.toLocaleString()}</td>
                                       <td className={`py-2 px-2 text-right font-mono ${t.clicks ? "text-slate-700" : "text-slate-300"}`}>{t.clicks}</td>
                                       <td className={`py-2 px-2 text-right font-mono ${t.orders ? "text-slate-900 font-bold" : "text-slate-300"}`}>{t.orders}</td>
                                       <td className={`py-2 px-2 text-right font-mono whitespace-nowrap ${t.spend ? "text-slate-700" : "text-slate-300"}`}>${t.spend.toFixed(2)}</td>

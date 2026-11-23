@@ -10,6 +10,7 @@ export interface SkuCampaignStat {
   campaignId: string;
   campaignName: string;
   campaignState: string;
+  impressions: number;
   clicks: number;
   spend: number;
   sales: number;
@@ -24,6 +25,7 @@ export interface SkuTargetStat {
   matchType: string;
   state: string;
   bid: number;
+  impressions: number;
   clicks: number;
   spend: number;
   sales: number;
@@ -82,6 +84,7 @@ export async function loadSkuCampaignStats(
     match_type: string;
     state: string;
     bid: string;
+    impressions: string;
     clicks: string;
     spend: string;
     sales: string;
@@ -96,7 +99,7 @@ export async function loadSkuCampaignStats(
     )
     SELECT p.grain, p.campaign_id, p.campaign_name, p.campaign_state,
            p.target_id, p.target_expression, p.match_type, p.state, p.bid,
-           p.clicks, p.spend, p.sales, p.orders
+           p.impressions, p.clicks, p.spend, p.sales, p.orders
     FROM camps
     JOIN ppc_performance_facts p ON p.store_id = camps."storeId" AND p.campaign_id = camps."campaignId"
     JOIN snap ON snap.store_id = p.store_id
@@ -117,6 +120,7 @@ export async function loadSkuCampaignStats(
         campaignId: r.campaign_id,
         campaignName: r.campaign_name,
         campaignState: (r.campaign_state || "").toLowerCase(),
+        impressions: Number(r.impressions || 0),
         clicks: Number(r.clicks || 0),
         spend: round2(r.spend),
         sales: round2(r.sales),
@@ -133,6 +137,7 @@ export async function loadSkuCampaignStats(
         matchType: r.match_type,
         state: (r.state || "").toLowerCase(),
         bid: round2(r.bid),
+        impressions: Number(r.impressions || 0),
         clicks: Number(r.clicks || 0),
         spend: round2(r.spend),
         sales: round2(r.sales),

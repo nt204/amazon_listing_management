@@ -122,6 +122,7 @@ export async function GET(request: Request) {
         items: pageRows.map((r) => ({
           sku: r.sku,
           channel: channelOf.get(r.sku),
+          skuStatus: channelOf.getStatus(r.sku),
           stock: live?.bySku.get(r.sku.trim().toUpperCase()) ?? null,
           all: metrics(r.targets, r.impressions, r.clicks, r.spend, r.sales, r.orders),
           active: metrics(r.a_targets, r.a_impressions, r.a_clicks, r.a_spend, r.a_sales, r.a_orders),

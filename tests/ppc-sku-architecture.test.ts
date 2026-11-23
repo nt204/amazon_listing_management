@@ -240,6 +240,7 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
       targetId: "t-1",
       bid: 1.0,
       cpc: 0.8,
+      impressions: 1234,
       clicks: 10,
       spend: 8.0,
       sales: 100.0,
@@ -256,6 +257,7 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
   );
   assert.equal(sp03StrongInc?.recType, "BID_INCREASE");
   assert.equal(sp03StrongInc?.recommendedBid, 1.08);
+  assert.equal(sp03StrongInc?.impressions, 1234);
 
   // 2. SP03 Has Order: ACoS = 25% (20% - 30%) -> +5% Current Bid (1.0 * 1.05 = 1.05)
   const sp03Inc = evaluateRowWithRuleEngine(

@@ -39,8 +39,8 @@ export function groupedRecommendationsRedisKey(
   days: number,
   includePaused = false,
 ): string {
-  // v2: nhóm SKU có activeTargetCount (tab Auto Bid ẩn SKU không còn target chạy).
-  return `ppc:recommendations:${teamId}:${encodeURIComponent(storeName)}:${days}:${includePaused ? 1 : 0}:v2`;
+  // v3: đề xuất có số impressions theo target.
+  return `ppc:recommendations:${teamId}:${encodeURIComponent(storeName)}:${days}:${includePaused ? 1 : 0}:v3`;
 }
 
 export function getCachedGroupedRecommendations(cacheKey: string): Awaited<ReturnType<typeof getGroupedRecommendations>> | null {

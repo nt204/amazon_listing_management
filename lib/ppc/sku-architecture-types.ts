@@ -228,6 +228,7 @@ export interface BulkExport {
 
 export interface SkuRecommendationGroup {
   sku: string;
+  skuStatus?: string | null;
   asin: string;
   productType: string;
   spend: number;

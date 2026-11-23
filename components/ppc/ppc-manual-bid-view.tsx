@@ -3,9 +3,13 @@
 // Tab Manual Bid: tìm SKU → toàn bộ target trong mọi campaign, phân nấc ACOS, sửa bid hàng loạt → Action Queue.
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Sparkle, Tag, UserCircle } from "@phosphor-icons/react";
 import type { PpcAction, SkuRecommendationGroup } from "@/lib/ppc/sku-architecture-types";
 import type { PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
 import { SkuTrendSparkline } from "./ppc-sku-trend-modal";
+import { PpcSkuStatusBadge, PpcSkuStatusFilter } from "./ppc-sku-status";
+import { PpcFilterDropdown } from "./ppc-filter-dropdown";
+import { getSkuStatus } from "@/lib/ppc/sku-status";
 import { StockCells, stockMetaTitle, type SkuStock, type StockMeta } from "./ppc-live-stock";
 import {
   EMPTY_SKU_FILTER,
@@ -57,7 +61,7 @@ type Row = ManualBidRow & { tier: ManualBidTier; acos: number | null };
 type SkuMetrics = { targets: number; impressions: number; clicks: number; spend: number; sales: number; orders: number };
 type SkuChannel = "FBA" | "FBM" | "";
 /** Tồn real time (crawler kế toán 16h10): mỗi kho = available + inbound + reserved; total = FBA + AWD. */
-type SkuSummaryItem = { sku: string; channel?: SkuChannel; all: SkuMetrics; active: SkuMetrics; stock?: SkuStock | null };
+type SkuSummaryItem = { sku: string; skuStatus?: string | null; channel?: SkuChannel; all: SkuMetrics; active: SkuMetrics; stock?: SkuStock | null };
 type ChannelPage = "FBA" | "FBM" | "OTHER";
 type ChannelCounts = Record<ChannelPage, { all: number; active: number }>;
 type SkuSummary = { items: SkuSummaryItem[]; hasChannels: boolean; counts: ChannelCounts | null; stockMeta?: StockMeta | null };
@@ -65,6 +69,7 @@ type SkuSummary = { items: SkuSummaryItem[]; hasChannels: boolean; counts: Chann
 /** Dòng bảng SKU: số liệu cộng từ target (khớp màn target), thông tin phôi/ảnh/BE lấy từ tab Auto Bid. */
 type SkuRow = SkuMetrics & {
   sku: string;
+  skuStatus?: string | null;
   channel: SkuChannel;
   acos: number;
   asin: string;
@@ -222,7 +227,7 @@ const TARGET_METRICS: Array<{ key: TargetMetricKey; label: string; unit: "$" | "
   { key: "spend", label: "Spend", unit: "$" },
   { key: "sales", label: "Sales", unit: "$" },
   { key: "acos", label: "ACOS", unit: "%" },
-  { key: "impressions", label: "Impr", unit: "" },
+  { key: "impressions", label: "Impression", unit: "" },
   { key: "clicks", label: "Click", unit: "" },
   { key: "orders", label: "Order", unit: "" },
   { key: "cpc", label: "CPC", unit: "$" },
@@ -280,7 +285,7 @@ const DEFAULT_COL_WIDTHS: Record<ColKey, number> = {
   sp: 50,
   matchType: 105,
   campaign: 380,
-  impr: 75,
+  impr: 100,
   clicks: 65,
   orders: 65,
   spend: 80,
@@ -606,6 +611,7 @@ export function PpcManualBidView({
         ...m,
         impressions: m.impressions ?? 0, // API cũ chưa có thì coi như 0
         sku: it.sku,
+        skuStatus: it.skuStatus,
         channel: (it.channel || "") as SkuChannel,
         acos: m.sales > 0 ? (m.spend / m.sales) * 100 : 0,
         asin: g?.asin || "",
@@ -1404,7 +1410,10 @@ export function PpcManualBidView({
         {skuMockupUrl && (
           <MockupHoverZoom url={skuMockupUrl} sku={query?.sku} size={28} />
         )}
-        <span className="font-mono text-sm font-bold text-slate-900">{query?.sku}</span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-sm font-bold text-slate-900">
+          {query?.sku}
+          <PpcSkuStatusBadge status={currentGroup?.skuStatus} />
+        </span>
 
         {/* Nút tìm kiếm nhấc sang trái */}
         {sku && (
@@ -1743,7 +1752,7 @@ export function PpcManualBidView({
                   {renderHeaderCell({ colKey: "sv", sortKey: "searchVolume", label: "SV", align: "right" })}
                   {renderHeaderCell({ colKey: "org", sortKey: "organicRank", label: "Org", align: "center" })}
                   {renderHeaderCell({ colKey: "sp", sortKey: "sponsoredRank", label: "SP", align: "center" })}
-                  {renderHeaderCell({ colKey: "impr", sortKey: "impressions", label: "Impr", align: "right" })}
+                  {renderHeaderCell({ colKey: "impr", sortKey: "impressions", label: "Impression", align: "right" })}
                   {renderHeaderCell({ colKey: "clicks", sortKey: "clicks", label: "Click", align: "right" })}
                   {renderHeaderCell({ colKey: "orders", sortKey: "orders", label: "Order", align: "right" })}
                   {renderHeaderCell({ colKey: "spend", sortKey: "spend", label: "Spend", align: "right" })}
@@ -2152,6 +2161,11 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
 
 type SkuSortKey = "sku" | "impressions" | "clicks" | "orders" | "spend" | "sales" | "acos" | "stock" | "stockValue";
 const SKU_SORT_KEYS: SkuSortKey[] = ["sku", "impressions", "clicks", "orders", "spend", "sales", "acos", "stock", "stockValue"];
+const SKU_FACETS = [
+  { key: "phoi", label: "Phôi", icon: Tag },
+  { key: "niche", label: "Niche", icon: Sparkle },
+  { key: "pic", label: "PIC", icon: UserCircle },
+] as const;
 const SKU_FILTER_STORAGE = "nce_manual_bid_sku_filter";
 
 function readSaved(): { filter?: Partial<SkuListFilter>; sort?: { key: SkuSortKey; dir: 1 | -1 } } | null {
@@ -2216,9 +2230,10 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
     const saved = readSaved()?.filter;
     return {
       ...EMPTY_SKU_FILTER,
-      phoi: saved?.phoi || "",
-      niche: saved?.niche || "",
-      pic: saved?.pic || "",
+      status: getSkuStatus(saved?.status) ?? "ALL",
+      phoi: saved?.phoi?.trim() || "",
+      niche: saved?.niche?.trim() || "",
+      pic: saved?.pic?.trim() || "",
       ranges: saved?.ranges && typeof saved.ranges === "object" ? saved.ranges : {},
     };
   });
@@ -2267,19 +2282,13 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
   };
 
   // Phôi / niche / PIC lọc lẫn nhau: chọn cái nào trước thì danh sách cái kia chỉ còn giá trị khớp.
-  const options = useMemo(() => {
-    const list = rows || [];
-    return {
-      phoi: facetOptions(list, filter, "phoi"),
-      niche: facetOptions(list, filter, "niche"),
-      pic: facetOptions(list, filter, "pic"),
-    };
-  }, [rows, filter]);
-  // Chỉ hiện ô chọn khi dữ liệu có từ 2 giá trị trở lên.
-  const facetShown = useMemo(() => {
-    const count = (pick: (g: SkuRow) => string) => new Set((rows || []).map(pick).filter(Boolean)).size;
-    return { phoi: count((g) => g.productType) > 1, niche: count((g) => g.niche) > 1, pic: count((g) => g.picMkt) > 1 };
-  }, [rows]);
+  const facets = useMemo(() => SKU_FACETS.map((facet) => ({
+    ...facet,
+    options: facetOptions(rows || [], filter, facet.key).map(({ value, count }) => ({
+      value,
+      label: `${value || facet.label} (${count})`,
+    })),
+  })), [rows, filter]);
 
   const queuedBySku = useMemo(() => {
     const m = new Map<string, number>();
@@ -2303,9 +2312,6 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
 
   // Điều kiện phụ đang bật → nhãn nhỏ, bấm để bỏ.
   const chips: Array<{ key: string; label: string; clear: () => void }> = [];
-  if (filter.phoi) chips.push({ key: "phoi", label: filter.phoi, clear: () => setFilter({ phoi: "" }) });
-  if (filter.niche) chips.push({ key: "niche", label: filter.niche, clear: () => setFilter({ niche: "" }) });
-  if (filter.pic) chips.push({ key: "pic", label: filter.pic, clear: () => setFilter({ pic: "" }) });
   for (const r of activeRanges(filter)) {
     const m = SKU_METRICS.find((x) => x.key === r.key)!;
     const fmt = (v: number) => (m.unit === "$" ? `$${v}` : m.unit === "%" ? `${v}%` : `${v}`);
@@ -2368,7 +2374,7 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
             const exact = filtered.find((g) => g.sku.toUpperCase() === q);
             if (exact) onOpen(exact.sku);
             else if (filtered.length === 1) onOpen(filtered[0].sku);
-            else if (/^[A-Z0-9-]{6,}$/.test(q)) onOpen(q);
+            else if (filter.status === "ALL" && /^[A-Z0-9-]{6,}$/.test(q)) onOpen(q);
           }}
         >
           <input
@@ -2380,14 +2386,25 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
           />
         </form>
 
-        {/* "Gồm paused" (đồng bộ các tab PPC): mặc định tắt = chỉ target / campaign đang chạy */}
-        <IncludePausedCheckbox checked={!activeOnly} onChange={() => onToggleActive()} className="h-9 text-[12px]" />
+        <PpcSkuStatusFilter value={filter.status} onChange={(status) => setFilter({ status })} />
+
+        {facets.map(({ key, label, icon: Icon, options }) => (
+          <PpcFilterDropdown
+            key={key}
+            label={label}
+            icon={<Icon size={13} className="shrink-0 text-slate-400" aria-hidden />}
+            options={options}
+            value={filter[key]}
+            onChange={(value) => setFilter({ [key]: value })}
+          />
+        ))}
 
         <div ref={moreRef} className="relative">
           <button
             type="button"
+            aria-expanded={moreOpen}
             onClick={() => setMoreOpen((v) => !v)}
-            className={`flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold ${
+            className={`flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold ${
               moreOpen || chips.length > 0 ? "border-slate-800 text-slate-900" : "border-slate-200 text-slate-600"
             } bg-white hover:bg-slate-50`}
           >
@@ -2396,40 +2413,27 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
             <span className="text-[9px] text-slate-400">▼</span>
           </button>
           {moreOpen && (
-            <div className="absolute left-0 top-11 z-40 w-80 space-y-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-              {(["phoi", "niche", "pic"] as const).map((k) => facetShown[k] && (
-                <label key={k} className="flex items-center justify-between gap-3 text-[12px] font-semibold text-slate-500">
-                  {k === "phoi" ? "Phôi" : k === "niche" ? "Niche" : "PIC"}
-                  <select
-                    value={filter[k]}
-                    onChange={(e) => setFilter({ [k]: e.target.value })}
-                    className="h-8 w-[172px] cursor-pointer rounded-md border border-slate-200 bg-white px-2 text-[12px] font-semibold text-slate-800 outline-none focus:border-indigo-400"
-                  >
-                    <option value="">Tất cả</option>
-                    {options[k].map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </label>
-              ))}
-              <div className="space-y-1.5 border-t border-slate-100 pt-3">
-                <div className="grid grid-cols-[1fr_76px_10px_76px] items-center gap-1 text-[10.5px] font-semibold text-slate-400">
-                  <span />
-                  <span className="text-center">từ</span>
-                  <span />
-                  <span className="text-center">đến</span>
-                </div>
-                {SKU_METRICS.map((m) => (
-                  <RangeRow
-                    key={m.key}
-                    label={m.label}
-                    unit={m.unit}
-                    value={filter.ranges[m.key] || { min: "", max: "" }}
-                    onChange={(r) => setRange(m.key, r)}
-                  />
-                ))}
+            <div className="absolute left-0 top-full z-40 mt-1 w-80 space-y-1.5 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+              <div className="grid grid-cols-[1fr_76px_10px_76px] items-center gap-1 text-[10.5px] font-semibold text-slate-400">
+                <span />
+                <span className="text-center">từ</span>
+                <span />
+                <span className="text-center">đến</span>
               </div>
+              {SKU_METRICS.map((m) => (
+                <RangeRow
+                  key={m.key}
+                  label={m.label}
+                  unit={m.unit}
+                  value={filter.ranges[m.key] || { min: "", max: "" }}
+                  onChange={(r) => setRange(m.key, r)}
+                />
+              ))}
             </div>
           )}
         </div>
+
+        <IncludePausedCheckbox checked={!activeOnly} onChange={() => onToggleActive()} className="h-8 text-[12px]" />
 
         {chips.map((c) => (
           <button
@@ -2464,7 +2468,7 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
             <tr className="border-b border-slate-200">
               <th className="w-12 px-2 py-2.5" />
               {head("sku", "SKU", "left")}
-              {head("impressions", "Impr")}
+              {head("impressions", "Impression")}
               {head("clicks", "Click")}
               {head("orders", "Order")}
               {head("spend", "Spend")}
@@ -2498,7 +2502,10 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
                     <MockupHoverZoom url={g.mockupUrl} sku={g.sku} size={32} />
                   </td>
                   <td className="px-3 py-1.5 font-bold text-slate-900">
-                    {g.sku}
+                    <span className="inline-flex items-center gap-1.5">
+                      {g.sku}
+                      <PpcSkuStatusBadge status={g.skuStatus} />
+                    </span>
                     {searchAll && (
                       <span className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold ${
                         g.channel === "FBA" ? "bg-sky-100 text-sky-800" : g.channel === "FBM" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"

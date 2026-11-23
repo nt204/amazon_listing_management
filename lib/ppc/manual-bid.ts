@@ -1,5 +1,7 @@
 // Tab Manual Bid: phân nấc target theo ACOS và tính bid mới khi sửa hàng loạt.
 
+import { getSkuStatus, type SkuStatusFilter } from "./sku-status";
+
 export type ManualBidTier = "A20" | "A40" | "A60" | "A60P" | "NO_ORDER" | "OTHER";
 
 /** Thứ tự hiển thị: ACOS cao → thấp (cần xử lý trước), rồi 0 order >7 click, cuối cùng Khác. */
@@ -79,6 +81,7 @@ export type MetricRange = { min: string; max: string };
 
 export interface SkuListFilter {
   search: string;
+  status: SkuStatusFilter;
   phoi: string;
   niche: string;
   pic: string;
@@ -86,10 +89,11 @@ export interface SkuListFilter {
   ranges: Partial<Record<SkuMetricKey, MetricRange>>;
 }
 
-export const EMPTY_SKU_FILTER: SkuListFilter = { search: "", phoi: "", niche: "", pic: "", tiers: [], ranges: {} };
+export const EMPTY_SKU_FILTER: SkuListFilter = { search: "", status: "ALL", phoi: "", niche: "", pic: "", tiers: [], ranges: {} };
 
 type SkuLike = {
   sku: string; asin?: string | null; productType?: string | null; niche?: string | null; picMkt?: string | null;
+  skuStatus?: string | null;
   clicks: number; orders: number; spend: number; sales: number;
 };
 
@@ -182,9 +186,10 @@ export function filterSkusExceptTier<T extends SkuLike>(list: T[], f: SkuListFil
   const tokens = searchTokens(f.search);
   const ranges = activeRanges(f);
   return list.filter((g) => {
-    if (skipFacet !== "phoi" && f.phoi && (g.productType || "") !== f.phoi) return false;
-    if (skipFacet !== "niche" && f.niche && (g.niche || "") !== f.niche) return false;
-    if (skipFacet !== "pic" && f.pic && (g.picMkt || "") !== f.pic) return false;
+    if (f.status !== "ALL" && getSkuStatus(g.skuStatus) !== f.status) return false;
+    if (skipFacet !== "phoi" && f.phoi && g.productType?.trim() !== f.phoi) return false;
+    if (skipFacet !== "niche" && f.niche && g.niche?.trim() !== f.niche) return false;
+    if (skipFacet !== "pic" && f.pic && g.picMkt?.trim() !== f.pic) return false;
     for (const r of ranges) {
       const v = skuMetric(g, r.key);
       if (v == null) return false;
@@ -200,10 +205,17 @@ export function filterSkusExceptTier<T extends SkuLike>(list: T[], f: SkuListFil
 }
 
 /** Lựa chọn phôi / niche / PIC còn khớp với các bộ lọc khác (chọn phôi trước thì niche chỉ còn niche của phôi đó, và ngược lại). */
-export function facetOptions<T extends SkuLike>(list: T[], f: SkuListFilter, facet: Facet): string[] {
-  const pick = (g: T) => (facet === "phoi" ? g.productType : facet === "niche" ? g.niche : g.picMkt) || "";
-  const vals = new Set(filterSkusExceptTier(list, { ...f, tiers: [] }, facet).map(pick).map((v) => v.trim()).filter(Boolean));
+export function facetOptions<T extends SkuLike>(list: T[], f: SkuListFilter, facet: Facet): { value: string; count: number }[] {
+  const matching = filterSkusExceptTier(list, f, facet);
+  const counts = new Map<string, number>();
+  for (const g of matching) {
+    const value = (facet === "phoi" ? g.productType : facet === "niche" ? g.niche : g.picMkt)?.trim();
+    if (value) counts.set(value, (counts.get(value) || 0) + 1);
+  }
   const current = f[facet];
-  if (current) vals.add(current);
-  return Array.from(vals).sort();
+  if (current && !counts.has(current)) counts.set(current, 0);
+  return [
+    { value: "", count: matching.length },
+    ...Array.from(counts.entries()).sort(([a], [b]) => a.localeCompare(b, "vi")).map(([value, count]) => ({ value, count })),
+  ];
 }

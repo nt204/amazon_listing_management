@@ -1825,6 +1825,7 @@ export function evaluateRowWithRuleEngine(
     ruleProfile: `${format} v1.0`,
     actionState,
     campaignState: (row.campaignState || "enabled").toLowerCase(),
+    impressions: row.impressions,
     clicks: row.clicks,
     spend: row.spend,
     sales: row.sales,

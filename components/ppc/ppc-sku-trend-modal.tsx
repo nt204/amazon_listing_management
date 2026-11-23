@@ -536,7 +536,7 @@ function SkuTargetBreakdown({
               <tr>
                 <th className="py-2 pl-3 pr-2">Target</th>
                 <th className="py-2 px-2">Campaign</th>
-                <th className="py-2 px-2 text-right">Impr.</th>
+                <th className="py-2 px-2 text-right">Impression</th>
                 <th className="py-2 px-2 text-right">Clicks</th>
                 <th className="py-2 px-2 text-right">Spend</th>
                 <th className="py-2 px-2 text-right">Orders</th>

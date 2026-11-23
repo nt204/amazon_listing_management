@@ -44,20 +44,29 @@ test("lọc SKU: nhiều SKU trong ô tìm, khoảng chỉ số, phôi/niche ph�
     sku, clicks, orders: sales > 0 ? 1 : 0, spend, sales, productType, niche,
   });
   const list = [
-    g("BTV1", 50, 100, 20, "Tumbler", "Navy"),
-    g("BTV2", 10, 100, 5, "Tumbler", "Marine"),
-    g("POC3", 5, 0, 8, "Card", "Navy"),
+    { ...g("BTV1", 50, 100, 20, "Tumbler", "Navy"), skuStatus: "Phát triển" },
+    { ...g("BTV2", 10, 100, 5, "Tumbler", "Marine"), skuStatus: "Test" },
+    { ...g("POC3", 5, 0, 8, "Card", "Navy"), skuStatus: "Hủy" },
     g("XX4", 0, 0, 0, "Card", "Army"),
   ];
   const ids = (f: Partial<typeof EMPTY_SKU_FILTER>) => filterSkusExceptTier(list, { ...EMPTY_SKU_FILTER, ...f }).map((x) => x.sku);
   // SKU có ads là hiện, kể cả chưa có click / spend.
   assert.deepEqual(ids({}), ["BTV1", "BTV2", "POC3", "XX4"]);
+  assert.deepEqual(ids({ status: "WIN" }), ["BTV1"]);
+  assert.deepEqual(ids({ status: "TEST", phoi: "Tumbler" }), ["BTV2"]);
+  assert.deepEqual(ids({ status: "FAIL", search: "btv1, poc3" }), ["POC3"]);
   assert.deepEqual(ids({ search: "btv1, poc3" }), ["BTV1", "POC3"]);
   assert.deepEqual(ids({ ranges: { spend: { min: "10", max: "" } } }), ["BTV1", "BTV2"]);
   assert.deepEqual(ids({ ranges: { acos: { min: "20", max: "60" } } }), ["BTV1"]);
   assert.deepEqual(ids({ ranges: { clicks: { min: "", max: "8" } } }), ["BTV2", "POC3", "XX4"]);
   // Chọn phôi trước → niche chỉ còn niche của phôi đó; chọn niche trước → phôi chỉ còn phôi của niche đó.
-  assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, phoi: "Tumbler" }, "niche"), ["Marine", "Navy"]);
-  assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, niche: "Navy" }, "phoi"), ["Card", "Tumbler"]);
-  assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, niche: "Marine" }, "phoi"), ["Tumbler"]);
+  assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, phoi: "Tumbler" }, "niche"), [
+    { value: "", count: 2 }, { value: "Marine", count: 1 }, { value: "Navy", count: 1 },
+  ]);
+  assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, niche: "Navy" }, "phoi"), [
+    { value: "", count: 2 }, { value: "Card", count: 1 }, { value: "Tumbler", count: 1 },
+  ]);
+  assert.deepEqual(facetOptions(list, { ...EMPTY_SKU_FILTER, niche: "Marine", phoi: "Card" }, "phoi"), [
+    { value: "", count: 1 }, { value: "Card", count: 0 }, { value: "Tumbler", count: 1 },
+  ]);
 });

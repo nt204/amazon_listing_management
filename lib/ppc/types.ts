@@ -166,6 +166,7 @@ export interface PpcRecommendation {
   ruleProfile?: string;
   actionState?: "ENABLE" | "PAUSED";
   campaignState?: "enabled" | "paused" | string;
+  impressions?: number;
   clicks?: number;
   spend?: number;
   sales?: number;

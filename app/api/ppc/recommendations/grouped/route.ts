@@ -188,16 +188,18 @@ export async function GET(request: Request) {
 
     // Trang FBA / FBM / Khác giống tab Manual Bid: kênh của từng SKU theo Bảng mã (FBM > FBA > "") + số SKU
     // mỗi trang (theo danh sách SKU economics của store, dùng cache chung 1 giờ) cho nút chuyển trang.
-    const withChannels = hasChannels && channelOf
-      ? {
-        ...filteredResult,
-        hasChannels: true,
-        channelPage,
-        // Số SKU của trang vừa tải (trang khác chưa tải thì giao diện chưa có số).
-        pageCount: channelPage ? filteredResult.groups.length : null,
-        groups: filteredResult.groups.map((g) => ({ ...g, channel: channelOf.get(g.sku) })),
-      }
-      : { ...filteredResult, hasChannels: false, channelPage: null, pageCount: null };
+    const withChannels = {
+      ...filteredResult,
+      hasChannels,
+      channelPage,
+      // Số SKU của trang vừa tải (trang khác chưa tải thì giao diện chưa có số).
+      pageCount: channelPage ? filteredResult.groups.length : null,
+      groups: filteredResult.groups.map((g) => ({
+        ...g,
+        channel: hasChannels ? channelOf?.get(g.sku) : undefined,
+        skuStatus: channelOf ? channelOf.getStatus(g.sku) : g.economics.skuStatus,
+      })),
+    };
 
     const responseData = {
       success: true,
