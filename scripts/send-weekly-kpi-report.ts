@@ -252,7 +252,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   // Tiến độ KPI của card team: Revenue / Units / Profit, lũy kế 1 → hết tuần so với Target cả tháng
   type KpiMetric = "revenue" | "quantity" | "profit";
   const KPI_METRICS: { key: KpiMetric; label: string; fmt: (v: number) => string }[] = [
-    { key: "revenue", label: "Revenue", fmt: usd0 },
+    { key: "revenue", label: "Rev", fmt: usd0 },
     { key: "quantity", label: "Units", fmt: (v) => fmtInt(v) },
     { key: "profit", label: "Profit", fmt: usd0 },
   ];
