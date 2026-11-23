@@ -251,10 +251,11 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const usd0 = (v: number) => fmtUsd(v);
   // Tiến độ KPI của card team: Revenue / Units / Profit, lũy kế 1 → hết tuần so với Target cả tháng
   type KpiMetric = "revenue" | "quantity" | "profit";
-  const KPI_METRICS: { key: KpiMetric; label: string; fmt: (v: number) => string }[] = [
-    { key: "revenue", label: "Rev", fmt: usd0 },
-    { key: "quantity", label: "Units", fmt: (v) => fmtInt(v) },
-    { key: "profit", label: "Profit", fmt: usd0 },
+  // label: cột "lũy kế / Target" (Revenue viết tắt Rev cho gọn); pctLabel: cột % đạt (viết đủ)
+  const KPI_METRICS: { key: KpiMetric; label: string; pctLabel: string; fmt: (v: number) => string }[] = [
+    { key: "revenue", label: "Rev", pctLabel: "Revenue", fmt: usd0 },
+    { key: "profit", label: "Profit", pctLabel: "Profit", fmt: usd0 },
+    { key: "quantity", label: "Units", pctLabel: "Units", fmt: (v) => fmtInt(v) },
   ];
   /** 1 dòng bảng Tiến độ KPI: mỗi chỉ số "lũy kế / Target tháng" + "% đạt tháng" (store không có target → "—") */
   const kpiRow = (name: string, mtd: Record<KpiMetric, number>, target: Partial<Record<KpiMetric, number>> | null, bold = false) => {
@@ -427,7 +428,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       header_style: TABLE_HEADER,
       columns: [
         col("channel", "Store", "left"),
-        ...KPI_METRICS.flatMap((m) => [col(`${m.key}Mtd`, `${m.label} lũy kế / Target`), col(`${m.key}Pace`, `% ${m.label}`)]),
+        ...KPI_METRICS.flatMap((m) => [col(`${m.key}Mtd`, `${m.label} lũy kế / Target`), col(`${m.key}Pace`, `% ${m.pctLabel}`)]),
       ],
       rows: kpiRows,
     };
