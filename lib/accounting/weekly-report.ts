@@ -59,7 +59,7 @@ export interface WeeklyBrandRow {
   /** Lũy kế từ đầu tháng đến ngày cuối kỳ */
   mtd: WeeklyMetrics;
   /** Mục tiêu tháng: FBA = KPI kinh doanh (SKU WIN); FBM = KPI nạp từ file FBM của store (null = chưa có) */
-  target: { revenue: number; profit: number } | null;
+  target: { revenue: number; profit: number; quantity?: number } | null;
   /** Cùng dòng nhưng SKU TEST (FBM không có Test → số 0, target null) — bảng brand chọn All / Win / Test */
   test: WeeklyGroupMetrics;
 }
@@ -68,7 +68,7 @@ export interface WeeklyGroupMetrics {
   current: WeeklyMetrics;
   previous: WeeklyMetrics;
   mtd: WeeklyMetrics;
-  target: { revenue: number; profit: number } | null;
+  target: { revenue: number; profit: number; quantity?: number } | null;
 }
 
 export interface WeeklyTestRow {
@@ -260,15 +260,15 @@ export async function getWeeklyReport(options: {
         if (channel === "FBA") {
           try {
             const t = await getStoreMonthTargets(s.storeId, period);
-            if (t.dev) target = { revenue: t.dev.revenue, profit: t.dev.profit };
-            if (t.test) testTarget = { revenue: t.test.revenue, profit: t.test.profit };
+            if (t.dev) target = { revenue: t.dev.revenue, profit: t.dev.profit, quantity: t.dev.quantity };
+            if (t.test) testTarget = { revenue: t.test.revenue, profit: t.test.profit, quantity: t.test.quantity };
           } catch {
             // Store chưa có KPI tháng → bỏ qua mục tiêu
           }
         } else {
           // FBM: KPI tháng nạp từ file "FBM - <STORE> - KẾ HOẠCH KINH DOANH" (cả kênh FBM tính là Win)
           const t = await getFbmMonthTarget(s.storeId, period).catch(() => null);
-          if (t) target = { revenue: t.revenue, profit: t.profit };
+          if (t) target = { revenue: t.revenue, profit: t.profit, quantity: t.quantity };
         }
         return {
           key,

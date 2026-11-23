@@ -383,18 +383,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
 
   // 1. Dữ liệu SKU WIN (để hiện Top KPI Cards & Overview Table)
   const totalWin = summarize(brands, ctx);
-  const revWinCur = totalWin.cur.revenue;
-  const revWinPrev = totalWin.prev.revenue;
-  const revWinMtd = totalWin.mtd.revenue;
-  const proWinCur = totalWin.cur.profit;
-  const proWinPrev = totalWin.prev.profit;
-  const proWinMtd = totalWin.mtd.profit;
-
-  const marginWinCur = div(proWinCur, revWinCur) ?? 0;
-  const marginWinPrev = div(proWinPrev, revWinPrev) ?? 0;
-  const tacosWinCur = div(totalWin.cur.adsFee, revWinCur) ?? 0;
-  const tacosWinPrev = div(totalWin.prev.adsFee, revWinPrev) ?? 0;
-
   // % Đạt Tháng = lũy kế ÷ Target tới ngày có số liệu (Target tháng × ngày ÷ số ngày tháng), giống cột
   // "% đạt Target (lũy kế)" trên Web. Trước đây chia cho cả Target tháng nên giữa tháng chỉ ra ~1/2.
   const monthPace = (mtd: number, monthTarget: number) =>
@@ -406,9 +394,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
 
   // 2. Dữ liệu SKU ALL (Win + Test)
   const allBrands = brands.map((b) => brandOfGroup(b, "all"));
-  const totalAll = summarize(allBrands, ctx);
-
-  const fullAllProTarget = allBrands.reduce((acc, b) => acc + (b.target?.profit ?? 0), 0);
 
   // Service Fees trong tuần + số theo SKU cả tuần của từng kênh (Top 10 SKU tốt / cần chú ý của mỗi team)
   const skusByChannel = new Map<string, TeamSkuRow[]>();
@@ -427,85 +412,84 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   // --- DỰNG LARK CARD ---
   const elements: any[] = [];
 
-  // 1. BẢNG TỔNG QUAN HIỆU QUẢ KINH DOANH (Thay cho dạng text dài, bám vào tuần & KPI)
-  const revDiffPpt = ((marginWinCur - marginWinPrev) * 100).toFixed(1);
-  const tacosDiffPpt = ((tacosWinCur - tacosWinPrev) * 100).toFixed(1);
-
-  // Số giống 2 thanh tiến độ trên Web (giữ bố cục cũ của báo cáo):
-  //  - Target Tuần / % Đạt Tuần = lũy kế 1→hết tuần ÷ (Target tháng × ngày ÷ số ngày tháng)
+  // 1. BẢNG TỔNG QUAN + tiến độ dùng chung cho bảng team:
+  //  - Target Tuần / % Đạt Tuần (bảng team) = lũy kế 1→hết tuần ÷ (Target tháng × ngày ÷ số ngày tháng)
   //  - % Đạt Tháng = lũy kế ÷ Target cả tháng
   const toWeekEnd = (monthTarget: number) => (monthTarget * ctx.day) / dim;
   const fullPct = (mtd: number, monthTarget: number) => (monthTarget > 0 ? (mtd / monthTarget) * 100 : null);
-  const progressCols = (mtd: number, monthTarget: number) => ({
-    targetWeek: monthTarget > 0 ? fmtUsd(toWeekEnd(monthTarget)) : "—",
-    paceWeek: fmtPaceTone(monthPace(mtd, monthTarget)),
-    paceMonth: fmtPaceTone(fullPct(mtd, monthTarget)),
-  });
-  const noProgress = { targetWeek: "—", paceWeek: "—", paceMonth: "—" };
 
+  // Bảng Tổng quan (SKU Win, như thẻ Tổng quan trên Web): Tuần đó | Lũy kế tuần (1→hết tuần) | Mục tiêu tháng |
+  // % đạt tháng (lũy kế ÷ mục tiêu cả tháng) | Còn lại tháng (mục tiêu − lũy kế, giá trị).
+  const fullQtyTarget = brands.reduce((acc, b) => acc + (b.target?.quantity ?? 0), 0);
+  const cur = totalWin.cur;
+  const mtdW = totalWin.mtd;
+  const remain = (target: number, mtd: number, fmt: (v: number) => string) => {
+    if (target <= 0) return "—";
+    const left = target - mtd;
+    return left > 0 ? fmt(left) : green(`Đã vượt ${fmt(-left)}`);
+  };
+  const usd0 = (v: number) => fmtUsd(v);
+  const targetMargin = div(fullProTarget, fullRevTarget);
   const overviewRows = [
     {
-      metric: "**Revenue (Win)**",
-      cur: `**${fmtUsd(revWinCur)}**`,
-      prev: fmtUsd(revWinPrev),
-      wow: fmtWow(revWinCur, revWinPrev, true),
-      ...progressCols(revWinMtd, fullRevTarget),
+      metric: "**Revenue**",
+      week: `**${fmtUsd(cur.revenue)}**`,
+      mtd: fmtUsd(mtdW.revenue),
+      target: fullRevTarget > 0 ? fmtUsd(fullRevTarget) : "—",
+      pace: fmtPaceTone(fullPct(mtdW.revenue, fullRevTarget)),
+      remain: remain(fullRevTarget, mtdW.revenue, usd0),
     },
     {
-      metric: "**Profit (Win)**",
-      cur: `**${fmtUsd(proWinCur)}**`,
-      prev: fmtUsd(proWinPrev),
-      wow: fmtWow(proWinCur, proWinPrev, true),
-      ...progressCols(proWinMtd, fullProTarget),
+      metric: "**Profit**",
+      week: `**${fmtUsd(cur.profit)}**`,
+      mtd: fmtUsd(mtdW.profit),
+      target: fullProTarget > 0 ? fmtUsd(fullProTarget) : "—",
+      pace: fmtPaceTone(fullPct(mtdW.profit, fullProTarget)),
+      remain: remain(fullProTarget, mtdW.profit, usd0),
     },
     {
-      metric: "**Biên LN**",
-      cur: fmtPct(marginWinCur),
-      prev: fmtPct(marginWinPrev),
-      wow: marginWinCur >= marginWinPrev ? green(`▲ +${revDiffPpt}đ`) : red(`▼ ${revDiffPpt}đ`),
-      ...noProgress,
+      metric: "**Units**",
+      week: `**${fmtInt(cur.quantity)}**`,
+      mtd: fmtInt(mtdW.quantity),
+      target: fullQtyTarget > 0 ? fmtInt(fullQtyTarget) : "—",
+      pace: fmtPaceTone(fullPct(mtdW.quantity, fullQtyTarget)),
+      remain: remain(fullQtyTarget, mtdW.quantity, (v) => fmtInt(v)),
+    },
+    {
+      metric: "**Margin**",
+      week: fmtPct(div(cur.profit, cur.revenue)),
+      mtd: fmtPct(div(mtdW.profit, mtdW.revenue)),
+      target: fmtPct(targetMargin),
+      pace: "—",
+      remain: "—",
     },
     {
       metric: "**TACoS**",
-      cur: fmtPct(tacosWinCur),
-      prev: fmtPct(tacosWinPrev),
-      wow: tacosWinCur <= tacosWinPrev ? green(`▼ ${tacosDiffPpt}đ`) : red(`▲ +${tacosDiffPpt}đ`),
-      ...noProgress,
-    },
-    {
-      metric: "**Tổng All Rev**",
-      cur: `**${fmtUsd(totalAll.cur.revenue)}**`,
-      prev: fmtUsd(totalAll.prev.revenue),
-      wow: fmtWow(totalAll.cur.revenue, totalAll.prev.revenue, true),
-      ...noProgress,
-    },
-    {
-      metric: "**Tổng All Profit**",
-      cur: `**${fmtUsd(totalAll.cur.profit)}**`,
-      prev: fmtUsd(totalAll.prev.profit),
-      wow: fmtWow(totalAll.cur.profit, totalAll.prev.profit, true),
-      ...progressCols(totalAll.mtd.profit, fullAllProTarget),
+      week: fmtPct(div(cur.adsFee, cur.revenue)),
+      mtd: fmtPct(div(mtdW.adsFee, mtdW.revenue)),
+      target: "—",
+      pace: "—",
+      remain: "—",
     },
   ];
 
   elements.push(
     {
       tag: "markdown",
-      content: `### 📌 TỔNG QUAN HIỆU QUẢ KINH DOANH TUẦN`,
+      content: `### 📌 TỔNG QUAN HIỆU QUẢ KINH DOANH TUẦN (SKU Win)`,
     },
     {
       tag: "table",
-      page_size: 6,
+      page_size: 5,
       row_height: "low",
       header_style: TABLE_HEADER,
       columns: [
         col("metric", "Chỉ số", "left"),
-        col("cur", "Tuần này"),
-        col("prev", "Tuần trước"),
-        col("wow", "Δ WoW"),
-        col("targetWeek", "Target Tuần"),
-        col("paceWeek", "% Đạt Tuần"),
-        col("paceMonth", "% Đạt Tháng"),
+        col("week", "Tuần đó"),
+        col("mtd", `Lũy kế tuần (1-${ctx.day}/${Number(week.endDate.slice(5, 7))})`),
+        col("target", "Mục tiêu tháng"),
+        col("pace", "% Đạt tháng"),
+        col("remain", "Còn lại tháng"),
       ],
       rows: overviewRows,
     }
@@ -721,6 +705,16 @@ async function main() {
     if (!webhookUrl) {
       console.error("Lỗi: Không tìm thấy webhook URL (LARK_ACCOUNTING_WEBHOOK_URL)!");
       process.exit(1);
+    }
+    // --chi-tong-quan: chỉ gửi card Tổng quan vào nhóm tổng (không gửi card team, không gửi nhóm team)
+    if (args.includes("--chi-tong-quan")) {
+      const res = await sendLarkWebhookNotification(webhookUrl, { card });
+      if (!res.sent) {
+        console.error(`❌ Gửi Lark thất bại:`, res.reason);
+        process.exit(1);
+      }
+      console.log(`✅ Đã gửi card Tổng quan tuần ${week.label} vào nhóm tổng`);
+      process.exit(0);
     }
     // --chi-nhom-team: bỏ qua nhóm tổng, chỉ gửi vào nhóm từng team (gửi bù)
     if (!args.includes("--chi-nhom-team")) {
