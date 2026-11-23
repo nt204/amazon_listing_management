@@ -3,7 +3,6 @@ import { getWeeklyReport, type WeeklyBrandRow, type WeeklyReport, type WeeklyMet
 import { daysInMonthOf, weekSegmentOf, previousWeekSegment, type WeekSegment } from "@/lib/accounting/weekly-report-periods";
 import { kpiRatio, kpiTone } from "@/lib/accounting/kpi-progress";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
-import { loadChannelSkus, skuPanel, type TeamSkuRow } from "@/scripts/send-daily-kpi-report";
 
 interface PaceContext {
   dim: number;
@@ -228,19 +227,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   // Dữ liệu SKU ALL (Win + Test)
   const allBrands = brands.map((b) => brandOfGroup(b, "all"));
 
-  // Số theo SKU cả tuần của từng kênh (Top 10 SKU tốt / cần chú ý của mỗi team)
-  const skusByChannel = new Map<string, TeamSkuRow[]>();
-  await Promise.all([
-    ...TEAMS_CONFIG.flatMap((team) =>
-      team.stores.map(async (stDef) => {
-        const b = allBrands.find((x) => x.storeName.toUpperCase() === stDef.name && x.channel.toUpperCase() === stDef.channel);
-        if (!b) return;
-        const rows = await loadChannelSkus(b.storeId, stDef.channel === "FBM", stDef.label, week.startDate, week.endDate);
-        skusByChannel.set(`${stDef.name}|${stDef.channel}`, rows);
-      }),
-    ),
-  ]);
-
   // --- DỰNG LARK CARD ---
   const elements: any[] = [];
 
@@ -442,13 +428,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         rows: teamKpiRows,
       };
 
-    // Top 10 SKU Profit cao nhất (tốt) và thấp nhất (cần chú ý) của cả team trong tuần — khung bấm để xem như báo cáo ngày
-    const teamSkus = team.stores.flatMap((st) => skusByChannel.get(`${st.name}|${st.channel}`) || []);
-    const topGood = [...teamSkus].sort((x, y) => y.profit - x.profit).slice(0, 10);
-    const goodSet = new Set(topGood);
-    const topBad = teamSkus.filter((r) => !goodSet.has(r)).sort((x, y) => x.profit - y.profit).slice(0, 10);
-    const skuPanels = [skuPanel("🏆 **Top 10 SKU tốt**", topGood, "Không có SKU phát sinh trong tuần.")];
-    if (topBad.length) skuPanels.push(skuPanel("🚨 **Top 10 SKU cần chú ý**", topBad));
 
     // Card tổng chỉ gồm tổng quan + đánh giá; mỗi team 1 card riêng (Lark giới hạn số bảng trong 1 card)
     teamCards.push({
@@ -468,7 +447,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
             teamTable,
             { tag: "markdown", content: "**🎯 2. Tiến độ KPI tháng (Profit)**" },
             teamKpiTable,
-            ...skuPanels,
           ],
         },
       },
