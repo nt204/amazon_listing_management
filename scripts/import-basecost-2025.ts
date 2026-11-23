@@ -90,10 +90,9 @@ async function main() {
       INSERT INTO accounting_monthly_base_cost_bak_history2025
       SELECT * FROM accounting_monthly_base_cost WHERE period >= '2025-01' AND period <= '2025-12'
     `;
-    const cols = Object.keys(items[0]);
     for (let i = 0; i < items.length; i += 500) {
       await tx`
-        INSERT INTO accounting_monthly_base_cost ${tx(items.slice(i, i + 500) as any[], ...(cols as any))}
+        INSERT INTO accounting_monthly_base_cost ${tx(items.slice(i, i + 500) as Record<string, string | number | boolean | null>[])}
         ON CONFLICT (store_id, period, sku) DO UPDATE SET
           sku_id = COALESCE(EXCLUDED.sku_id, accounting_monthly_base_cost.sku_id),
           brand = EXCLUDED.brand,

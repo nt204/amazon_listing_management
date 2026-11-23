@@ -286,8 +286,81 @@ async function fetchStoreDaily(storeId: string, startDate: string, endDate: stri
     sortDirection: "asc" as const,
     limit: 100_000,
   };
-  const res = channel === "Merchant" ? await listFbmDaily(storeId, options) : await listFbaDaily(storeId, { ...options, channel });
-  return res.items;
+  const [res, history] = await Promise.all([
+    channel === "Merchant" ? listFbmDaily(storeId, options) : listFbaDaily(storeId, { ...options, channel }),
+    loadDailyHistory(storeId, channel === "Merchant" ? "FBM" : "FBA", startDate, endDate),
+  ]);
+  return history.size ? overlayDailyHistory(res.items, history) : res.items;
+}
+
+type DailyHistoryRow = {
+  date: string;
+  revenue: number;
+  quantity: number;
+  ads_fee: number;
+  basecost: number;
+  amazon_fee: number;
+  tax: number;
+  promotion: number;
+  refund: number;
+  profit: number;
+};
+
+/** Số theo ngày kế toán đã chốt (accounting_daily_history, vd. năm 2025) của 1 store + kênh trong khoảng ngày. */
+async function loadDailyHistory(storeId: string, channel: "FBA" | "FBM", startDate: string, endDate: string) {
+  const sql = await getDatabaseClient();
+  const rows = await sql<DailyHistoryRow[]>`
+    SELECT to_char(date, 'YYYY-MM-DD') AS date, revenue::float, quantity::float, ads_fee::float, basecost::float,
+           amazon_fee::float, tax::float, promotion::float, refund::float, profit::float
+    FROM accounting_daily_history
+    WHERE store_id = ${storeId} AND channel = ${channel}
+      ${startDate ? sql`AND date >= ${startDate}::date` : sql``}
+      ${endDate ? sql`AND date <= ${endDate}::date` : sql``}
+  `.catch(() => [] as DailyHistoryRow[]); // bảng chưa có (chưa migrate) → như cũ
+  return new Map(rows.map((r) => [r.date, r]));
+}
+
+/**
+ * Ngày có số đã chốt: thay Revenue / Units / chi phí / Profit bằng số kế toán; giữ số đơn, click, doanh thu Ads
+ * và phần phí dịch vụ chia theo ngày (net_profit = profit − phí dịch vụ) mà hệ thống tự tính.
+ */
+function overlayDailyHistory(items: FbaDailyItem[], history: Map<string, DailyHistoryRow>): FbaDailyItem[] {
+  const byDate = new Map(items.map((it) => [it.date, it]));
+  for (const [date, h] of history) {
+    const base = byDate.get(date);
+    const serviceCost = base ? base.profit - base.net_profit : 0;
+    const d = new Date(`${date}T00:00:00Z`);
+    byDate.set(date, {
+      ...(base ?? {
+        id: date,
+        date,
+        week: "",
+        month: `THÁNG ${d.getUTCMonth() + 1}`,
+        orders: 0,
+        revenue_ads: 0,
+        quantity_ads: 0,
+        clicks: 0,
+      }),
+      revenue: h.revenue,
+      quantity: h.quantity,
+      ads_fee: h.ads_fee,
+      basecost: h.basecost,
+      amazon_fee: h.amazon_fee,
+      thue: h.tax,
+      promotion: h.promotion,
+      return_cost: h.refund,
+      profit: h.profit,
+      net_profit: h.profit - serviceCost,
+      balance: h.revenue - h.amazon_fee - h.ads_fee - h.refund,
+      roi: h.basecost > 0 ? h.profit / h.basecost : 0,
+      tacos: h.revenue > 0 ? h.ads_fee / h.revenue : 0,
+      acos: base && base.revenue_ads > 0 ? h.ads_fee / base.revenue_ads : 0,
+      margin: h.revenue > 0 ? h.profit / h.revenue : 0,
+      margin_pre_ads: h.revenue > 0 ? (h.revenue - h.basecost - h.amazon_fee) / h.revenue : 0,
+      profit_per_item: h.quantity > 0 ? h.profit / h.quantity : 0,
+    } as FbaDailyItem);
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /**
