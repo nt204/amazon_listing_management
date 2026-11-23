@@ -131,18 +131,6 @@ const red = (text: string) => `<font color='red'>${text}</font>`;
 const orange = (text: string) => `<font color='orange'>${text}</font>`;
 const grey = (text: string) => `<font color='grey'>${text}</font>`;
 
-function fmtWow(cur: number, prev: number, isGoodWhenUp = true): string {
-  const w = wow(cur, prev);
-  if (w == null) return grey("—");
-  const p = Math.abs(w * 100).toFixed(1);
-  if (Math.abs(w) < 0.001) return grey("0.0%");
-  if (w > 0) {
-    return isGoodWhenUp ? green(`▲ +${p}%`) : red(`▲ +${p}%`);
-  } else {
-    return isGoodWhenUp ? red(`▼ -${p}%`) : green(`▼ -${p}%`);
-  }
-}
-
 function fmtPaceTone(pace: number | null): string {
   if (pace == null || !Number.isFinite(pace)) return grey("—");
   const s = `${pace.toFixed(1)}%`;
@@ -266,7 +254,7 @@ function generateWeeklyStoreComment(
   prev: WeeklyMetrics,
   displayName: string,
   mtdProfit: number,
-  targetToWeekEnd: number,
+  monthTarget: number,
   paceMtd: number | null,
   serviceFees: ServiceFeeItem[] = []
 ): string {
@@ -287,9 +275,9 @@ function generateWeeklyStoreComment(
 
   // Đoạn text KPI
   let kpiPrefix = "";
-  if (targetToWeekEnd > 0 && paceMtd != null) {
+  if (monthTarget > 0 && paceMtd != null) {
     const paceLabel = paceMtd >= 100 ? "vượt nhịp" : paceMtd >= 85 ? "sát nhịp" : "dưới nhịp";
-    kpiPrefix = `Đạt **${paceMtd.toFixed(1)}% KPI tuần** (Profit lũy kế ${fmtUsd(mtdProfit)} / Target ${fmtUsd(targetToWeekEnd)}, ${paceLabel}). `;
+    kpiPrefix = `Lũy kế đạt **${((mtdProfit / monthTarget) * 100).toFixed(1)}% Target tháng** (nhịp ${paceMtd.toFixed(1)}%, ${paceLabel}). `;
   } else {
     kpiPrefix = `(Chưa có KPI) `;
   }
@@ -418,7 +406,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   // 1. BẢNG TỔNG QUAN + tiến độ dùng chung cho bảng team:
   //  - Target Tuần / % Đạt Tuần (bảng team) = lũy kế 1→hết tuần ÷ (Target tháng × ngày ÷ số ngày tháng)
   //  - % Đạt Tháng = lũy kế ÷ Target cả tháng
-  const toWeekEnd = (monthTarget: number) => (monthTarget * ctx.day) / dim;
   const fullPct = (mtd: number, monthTarget: number) => (monthTarget > 0 ? (mtd / monthTarget) * 100 : null);
 
   // Bảng Tổng quan (Win + Test, như bảng Team/Brand chế độ All trên Web): Tuần này | Lũy kế tuần (1→hết tuần) | Mục tiêu tháng |
@@ -517,6 +504,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const teamCards: Array<{ teamId: string; teamName: string; card: Record<string, any> }> = [];
   for (const team of TEAMS_CONFIG) {
     const teamStoreRows: any[] = [];
+    const teamKpiRows: any[] = [];
     const teamComments: string[] = [];
     let teamCurTotal = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
     let teamPrevTotal = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
@@ -545,17 +533,23 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
 
       const displayName = stDef.label;
 
+      // Bảng 1 — Hiệu suất kinh doanh tuần
       teamStoreRows.push({
         channel: hasData ? displayName : `${displayName} (—)`,
         revenue: hasData ? fmtUsd(cur.revenue) : "—",
+        profit: hasData ? (cur.profit >= 0 ? fmtUsd(cur.profit) : red(fmtUsd(cur.profit))) : "—",
         units: hasData ? fmtInt(cur.quantity) : "—",
         spend: hasData ? fmtUsd(cur.adsFee) : "—",
-        profit: hasData ? (cur.profit >= 0 ? fmtUsd(cur.profit) : red(fmtUsd(cur.profit))) : "—",
-        targetWeek: storeMonthProTarget > 0 ? fmtUsd(toWeekEnd(storeMonthProTarget)) : "—",
-        paceWeek: storePaceMonth != null ? fmtPaceTone(storePaceMonth) : "—",
         margin: hasData ? fmtPct(margin / 100) : "—",
         tacos: hasData ? fmtPct(tacos / 100) : "—",
-        paceMonth: storeMonthProTarget > 0 ? fmtPaceTone(fullPct(mtd.profit, storeMonthProTarget)) : "—",
+      });
+      // Bảng 2 — Tiến độ KPI (lũy kế từ đầu tháng tới hết tuần so với Target cả tháng)
+      teamKpiRows.push({
+        channel: displayName,
+        mtdProfit: mtd.profit >= 0 ? fmtUsd(mtd.profit) : red(fmtUsd(mtd.profit)),
+        target: storeMonthProTarget > 0 ? fmtUsd(storeMonthProTarget) : "—",
+        pace: storeMonthProTarget > 0 ? fmtPaceTone(fullPct(mtd.profit, storeMonthProTarget)) : "—",
+        remain: remain(storeMonthProTarget, mtd.profit, usd0),
       });
 
       // Nhận xét store (GẮN VỚI KPI)
@@ -570,7 +564,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         prev,
         displayName,
         mtd.profit,
-        storeMonthProTarget > 0 ? toWeekEnd(storeMonthProTarget) : 0,
+        storeMonthProTarget,
         storePaceMonth,
         storeFees
       );
@@ -587,14 +581,18 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     teamStoreRows.push({
       channel: `**Tổng ${team.name}**`,
       revenue: `**${fmtUsd(teamCurTotal.revenue)}**`,
+      profit: `**${fmtUsd(teamCurTotal.profit)}**`,
       units: `**${fmtInt(teamCurTotal.quantity)}**`,
       spend: `**${fmtUsd(teamCurTotal.adsFee)}**`,
-      profit: `**${fmtUsd(teamCurTotal.profit)}**`,
-      targetWeek: teamTargetProMonth > 0 ? `**${fmtUsd(toWeekEnd(teamTargetProMonth))}**` : "—",
-      paceWeek: teamPaceMonth != null ? `**${fmtPaceTone(teamPaceMonth)}**` : "—",
       margin: `**${fmtPct(teamMargin / 100)}**`,
       tacos: `**${fmtPct(teamTacos / 100)}**`,
-      paceMonth: teamTargetProMonth > 0 ? `**${fmtPaceTone(fullPct(teamMtdProfit, teamTargetProMonth))}**` : "—",
+    });
+    teamKpiRows.push({
+      channel: `**Tổng ${team.name}**`,
+      mtdProfit: `**${fmtUsd(teamMtdProfit)}**`,
+      target: teamTargetProMonth > 0 ? `**${fmtUsd(teamTargetProMonth)}**` : "—",
+      pace: teamTargetProMonth > 0 ? `**${fmtPaceTone(fullPct(teamMtdProfit, teamTargetProMonth))}**` : "—",
+      remain: `**${remain(teamTargetProMonth, teamMtdProfit, usd0)}**`,
     });
 
     // Dòng nhận xét Team GẮN CHẶT VỚI KPI
@@ -607,7 +605,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     if (teamTargetProMonth > 0 && teamPaceMonth != null) {
       const paceLabel = teamPaceMonth >= 100 ? "vượt nhịp" : teamPaceMonth >= 85 ? "sát nhịp" : "dưới nhịp";
       const monthPct = fullPct(teamMtdProfit, teamTargetProMonth) ?? 0;
-      kpiTeamText = `Đạt **${teamPaceMonth.toFixed(1)}% KPI tuần** (Profit lũy kế ${fmtUsd(teamMtdProfit)} / Target ${fmtUsd(toWeekEnd(teamTargetProMonth))}, ${paceLabel}). Revenue ${teamRevStr}, Profit ${teamProStr} so với tuần trước. Lũy kế tháng đạt **${monthPct.toFixed(1)}%**.`;
+      kpiTeamText = `Lũy kế đạt **${monthPct.toFixed(1)}% Target tháng** (${fmtUsd(teamMtdProfit)} / ${fmtUsd(teamTargetProMonth)}; so với nhịp tới hết tuần: ${teamPaceMonth.toFixed(1)}%, ${paceLabel}). Tuần này Revenue ${teamRevStr}, Profit ${teamProStr} so với tuần trước.`;
     } else {
       kpiTeamText = `Revenue ${teamRevStr}, Profit ${teamProStr} so với tuần trước.`;
     }
@@ -621,18 +619,29 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         row_height: "low",
         header_style: TABLE_HEADER,
         columns: [
-          col("channel", "Kênh", "left"),
+          col("channel", "Store", "left"),
           col("revenue", "Revenue"),
+          col("profit", "Profit"),
           col("units", "Units"),
           col("spend", "Spend"),
-          col("profit", "Profit"),
-          col("targetWeek", "Target Tuần"),
-          col("paceWeek", "% Đạt Tuần"),
           col("margin", "Margin"),
           col("tacos", "TACoS"),
-          col("paceMonth", "% Đạt Tháng"),
         ],
         rows: teamStoreRows,
+      };
+    const teamKpiTable = {
+        tag: "table",
+        page_size: Math.min(teamKpiRows.length, 10),
+        row_height: "low",
+        header_style: TABLE_HEADER,
+        columns: [
+          col("channel", "Store", "left"),
+          col("mtdProfit", "Profit lũy kế tuần"),
+          col("target", "Target tháng"),
+          col("pace", "% Đạt tháng"),
+          col("remain", "Còn lại"),
+        ],
+        rows: teamKpiRows,
       };
     const teamComment = { tag: "markdown", content: commentBlockContent };
 
@@ -656,7 +665,16 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
           title: { tag: "plain_text", content: `📊 ${team.name.toUpperCase()} (${team.lead.toUpperCase()}) — BÁO CÁO ${week.label.toUpperCase()}` },
           subtitle: { tag: "plain_text", content: `Kỳ ${week.startDate} đến ${week.endDate} • Đã chốt số liệu` },
         },
-        body: { elements: [teamTable, teamComment, ...skuPanels] },
+        body: {
+          elements: [
+            { tag: "markdown", content: "**📈 1. Hiệu suất kinh doanh tuần**" },
+            teamTable,
+            { tag: "markdown", content: "**🎯 2. Tiến độ KPI tháng (Profit)**" },
+            teamKpiTable,
+            teamComment,
+            ...skuPanels,
+          ],
+        },
       },
     });
   }
@@ -711,6 +729,20 @@ async function main() {
     if (!webhookUrl) {
       console.error("Lỗi: Không tìm thấy webhook URL (LARK_ACCOUNTING_WEBHOOK_URL)!");
       process.exit(1);
+    }
+    // --team=<id hoặc tên> (vd --team="FBA 2" hoặc --team="Team 2"): chỉ gửi card của team đó vào nhóm tổng (xem thử)
+    const teamArg = args.find((a) => a.startsWith("--team="))?.slice("--team=".length).trim().toLowerCase();
+    if (teamArg) {
+      const picked = teamCards.filter((t) => t.teamId.toLowerCase() === teamArg || t.teamName.toLowerCase() === teamArg);
+      if (!picked.length) {
+        console.error(`Không tìm thấy team "${teamArg}". Có: ${teamCards.map((t) => `${t.teamId} / ${t.teamName}`).join(", ")}`);
+        process.exit(1);
+      }
+      for (const t of picked) {
+        const res = await sendLarkWebhookNotification(webhookUrl, { card: t.card });
+        console.log(res.sent ? `✅ Đã gửi card ${t.teamName} vào nhóm tổng` : `❌ Gửi ${t.teamName} lỗi: ${res.reason}`);
+      }
+      process.exit(0);
     }
     // --chi-tong-quan: chỉ gửi card Tổng quan vào nhóm tổng (không gửi card team, không gửi nhóm team)
     if (args.includes("--chi-tong-quan")) {
