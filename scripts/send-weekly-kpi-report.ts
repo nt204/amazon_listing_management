@@ -149,13 +149,15 @@ const TABLE_HEADER = {
   lines: 1,
 };
 
-function col(name: string, displayName: string, align: "left" | "right" = "right") {
+// width: "auto" (mặc định) hoặc px cố định [80px, 600px]. Lark cắt chữ (phải rê chuột mới thấy) khi cột "auto" không đủ chỗ;
+// cột px cố định thì bảng rộng hơn card sẽ kéo ngang được (bảng card team dùng freeze_first_column giữ cột Store).
+function col(name: string, displayName: string, align: "left" | "right" = "right", width = "auto") {
   return {
     name,
     display_name: displayName,
     data_type: "lark_md",
     horizontal_align: align,
-    width: "auto",
+    width,
   };
 }
 
@@ -410,14 +412,15 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         page_size: Math.min(teamStoreRows.length, 10),
         row_height: "low",
         header_style: TABLE_HEADER,
+        freeze_first_column: true,
         columns: [
-          col("channel", "Store", "left"),
-          col("revenue", "Revenue"),
-          col("profit", "Profit"),
-          col("units", "Units"),
-          col("spend", "Spend"),
-          col("margin", "Margin"),
-          col("tacos", "TACoS"),
+          col("channel", "Store", "left", "140px"),
+          col("revenue", "Revenue", "right", "110px"),
+          col("profit", "Profit", "right", "100px"),
+          col("units", "Units", "right", "80px"),
+          col("spend", "Spend", "right", "100px"),
+          col("margin", "Margin", "right", "90px"),
+          col("tacos", "TACoS", "right", "90px"),
         ],
         rows: teamStoreRows,
       };
@@ -426,9 +429,13 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       page_size: Math.min(kpiRows.length, 10),
       row_height: "low",
       header_style: TABLE_HEADER,
+      freeze_first_column: true,
       columns: [
-        col("channel", "Store", "left"),
-        ...KPI_METRICS.flatMap((m) => [col(`${m.key}Mtd`, `${m.label} lũy kế / Target`), col(`${m.key}Pace`, `% ${m.pctLabel}`)]),
+        col("channel", "Store", "left", "140px"),
+        ...KPI_METRICS.flatMap((m) => [
+          col(`${m.key}Mtd`, `${m.label} lũy kế / Target`, "right", m.key === "quantity" ? "160px" : "190px"),
+          col(`${m.key}Pace`, `% ${m.pctLabel}`, "right", "100px"),
+        ]),
       ],
       rows: kpiRows,
     };
