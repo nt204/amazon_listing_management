@@ -35,10 +35,6 @@ interface GroupSummary {
   profit: MetricProgress | null;
 }
 
-interface ServiceFeeItem {
-  name: string;
-  amount: number;
-}
 
 const ZERO: WeeklyMetrics = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
 const add = (a: WeeklyMetrics, b: WeeklyMetrics): WeeklyMetrics => ({
@@ -123,8 +119,6 @@ const fmtPct = (v: number | null | undefined, digits = 1) =>
 const div = (a: number | null | undefined, b: number | null | undefined) =>
   a != null && b != null && Math.abs(b) > 1e-9 ? a / b : null;
 
-const wow = (cur: number | null | undefined, prev: number | null | undefined) =>
-  cur != null && prev != null && Math.abs(prev) > 1e-9 ? (cur - prev) / Math.abs(prev) : null;
 
 const green = (text: string) => `<font color='green'>${text}</font>`;
 const red = (text: string) => `<font color='red'>${text}</font>`;
@@ -212,150 +206,6 @@ const TEAMS_CONFIG = [
   },
 ];
 
-// Query khoản phí Service Fee trừ >= $1,000 trong tuần (đã loại phí ads)
-async function loadLargeServiceFeesWeek(startDate: string, endDate: string): Promise<Map<string, ServiceFeeItem[]>> {
-  const sql = await getDatabaseClient();
-  const result = new Map<string, ServiceFeeItem[]>();
-  try {
-    const rows = await sql<Array<{
-      store_id: string;
-      product_details: string;
-      total_amount: number;
-    }>>`
-      SELECT
-        sf.store_id,
-        COALESCE(NULLIF(TRIM(sf.product_details), ''), 'Service Fee') AS product_details,
-        SUM(ABS(sf.total))::float AS total_amount
-      FROM accounting_service_fees sf
-      WHERE sf.date BETWEEN ${startDate}::date AND ${endDate}::date
-        AND sf.total < 0
-        AND LOWER(COALESCE(sf.product_details, '')) NOT LIKE '%advertising%'
-        AND LOWER(COALESCE(sf.product_details, '')) NOT LIKE '%cost of ads%'
-      GROUP BY sf.store_id, 2
-      HAVING SUM(ABS(sf.total)) >= 1000
-      ORDER BY total_amount DESC
-    `;
-    for (const r of rows) {
-      if (!result.has(r.store_id)) result.set(r.store_id, []);
-      result.get(r.store_id)!.push({
-        name: r.product_details,
-        amount: -r.total_amount,
-      });
-    }
-  } catch (err) {
-    console.error("[ServiceFee] Lỗi query service fee tuần:", err);
-  }
-  return result;
-}
-
-// Sinh nhận xét chi tiết cho từng store ở phạm vi tuần (GẮN VỚI KPI)
-function generateWeeklyStoreComment(
-  cur: WeeklyMetrics,
-  prev: WeeklyMetrics,
-  displayName: string,
-  mtdProfit: number,
-  monthTarget: number,
-  paceMtd: number | null,
-  serviceFees: ServiceFeeItem[] = []
-): string {
-  // 0. Nếu không có dữ liệu
-  if (cur.revenue === 0 && cur.quantity === 0 && cur.profit === 0) {
-    return `🔹 **${displayName}:** Không có dữ liệu.`;
-  }
-
-  const dRevPct = prev.revenue > 0 ? ((cur.revenue - prev.revenue) / prev.revenue) * 100 : 0;
-  const dQtyPct = prev.quantity > 0 ? ((cur.quantity - prev.quantity) / prev.quantity) * 100 : 0;
-  const signed = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
-  const dProfitPct = prev.profit !== 0 ? ((cur.profit - prev.profit) / Math.abs(prev.profit)) * 100 : 0;
-  const curTacos = cur.revenue > 0 ? (cur.adsFee / cur.revenue) * 100 : 0;
-  const prevTacos = prev.revenue > 0 ? (prev.adsFee / prev.revenue) * 100 : 0;
-  const dTacos = curTacos - prevTacos;
-  const dAdsFeePct = prev.adsFee > 0 ? ((cur.adsFee - prev.adsFee) / prev.adsFee) * 100 : 0;
-  const curMargin = cur.revenue > 0 ? (cur.profit / cur.revenue) * 100 : 0;
-
-  // Đoạn text KPI
-  let kpiPrefix = "";
-  if (monthTarget > 0 && paceMtd != null) {
-    const paceLabel = paceMtd >= 100 ? "vượt nhịp" : paceMtd >= 85 ? "sát nhịp" : "dưới nhịp";
-    kpiPrefix = `Lũy kế đạt **${((mtdProfit / monthTarget) * 100).toFixed(1)}% Target tháng** (nhịp ${paceMtd.toFixed(1)}%, ${paceLabel}). `;
-  } else {
-    kpiPrefix = `(Chưa có KPI) `;
-  }
-
-  let serviceFeeText = "";
-  if (serviceFees.length > 0) {
-    const feeLines = serviceFees.map((f) => `  ❗ **Service Fee:** ${f.name} ${fmtUsd(f.amount, 2)}`);
-    serviceFeeText = `\n${feeLines.join("\n")}`;
-  }
-
-  const fullWarningText = serviceFeeText;
-
-  // Câu về TACoS theo đúng chiều thay đổi (trước đây luôn ghi "tăng lên … (+-3.4đ)" kể cả khi TACoS giảm)
-  const tacosPhrase = () => {
-    const c = curTacos.toFixed(1);
-    if (dTacos >= 0.5) return `TACoS tăng lên ${c}% (+${dTacos.toFixed(1)}đ)`;
-    if (dTacos <= -0.5) {
-      return curTacos >= 25
-        ? `TACoS vẫn cao ${c}% (dù giảm ${Math.abs(dTacos).toFixed(1)}đ so với tuần trước)`
-        : `TACoS giảm còn ${c}% (${dTacos.toFixed(1)}đ)`;
-    }
-    return curTacos >= 25 ? `TACoS ở mức cao ${c}% (không đổi)` : `TACoS ${c}% (không đổi)`;
-  };
-
-  // Cả tuần không có doanh thu: không tính % so với tuần trước (ra -100%, -177% khó hiểu)
-  if (cur.revenue === 0 && cur.quantity === 0) {
-    return `🔹 **${displayName}:** ${kpiPrefix}Không có doanh thu trong tuần (Profit ${fmtUsd(cur.profit)}, Spend ${fmtUsd(cur.adsFee)}).${fullWarningText}`;
-  }
-
-  // 1. Profit sụt giảm sâu (<= -20%)
-  if (dProfitPct <= -20) {
-    const causes: string[] = [];
-    if (dTacos >= 3 || curTacos >= 25) {
-      const spendClause = dAdsFeePct >= 10 ? ` do Spend +${dAdsFeePct.toFixed(0)}%` : "";
-      causes.push(`${tacosPhrase()}${spendClause}`);
-    }
-    if (dRevPct <= -15) {
-      causes.push(`Units ${signed(dQtyPct)}`);
-    }
-    const revNote = Math.abs(dRevPct) < 10 ? "Revenue đi ngang" : `Revenue ${dRevPct > 0 ? "+" : ""}${dRevPct.toFixed(1)}%`;
-    const causeStr = causes.length > 0 ? `, do ${causes.join(" và ")}` : "";
-    return `🔹 **${displayName}:** ${kpiPrefix}Profit sụt ${dProfitPct.toFixed(1)}% (${revNote})${causeStr}.${fullWarningText}`;
-  }
-
-  // 2. Margin mỏng (<= 10%) dù revenue tăng mạnh
-  if (curMargin <= 10 && dRevPct >= 20) {
-    const issues: string[] = [];
-    if (dTacos >= 3 || curTacos >= 25) {
-      const spendClause = dAdsFeePct > 0 ? `Spend +${dAdsFeePct.toFixed(0)}%` : "";
-      issues.push(`${spendClause}, ${tacosPhrase()}`.replace(/^, /, ""));
-    }
-    const issueStr = issues.length > 0 ? ` do ${issues.join(" và ")}` : "";
-    return `🔹 **${displayName}:** ${kpiPrefix}Revenue tăng +${dRevPct.toFixed(1)}% (Units ${signed(dQtyPct)}), nhưng Margin mỏng chỉ còn ${curMargin.toFixed(1)}%${issueStr}.${fullWarningText}`;
-  }
-
-  // 3. Profit tăng mạnh (>= 20%)
-  if (dProfitPct >= 20) {
-    if (dTacos <= -2 && curTacos <= 20) {
-      const spendNote = dAdsFeePct <= -5 ? `Spend ${dAdsFeePct.toFixed(0)}%` : "Spend giữ nguyên";
-      return `🔹 **${displayName}:** ${kpiPrefix}Profit +${dProfitPct.toFixed(1)}%, Revenue +${dRevPct.toFixed(1)}% nhờ đơn Organic tăng vọt trong khi ${spendNote}, kéo TACoS giảm về ${curTacos.toFixed(1)}% (${dTacos.toFixed(1)}đ).${fullWarningText}`;
-    }
-    if (curTacos >= 30) {
-      const spendNote = dAdsFeePct >= 5 ? `Spend +${dAdsFeePct.toFixed(0)}%` : (dAdsFeePct <= -5 ? `Spend ${dAdsFeePct.toFixed(0)}%` : "Spend đi ngang");
-      const tacosNote = `${tacosPhrase()} (${spendNote})`;
-      return `🔹 **${displayName}:** ${kpiPrefix}Profit tăng +${dProfitPct.toFixed(1)}% (Revenue ${signed(dRevPct)}, Units ${signed(dQtyPct)}); tuy nhiên ${tacosNote}.${fullWarningText}`;
-    }
-    return `🔹 **${displayName}:** ${kpiPrefix}Revenue +${dRevPct.toFixed(1)}%, Profit +${dProfitPct.toFixed(1)}% so với tuần trước (Units ${signed(dQtyPct)}).${fullWarningText}`;
-  }
-
-  // 4. Biến động TACoS riêng lẻ
-  if (dTacos >= 3) {
-    const spendNote = dAdsFeePct >= 5 ? ` (Spend +${dAdsFeePct.toFixed(0)}%)` : "";
-    return `🔹 **${displayName}:** ${kpiPrefix}TACoS tăng lên ${curTacos.toFixed(1)}% (+${dTacos.toFixed(1)}đ)${spendNote}.${fullWarningText}`;
-  }
-
-  return `🔹 **${displayName}:** ${kpiPrefix}Nhìn chung ổn định.${fullWarningText}`;
-}
-
 export async function generateWeeklyKpiReport(targetDate?: string) {
   const date = targetDate || getPreviousCompletedSaturday();
   const report = await getWeeklyReport({
@@ -375,21 +225,12 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     weekDays: week.days || 7,
   };
 
-  // 1. Dữ liệu SKU WIN (để hiện Top KPI Cards & Overview Table)
-  // % Đạt Tháng = lũy kế ÷ Target tới ngày có số liệu (Target tháng × ngày ÷ số ngày tháng), giống cột
-  // "% đạt Target (lũy kế)" trên Web. Trước đây chia cho cả Target tháng nên giữa tháng chỉ ra ~1/2.
-  const monthPace = (mtd: number, monthTarget: number) =>
-    monthTarget > 0 ? (mtd / ((monthTarget * ctx.day) / dim)) * 100 : null;
-
-
-
-  // 2. Dữ liệu SKU ALL (Win + Test)
+  // Dữ liệu SKU ALL (Win + Test)
   const allBrands = brands.map((b) => brandOfGroup(b, "all"));
 
-  // Service Fees trong tuần + số theo SKU cả tuần của từng kênh (Top 10 SKU tốt / cần chú ý của mỗi team)
+  // Số theo SKU cả tuần của từng kênh (Top 10 SKU tốt / cần chú ý của mỗi team)
   const skusByChannel = new Map<string, TeamSkuRow[]>();
-  const [serviceFeesMap] = await Promise.all([
-    loadLargeServiceFeesWeek(week.startDate, week.endDate),
+  await Promise.all([
     ...TEAMS_CONFIG.flatMap((team) =>
       team.stores.map(async (stDef) => {
         const b = allBrands.find((x) => x.storeName.toUpperCase() === stDef.name && x.channel.toUpperCase() === stDef.channel);
@@ -505,9 +346,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   for (const team of TEAMS_CONFIG) {
     const teamStoreRows: any[] = [];
     const teamKpiRows: any[] = [];
-    const teamComments: string[] = [];
     let teamCurTotal = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
-    let teamPrevTotal = { revenue: 0, quantity: 0, adsFee: 0, profit: 0, basecost: 0 };
     let teamMtdProfit = 0;
     let teamTargetProMonth = 0;
 
@@ -516,16 +355,13 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         (x) => x.storeName.toUpperCase() === stDef.name && x.channel.toUpperCase() === stDef.channel
       );
       const cur = b?.current || ZERO;
-      const prev = b?.previous || ZERO;
       const mtd = b?.mtd || ZERO;
 
       teamCurTotal = add(teamCurTotal, cur);
-      teamPrevTotal = add(teamPrevTotal, prev);
       teamMtdProfit += mtd.profit;
 
       const storeMonthProTarget = b?.target?.profit ?? 0;
       teamTargetProMonth += storeMonthProTarget;
-      const storePaceMonth = monthPace(mtd.profit, storeMonthProTarget);
 
       const hasData = cur.revenue > 0 || cur.quantity > 0 || cur.profit !== 0;
       const margin = cur.revenue > 0 ? (cur.profit / cur.revenue) * 100 : 0;
@@ -552,27 +388,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         remain: remain(storeMonthProTarget, mtd.profit, usd0),
       });
 
-      // Nhận xét store (GẮN VỚI KPI)
-      const rawStoreFees = b ? serviceFeesMap.get(b.storeId) || [] : [];
-      const storeFees = rawStoreFees.filter((f) => {
-        const isFbaFee = f.name.toLowerCase().includes("fba") || f.name.toLowerCase().includes("storage");
-        if (stDef.channel.toLowerCase() === "fbm") return !isFbaFee;
-        return true;
-      });
-      const comment = generateWeeklyStoreComment(
-        cur,
-        prev,
-        displayName,
-        mtd.profit,
-        storeMonthProTarget,
-        storePaceMonth,
-        storeFees
-      );
-      if (comment) teamComments.push(comment);
     }
-
-    // Tính KPI tổng của Team
-    const teamPaceMonth = monthPace(teamMtdProfit, teamTargetProMonth);
 
     // Thêm dòng TỔNG của Team vào cuối bảng team
     const teamMargin = teamCurTotal.revenue > 0 ? (teamCurTotal.profit / teamCurTotal.revenue) * 100 : 0;
@@ -594,24 +410,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       pace: teamTargetProMonth > 0 ? `**${fmtPaceTone(fullPct(teamMtdProfit, teamTargetProMonth))}**` : "—",
       remain: `**${remain(teamTargetProMonth, teamMtdProfit, usd0)}**`,
     });
-
-    // Dòng nhận xét Team GẮN CHẶT VỚI KPI
-    const teamRevDiffPct = teamPrevTotal.revenue > 0 ? ((teamCurTotal.revenue - teamPrevTotal.revenue) / teamPrevTotal.revenue) * 100 : 0;
-    const teamProDiffPct = teamPrevTotal.profit !== 0 ? ((teamCurTotal.profit - teamPrevTotal.profit) / Math.abs(teamPrevTotal.profit)) * 100 : 0;
-    const teamRevStr = teamRevDiffPct >= 0 ? `+${teamRevDiffPct.toFixed(1)}%` : `${teamRevDiffPct.toFixed(1)}%`;
-    const teamProStr = teamProDiffPct >= 0 ? `+${teamProDiffPct.toFixed(1)}%` : `${teamProDiffPct.toFixed(1)}%`;
-
-    let kpiTeamText = "";
-    if (teamTargetProMonth > 0 && teamPaceMonth != null) {
-      const paceLabel = teamPaceMonth >= 100 ? "vượt nhịp" : teamPaceMonth >= 85 ? "sát nhịp" : "dưới nhịp";
-      const monthPct = fullPct(teamMtdProfit, teamTargetProMonth) ?? 0;
-      kpiTeamText = `Lũy kế đạt **${monthPct.toFixed(1)}% Target tháng** (${fmtUsd(teamMtdProfit)} / ${fmtUsd(teamTargetProMonth)}; so với nhịp tới hết tuần: ${teamPaceMonth.toFixed(1)}%, ${paceLabel}). Tuần này Revenue ${teamRevStr}, Profit ${teamProStr} so với tuần trước.`;
-    } else {
-      kpiTeamText = `Revenue ${teamRevStr}, Profit ${teamProStr} so với tuần trước.`;
-    }
-
-    const teamSummaryLine = `📌 **Nhận xét ${team.name}:** ${kpiTeamText}`;
-    const commentBlockContent = teamComments.length > 0 ? `${teamSummaryLine}\n${teamComments.join("\n")}` : teamSummaryLine;
 
     const teamTable = {
         tag: "table",
@@ -643,7 +441,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         ],
         rows: teamKpiRows,
       };
-    const teamComment = { tag: "markdown", content: commentBlockContent };
 
     // Top 10 SKU Profit cao nhất (tốt) và thấp nhất (cần chú ý) của cả team trong tuần — khung bấm để xem như báo cáo ngày
     const teamSkus = team.stores.flatMap((st) => skusByChannel.get(`${st.name}|${st.channel}`) || []);
@@ -671,7 +468,6 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
             teamTable,
             { tag: "markdown", content: "**🎯 2. Tiến độ KPI tháng (Profit)**" },
             teamKpiTable,
-            teamComment,
             ...skuPanels,
           ],
         },
