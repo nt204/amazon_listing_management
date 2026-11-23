@@ -418,7 +418,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   const toWeekEnd = (monthTarget: number) => (monthTarget * ctx.day) / dim;
   const fullPct = (mtd: number, monthTarget: number) => (monthTarget > 0 ? (mtd / monthTarget) * 100 : null);
 
-  // Bảng Tổng quan (SKU Win, như thẻ Tổng quan trên Web): Tuần đó | Lũy kế tuần (1→hết tuần) | Mục tiêu tháng |
+  // Bảng Tổng quan (SKU Win, như thẻ Tổng quan trên Web): Tuần này | Lũy kế tuần (1→hết tuần) | Mục tiêu tháng |
   // % đạt tháng (lũy kế ÷ mục tiêu cả tháng) | Còn lại tháng (mục tiêu − lũy kế, giá trị).
   const fullQtyTarget = brands.reduce((acc, b) => acc + (b.target?.quantity ?? 0), 0);
   const cur = totalWin.cur;
@@ -485,7 +485,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
       header_style: TABLE_HEADER,
       columns: [
         col("metric", "Chỉ số", "left"),
-        col("week", "Tuần đó"),
+        col("week", "Tuần này"),
         col("mtd", `Lũy kế tuần (1-${ctx.day}/${Number(week.endDate.slice(5, 7))})`),
         col("target", "Mục tiêu tháng"),
         col("pace", "% Đạt tháng"),
