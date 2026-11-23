@@ -582,6 +582,8 @@ type AggregatedChartPoint = DashboardSeriesPoint & {
   rangeEnd: string;
   compareRangeStart?: string;
   compareRangeEnd?: string;
+  /** Tháng đang chạy dở (theo tháng): số CẢ tháng của kỳ so sánh, vd. cả tháng 11/2025 khi đang ở 1–22/11/2026 */
+  compareFull?: DashboardSeriesPoint | null;
 };
 
 /** Tuần Chủ nhật → Thứ 7, khớp bộ chọn ngày (This week / Last week) và lịch Amazon. */
@@ -625,6 +627,11 @@ function monthBuckets(days: DashboardDay[], trendStart: string, endDate: string,
       point.compare = seriesOf(prev.startDate.slice(0, 7), summarizeRange(days, prev.startDate, prev.endDate));
       point.compareRangeStart = prev.startDate;
       point.compareRangeEnd = prev.endDate;
+      // Tháng chưa hết: thêm số cả tháng của kỳ so sánh (dữ liệu ngày đã tải đủ tới hôm nay nên có sẵn cả tháng đó)
+      if (rangeStart === `${key}-01` && rangeEnd < monthLast) {
+        const full = previousMonthRange(`${key}-01`, monthLast, monthsBack);
+        point.compareFull = seriesOf(full.startDate.slice(0, 7), summarizeRange(days, full.startDate, full.endDate));
+      }
     }
     points.push(point);
     m += 1;
@@ -925,6 +932,31 @@ function TrendChart({
                           </div>
                         );
                       })}
+                      {cmp && mode === "month" && point.compareFull && (
+                        <div className="mt-1.5 border-t border-slate-100 pt-1.5">
+                          <p className="mb-0.5 text-[11.5px] text-slate-400">
+                            Cả {monthLabel(point.compareFull.key, true)} · tháng này đã đạt
+                          </p>
+                          {SERIES.map((s) => {
+                            const full = point.compareFull![s.key];
+                            const pct = full > 0 && point[s.key] >= 0 ? point[s.key] / full : null;
+                            return (
+                              <div key={s.key} className="flex items-center justify-between gap-3 py-0.5">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
+                                  {s.label}
+                                </span>
+                                <span className="flex items-baseline gap-2 tabular-nums">
+                                  <span className={full < 0 ? "text-rose-500" : "text-slate-500"}>{money(full)}</span>
+                                  <span className="w-12 text-right text-[10.5px] font-semibold text-slate-500">
+                                    {pct == null ? "—" : `${(pct * 100).toFixed(0)}%`}
+                                  </span>
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   );
                 }}
