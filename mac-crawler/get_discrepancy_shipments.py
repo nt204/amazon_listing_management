@@ -144,7 +144,14 @@ def main():
                       AND LOWER(TRIM(c.shipment_id)) = LOWER(TRIM(b.shipment_id))
                     ORDER BY c.updated_at DESC
                     LIMIT 1
-                ) AS check_located
+                ) AS check_located,
+                (
+                    SELECT c.units_expected FROM accounting_amazon_check_shipments c
+                    WHERE c.store_id = b.store_id AND c.deleted_at IS NULL
+                      AND LOWER(TRIM(c.shipment_id)) = LOWER(TRIM(b.shipment_id))
+                    ORDER BY c.updated_at DESC
+                    LIMIT 1
+                ) AS check_expected
             FROM base b
             JOIN lot l ON l.shipment_id = b.shipment_id
             ORDER BY l.sku_count DESC, b.shipment_id, b.sku;
@@ -172,6 +179,7 @@ def main():
             lot_status = (r[9] or "").strip()
             resolvable = bool(r[10])
             check_located = r[11]
+            check_expected = r[12]
 
             status = lot_status if lot_status else "Closed"
             shipment_status[shipment_id] = status
@@ -184,7 +192,7 @@ def main():
                 if lot is None:
                     lot = single_lots[shipment_id] = {
                         "sku": sku, "asin": asin, "quantity": 0, "sheet_received": None,
-                        "lot_received": lot_received, "check_located": check_located,
+                        "lot_received": lot_received, "check_located": check_located, "check_expected": check_expected,
                         "receiving_date": receiving_date, "status": status, "raw_disc": 0,
                     }
                 lot["quantity"] += quantity
@@ -212,7 +220,8 @@ def main():
                     multi_sku_shipments.append(shipment_id)
 
         for shipment_id, lot in single_lots.items():
-            quantity = lot["quantity"]
+            # Số phải nhận = Units expected của Amazon (giống Seller Central), chưa có thì số đi trên sheet
+            quantity = int(lot["check_expected"]) if lot["check_expected"] is not None else lot["quantity"]
             if lot["check_located"] is not None:
                 received = int(lot["check_located"])
             elif lot["lot_received"] is not None:

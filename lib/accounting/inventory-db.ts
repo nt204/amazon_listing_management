@@ -102,6 +102,10 @@ export interface InboundShipmentItem {
   custom_fields?: Record<string, any> | null;
   created_at: string;
   updated_at: string;
+  /** Units expected của Amazon cho cả lô (Check Shipment) — chỉ khi đọc danh sách */
+  amz_units_expected?: number | null;
+  /** Tổng Quantity các dòng cùng lô — so với amz_units_expected để đánh dấu sheet nhập lệch */
+  lot_quantity?: number | null;
 }
 
 export interface CheckShipmentItem {
@@ -991,9 +995,26 @@ export async function listInboundShipments(
       s.trang_thai,
       s.custom_fields,
       s.created_at::text,
-      s.updated_at::text
+      s.updated_at::text,
+      ck.amz_units_expected,
+      ck.lot_quantity
     FROM accounting_inbound_shipments s
     LEFT JOIN accounting_sku_master m ON m.store_id = s.store_id AND m.sku = s.sku AND m.deleted_at IS NULL
+    LEFT JOIN LATERAL (
+      SELECT
+        c.units_expected AS amz_units_expected,
+        (
+          SELECT SUM(COALESCE(s2.quantity, 0))::int FROM accounting_inbound_shipments s2
+          WHERE s2.store_id = s.store_id AND s2.deleted_at IS NULL
+            AND LOWER(TRIM(s2.shipment_id)) = LOWER(TRIM(s.shipment_id))
+        ) AS lot_quantity
+      FROM accounting_amazon_check_shipments c
+      WHERE c.store_id = s.store_id AND c.deleted_at IS NULL
+        AND LOWER(TRIM(c.shipment_id)) = LOWER(TRIM(s.shipment_id))
+        AND LOWER(TRIM(s.shipment_id)) NOT LIKE 'star%'
+      ORDER BY c.updated_at DESC
+      LIMIT 1
+    ) ck ON TRUE
     WHERE s.store_id = ${storeId}
       AND s.deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
@@ -3671,7 +3692,7 @@ export function parseAmazonShipmentNameAndId(raw: string): {
  * - units_located -> so_luong_amazon_nhan (KHÔNG map đè vào amazon_received)
  * - status -> status và tinh_trang_hang_den_kho
  * - created_date (cột Created của Check Shipment) -> ngay_di (cột Ngày đi của Đi Hàng)
- * - discrepancy -> (quantity - units_located)
+ * - discrepancy -> Units expected (Amazon) − số nhận (dương = thiếu); lô chưa nhận để trống
  */
 export async function syncCheckShipmentsToInbound(
   storeId: string,
@@ -3685,10 +3706,19 @@ export async function syncCheckShipmentsToInbound(
       ? sql`AND LOWER(TRIM(s.shipment_id)) = ANY(${validIds})`
       : sql``;
 
+  const [storeRow] = await sql<{ name: string }[]>`SELECT name FROM stores WHERE id = ${storeId} LIMIT 1`;
+  const storeName = storeRow?.name ?? "";
+
+  // Quy ước cột Discrepancy của Đi Hàng: dương = Amazon nhận THIẾU, âm = thừa.
+  // - Lô chưa nhận (In transit / Shipped / Delivered / Checked in): để trống số nhận + Discrepancy (chưa nhận ≠ thiếu).
+  // - Lô 1 SKU: số nhận = Units located; Discrepancy = Units expected (Amazon) − Units located.
+  // - Lô nhiều SKU: lấy số theo từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) khi số đó khớp
+  //   tổng Units located của lô (SKU crawler không liệt kê = nhận đủ số đi). Không khớp / chưa có → tổng lô ở dòng đầu.
   const updatedRows = await sql<{ id: string }[]>`
     WITH check_data AS (
       SELECT DISTINCT ON (LOWER(TRIM(shipment_id)))
-        LOWER(TRIM(shipment_id)) AS matched_shipment_id,
+        LOWER(TRIM(shipment_id)) AS sid,
+        units_expected,
         units_located,
         status,
         created_date
@@ -3699,120 +3729,108 @@ export async function syncCheckShipmentsToInbound(
         AND TRIM(shipment_id) != ''
       ORDER BY LOWER(TRIM(shipment_id)), updated_at DESC
     ),
-    inbound_matched AS (
+    crawler AS (
+      SELECT LOWER(TRIM(shipment_id)) AS sid, UPPER(TRIM(sku)) AS sku_key,
+             MAX(amazon_received) AS d_expected, MAX(so_luong_amazon_nhan) AS d_located
+      FROM accounting_shipment_discrepancies
+      WHERE UPPER(TRIM(store_name)) = UPPER(${storeName})
+      GROUP BY 1, 2
+    ),
+    rows_ AS (
       SELECT
-        s.id,
-        s.store_id,
-        s.shipment_id,
-        s.quantity,
-        s.so_luong_amazon_nhan AS current_so_luong_amazon_nhan,
-        s.discrepancy AS current_discrepancy,
-        s.status AS current_status,
-        s.tinh_trang_hang_den_kho AS current_tinh_trang,
-        s.ngay_di AS current_ngay_di,
-        c.units_located,
-        c.status AS c_status,
-        c.created_date AS c_created_date,
-        -- Chỉ lô Amazon đã bắt đầu nhận (Receiving / Closed) mới có số nhận + Discrepancy.
-        -- In transit / Shipped / Delivered / Checked in: Units located = 0 vì chưa nhận, không phải thiếu.
+        s.id, s.shipment_id, LOWER(TRIM(s.shipment_id)) AS sid, UPPER(TRIM(s.sku)) AS sku_key,
+        COALESCE(s.quantity, 0) AS qty,
+        s.so_luong_amazon_nhan AS cur_recv, s.discrepancy AS cur_disc, s.ngay_di AS cur_ngay_di,
+        c.units_expected, c.units_located, c.status AS c_status, c.created_date AS c_created_date,
         (LOWER(TRIM(COALESCE(c.status, ''))) IN ('receiving', 'closed')) AS c_received,
+        cr.d_expected, cr.d_located,
         ROW_NUMBER() OVER (
-          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
+          PARTITION BY LOWER(TRIM(s.shipment_id))
           ORDER BY
             (CASE WHEN s.row_order IS NOT NULL AND s.row_order > 0 THEN s.row_order ELSE 999999 END) ASC,
             s.created_at DESC,
             s.id DESC
-        ) AS rn,
-        COUNT(*) OVER (
-          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
-        ) AS sku_count,
-        SUM(COALESCE(s.quantity, 0)) OVER (
-          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
-        ) AS total_shipment_qty,
-        BOOL_AND(s.so_luong_amazon_nhan IS NOT NULL AND s.so_luong_amazon_nhan = c.units_located) OVER (
-          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
-        ) AS is_all_duplicate
+        ) AS rn
       FROM accounting_inbound_shipments s
-      JOIN check_data c ON LOWER(TRIM(s.shipment_id)) = c.matched_shipment_id
+      JOIN check_data c ON LOWER(TRIM(s.shipment_id)) = c.sid
+      LEFT JOIN crawler cr ON cr.sid = LOWER(TRIM(s.shipment_id)) AND cr.sku_key = UPPER(TRIM(s.sku))
       WHERE s.store_id = ${storeId}
         AND s.deleted_at IS NULL
         ${idFilter}
     ),
-    shipment_summary AS (
-      SELECT
-        m.*,
-        (m.sku_count > 1 AND NOT m.is_all_duplicate AND (
-          BOOL_OR(m.rn > 1 AND m.current_so_luong_amazon_nhan IS NOT NULL) OVER (
-            PARTITION BY m.store_id, LOWER(TRIM(m.shipment_id))
-          )
-        )) AS has_manual_split
-      FROM inbound_matched m
+    lot AS (
+      SELECT sid,
+        COUNT(*) AS n_rows,
+        COUNT(DISTINCT sku_key) AS n_sku,
+        BOOL_OR(d_located IS NOT NULL) AS has_crawler,
+        SUM(CASE WHEN d_located IS NOT NULL THEN d_located ELSE qty END) AS crawler_located,
+        MAX(units_located) AS units_located,
+        -- Sheet tự chia số nhận theo SKU (dòng sau dòng đầu có số) và không phải chép cùng 1 số cho mọi dòng
+        (COUNT(*) > 1
+          AND BOOL_OR(rn > 1 AND cur_recv IS NOT NULL)
+          AND NOT BOOL_AND(cur_recv IS NOT NULL AND cur_recv = units_located)) AS has_manual_split
+      FROM rows_
+      GROUP BY sid
+    ),
+    computed AS (
+      SELECT r.*,
+        CASE
+          WHEN r.sid LIKE 'star%' THEN 'star'
+          WHEN NOT r.c_received THEN 'pending'
+          WHEN l.n_rows = 1 THEN 'single'
+          WHEN l.n_sku = l.n_rows AND l.has_crawler AND l.crawler_located = l.units_located THEN 'crawler'
+          WHEN l.has_manual_split THEN 'manual'
+          ELSE 'lot_total'
+        END AS mode
+      FROM rows_ r JOIN lot l USING (sid)
+    ),
+    target AS (
+      SELECT id, c_status, c_created_date, cur_recv, cur_disc, cur_ngay_di,
+        CASE mode
+          WHEN 'star' THEN qty
+          WHEN 'pending' THEN NULL
+          WHEN 'single' THEN units_located
+          WHEN 'crawler' THEN COALESCE(d_located, qty)
+          WHEN 'manual' THEN cur_recv
+          ELSE CASE WHEN rn = 1 THEN units_located END
+        END AS new_recv,
+        CASE mode
+          WHEN 'star' THEN 0
+          WHEN 'pending' THEN NULL
+          WHEN 'single' THEN COALESCE(units_expected, qty) - units_located
+          WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE 0 END
+          WHEN 'manual' THEN cur_disc
+          ELSE CASE WHEN rn = 1 THEN COALESCE(units_expected, qty) - units_located END
+        END AS new_disc
+      FROM computed
     )
     UPDATE accounting_inbound_shipments s
     SET
-      so_luong_amazon_nhan = CASE
-        WHEN r.has_manual_split THEN s.so_luong_amazon_nhan
-        WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN COALESCE(r.quantity, 0)
-        WHEN NOT r.c_received THEN NULL
-        WHEN r.rn = 1 THEN r.units_located
-        ELSE NULL
-      END,
+      so_luong_amazon_nhan = t.new_recv,
+      discrepancy = t.new_disc,
       status = CASE
-        WHEN r.c_status IS NOT NULL AND r.c_status != '' AND r.c_status NOT LIKE '%object Object%' THEN r.c_status
+        WHEN t.c_status IS NOT NULL AND t.c_status != '' AND t.c_status NOT LIKE '%object Object%' THEN t.c_status
         ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
       END,
       tinh_trang_hang_den_kho = CASE
-        WHEN r.c_status IS NOT NULL AND r.c_status != '' AND r.c_status NOT LIKE '%object Object%' THEN r.c_status
+        WHEN t.c_status IS NOT NULL AND t.c_status != '' AND t.c_status NOT LIKE '%object Object%' THEN t.c_status
         WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
         ELSE COALESCE(s.tinh_trang_hang_den_kho, s.status, 'Working')
       END,
       ngay_di = CASE
-        WHEN r.c_created_date IS NOT NULL AND TRIM(r.c_created_date) != '' THEN r.c_created_date
+        WHEN t.c_created_date IS NOT NULL AND TRIM(t.c_created_date) != '' THEN t.c_created_date
         ELSE s.ngay_di
-      END,
-      discrepancy = CASE
-        WHEN r.has_manual_split THEN s.discrepancy
-        WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN 0
-        WHEN NOT r.c_received THEN NULL
-        WHEN r.rn = 1 THEN (
-          CASE
-            WHEN r.units_located IS NOT NULL THEN (r.total_shipment_qty - r.units_located)
-            ELSE NULL
-          END
-        )
-        ELSE NULL
       END,
       last_changed_by = ${changedBy},
       updated_at = NOW()
-    FROM shipment_summary r
-    WHERE s.id = r.id
+    FROM target t
+    WHERE s.id = t.id
       AND (
-        s.so_luong_amazon_nhan IS DISTINCT FROM (
-          CASE
-            WHEN r.has_manual_split THEN s.so_luong_amazon_nhan
-            WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN COALESCE(r.quantity, 0)
-            WHEN NOT r.c_received THEN NULL
-            WHEN r.rn = 1 THEN r.units_located
-            ELSE NULL
-          END
-        ) OR
-        s.discrepancy IS DISTINCT FROM (
-          CASE
-            WHEN r.has_manual_split THEN s.discrepancy
-            WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN 0
-            WHEN NOT r.c_received THEN NULL
-            WHEN r.rn = 1 THEN (
-              CASE
-                WHEN r.units_located IS NOT NULL THEN (r.total_shipment_qty - r.units_located)
-                ELSE NULL
-              END
-            )
-            ELSE NULL
-          END
-        ) OR
-        s.status IS DISTINCT FROM r.c_status OR
-        s.tinh_trang_hang_den_kho IS DISTINCT FROM r.c_status OR
-        (r.c_created_date IS NOT NULL AND TRIM(r.c_created_date) != '' AND s.ngay_di IS DISTINCT FROM r.c_created_date)
+        s.so_luong_amazon_nhan IS DISTINCT FROM t.new_recv OR
+        s.discrepancy IS DISTINCT FROM t.new_disc OR
+        s.status IS DISTINCT FROM t.c_status OR
+        s.tinh_trang_hang_den_kho IS DISTINCT FROM t.c_status OR
+        (t.c_created_date IS NOT NULL AND TRIM(t.c_created_date) != '' AND s.ngay_di IS DISTINCT FROM t.c_created_date)
       )
     RETURNING s.id
   `;

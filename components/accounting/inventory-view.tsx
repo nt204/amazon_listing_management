@@ -4609,10 +4609,22 @@ function InventoryViewInner() {
         displayNode = safeDisplay(formatDate(cellValue));
         cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
         break;
-      case "quantity":
+      case "quantity": {
         displayNode = item.quantity?.toLocaleString() || 0;
         cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-950 border-r border-slate-200";
+        // Tổng số đi của lô trên sheet khác Units expected của Amazon → tô cam, rê chuột xem 2 số để team kiểm tra
+        const lotQty = item.lot_quantity;
+        const amzExpected = item.amz_units_expected;
+        if (amzExpected != null && lotQty != null && lotQty !== amzExpected) {
+          displayNode = (
+            <span title={`Tổng số đi của lô trên sheet (${lotQty.toLocaleString()}) khác Amazon expected (${amzExpected.toLocaleString()}) — kiểm tra lại Quantity`}>
+              {item.quantity?.toLocaleString() || 0}
+            </span>
+          );
+          cellClass += " !bg-orange-200";
+        }
         break;
+      }
       case "line_ship":
         displayNode = <EntityBadge value={item.line_ship} />;
         cellClass = "py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200";
