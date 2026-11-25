@@ -39,16 +39,20 @@ trap cleanup EXIT
 cd "$SCRIPT_DIR"
 
 # Nếu truyền tham số store (ví dụ: FASTPEACE) thì chạy store đó.
-# Nếu không truyền gì (chạy tự động 02:00 sáng hằng ngày) thì chạy --all cho tất cả các store.
-# Tin Telegram tổng hợp chỉ gửi sáng thứ 2, các ngày khác chỉ cập nhật DB + Google Sheet.
+# Nếu không truyền gì (launchd gọi 02:00 sáng hằng ngày) thì 3 ngày mới quét 1 lần (ngày trong năm chia hết cho 3),
+# chạy --all cho tất cả các store và gửi Telegram tổng hợp. Chạy tay có tham số store thì luôn chạy.
+# Ép chạy ngay cả ngày bị bỏ qua: FORCE=1 bash run_shipment_discrepancy_daily.sh
 if [ -n "$1" ]; then
   echo "[Runner] Chạy quét riêng cho Store: $1..."
   npx tsx shipment_discrepancy_crawler.ts --store "$1"
 else
-  NOTIFY_FLAG=""
-  if [ "$(date +%u)" != "1" ]; then NOTIFY_FLAG="--no-notify"; fi
-  echo "[Runner] Chạy quét toàn bộ TẤT CẢ các store (--all) ${NOTIFY_FLAG}..."
-  npx tsx shipment_discrepancy_crawler.ts --all $NOTIFY_FLAG
+  DAY_OF_YEAR=$((10#$(date +%j)))
+  if [ "${FORCE:-0}" != "1" ] && [ $((DAY_OF_YEAR % 3)) -ne 0 ]; then
+    echo "[Runner] Hôm nay (ngày $DAY_OF_YEAR) không tới lượt — 3 ngày quét 1 lần. Bỏ qua."
+    exit 0
+  fi
+  echo "[Runner] Chạy quét toàn bộ TẤT CẢ các store (--all)..."
+  npx tsx shipment_discrepancy_crawler.ts --all
 fi
 
 echo "[Runner] Hoàn thành lúc: $(date)"

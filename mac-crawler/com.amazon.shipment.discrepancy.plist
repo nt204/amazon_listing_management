@@ -11,8 +11,8 @@
         <string>/Users/ad/mac-crawler/run_shipment_discrepancy_daily.sh</string>
     </array>
 
-    <!-- Chạy hằng ngày 02:00 sáng: lô đã chốt (Closed, hết Action required) dùng cache, chỉ mở Seller Central
-         cho lô đang Receiving / còn Action required → số theo SKU không bị cũ cả tuần. Telegram chỉ gửi sáng thứ 2. -->
+    <!-- launchd gọi 02:00 sáng mỗi ngày; run_shipment_discrepancy_daily.sh tự bỏ qua để 3 ngày mới quét 1 lần.
+         Lô đã chốt (Closed, hết Action required) dùng cache, chỉ mở Seller Central cho lô còn thay đổi. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
