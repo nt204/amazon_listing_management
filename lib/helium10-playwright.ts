@@ -24,6 +24,8 @@ export interface Helium10MiningOptions {
   timeoutMs?: number;
   /** Bỏ qua fallback Playwright, ném thẳng lỗi API gốc (job nền: tránh mở Chromium và giữ lỗi 401 để dừng đúng). */
   directApiOnly?: boolean;
+  /** Có lượt Cerebro cho ASIN này tạo sau mốc này → đọc lại kết quả đó, không tạo lượt mới (không tốn lượt H10). */
+  reuseSearchSince?: Date;
 }
 
 export interface Helium10KeywordItem {
@@ -57,6 +59,8 @@ export interface Helium10MiningResult {
   };
   keywords: Helium10KeywordItem[];
   rawMetrics: RawKeywordMetric[];
+  /** true = đọc lại lượt Cerebro có sẵn, không tốn lượt. */
+  reusedSearch?: boolean;
 }
 
 const MARKETPLACE_ID_MAP: Record<string, string> = {
@@ -360,15 +364,18 @@ async function fetchCerebroDirectApi(
   limit: number,
   accountIdHint?: string,
   allAsins?: string[],
+  reuseSince?: Date,
 ): Promise<{
   keywords: Helium10KeywordItem[];
   asinMetadata?: Helium10MiningResult["asinMetadata"];
+  reusedSearch: boolean;
 }> {
   const { token, pacvueToken, accountId } = await getHelium10ApiTokens(cookieHeader, accountIdHint);
   const mpId = MARKETPLACE_ID_MAP[marketplaceCode] || MARKETPLACE_ID_MAP.US;
 
-  const targetProductIds = allAsins && allAsins.length > 0 ? allAsins : [asin];
-  const primaryAsin = asin || targetProductIds[0];
+  // Endpoint search/single chỉ tìm MỘT ASIN (productId) — productIds gửi kèm bị H10 bỏ qua (đã kiểm 2026-11-25:
+  // lượt "5 ASIN" chỉ có dòng của ASIN đầu, currentAsin = ASIN đầu). Muốn đủ từng ASIN thì mỗi ASIN một lượt.
+  const primaryAsin = (asin || allAsins?.[0] || "").trim().toUpperCase();
 
   // 1. Fetch ASIN metadata concurrently
   const [salesRes, calcRes] = await Promise.all([
@@ -418,38 +425,70 @@ async function fetchCerebroDirectApi(
     imageUrl: calcData?.imageUrl || undefined,
   };
 
-  // 2. POST create Cerebro search (supports multi-ASIN productIds)
-  const createSearchUrl = `https://h10api.pacvue.com/rta/cerebro/v1/amazon/search/single?accountId=${accountId}`;
-  const createRes = await fetch(createSearchUrl, {
-    method: "POST",
-    headers: {
-      authorization: "Bearer " + token,
-      "x-pacvue-token": "Bearer " + pacvueToken,
-      referer: `https://members.helium10.com/cerebro-new?accountId=${accountId}`,
-      "content-type": "application/json",
-      accept: "application/json",
-    },
-    body: JSON.stringify({
-      productId: primaryAsin,
-      productIds: targetProductIds,
-      marketplace: mpId,
-    }),
-    signal: AbortSignal.timeout(15000),
-  });
-
-  if (!createRes.ok) {
-    const errText = await createRes.text().catch(() => "");
-    throw new Error(`Cerebro search creation failed (${createRes.status}): ${errText.slice(0, 200)}`);
+  // 2a. Đã có lượt Cerebro cho ASIN này (job trước / người dùng H10 tự tìm) sau mốc reuseSince → đọc lại, không tốn lượt
+  let searchId: string | number | undefined;
+  let reusedSearch = false;
+  if (reuseSince) {
+    try {
+      const prevRes = await fetch(
+        `https://h10api.pacvue.com/rta/cerebro/v1/search/single/previous-searches?accountId=${accountId}&marketplace=${mpId}&productId=${encodeURIComponent(primaryAsin)}`,
+        {
+          headers: {
+            authorization: "Bearer " + token,
+            "x-pacvue-token": "Bearer " + pacvueToken,
+            referer: `https://members.helium10.com/cerebro-new?accountId=${accountId}`,
+            accept: "application/json",
+          },
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      if (prevRes.ok) {
+        const prev = (await prevRes.json())?.data;
+        const createdAtMs = Number(prev?.createdAt) * 1000;
+        if (prev?.id && String(prev.productId || "").toUpperCase() === primaryAsin && createdAtMs >= reuseSince.getTime()) {
+          searchId = prev.id;
+          reusedSearch = true;
+          if (prev.title && !asinMetadata.title) asinMetadata.title = prev.title;
+          if (prev.imageUrl && !asinMetadata.imageUrl) asinMetadata.imageUrl = prev.imageUrl;
+        }
+      }
+    } catch {}
   }
 
-  const createJson = await createRes.json();
-  const searchId = createJson?.data?.id;
+  // 2b. POST tạo lượt Cerebro mới (tốn 1 lượt)
   if (!searchId) {
-    throw new Error("Không nhận được searchId từ Helium 10 Cerebro.");
-  }
+    const createSearchUrl = `https://h10api.pacvue.com/rta/cerebro/v1/amazon/search/single?accountId=${accountId}`;
+    const createRes = await fetch(createSearchUrl, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + token,
+        "x-pacvue-token": "Bearer " + pacvueToken,
+        referer: `https://members.helium10.com/cerebro-new?accountId=${accountId}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        productId: primaryAsin,
+        productIds: [primaryAsin],
+        marketplace: mpId,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
 
-  if (createJson.data.title && !asinMetadata.title) asinMetadata.title = createJson.data.title;
-  if (createJson.data.imageUrl && !asinMetadata.imageUrl) asinMetadata.imageUrl = createJson.data.imageUrl;
+    if (!createRes.ok) {
+      const errText = await createRes.text().catch(() => "");
+      throw new Error(`Cerebro search creation failed (${createRes.status}): ${errText.slice(0, 200)}`);
+    }
+
+    const createJson = await createRes.json();
+    searchId = createJson?.data?.id;
+    if (!searchId) {
+      throw new Error("Không nhận được searchId từ Helium 10 Cerebro.");
+    }
+
+    if (createJson.data.title && !asinMetadata.title) asinMetadata.title = createJson.data.title;
+    if (createJson.data.imageUrl && !asinMetadata.imageUrl) asinMetadata.imageUrl = createJson.data.imageUrl;
+  }
 
   // 3. Poll and retrieve keyword table data
   let tableData: any[] = [];
@@ -520,7 +559,7 @@ async function fetchCerebroDirectApi(
     };
   }).filter((k) => k.keyword.length > 0);
 
-  return { keywords, asinMetadata };
+  return { keywords, asinMetadata, reusedSearch };
 }
 
 /**
@@ -759,6 +798,7 @@ export async function mineHelium10Keywords(
         limit,
         config.accountId,
         asinsList.length > 0 ? asinsList : undefined,
+        options.reuseSearchSince,
       );
 
       const rawMetrics: RawKeywordMetric[] = apiResult.keywords.map((k) => ({
@@ -779,6 +819,7 @@ export async function mineHelium10Keywords(
         asinMetadata: apiResult.asinMetadata,
         keywords: apiResult.keywords,
         rawMetrics,
+        reusedSearch: apiResult.reusedSearch,
       };
     } else {
       const apiResult = await fetchMagnetDirectApi(

@@ -22,7 +22,9 @@ const envInt = (name: string, fallback: number) => {
 };
 
 const LOOKBACK_DAYS = envInt("PPC_SEARCH_VOLUME_LOOKBACK_DAYS", 60);
-const CEREBRO_ASINS_PER_CALL = Math.max(1, envInt("PPC_SEARCH_VOLUME_ASINS_PER_CALL", 10));
+// H10 Cerebro (search/single) chỉ tìm MỘT ASIN mỗi lượt — gộp 10 ASIN thì 9 ASIN sau không hề được quét (vẫn bị đánh dấu
+// xong) và không có rank. Rank Organic/Sponsored cũng chỉ có cho đúng ASIN được tìm → mỗi lượt 1 ASIN.
+const CEREBRO_ASINS_PER_CALL = 1;
 // Số keyword tối đa đọc về mỗi lượt (nhiều trang, không tốn thêm lượt H10). Trước đây chỉ 1.000 dòng cho 10 ASIN →
 // 1.457 lượt tháng 11 dừng đúng ở 998–1.000 dòng, keyword target như "gift fo wife" ở trang sau bị bỏ.
 const CEREBRO_ROWS_PER_CALL = Math.max(1000, envInt("PPC_SEARCH_VOLUME_CEREBRO_ROWS", 30000));
@@ -37,7 +39,7 @@ const MAGNET_PER_RUN = envInt("PPC_SEARCH_VOLUME_MAGNET_PER_RUN", 0);
 const CALL_DELAY_MS = envInt("PPC_SEARCH_VOLUME_CALL_DELAY_MS", 1500);
 // Không có heartbeat trong khoảng này → coi như process đã chết (1 lượt Cerebro chậm nhất ~4 phút)
 const STALE_RUN_MINUTES = envInt("PPC_SEARCH_VOLUME_STALE_MINUTES", 15);
-// ASIN lỗi được thử lại tối đa bấy nhiêu lần trong 1 tháng (lô nhỏ dần 10 → 5 → 2 → 1)
+// ASIN lỗi được thử lại tối đa bấy nhiêu lần trong 1 tháng
 const MAX_ASIN_ATTEMPTS = 4;
 const MAX_CONSECUTIVE_FAILURES = 5;
 
@@ -379,13 +381,14 @@ async function loadAsinQueue(sql: Sql, storeIds: string[], marketplace: string) 
   `;
 }
 
-/** ASIN mới gộp 10/lượt; ASIN từng lỗi chia nhỏ dần (10 → 5 → 2 → 1) để cô lập ASIN hỏng mà không đốt quota. */
+/** Mỗi lượt 1 ASIN (giữ thứ tự spend của hàng đợi); ASIN chưa thử trước, ASIN từng lỗi thử lại sau. */
 function buildAsinBatches(queue: AsinQueueRow[]) {
   const batches: Array<{ asins: string[]; attempts: number }> = [];
   for (let attempts = 0; attempts < MAX_ASIN_ATTEMPTS; attempts++) {
     const group = queue.filter((row) => !row.done && row.attempts === attempts).map((row) => row.asin);
-    const size = Math.max(1, CEREBRO_ASINS_PER_CALL >> attempts);
-    for (let i = 0; i < group.length; i += size) batches.push({ asins: group.slice(i, i + size), attempts });
+    for (let i = 0; i < group.length; i += CEREBRO_ASINS_PER_CALL) {
+      batches.push({ asins: group.slice(i, i + CEREBRO_ASINS_PER_CALL), attempts });
+    }
   }
   return batches;
 }
@@ -785,6 +788,9 @@ async function runSearchVolumeSync(
   // cerebroExhausted = Cerebro hết lượt trong tháng → tháng này không quét thêm được, Magnet vẫn nên lấp phần thiếu.
   let cerebroExhausted = false;
   let consecutiveFailures = 0;
+  // Lượt Cerebro đã tạo trong tháng (job trước bị ngắt, người dùng tự tìm trên H10) → đọc lại, không tốn lượt
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   for (const [index, batch] of batches.entries()) {
     if (usage.cerebro + cerebroCalls >= CEREBRO_MONTHLY_BUDGET) {
       stopReason = `Hết hạn mức Cerebro tháng (${CEREBRO_MONTHLY_BUDGET} lượt), sẽ chạy tiếp từ checkpoint.`;
@@ -804,8 +810,9 @@ async function runSearchVolumeSync(
         marketplace,
         limit: CEREBRO_ROWS_PER_CALL,
         directApiOnly: true,
+        reuseSearchSince: monthStart,
       }));
-      cerebroCalls++;
+      if (!result.reusedSearch) cerebroCalls++;
       const { saved, withVolume } = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
       await upsertRankings(sql, marketplace, batch.asins, result.keywords, spendLooseByMarket.get(marketplace));
       keywordsUpserted += saved.length;
