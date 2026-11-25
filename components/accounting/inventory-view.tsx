@@ -14,6 +14,7 @@ import {
   ArrowsInLineHorizontalIcon,
   BarcodeIcon,
   CalculatorIcon,
+  WarehouseIcon,
   CameraIcon,
   CaretDownIcon,
   CaretUpIcon,
@@ -134,6 +135,7 @@ import {
 } from "./inventory-sheet-links-modal";
 import type { LinkType, SheetType } from "@/lib/accounting/inventory-sheet-sync";
 import { MonthlyBaseCostView, type MonthlyBaseCostViewRef } from "./monthly-base-cost-view";
+import { InventoryTonView, type InventoryTonViewRef } from "./inventory-ton-view";
 import { PaginationBar } from "./pagination-bar";
 import { FbmPwCostView, type FbmPwCostViewRef } from "./fbm-pw-cost-view";
 import { StoreSelect } from "./store-select";
@@ -1482,11 +1484,11 @@ function InventoryViewInner() {
   const [loadingStores, setLoadingStores] = useState(true);
 
   // Giữ nguyên tab Inventory đang mở khi reload trang trong cùng một phiên browser.
-  type InventoryTab = "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
+  type InventoryTab = "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "ton";
   const [activeTab, setActiveTab] = useState<InventoryTab>(() => {
     if (typeof window === "undefined") return "sku";
     const savedTab = window.sessionStorage.getItem("accounting_inventory_active_tab");
-    return savedTab === "sku" || savedTab === "inbound" || savedTab === "check_shipment" || savedTab === "monthly_base_cost"
+    return savedTab === "sku" || savedTab === "inbound" || savedTab === "check_shipment" || savedTab === "monthly_base_cost" || savedTab === "ton"
       ? savedTab
       : "sku";
   });
@@ -1500,6 +1502,7 @@ function InventoryViewInner() {
     inbound: activeTab === "inbound",
     check_shipment: activeTab === "check_shipment",
     monthly_base_cost: activeTab === "monthly_base_cost",
+    ton: activeTab === "ton",
   }));
 
   // Nút tab đổi màu ngay theo activeTab; phần bảng đi theo shownTab (deferred) nên được render ở mức ưu tiên
@@ -1518,7 +1521,7 @@ function InventoryViewInner() {
   const storeHasFbm = storeHasTeam(selectedStore?.team, "FBM") && storeCanView(selectedStore, "FBM");
   const storeCanFba = loadingStores || storeCanView(selectedStore, "FBA");
   // Không xem được FBA: tab Đi Hàng / Check Shipment (chỉ có FBA) quay về Bảng Mã FBM
-  if (!storeCanFba && (activeTab === "inbound" || activeTab === "check_shipment")) handleTabChange("sku");
+  if (!storeCanFba && (activeTab === "inbound" || activeTab === "check_shipment" || activeTab === "ton")) handleTabChange("sku");
   const [skuChannelState, setSkuChannelState] = useState<SkuChannel>(() => {
     if (typeof window === "undefined") return "fba";
     return window.sessionStorage.getItem("accounting_inventory_sku_channel") === "fbm" ? "fbm" : "fba";
@@ -1529,6 +1532,7 @@ function InventoryViewInner() {
   const skuSheetLabel = skuChannel === "fbm" ? "Bảng Mã FBM" : "Bảng Mã";
 
   const monthlyBaseCostRef = useRef<MonthlyBaseCostViewRef>(null);
+  const tonRef = useRef<InventoryTonViewRef>(null);
   // Store có team FBM có thêm tab BASECOST THÁNG FBM (dữ liệu ĐẦU VÀO FBM PW từ link Kế Toán Tổng Hợp FBM),
   // dùng chung tab Basecost Tháng như cặp Bảng Mã / Bảng Mã FBM.
   const [baseCostChannelState, setBaseCostChannelState] = useState<SkuChannel>(() => {
@@ -5247,6 +5251,26 @@ function InventoryViewInner() {
                   <ArrowClockwiseIcon size={16} weight="bold" className={syncingSheet ? "animate-spin text-indigo-600" : ""} />
                 </button>
               </div>
+            ) : activeTab === "ton" ? (
+              <div className="flex items-center gap-2">
+                <a
+                  href={`/api/accounting/inventory/ton?store_id=${selectedStoreId}&format=xlsx`}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
+                  title="Xuất tab TỒN ra file Excel"
+                >
+                  <FileXlsIcon size={15} weight="bold" />
+                  <span>Xuất Excel</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => tonRef.current?.reload()}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Tải lại tab TỒN"
+                >
+                  <ArrowClockwiseIcon size={16} weight="bold" />
+                </button>
+              </div>
             ) : activeTab === "monthly_base_cost" ? (
               <div className="flex items-center gap-2">
                 <button
@@ -5502,6 +5526,19 @@ function InventoryViewInner() {
           </button>
 
           {renderBaseCostTab({ channel: "fba", label: "Basecost Tháng" })}
+
+          <button
+            type="button"
+            onClick={() => handleTabChange("ton")}
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              activeTab === "ton"
+                ? channelTabActiveClass("fba")
+                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+            }`}
+          >
+            <WarehouseIcon size={16} weight="bold" />
+            <span>Tồn</span>
+          </button>
           </>
           )}
 
@@ -5784,11 +5821,38 @@ function InventoryViewInner() {
               </button>
             </div>
           </div>
+        ) : activeTab === "ton" ? (
+          <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs ml-auto">
+            <button
+              type="button"
+              onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
+              className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+              title="Thu nhỏ bảng (-10%)"
+            >
+              <MinusIcon size={13} weight="bold" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setTableZoom(100)}
+              className="px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+              title="Đặt lại cỡ 100%"
+            >
+              {tableZoom}%
+            </button>
+            <button
+              type="button"
+              onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
+              className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+              title="Phóng to bảng (+10%)"
+            >
+              <PlusIcon size={13} weight="bold" />
+            </button>
+          </div>
         ) : null}
       </div>
 
       {/* ACTIVE COLUMN FILTERS BAR (HIỂN THỊ CÁC CỘT ĐANG ĐƯỢC LỌC) */}
-      {activeTab !== "monthly_base_cost" && Object.keys(columnFilters[activeTab] || {}).length > 0 && (
+      {activeTab !== "monthly_base_cost" && activeTab !== "ton" && Object.keys(columnFilters[activeTab] || {}).length > 0 && (
         <div className="flex items-center gap-2 px-3 py-2 bg-amber-50/80 rounded-xl border border-amber-200 flex-wrap shadow-2xs">
           <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-300">
             <FunnelIcon size={12} weight="bold" />
@@ -6539,6 +6603,13 @@ function InventoryViewInner() {
             onColumnContextMenu={(field, x, y) => setColumnContextMenu({ table: "monthly_base_cost", field, x, y })}
           />
           </>)} />
+        </div>
+      )}
+
+      {/* TAB 5: TỒN (giống tab TỒN của file <STORE> INVENTORY) */}
+      {visitedTabs.ton && selectedStoreId && (
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col h-[calc(100vh-230px)] min-h-[580px] ${shownTab === "ton" ? "" : "hidden"}`}>
+          <InventoryTonView ref={tonRef} storeId={selectedStoreId} tableZoom={tableZoom} />
         </div>
       )}
 

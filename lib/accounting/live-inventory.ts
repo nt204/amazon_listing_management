@@ -19,6 +19,8 @@ export interface LiveInventoryRow {
   available: number;
   inbound: number;
   reserved: number;
+  /** FBA: "estimated-storage-cost-next-month" (USD); AWD không có → null */
+  storageCost?: number | null;
 }
 
 export interface ParsedLiveInventory {
@@ -32,6 +34,13 @@ const norm = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
 function toInt(value: string | undefined): number {
   const n = Number(String(value ?? "").replace(/,/g, "").trim());
   return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+function toMoney(value: string | undefined): number | null {
+  const text = String(value ?? "").replace(/[$,]/g, "").trim();
+  if (!text) return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
 }
 
 function pickColumns(header: string[], wanted: Record<string, string[]>): Record<string, number> {
@@ -53,6 +62,7 @@ function mergeBySku(rows: LiveInventoryRow[]): LiveInventoryRow[] {
       prev.available += r.available;
       prev.inbound += r.inbound;
       prev.reserved += r.reserved;
+      if (r.storageCost != null) prev.storageCost = (prev.storageCost ?? 0) + r.storageCost;
       prev.fnsku ||= r.fnsku;
       prev.asin ||= r.asin;
     }
@@ -82,6 +92,7 @@ export function parseFbaInventoryReport(content: string): ParsedLiveInventory {
     inbound: ["inbound-quantity"],
     reserved: ["Total Reserved Quantity"],
     date: ["snapshot-date"],
+    storageCost: ["estimated-storage-cost-next-month"],
   });
   if (c.inbound < 0 || c.reserved < 0) throw new Error("File FBA Inventory thiếu cột inbound-quantity / Total Reserved Quantity.");
   const rows: LiveInventoryRow[] = [];
@@ -97,6 +108,7 @@ export function parseFbaInventoryReport(content: string): ParsedLiveInventory {
       available: toInt(r[c.available]),
       inbound: toInt(r[c.inbound]),
       reserved: toInt(r[c.reserved]),
+      storageCost: c.storageCost >= 0 ? toMoney(r[c.storageCost]) : null,
     });
   }
   return { rows: mergeBySku(rows), reportLabel };
@@ -150,6 +162,7 @@ export async function replaceLiveInventory(
     available: r.available,
     inbound: r.inbound,
     reserved: r.reserved,
+    estimated_storage_cost: r.storageCost ?? null,
     report_label: parsed.reportLabel,
     file_name: fileName,
   }));

@@ -47,6 +47,10 @@ export async function syncBaseCostOpeningFromSheet(storeId: string, url: string,
   if (skuCol < 0 || qtyCol < 0 || priceCol < 0) {
     throw new Error(`Tab "${sheet.tabTitle}" thiếu cột SKU / Hàng tồn 1/1 / Trung bình giá 1/1.`);
   }
+  // Cột "BASECOST" (nhập tay, sheet đang ẩn) → accounting_sku_master.ton_basecost cho tab TỒN của app.
+  // Ô trống giữ số cũ; không phụ thuộc năm kỳ mốc.
+  await syncTonBasecost(storeId, sheet.rows, skuCol, header.indexOf("basecost"));
+
   // Năm của cột ("Hàng tồn 1/1/2026") phải khớp kỳ mốc, tránh nạp nhầm tồn đầu năm khác
   const year = header[qtyCol].match(/(\d{4})/)?.[1];
   const period = BASE_COST_AUTO_FROM;
@@ -115,4 +119,24 @@ export async function syncBaseCostOpeningFromSheet(storeId: string, url: string,
       resyncFrom,
     };
   });
+}
+
+async function syncTonBasecost(storeId: string, rows: unknown[][], skuCol: number, basecostCol: number): Promise<void> {
+  if (basecostCol < 0) return;
+  const values = new Map<string, number>();
+  for (const row of rows.slice(1)) {
+    const sku = String(row[skuCol] ?? "").replace(/[\n\t\v\f]+/g, "").trim();
+    const raw = row[basecostCol];
+    if (!sku || raw === "" || raw == null) continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) values.set(sku.toUpperCase(), n);
+  }
+  if (!values.size) return;
+  const sql = await getDatabaseClient();
+  await sql`
+    UPDATE accounting_sku_master m SET ton_basecost = v.price
+    FROM unnest(${[...values.keys()]}::text[], ${[...values.values()]}::numeric[]) AS v(sku, price)
+    WHERE m.store_id = ${storeId} AND m.deleted_at IS NULL AND UPPER(TRIM(m.sku)) = v.sku
+      AND m.ton_basecost IS DISTINCT FROM v.price
+  `;
 }
