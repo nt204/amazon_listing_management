@@ -619,3 +619,9 @@ export function parseTargetListCommand(text: string, today: string, knownTeams: 
   }
   return { remove, range, team: teamMentionedInText(t, knownTeams) };
 }
+
+/** "🎯 **Mục tiêu tuần 23–29/11:** Tổng units 731 · Target units tuần 5,000 · % đạt 14.6%" (báo cáo ngày + tuần). */
+export function weekTargetLine(t: { startDate: string; endDate: string | null; value: number }, totalUnits: number): string {
+  const pct = t.value > 0 ? `${((totalUnits / t.value) * 100).toFixed(1)}%` : "—";
+  return `🎯 **Mục tiêu tuần ${rangeLabel(t.startDate, t.endDate)}:** Tổng units ${fmtMetric("units", totalUnits)} · Target units tuần ${fmtMetric("units", t.value)} · % đạt ${pct}`;
+}

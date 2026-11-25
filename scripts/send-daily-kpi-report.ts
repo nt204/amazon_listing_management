@@ -9,6 +9,7 @@ import { listActiveTeamTargets } from "@/lib/accounting/team-targets-service";
 import {
   isWeekUnitsTarget,
   weekTargetCells,
+  weekTargetLine,
   type ActiveTeamTarget,
   type TeamTotalsFn,
 } from "@/lib/accounting/team-targets";
@@ -774,8 +775,9 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
     // Có target tuần (Units) đang chạy → 1 dòng chỉ số ngay trên "Nhận xét team" (không chèn vào bảng, không nhận xét);
     // không có thì báo cáo như cũ
     const week = weekTargetCells(activeTargets, targetDate, teamTotals, null);
-    const weekLine = week && week.target !== "—"
-      ? `🎯 **Tuần ${week.week}:** Tổng units ${week.cum} · Target units tuần ${week.target} · % đạt ${week.pct}`
+    const teamWeek = activeTargets.find((t) => t.storeName === null && t.endDate);
+    const weekLine = week && teamWeek
+      ? weekTargetLine(teamWeek, teamTotals(teamWeek.startDate, targetDate, null).quantity)
       : "";
 
     const teamTableRows: Array<Record<string, string>> = [];

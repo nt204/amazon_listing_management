@@ -3,6 +3,9 @@ import { getWeeklyReport, type WeeklyBrandRow, type WeeklyReport, type WeeklyMet
 import { daysInMonthOf, weekSegmentOf, previousWeekSegment, type WeekSegment } from "@/lib/accounting/weekly-report-periods";
 import { kpiRatio, kpiTone } from "@/lib/accounting/kpi-progress";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
+import { loadChannelSeries } from "@/lib/accounting/daily-business-reporter";
+import { listActiveTeamTargets } from "@/lib/accounting/team-targets-service";
+import { isWeekUnitsTarget, weekTargetLine, type ActiveTeamTarget } from "@/lib/accounting/team-targets";
 
 interface PaceContext {
   dim: number;
@@ -229,6 +232,23 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
   // Dữ liệu SKU ALL (Win + Test)
   const allBrands = brands.map((b) => brandOfGroup(b, "all"));
 
+  // Target units tuần của team (tuần T2 → CN chứa ngày cuối kỳ báo cáo, vd kỳ 22–28/11 → tuần 23–29/11):
+  // 1 dòng "Mục tiêu tuần …" dưới bảng hiệu suất của team; team không có target thì không ghi gì.
+  const activeByTeam = await listActiveTeamTargets(week.endDate).catch(() => new Map<string, ActiveTeamTarget[]>());
+  const weekTargets = new Map<string, ActiveTeamTarget>();
+  for (const [teamId, list] of activeByTeam) {
+    const t = list.find((x) => isWeekUnitsTarget(x) && x.storeName === null && x.endDate);
+    if (t) weekTargets.set(teamId, t);
+  }
+  const targetList = [...weekTargets.values()];
+  const targetSeries = targetList.length
+    ? await loadChannelSeries(
+        targetList.reduce((max, t) => (t.endDate! > max ? t.endDate! : max), week.endDate),
+        undefined,
+        targetList.reduce((min, t) => (t.startDate < min ? t.startDate : min), week.endDate),
+      ).catch(() => [])
+    : [];
+
   // --- DỰNG LARK CARD ---
   const elements: any[] = [];
 
@@ -424,6 +444,14 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
         ],
         rows: teamStoreRows,
       };
+    const weekTarget = weekTargets.get(team.id);
+    const weekTargetUnits = weekTarget
+      ? targetSeries
+          .filter((c) => team.stores.some((st) => st.name === c.storeName.trim().toUpperCase() && st.channel === c.channel))
+          .flatMap((c) => c.days)
+          .filter((d) => d.date >= weekTarget.startDate && d.date <= weekTarget.endDate!)
+          .reduce((sum, d) => sum + (d.quantity || 0), 0)
+      : 0;
     const teamKpiTable = {
       tag: "table",
       page_size: Math.min(kpiRows.length, 10),
@@ -457,6 +485,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
           elements: [
             { tag: "markdown", content: "**📈 1. Hiệu suất kinh doanh tuần**" },
             teamTable,
+            ...(weekTarget ? [{ tag: "markdown", content: weekTargetLine(weekTarget, weekTargetUnits) }] : []),
             { tag: "markdown", content: "**🎯 2. Tiến độ KPI tháng (lũy kế đến hết tuần / Target tháng)**" },
             teamKpiTable,
           ],
