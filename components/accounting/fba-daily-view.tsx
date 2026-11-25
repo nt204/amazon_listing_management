@@ -1061,15 +1061,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                         {col.id === "profit_per_item" && (() => {
                           const ppi = stats.totalQuantity > 0 ? (stats.totalProfit + totalMonthFees) / stats.totalQuantity : 0;
                           return (
-                            <span
-                              className={`font-bold tabular-nums ${
-                                ppi > 0
-                                  ? "text-emerald-600"
-                                  : ppi < 0
-                                  ? "text-red-600"
-                                  : "text-slate-950"
-                              }`}
-                            >
+                            <span className="font-bold tabular-nums text-slate-950">
                               {formatCurrency(ppi)}
                             </span>
                           );
@@ -1233,7 +1225,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
 
                             {/* Refund */}
                             {col.id === "return_cost" && (
-                              <span className="font-normal tabular-nums" style={{ color: SHEET_RED }}>
+                              <span className="font-normal tabular-nums text-black">
                                 {formatCurrency(item.return_cost)}
                               </span>
                             )}
@@ -1267,39 +1259,21 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
 
                             {/* TACOS */}
                             {col.id === "tacos" && (
-                              <span
-                                className={`tabular-nums ${
-                                  item.tacos > 0.2
-                                    ? "text-rose-600 font-bold"
-                                    : "text-slate-700"
-                                }`}
-                              >
+                              <span className="font-normal tabular-nums text-black">
                                 {formatPercent(item.tacos)}
                               </span>
                             )}
 
                             {/* ACOS */}
                             {col.id === "acos" && (
-                              <span
-                                className={`tabular-nums ${
-                                  item.acos > 0.35
-                                    ? "text-rose-600 font-bold"
-                                    : "text-slate-700"
-                                }`}
-                              >
+                              <span className="font-normal tabular-nums text-black">
                                 {formatPercent(item.acos)}
                               </span>
                             )}
 
                             {/* % Profit (Margin) */}
                             {col.id === "margin" && (
-                              <span
-                                className={`tabular-nums ${
-                                  item.margin > 0.15
-                                    ? "text-emerald-700 font-semibold"
-                                    : "text-slate-700"
-                                }`}
-                              >
+                              <span className="font-normal tabular-nums text-black">
                                 {formatPercent(item.margin)}
                               </span>
                             )}
@@ -1311,17 +1285,9 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                               </span>
                             )}
 
-                            {/* Profit / item: font-semibold và xanh/đỏ */}
+                            {/* Profit / item: chữ đen, không in đậm */}
                             {col.id === "profit_per_item" && (
-                              <span
-                                className={`font-semibold tabular-nums ${
-                                  item.profit_per_item > 0
-                                    ? "text-emerald-600"
-                                    : item.profit_per_item < 0
-                                    ? "text-red-600"
-                                    : "text-slate-600"
-                                }`}
-                              >
+                              <span className="font-normal tabular-nums text-black">
                                 {formatCurrency(item.profit_per_item)}
                               </span>
                             )}
