@@ -290,9 +290,6 @@ interface GroupSummary {
   targetedRows: number;
   revenue: MetricProgress | null;
   profit: MetricProgress | null;
-  /** Dòng team / tổng của bảng team: tên team và mục tiêu units tuần (chốt ở check-in tuần) */
-  team?: string;
-  unitTarget?: number | null;
 }
 
 interface PaceContext {
@@ -423,51 +420,7 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
   const [skuGroup, setSkuGroup] = useState<SkuGroup>("all");
   const groupBrands = useMemo(() => visibleBrands.map((b) => brandOfGroup(b, skuGroup)), [visibleBrands, skuGroup]);
   const brandTotal = useMemo(() => (skuGroup === "win" ? total : summarize(groupBrands, ctx)), [skuGroup, total, groupBrands, ctx]);
-  const brandTeamsBase = useMemo(() => (skuGroup === "win" ? teams : groupTeams(groupBrands, ctx)), [skuGroup, teams, groupBrands, ctx]);
-
-  // Mục tiêu units tuần theo team: số từ server + phần vừa sửa ở trang (theo tuần, không cần tải lại)
-  const [unitEdits, setUnitEdits] = useState<Record<string, Record<string, number | null>>>({});
-  const unitTargets = useMemo(() => {
-    const merged: Record<string, number | null> = { ...(data.unitTargets ?? {}), ...(unitEdits[week.startDate] ?? {}) };
-    return merged;
-  }, [data.unitTargets, unitEdits, week.startDate]);
-  // Mục tiêu đặt cho tổng units cả team (Win + Test) → chỉ gắn khi xem All SKU, tất cả store
-  const showUnitTargets = skuGroup === "all" && selectedStoreKey === "all";
-  const brandTeams = useMemo(
-    () =>
-      showUnitTargets
-        ? brandTeamsBase.map((t) => ({ ...t, summary: { ...t.summary, team: t.team, unitTarget: unitTargets[t.team] ?? null } }))
-        : brandTeamsBase,
-    [showUnitTargets, brandTeamsBase, unitTargets],
-  );
-  const brandTotalWithUnits = useMemo(() => {
-    if (!showUnitTargets) return brandTotal;
-    // Chỉ cộng khi mọi team đều có mục tiêu — thiếu team nào thì % đạt của dòng tổng sẽ sai (units cả công ty ÷ mục tiêu vài team)
-    const list = brandTeams.map((t) => t.summary.unitTarget);
-    const complete = list.length > 0 && list.every((v) => v != null);
-    return { ...brandTotal, unitTarget: complete ? list.reduce((a: number, b) => a + (b ?? 0), 0) : null };
-  }, [showUnitTargets, brandTotal, brandTeams]);
-  const unitApi: UnitTargetApi = useMemo(
-    () => ({
-      canEdit: data.canEditPrepaid,
-      ctx,
-      running: (data.days || 0) < (week.days || 7),
-      save: async (team, units) => {
-        const res = await fetch("/api/accounting/financials/weekly-report/unit-target", {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ week_start: week.startDate, team, units }),
-        });
-        if (!res.ok) {
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          window.alert(j.error || "Không lưu được mục tiêu tuần.");
-          return;
-        }
-        setUnitEdits((prev) => ({ ...prev, [week.startDate]: { ...(prev[week.startDate] ?? {}), [team]: units } }));
-      },
-    }),
-    [data.canEditPrepaid, ctx, data.days, week.days, week.startDate],
-  );
+  const brandTeams = useMemo(() => (skuGroup === "win" ? teams : groupTeams(groupBrands, ctx)), [skuGroup, teams, groupBrands, ctx]);
 
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const brandRef = useRef<HTMLElement>(null);
@@ -490,19 +443,16 @@ function WeeklyDashboardBody({ data, selectedStoreKey }: { data: WeeklyReport; s
       </Section>
 
       <Section title="Kinh doanh theo Team/Brand" theme="blue">
-        <UnitTargetContext.Provider value={unitApi}>
         <BrandPanel
           sectionRef={brandRef}
           teams={brandTeams}
-          total={brandTotalWithUnits}
-          showUnitTargets={showUnitTargets}
+          total={brandTotal}
           skuGroup={skuGroup}
           onSkuGroup={setSkuGroup}
           totalLabel={selectedStoreKey === "all" ? "TỔNG" : "Tổng"}
           activeTeam={activeTeam}
           onClearTeam={() => setTeamFilter(null)}
         />
-        </UnitTargetContext.Provider>
       </Section>
 
       {stock.length > 0 && (
@@ -1082,104 +1032,6 @@ const BAD_TACOS = 0.3;
 const BAD_MARGIN = 0.15;
 const BAD = "!text-rose-600";
 
-// ---- Mục tiêu units tuần của team (chốt ở check-in tuần, riêng với mục tiêu tháng) ----
-interface UnitTargetApi {
-  canEdit: boolean;
-  ctx: PaceContext;
-  /** Tuần đang chạy dở: so theo nhịp (mục tiêu × ngày đã qua ÷ số ngày tuần) */
-  running: boolean;
-  save: (team: string, units: number | null) => Promise<void>;
-}
-const UnitTargetContext = createContext<UnitTargetApi | null>(null);
-
-function UnitTargetCell({ s, total }: { s: GroupSummary; total: boolean }) {
-  const api = useContext(UnitTargetContext);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  if (!s.team && !total) return null;
-  const value = s.unitTarget ?? null;
-  const editable = Boolean(api?.canEdit && s.team && !total);
-  if (!editable) return value != null ? <span>{int(value)}</span> : <span className="!text-slate-400">—</span>;
-  if (editing) {
-    const commit = async () => {
-      const raw = draft.replace(/[^\d]/g, "");
-      const next = raw === "" ? null : Number(raw);
-      setEditing(false);
-      if (next === value) return;
-      setSaving(true);
-      try {
-        await api!.save(s.team!, next);
-      } finally {
-        setSaving(false);
-      }
-    };
-    return (
-      <input
-        autoFocus
-        inputMode="numeric"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") setEditing(false);
-        }}
-        aria-label={`Mục tiêu units tuần ${s.team}`}
-        className="w-24 rounded-md border border-slate-400 bg-white px-2 py-1 text-right font-bold !text-black outline-none focus:border-slate-900"
-      />
-    );
-  }
-  return (
-    <button
-      type="button"
-      disabled={saving}
-      onClick={() => {
-        setDraft(value != null ? String(value) : "");
-        setEditing(true);
-      }}
-      title="Bấm để nhập mục tiêu units tuần của team"
-      className="cursor-pointer rounded-md border border-dashed border-slate-400 px-2 py-0.5 hover:border-slate-900 hover:bg-white/70 disabled:opacity-50"
-    >
-      {value != null ? int(value) : <span className="text-[12px] font-semibold !text-slate-500">+ Nhập</span>}
-    </button>
-  );
-}
-
-function UnitPctCell({ s, total }: { s: GroupSummary; total: boolean }) {
-  const api = useContext(UnitTargetContext);
-  if ((!s.team && !total) || !api || !s.unitTarget) return null;
-  const a = periodOf(s.cur.quantity, s.unitTarget, api.ctx.weekElapsed, api.ctx.weekDays);
-  // Tuần đã xong: units ÷ mục tiêu · đang chạy: so với nhịp tới ngày có số liệu
-  const ratio = api.running ? a.ratio : a.fullRatio;
-  const tone = kpiTone(ratio);
-  const hint = api.running
-    ? `Đến ngày ${a.elapsed}/${a.total} của tuần: ${int(a.actual)} / cần ${int(Math.round(a.due))} units (nhịp) · mục tiêu tuần ${int(a.full)}` +
-      (a.needPerDay != null ? ` · còn thiếu ${int(Math.max(0, a.full - a.actual))} → cần ~${int(Math.ceil(a.needPerDay))}/ngày` : "")
-    : `${int(a.actual)} / ${int(a.full)} units`;
-  return (
-    <span className={tone ? TONE_TEXT[tone] : ""} title={hint}>
-      {pct(ratio, 0)}
-      {api.running && <span className="ml-1 text-[11px] font-semibold !text-slate-500">nhịp</span>}
-    </span>
-  );
-}
-
-const UNIT_COLS: Col[] = [
-  {
-    key: "unitTarget",
-    label: "MT units\ntuần",
-    title: "Mục tiêu units tuần của team (chốt ở buổi check-in tuần). Admin / kế toán bấm vào ô để nhập.",
-    render: (s, total) => <UnitTargetCell s={s} total={total} />,
-  },
-  {
-    key: "unitPct",
-    label: "% đạt\nMT tuần",
-    title: "Units tuần ÷ mục tiêu tuần. Tuần đang chạy: so với nhịp (mục tiêu × ngày đã qua ÷ số ngày tuần).",
-    render: (s, total) => <UnitPctCell s={s} total={total} />,
-  },
-];
-
 // Kết quả tuần: Revenue · % WoW Revenue · Quantity · Ads Fee · Profit · % WoW Profit · TACoS · Biên LN · ROI; Tiến độ tháng: 4 cột
 const BRAND_COLS: Col[] = [
   { key: "rev", label: "Revenue\ntuần này", sort: "revenue", render: (s) => money(s.cur.revenue) },
@@ -1275,7 +1127,6 @@ function BrandPanel({
   onClearTeam,
   skuGroup,
   onSkuGroup,
-  showUnitTargets = false,
 }: {
   sectionRef: RefObject<HTMLElement | null>;
   teams: TeamGroup[];
@@ -1285,15 +1136,12 @@ function BrandPanel({
   totalLabel: string;
   activeTeam: string | null;
   onClearTeam: () => void;
-  /** Hiện 2 cột mục tiêu units tuần (chỉ khi xem All SKU, tất cả store) */
-  showUnitTargets?: boolean;
 }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: "desc" | "asc" } | null>(null);
   // TEAM: mỗi team 1 dòng tổng (mặc định) · BRAND: chi tiết từng brand trong team
   const [level, setLevel] = useState<"team" | "brand">("team");
 
-  const qtyAt = BRAND_COLS.findIndex((c) => c.key === "qty") + 1;
-  const cols = showUnitTargets ? [...BRAND_COLS.slice(0, qtyAt), ...UNIT_COLS, ...BRAND_COLS.slice(qtyAt)] : BRAND_COLS;
+  const cols = BRAND_COLS;
   const grouped = teams.length > 1;
   // Chỉ 1 team (lọc 1 store) thì luôn hiện brand, không có dòng team
   const showBrands = !grouped || level === "brand";
