@@ -11,7 +11,6 @@ const resultBg = (v: number | null | undefined) =>
   v == null || Number.isNaN(v) ? undefined : v < 0 ? SHEET_RED : SHEET_GREEN;
 import {
   ArrowClockwiseIcon,
-  CalendarBlankIcon,
   CaretDownIcon,
   CaretUpIcon,
   CheckIcon,
@@ -40,6 +39,7 @@ import {
   createTextWidthMeasurer,
 } from "./column-manager-modal";
 import { PaginationBar } from "./pagination-bar";
+import { MonthRangePicker } from "./month-range-picker";
 import { ColumnHeaderMenu, filterOptionsFor, passesValueFilters, type ValueFilters } from "./column-header-menu";
 import {
   AccountingTableSkeletonRows,
@@ -556,25 +556,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     fetchData();
   }, [fetchData]);
 
-  // SKU FBM-monthly: hiện cả tháng chưa có số (đến tháng hiện tại) để chọn rồi bấm "Tính từ file thô"
-  const monthOptions = useMemo(() => {
-    const options: { month: number; label: string; activeSkus: number | null }[] = availableMonths.map((m) => ({
-      month: m.month,
-      label: m.label,
-      activeSkus: m.activeSkus,
-    }));
-    if (isFbm) {
-      const now = new Date();
-      const lastMonth = selectedYear < now.getFullYear() ? 12 : selectedYear === now.getFullYear() ? now.getMonth() + 1 : 0;
-      for (let month = 1; month <= lastMonth; month++) {
-        if (!options.some((o) => o.month === month)) {
-          options.push({ month, label: `Tháng ${month}/${selectedYear}`, activeSkus: null });
-        }
-      }
-      options.sort((a, b) => b.month - a.month);
-    }
-    return options;
-  }, [availableMonths, isFbm, selectedYear]);
 
   // Tìm kiếm + sắp xếp trên TOÀN BỘ SKU của kỳ rồi mới chia trang
   const displayItems = useMemo(() => {
@@ -640,78 +621,23 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
             </select>
           </div>
 
-          {/* Month Selector */}
-          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
-            <CalendarBlankIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
-            <select
-              value={selectedMonth}
-              onChange={(e) => {
-                const val = e.target.value === "all" ? "all" : parseInt(e.target.value, 10);
-                setSelectedMonth(val);
-                if (typeof window !== "undefined") {
-                  localStorage.setItem("acc_selected_month", String(val));
-                }
-                // Từ tháng mới vượt quá Đến tháng → về xem 1 tháng
-                if (val === "all" || (selectedMonthTo != null && selectedMonthTo <= val)) saveMonthTo(null);
-              }}
-              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-                backgroundPosition: "right 0 center",
-                backgroundRepeat: "no-repeat",
-                backgroundSize: "1.25em 1.25em",
-              }}
-            >
-              {availableMonths.length > 0 ? (
-                monthOptions.map((m) => (
-                  <option key={m.month} value={m.month}>
-                    {m.activeSkus == null ? `${m.label} (chưa có số)` : `${m.label} (${m.activeSkus} SKUs)`}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value={9}>Tháng 9/2026</option>
-                  <option value={8}>Tháng 8/2026</option>
-                  <option value={7}>Tháng 7/2026</option>
-                  <option value={6}>Tháng 6/2026</option>
-                  <option value={5}>Tháng 5/2026</option>
-                  <option value={4}>Tháng 4/2026</option>
-                  <option value={3}>Tháng 3/2026</option>
-                  <option value={2}>Tháng 2/2026</option>
-                  <option value={1}>Tháng 1/2026</option>
-                </>
-              )}
-              <option value="all">Tất cả các tháng (YTD)</option>
-            </select>
-          </div>
-
-          {/* Đến tháng: gộp số từ tháng đã chọn đến tháng này */}
-          {selectedMonth !== "all" && (
-            <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
-              <span className="mr-1.5 shrink-0 font-semibold text-slate-500">đến</span>
-              <select
-                aria-label="Đến tháng"
-                value={monthTo ?? ""}
-                onChange={(e) => saveMonthTo(e.target.value ? parseInt(e.target.value, 10) : null)}
-                className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
-                style={{
-                  backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-                  backgroundPosition: "right 0 center",
-                  backgroundRepeat: "no-repeat",
-                  backgroundSize: "1.25em 1.25em",
-                }}
-              >
-                <option value="">(chỉ tháng {selectedMonth})</option>
-                {monthOptions
-                  .filter((m) => m.month > selectedMonth)
-                  .map((m) => (
-                    <option key={m.month} value={m.month}>
-                      {m.label}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          )}
+          {/* Chọn tháng / khoảng tháng (lưới 12 tháng, đổi năm bằng mũi tên) */}
+          <MonthRangePicker
+            value={{ year: selectedYear, from: selectedMonth, to: monthTo }}
+            monthSkus={Object.fromEntries(availableMonths.filter((m) => m.year === selectedYear).map((m) => [m.month, m.activeSkus]))}
+            monthSkusYear={selectedYear}
+            onChange={(v) => {
+              setSelectedYear(v.year);
+              setSelectedMonth(v.from);
+              saveMonthTo(v.to);
+              try {
+                localStorage.setItem("acc_selected_year", String(v.year));
+                localStorage.setItem("acc_selected_month", String(v.from));
+              } catch {
+                // bỏ qua
+              }
+            }}
+          />
 
           {/* Search SKU, ASIN */}
           <div className="relative flex items-center">
