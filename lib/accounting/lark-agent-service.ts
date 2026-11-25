@@ -1154,6 +1154,22 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
     }
   }
 
+  // Sếp giao mục tiêu cho team ("tuần cuối T11 tối thiểu 3000 unit"): bóc ra, trả card xác nhận (bật bằng LARK_TEAM_TARGETS=1)
+  if (targetReceiveIdType === "chat_id" && targetReceiveId) {
+    const { handleTeamTargetMessage } = await import("@/lib/accounting/team-targets-service");
+    const target = await handleTeamTargetMessage({
+      message: options.message,
+      chatId: targetReceiveId,
+      messageId: options.replyToMessageId,
+      senderOpenId: options.larkSenderId,
+      recipient: { receiveId: targetReceiveId, receiveIdType: targetReceiveIdType, replyToMessageId: options.replyToMessageId },
+      sendToLark: Boolean(options.sendToLark),
+    });
+    if (target.handled) {
+      return { replyText: target.replyText ?? "", toolsUsed: ["team_targets"], larkSent: Boolean(options.sendToLark) };
+    }
+  }
+
   // 1. KIỂM TRA THAO TÁC PPC ĐANG CHỜ XÁC NHẬN (NẾU CÓ SESSION ID)
   if (options.sessionId) {
     const pending = await getPendingAction(options.sessionId);

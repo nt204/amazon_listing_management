@@ -206,6 +206,17 @@ export async function processLarkCardAction(data: LarkCardActionEvent): Promise<
     ].filter((id): id is string => Boolean(id));
     return { status: "response", response: await handleAutoDecreaseCardAction(actionType, batchId, operatorIds) };
   }
+  // Card "Mục tiêu team" (lib/accounting/team-targets-service.ts): ai đã liên kết NCE HUB cũng bấm được, ghi tên người bấm.
+  if (actionType === "TEAM_TARGET_CONFIRM" || actionType === "TEAM_TARGET_CANCEL") {
+    const draftId = typeof value.draftId === "string" ? value.draftId : "";
+    if (!draftId) return { status: "ignored" };
+    const { handleTeamTargetCardAction } = await import("@/lib/accounting/team-targets-service");
+    const operatorIds = [
+      data.operator?.open_id, data.operator?.user_id, data.operator?.union_id, data.open_id,
+    ].filter((id): id is string => Boolean(id));
+    const team = typeof value.team === "string" ? value.team : undefined;
+    return { status: "response", response: await handleTeamTargetCardAction(actionType, draftId, team, operatorIds) };
+  }
   const sessionId = typeof value.sessionId === "string" ? value.sessionId : "";
   const chatId = data.context?.open_chat_id || data.open_chat_id;
 

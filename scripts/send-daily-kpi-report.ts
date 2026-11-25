@@ -5,6 +5,8 @@ import type { DashboardDay } from "@/lib/accounting/dashboard-totals";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
 import { listSkuWin, type SkuWinItem } from "@/lib/accounting/sku-win-db";
 import { listFbmSkuFixed } from "@/lib/accounting/fbm-financials-db";
+import { listActiveTeamTargets } from "@/lib/accounting/team-targets-service";
+import { teamTargetsBlock, type ActiveTeamTarget, type TeamTotalsFn } from "@/lib/accounting/team-targets";
 
 interface MetricSet {
   revenue: number;
@@ -496,8 +498,18 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
   const monthStart = `${targetDate.slice(0, 7)}-01`;
 
   const sql = await getDatabaseClient();
+  // Mục tiêu sếp giao (tag bot trên Lark) đang áp dụng; tuần/tháng nằm trong 1 tháng, chỉ mục tiêu ghi thẳng ngày
+  // mới có thể bắt đầu trước đầu tháng → nạp số liệu từ ngày bắt đầu sớm nhất. Margin tối thiểu tính từ đầu tháng.
+  const teamTargets = await listActiveTeamTargets(targetDate).catch((err) => {
+    console.error("[DailyKpiReport] Không đọc được mục tiêu team:", err);
+    return new Map<string, ActiveTeamTarget[]>();
+  });
+  for (const list of teamTargets.values()) {
+    for (const t of list) if (t.kind === "margin_floor" && t.startDate < monthStart) t.startDate = monthStart;
+  }
+  const seriesFrom = [...teamTargets.values()].flat().reduce((min, t) => (t.startDate < min ? t.startDate : min), monthStart);
   const [channels, storeList, serviceFeesMap] = await Promise.all([
-    loadChannelSeries(targetDate, undefined, monthStart),
+    loadChannelSeries(targetDate, undefined, seriesFrom),
     sql<Array<{ id: string; name: string }>>`SELECT id, name FROM stores`,
     loadLargeServiceFees(targetDate),
   ]);
@@ -803,7 +815,27 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       return `[${chDef.displayName}](${dailyReportStoreUrl(storeName, isFbm ? "FBM" : "FBA")})`;
     });
 
+    // Tiến độ mục tiêu sếp giao: cộng số các kênh của team (cùng kênh với bảng trên), lọc 1 store khi mục tiêu theo store
+    const teamSeries = team.channels
+      .map((chDef) => findCh(channels, chDef.label))
+      .filter((c): c is ChannelSeriesInput => Boolean(c));
+    const teamTotals: TeamTotalsFn = (from, to, storeName) => {
+      const acc = { quantity: 0, revenue: 0, profit: 0 };
+      for (const c of teamSeries) {
+        if (storeName && c.storeName.trim().toUpperCase() !== storeName) continue;
+        for (const d of c.days) {
+          if (d.date < from || d.date > to) continue;
+          acc.quantity += d.quantity || 0;
+          acc.revenue += d.revenue || 0;
+          acc.profit += d.profit || 0;
+        }
+      }
+      return acc;
+    };
+    const targetsBlock = teamTargetsBlock(teamTargets.get(team.id) ?? [], targetDate, teamTotals);
+
     const teamElements: Array<Record<string, any>> = [
+      ...(targetsBlock ? [{ tag: "markdown", content: targetsBlock }, { tag: "hr" }] : []),
       {
         tag: "table",
         page_size: Math.min(teamTableRows.length, 10),
