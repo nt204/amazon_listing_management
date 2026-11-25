@@ -21,6 +21,8 @@ ITEMS=(
   "mac-crawler/accounting_crawler.ts:accounting_crawler.ts"
   # Cuối pipeline kế toán ngày: gọi /api/accounting/financials/report-daily/after-crawl gửi Báo cáo KPI ngày
   "mac-crawler/run_accounting_daily.sh:run_accounting_daily.sh"
+  # Crawler lệch kho (thứ 2, 2h): phân loại lô + tính chi tiết theo SKU cho lô 1 SKU
+  "mac-crawler/get_discrepancy_shipments.py:get_discrepancy_shipments.py"
 )
 
 cd "$(dirname "$0")/.."

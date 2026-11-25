@@ -136,7 +136,15 @@ def main():
                 COALESCE(b.ngay_den, '') AS receiving_date,
                 COALESCE(l.lot_status, '') AS lot_status,
                 -- Lô nhiều SKU tự tính được từ bảng khi mọi SKU đã có số nhận và tổng khớp số nhận của lô
-                (l.missing_sku_received = 0 AND (l.lot_received IS NULL OR l.lot_received = l.sum_sku_received)) AS resolvable
+                (l.missing_sku_received = 0 AND (l.lot_received IS NULL OR l.lot_received = l.sum_sku_received)) AS resolvable,
+                -- Units located của Amazon (báo cáo Check Shipment) cho cả lô
+                (
+                    SELECT c.units_located FROM accounting_amazon_check_shipments c
+                    WHERE c.store_id = b.store_id AND c.deleted_at IS NULL
+                      AND LOWER(TRIM(c.shipment_id)) = LOWER(TRIM(b.shipment_id))
+                    ORDER BY c.updated_at DESC
+                    LIMIT 1
+                ) AS check_located
             FROM base b
             JOIN lot l ON l.shipment_id = b.shipment_id
             ORDER BY l.sku_count DESC, b.shipment_id, b.sku;
@@ -150,6 +158,7 @@ def main():
         shipment_status = {}
 
         seen_multi = set()
+        single_lots = {}  # lô 1 SKU: gom các dòng cùng SKU (sheet có thể ghi 1 SKU thành nhiều dòng)
         for r in rows:
             shipment_id = (r[0] or "").strip()
             sku_count = r[1]
@@ -162,25 +171,28 @@ def main():
             receiving_date = (r[8] or "").strip()
             lot_status = (r[9] or "").strip()
             resolvable = bool(r[10])
+            check_located = r[11]
 
             status = lot_status if lot_status else "Closed"
             shipment_status[shipment_id] = status
 
             if sku_count == 1:
-                # Lô 1 SKU: số nhận của SKU = số nhận theo SKU, không có thì số nhận của lô
-                received = sku_received if sku_received is not None else lot_received
-                discrepancy = (int(received) - quantity) if received is not None else -raw_disc
-                single_sku_items.append({
-                    "store": store_name,
-                    "sku": sku,
-                    "asin": asin,
-                    "shipment_id": shipment_id,
-                    "amazon_received": quantity,
-                    "so_luong_amazon_nhan": quantity + discrepancy,
-                    "discrepancy": discrepancy,
-                    "receiving_date": receiving_date,
-                    "status": status
-                })
+                # Lô 1 SKU: lô thiếu/thừa bao nhiêu thì chính SKU đó thiếu/thừa bấy nhiêu.
+                # Số nhận ưu tiên Units located của Amazon (Check Shipment), rồi số nhận của lô trong bảng,
+                # cuối cùng mới tới Amazon Received trên sheet (hay bị ghi bằng số đi → che mất phần thiếu).
+                lot = single_lots.get(shipment_id)
+                if lot is None:
+                    lot = single_lots[shipment_id] = {
+                        "sku": sku, "asin": asin, "quantity": 0, "sheet_received": None,
+                        "lot_received": lot_received, "check_located": check_located,
+                        "receiving_date": receiving_date, "status": status, "raw_disc": 0,
+                    }
+                lot["quantity"] += quantity
+                lot["raw_disc"] += raw_disc
+                if sku_received is not None:
+                    lot["sheet_received"] = (lot["sheet_received"] or 0) + int(sku_received)
+                if not lot["asin"] and asin:
+                    lot["asin"] = asin
             elif resolvable:
                 received = int(sku_received or 0)
                 db_resolved_items.append({
@@ -198,6 +210,28 @@ def main():
                 if shipment_id not in seen_multi:
                     seen_multi.add(shipment_id)
                     multi_sku_shipments.append(shipment_id)
+
+        for shipment_id, lot in single_lots.items():
+            quantity = lot["quantity"]
+            if lot["check_located"] is not None:
+                received = int(lot["check_located"])
+            elif lot["lot_received"] is not None:
+                received = int(lot["lot_received"])
+            elif lot["sheet_received"] is not None:
+                received = lot["sheet_received"]
+            else:
+                received = quantity - lot["raw_disc"]
+            single_sku_items.append({
+                "store": store_name,
+                "sku": lot["sku"],
+                "asin": lot["asin"],
+                "shipment_id": shipment_id,
+                "amazon_received": quantity,
+                "so_luong_amazon_nhan": received,
+                "discrepancy": received - quantity,
+                "receiving_date": lot["receiving_date"],
+                "status": lot["status"]
+            })
 
         print(json.dumps({
             "store": store_name,
