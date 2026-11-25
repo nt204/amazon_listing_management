@@ -1,6 +1,7 @@
 // Nhắc đánh giá SKU Testing — xem trước / gửi tay.
 //   node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/send-sku-eval-reminder.ts \
-//     [--month 2026-12] [--store LIMIMA[,FASTPEACE]] [--send] [--webhook URL] [--json]
+//     [--month 2026-12] [--store LIMIMA[,FASTPEACE]] [--team "FBA 2"] [--send] [--webhook URL] [--json]
+// --team: mã team như báo cáo KPI ngày (TEAMS[].id) — gửi 1 tin gồm mọi store của team, tiêu đề có tên team.
 // Không có --send: chỉ in ra số liệu, không gửi Lark.
 import {
   buildSkuEvalReminder,
@@ -10,6 +11,7 @@ import {
   vietnamNow,
 } from "@/lib/accounting/sku-eval-reminder";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
+import { TEAMS } from "@/scripts/send-daily-kpi-report";
 
 function arg(name: string) {
   const i = process.argv.indexOf(name);
@@ -20,8 +22,13 @@ async function main() {
   const month = arg("--month") || vietnamNow().month;
   const storeArg = arg("--store");
   const stores = storeArg ? storeArg.split(",").map((s) => s.trim()).filter(Boolean) : configuredReminderStores();
-  const reminder = await buildSkuEvalReminder(month, stores);
-  const card = buildSkuEvalReminderCard(reminder);
+  const teamId = arg("--team")?.trim().toUpperCase();
+  const team = teamId ? TEAMS.find((t) => t.id.toUpperCase() === teamId) : undefined;
+  if (teamId && !team) throw new Error(`Không có team "${teamId}". Có: ${TEAMS.map((t) => t.id).join(", ")}`);
+  const reminder = await buildSkuEvalReminder(month, storeArg || !teamId ? stores : [], { teamId });
+  const card = buildSkuEvalReminderCard(reminder, {
+    titlePrefix: team ? `${team.name.toUpperCase()} (${team.lead.toUpperCase()})` : undefined,
+  });
 
   console.log(`Tháng ${month} · tháng thứ 3 = listing ${reminder.m3Listing} · tháng thứ 4 = listing ${reminder.m4Listing}`);
   for (const s of reminder.stores) {

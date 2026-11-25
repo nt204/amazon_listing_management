@@ -74,8 +74,16 @@ export function configuredReminderStores(): string[] {
     .filter(Boolean);
 }
 
-/** SKU cần điền trạng thái đánh giá tính tới tháng `month` (YYYY-MM). storeNames rỗng = mọi store active. */
-export async function buildSkuEvalReminder(month: string, storeNames: string[] = []): Promise<SkuEvalReminder> {
+/**
+ * SKU cần điền trạng thái đánh giá tính tới tháng `month` (YYYY-MM). storeNames rỗng = mọi store active.
+ * teamId (vd "FBA 2") = các store có cột team bắt đầu bằng mã đó ("FBA 2 / FBM" vẫn thuộc FBA 2).
+ */
+export async function buildSkuEvalReminder(
+  month: string,
+  storeNames: string[] = [],
+  options: { teamId?: string } = {},
+): Promise<SkuEvalReminder> {
+  const teamId = options.teamId?.trim().toUpperCase() || "";
   const sql = await getDatabaseClient();
   const m3Listing = addMonths(month, -3);
   const m4Listing = addMonths(month, -4);
@@ -93,6 +101,7 @@ export async function buildSkuEvalReminder(month: string, storeNames: string[] =
     WHERE s.status = 'active'
       AND m.listing_month <= ${m3Listing}
       AND (${names.length === 0} OR upper(s.name) = ANY(${names}))
+      AND (${teamId === ""} OR upper(trim(split_part(s.team, '/', 1))) = ${teamId})
     ORDER BY s.name, m.listing_month, m.sku
   `;
 
@@ -125,7 +134,7 @@ function skuListUrl(s: StoreEvalReminder, year: string, skus: string[], label: s
 }
 
 /** Card Lark: mỗi store 3 dòng đếm (quá hạn / tháng thứ 4 / tháng thứ 3) + link mở bảng SKU Testing đã lọc sẵn. */
-export function buildSkuEvalReminderCard(r: SkuEvalReminder): Record<string, unknown> {
+export function buildSkuEvalReminderCard(r: SkuEvalReminder, options: { titlePrefix?: string } = {}): Record<string, unknown> {
   const total = r.stores.reduce((sum, s) => sum + s.total, 0);
   const elements: Record<string, unknown>[] = [];
 
@@ -165,7 +174,7 @@ export function buildSkuEvalReminderCard(r: SkuEvalReminder): Record<string, unk
     config: { width_mode: "fill" },
     header: {
       template: total ? "orange" : "green",
-      title: { tag: "plain_text", content: `⏰ SKU CẦN ĐÁNH GIÁ · ${monthLabel(r.month)} — ${total} SKU` },
+      title: { tag: "plain_text", content: `⏰ ${options.titlePrefix ? `${options.titlePrefix} · ` : ""}SKU CẦN ĐÁNH GIÁ · ${monthLabel(r.month)} — ${total} SKU` },
     },
     body: { elements },
   };
