@@ -387,7 +387,8 @@ export async function listSkuMonthly(
         basecost_adjustment: Number(storedSummary.basecost_adjustment || 0),
         total_sku_profit: Number(storedSummary.total_sku_profit || 0),
         net_profit: Number(storedSummary.net_profit || 0),
-        total_available_now: Number(storedSummary.total_available_now || 0),
+        // Bảng tổng tháng không lưu tồn (luôn 0) → cộng tồn từng SKU như cột Available now đang hiện
+        total_available_now: items.reduce((sum, i) => sum + i.available_now, 0),
         total_revenue_ads: Number(storedSummary.total_revenue_ads || 0),
         tacos: storedSummary.tacos !== null ? Number(storedSummary.tacos) : null,
         acos: storedSummary.acos !== null ? Number(storedSummary.acos) : null,
