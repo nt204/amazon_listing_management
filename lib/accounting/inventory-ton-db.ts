@@ -14,7 +14,7 @@ import { getDatabaseClient } from "@/lib/db";
 //   N Tồn                 = F + I − M
 //   O/P/Q Available / Inbound / Reserved = FBA (báo cáo FBA Inventory) + AWD (AWD inventory report) mới nhất
 //         (crawler 16h10), cộng theo ASIN như sheet
-//   R Total (Amazon)      = O + P + Q
+//   Inventory (FBA) / AWD = available + inbound + reserved của từng kho; R Total (Amazon) = FBA + AWD
 //   S Tổng giá trị tồn    = R × K
 //   T Giá trị đang đi đường = P × K
 //   U Phí lưu kho tháng sau = estimated-storage-cost-next-month, theo ASIN
@@ -39,6 +39,11 @@ export interface InventoryTonRow {
   available: number;
   inbound: number;
   reserved: number;
+  /** Tồn kho FBA = available + inbound + reserved (báo cáo FBA Inventory) */
+  fba_total: number;
+  /** Tồn kho AWD = available + inbound + reserved (AWD inventory report) */
+  awd_total: number;
+  /** = fba_total + awd_total */
   total_amazon: number;
   gtri_ton: number;
   gtri_di_duong: number;
@@ -88,14 +93,16 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
       lv AS (
         SELECT UPPER(TRIM(asin)) AS a,
           SUM(available)::float AS o, SUM(inbound)::float AS p, SUM(reserved)::float AS q,
-          SUM(estimated_storage_cost)::float AS u
+          SUM(estimated_storage_cost)::float AS u,
+          SUM(total) FILTER (WHERE source = 'FBA')::float AS fba,
+          SUM(total) FILTER (WHERE source = 'AWD')::float AS awd
         FROM accounting_live_inventory
         WHERE store_id = ${storeId} AND COALESCE(asin, '') <> ''
         GROUP BY 1
       )
       SELECT asm.id::text AS id, asm.brand, asm.product_type, asm.mockup_url, asm.sku, asm.asin, asm.status,
         asm.ton_basecost::float AS basecost,
-        op.f, op.g, ib.i, ib.j, rk.m, lv.o, lv.p, lv.q, lv.u
+        op.f, op.g, ib.i, ib.j, rk.m, lv.o, lv.p, lv.q, lv.u, lv.fba, lv.awd
       FROM accounting_sku_master asm
       LEFT JOIN op ON op.k = UPPER(TRIM(asm.sku))
       LEFT JOIN ib ON ib.k = REPLACE(UPPER(TRIM(asm.sku)), ' ', '')
@@ -131,7 +138,9 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
       const o = num(r.o);
       const p = num(r.p);
       const q = num(r.q);
-      const total = o + p + q;
+      const fba = num(r.fba);
+      const awd = num(r.awd);
+      const total = fba + awd;
       return {
         id: String(r.id),
         brand: (r.brand as string) ?? null,
@@ -152,6 +161,8 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
         available: o,
         inbound: p,
         reserved: q,
+        fba_total: fba,
+        awd_total: awd,
         total_amazon: total,
         gtri_ton: total * k,
         gtri_di_duong: p * k,

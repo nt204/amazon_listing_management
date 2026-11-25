@@ -58,35 +58,24 @@ function buildColumns(year: number): Col[] {
     { key: "asin", label: "ASIN", width: 112, fmt: "text", head: ORANGE, bold: true, align: "left" },
     { key: "ton_dau_nam", label: `Hàng tồn 1/1/${year}`, width: 86, fmt: "int", head: ORANGE, cellBg: CREAM, align: "center",
       hint: `Tồn đầu kỳ tháng 1/${year} của Basecost Tháng (nạp từ tab TỒN của sheet)` },
-    { key: "gia_dau_nam", label: `Trung bình giá 1/1/${year}`, width: 90, fmt: "dec", head: ORANGE, cellBg: CREAM, align: "center", group: "opening",
-      hint: `Giá đầu kỳ tháng 1/${year} của Basecost Tháng` },
     { key: "gtri_dau_nam", label: "Tổng giá trị tồn đầu năm", width: 104, fmt: "money", head: ORANGE, align: "right", group: "opening",
       hint: "= Hàng tồn 1/1 × Trung bình giá 1/1" },
     { key: "sl_di_hang", label: "SL ĐI HÀNG /NĂM", width: 86, fmt: "int", head: ORANGE, align: "right",
       hint: "= Tổng Quantity của SKU ở Chi Tiết Đi Hàng" },
     { key: "tien_hang", label: "TIỀN HÀNG/NĂM", width: 112, fmt: "money", head: ORANGE, bgWhenPositive: GREEN, align: "center",
       hint: "= Tổng Total Basecost của SKU ở Chi Tiết Đi Hàng" },
-    { key: "basecost_tb", label: "BASECOST TB/NĂM", width: 96, fmt: "money", head: ORANGE, bgWhenPositive: GREEN, align: "center",
-      hint: "= SL đi hàng ≤ 0 ? Trung bình giá 1/1 : Tiền hàng ÷ SL đi hàng" },
     { key: "basecost", label: "BASECOST", width: 86, fmt: "money", head: ORANGE, bgWhenPositive: GREEN, align: "center", hiddenByDefault: true,
       hint: "Số nhập tay trên sheet (đồng bộ từ tab TỒN hằng ngày)" },
     { key: "luong_ban", label: "LƯỢNG BÁN /NĂM", width: 80, fmt: "int", head: ORANGE, align: "right",
       hint: "= Tổng hàng ra kho các tháng trong năm (SL bán − Return + Adjustment + Removal, từ file thô Amazon)" },
     { key: "ton", label: "TỒN", width: 76, fmt: "int", head: ORANGE, align: "right", hint: "= Hàng tồn 1/1 + SL đi hàng − Lượng bán" },
-    { key: "available", label: "Available AMAZON (FBA + AWD)", width: 80, fmt: "int", head: YELLOW, align: "right",
-      hint: "Available FBA + Available in AWD — báo cáo mới nhất, cộng theo ASIN" },
-    { key: "inbound", label: "Inbound-quantity AMAZON (FBA + AWD)", width: 80, fmt: "int", head: YELLOW, align: "right",
-      hint: "inbound-quantity FBA + Inbound to AWD — báo cáo mới nhất, cộng theo ASIN" },
-    { key: "reserved", label: "Total Reserved Quantity (FBA + AWD)", width: 96, fmt: "int", head: YELLOW, align: "right",
-      hint: "Total Reserved Quantity FBA + Reserved in AWD — báo cáo mới nhất, cộng theo ASIN" },
+    { key: "fba_total", label: "Inventory (FBA)", width: 96, fmt: "int", head: YELLOW, align: "right",
+      hint: "Tồn kho FBA = available + inbound-quantity + Total Reserved — báo cáo FBA Inventory mới nhất, cộng theo ASIN" },
+    { key: "awd_total", label: "AWD", width: 86, fmt: "int", head: YELLOW, align: "right",
+      hint: "Tồn kho AWD = Available + Inbound + Reserved in AWD — AWD inventory report mới nhất, cộng theo ASIN" },
     { key: "total_amazon", label: "Total (AMAZON)", width: 96, fmt: "int", head: YELLOW, cellBg: YELLOW, align: "right",
-      hint: "= Available + Inbound + Reserved" },
-    { key: "gtri_ton", label: "Tổng giá trị tồn", width: 104, fmt: "money", head: YELLOW, align: "right", hint: "= Total (AMAZON) × Basecost TB/năm" },
-    { key: "gtri_di_duong", label: "Tổng giá trị hàng đang đi đường", width: 104, fmt: "money", head: YELLOW, align: "right",
-      hint: "= Inbound-quantity × Basecost TB/năm" },
-    { key: "storage_cost", label: "estimated-storage-cost-next-month", width: 104, fmt: "dec", head: PEACH, align: "right",
-      hint: "Phí lưu kho dự kiến tháng sau — báo cáo FBA Inventory, cộng theo ASIN" },
-    { key: "status", label: "Trạng thái", width: 110, fmt: "text", head: YELLOW, align: "center", hint: "Trạng thái ở Bảng Mã" },
+      hint: "= Inventory (FBA) + AWD" },
+    { key: "gtri_ton", label: "Tổng giá trị tồn", width: 104, fmt: "money", head: YELLOW, align: "right", hint: "= Total (AMAZON) × Basecost TB/năm (Tiền hàng ÷ SL đi hàng; chưa đi hàng thì lấy giá 1/1)" },
   ];
 }
 
@@ -170,8 +159,6 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
       total: sum("total_amazon"),
       gtriDauNam: sum("gtri_dau_nam"),
       gtriTon: sum("gtri_ton"),
-      gtriDiDuong: sum("gtri_di_duong"),
-      storage: sum("storage_cost"),
     };
   }, [rows]);
 
@@ -227,7 +214,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
         </select>
         <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
           <input type="checkbox" checked={!openingCollapsed} onChange={(e) => setOpeningCollapsed(!e.target.checked)} className="cursor-pointer" />
-          Giá + giá trị đầu năm
+          Giá trị tồn đầu năm
         </label>
         <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
           <input type="checkbox" checked={showBasecost} onChange={(e) => setShowBasecost(e.target.checked)} className="cursor-pointer" />
@@ -239,11 +226,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
             Tồn: <strong>{intFmt.format(totals.ton)}</strong> · Total Amazon: <strong>{intFmt.format(totals.total)}</strong>
           </span>
           <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">
-            Giá trị tồn: <strong className="font-mono">{formatValue(totals.gtriTon, "money")}</strong> · Đi đường:{" "}
-            <strong className="font-mono">{formatValue(totals.gtriDiDuong, "money")}</strong>
-          </span>
-          <span className="rounded-lg border px-2.5 py-1 text-slate-800" style={{ background: PEACH, borderColor: "#f5c9a0" }}>
-            Phí lưu kho tháng sau: <strong className="font-mono">{formatValue(totals.storage, "money")}</strong>
+            Giá trị tồn: <strong className="font-mono">{formatValue(totals.gtriTon, "money")}</strong>
           </span>
           <span
             className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-600"
