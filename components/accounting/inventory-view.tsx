@@ -29,6 +29,7 @@ import {
   LockOpenIcon,
   ImageSquareIcon,
   MagnifyingGlassIcon,
+  CircleNotchIcon,
   MinusIcon,
   PackageIcon,
   PencilSimpleIcon,
@@ -546,6 +547,14 @@ export function isDateField(field: string): boolean {
     "created_date",
     "last_updated_date",
   ].includes(field);
+}
+
+function SearchInputIcon({ loading }: { loading: boolean }) {
+  return loading ? (
+    <CircleNotchIcon size={14} weight="bold" className="absolute left-3 top-1/2 -mt-[7px] text-indigo-500 animate-spin" aria-label="Đang tìm" />
+  ) : (
+    <MagnifyingGlassIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+  );
 }
 
 function safeDisplay(val: unknown): string {
@@ -2195,6 +2204,9 @@ function InventoryViewInner() {
       }>;
     },
     enabled: !!selectedStoreId && activeTab === "sku",
+    // Giữ dòng cũ (mờ đi) lúc tải kết quả tìm kiếm / trang mới — chỉ khi cùng store + kênh; đổi store thì hiện skeleton
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey[1] === selectedStoreId && prevQuery?.queryKey[2] === skuChannel ? prev : undefined,
   });
 
   const allSkus = useMemo(() => skuQuery.data?.items ?? [], [skuQuery.data?.items]);
@@ -2274,6 +2286,7 @@ function InventoryViewInner() {
       }>;
     },
     enabled: !!selectedStoreId && activeTab === "inbound",
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === selectedStoreId ? prev : undefined),
   });
 
   const allShipments = useMemo(() => shipmentQuery.data?.items ?? [], [shipmentQuery.data?.items]);
@@ -2304,6 +2317,7 @@ function InventoryViewInner() {
       }>;
     },
     enabled: !!selectedStoreId && activeTab === "check_shipment",
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === selectedStoreId ? prev : undefined),
   });
 
   const fieldOptionsQuery = useQuery({
@@ -2368,9 +2382,13 @@ function InventoryViewInner() {
     return checkShipmentQuery.refetch();
   }, [checkShipmentQuery]);
 
-  const loadingSkus = skuQuery.isLoading;
-  const loadingShipments = shipmentQuery.isLoading;
-  const loadingCheckShipments = checkShipmentQuery.isLoading;
+  // Đang tìm: lúc gõ (chờ debounce) hoặc đang tải kết quả → icon xoay trong ô tìm kiếm + bảng cũ mờ đi
+  const loadingSkus = skuQuery.isFetching;
+  const loadingShipments = shipmentQuery.isFetching;
+  const loadingCheckShipments = checkShipmentQuery.isFetching;
+  const searchingSkus = skuSearch !== debouncedSkuSearch || skuQuery.isFetching;
+  const searchingShipments = shipmentSearch !== debouncedShipmentSearch || shipmentQuery.isFetching;
+  const searchingCheckShipments = checkShipmentSearch !== debouncedCheckShipmentSearch || checkShipmentQuery.isFetching;
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const notify = useCallback((message: string, type: "success" | "error" = "success") => {
     setToast({ type, message });
@@ -5494,10 +5512,7 @@ function InventoryViewInner() {
               </div>
             )}
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
-              <MagnifyingGlassIcon
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
+              <SearchInputIcon loading={searchingSkus} />
               <input
                 type="text"
                 placeholder="Tìm SKU, ASIN, Niche..."
@@ -5558,10 +5573,7 @@ function InventoryViewInner() {
         ) : activeTab === "inbound" ? (
           <div className="flex items-center gap-2 flex-wrap ml-auto justify-end min-w-0">
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
-              <MagnifyingGlassIcon
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
+              <SearchInputIcon loading={searchingShipments} />
               <input
                 type="text"
                 placeholder="Tìm lô, SKU, Shipment ID..."
@@ -5623,10 +5635,7 @@ function InventoryViewInner() {
         ) : activeTab === "check_shipment" ? (
           <div className="flex items-center gap-2 flex-wrap ml-auto justify-end min-w-0">
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
-              <MagnifyingGlassIcon
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
+              <SearchInputIcon loading={searchingCheckShipments} />
               <input
                 type="text"
                 placeholder="Tìm Shipment ID, name..."
