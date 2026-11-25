@@ -1397,6 +1397,32 @@ function KqkdPeople({
 }
 
 // Mục "KQKD SKU" riêng trên sidebar: hai trang Tổng quan tháng / SKU Testing chuyển bằng nút trên thanh công cụ.
+// Link từ tin Lark "SKU cần đánh giá" (lib/accounting/sku-eval-reminder.ts):
+// ?view=accounting&section=kqkd&kqkd_store=<storeId>&kqkd_year=2026&kqkd_skus=A,B&kqkd_label=...
+// → mở SKU Testing đúng store + năm, lọc đúng các SKU đó (như lọc mang từ KPI kinh doanh).
+function readUrlJump(): { storeId: string; year: number; label: string; skus: string[]; from: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const p = new URL(window.location.href).searchParams;
+    const storeId = p.get("kqkd_store")?.trim();
+    const skus = (p.get("kqkd_skus") || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!storeId || !skus.length) return null;
+    return { storeId, year: Number(p.get("kqkd_year")), label: p.get("kqkd_label") || "SKU cần đánh giá", skus, from: "Lark" };
+  } catch {
+    return null;
+  }
+}
+function clearUrlJump() {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("kqkd_store")) return;
+    for (const k of ["kqkd_store", "kqkd_year", "kqkd_skus", "kqkd_label"]) url.searchParams.delete(k);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // bỏ qua
+  }
+}
+
 export function KqkdView() {
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -1407,6 +1433,8 @@ export function KqkdView() {
   const [year, setYear] = useState(() => {
     if (typeof window === "undefined") return currentYear;
     try {
+      const urlYear = readUrlJump()?.year;
+      if (urlYear && Number.isFinite(urlYear) && urlYear >= 2020) return urlYear;
       const y = Number(JSON.parse(window.sessionStorage.getItem("acc_kqkd_jump") || "null")?.year);
       return Number.isFinite(y) && y >= 2020 ? y : currentYear;
     } catch {
@@ -1415,6 +1443,7 @@ export function KqkdView() {
   });
   const [mode, setMode] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "overview";
+    if (readUrlJump()) return "skus";
     try {
       const saved = window.sessionStorage.getItem("acc_kqkd_mode");
       return saved === "skus" ? "skus" : "overview";
@@ -1440,8 +1469,10 @@ export function KqkdView() {
   // Lọc mang từ thẻ KPI của Tổng quan sang (bấm thẻ): giữ đúng danh sách SKU của thẻ, có nhãn để bỏ
   // (chỉ áp cho đúng store + năm lúc bấm; đổi store / năm là tự bỏ)
   // Bấm dòng phôi ở tab KPI kinh doanh → mở thẳng SKU Testing lọc đúng các SKU đó (KpiPhoiPicTable ghi acc_kqkd_jump)
-  const [kpiJump] = useState<{ storeId: string; year: number; label: string; skus: string[] } | null>(() => {
+  const [kpiJump] = useState<{ storeId: string; year: number; label: string; skus: string[]; from?: string } | null>(() => {
     if (typeof window === "undefined") return null;
+    const fromUrl = readUrlJump();
+    if (fromUrl) return fromUrl;
     try {
       // Không xoá ở đây (StrictMode gọi hàm khởi tạo 2 lần) — xoá trong effect bên dưới
       const raw = window.sessionStorage.getItem("acc_kqkd_jump");
@@ -1458,9 +1489,10 @@ export function KqkdView() {
     } catch {
       // bỏ qua
     }
+    clearUrlJump();
   }, []);
   const [kpiPresetState, setKpiPreset] = useState<{ scope: string; label: string; skus: Set<string>; outside: number; from?: string } | null>(() =>
-    kpiJump ? { scope: `${kpiJump.storeId}|${kpiJump.year}`, label: kpiJump.label, skus: new Set(kpiJump.skus), outside: -1, from: "KPI kinh doanh" } : null,
+    kpiJump ? { scope: `${kpiJump.storeId}|${kpiJump.year}`, label: kpiJump.label, skus: new Set(kpiJump.skus), outside: -1, from: kpiJump.from || "KPI kinh doanh" } : null,
   );
   const kpiPreset = kpiPresetState?.scope === `${selectedStoreId}|${year}` ? kpiPresetState : null;
   const [filterOpen, setFilterOpen] = useState<FilterOpen | null>(null);
@@ -1498,8 +1530,14 @@ export function KqkdView() {
         const list = (json.stores || []).filter((s) => storeCanView(s, "FBA"));
         setStores(list);
         const saved = window.localStorage.getItem("acc_selected_store_id") || "";
-        const target = list.find((s) => s.id === saved) || list[0];
+        // Mở từ link (Lark / KPI kinh doanh) thì chọn đúng store của link
+        const jumpTarget = kpiJump ? list.find((s) => s.id === kpiJump.storeId) : undefined;
+        const target = jumpTarget || list.find((s) => s.id === saved) || list[0];
         if (target) setSelectedStoreId(target.id);
+        if (jumpTarget) {
+          window.localStorage.setItem("acc_selected_store_id", jumpTarget.id);
+          window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: jumpTarget.id }));
+        }
       })
       .catch(() => {
         if (!ignore) setStores([]);
@@ -1510,7 +1548,7 @@ export function KqkdView() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [kpiJump]);
 
   // Đồng bộ store với các tab khác
   useEffect(() => {

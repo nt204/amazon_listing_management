@@ -29,6 +29,8 @@ export interface StoreEvalReminder {
   late: string[];
   m4: string[];
   m3: string[];
+  /** Năm listing của từng SKU — bảng SKU Testing xem theo năm listing nên link chia theo năm */
+  yearOf: Record<string, string>;
   total: number;
 }
 
@@ -99,21 +101,30 @@ export async function buildSkuEvalReminder(month: string, storeNames: string[] =
     if (DONE_STATUSES.has((r.status || "").normalize("NFC").trim().toLowerCase())) continue;
     const cur =
       byStore.get(r.store_id) ||
-      { storeId: r.store_id, storeName: r.store_name, team: r.team, late: [], m4: [], m3: [], total: 0 };
+      { storeId: r.store_id, storeName: r.store_name, team: r.team, late: [], m4: [], m3: [], yearOf: {}, total: 0 };
     const bucket: EvalBucket = r.listing_month === m3Listing ? "m3" : r.listing_month === m4Listing ? "m4" : "late";
     cur[bucket].push(r.sku);
+    cur.yearOf[r.sku] = r.listing_month.slice(0, 4);
     cur.total += 1;
     byStore.set(r.store_id, cur);
   }
   return { month, m3Listing, m4Listing, stores: [...byStore.values()] };
 }
 
-function storeUrl(storeName: string) {
-  const params = new URLSearchParams({ view: "accounting", store: storeName.toUpperCase(), section: "kqkd" });
+/** Link mở SKU Testing đúng store + năm listing, lọc đúng các SKU (components/accounting/kqkd-view.tsx readUrlJump). */
+function skuListUrl(s: StoreEvalReminder, year: string, skus: string[], label: string) {
+  const params = new URLSearchParams({
+    view: "accounting",
+    section: "kqkd",
+    kqkd_store: s.storeId,
+    kqkd_year: year,
+    kqkd_label: label,
+    kqkd_skus: skus.join(","),
+  });
   return `${REPORT_BASE_URL}/?${params.toString()}`;
 }
 
-/** Card Lark: mỗi store 3 dòng đếm (quá hạn / tháng thứ 4 / tháng thứ 3), danh sách SKU gập lại bên dưới. */
+/** Card Lark: mỗi store 3 dòng đếm (quá hạn / tháng thứ 4 / tháng thứ 3) + link mở bảng SKU Testing đã lọc sẵn. */
 export function buildSkuEvalReminderCard(r: SkuEvalReminder): Record<string, unknown> {
   const total = r.stores.reduce((sum, s) => sum + s.total, 0);
   const elements: Record<string, unknown>[] = [];
@@ -124,41 +135,28 @@ export function buildSkuEvalReminderCard(r: SkuEvalReminder): Record<string, unk
 
   for (const [i, s] of r.stores.entries()) {
     if (i > 0) elements.push({ tag: "hr" });
-    const line = (icon: string, label: string, list: string[]) =>
-      `${icon} ${label}: **${list.length}** SKU`;
+    // SKU listing năm khác nằm ở bảng năm khác → mỗi năm một link
+    const byYear = new Map<string, string[]>();
+    for (const sku of [...s.late, ...s.m4, ...s.m3]) {
+      const y = s.yearOf[sku];
+      byYear.set(y, [...(byYear.get(y) || []), sku]);
+    }
+    const years = [...byYear.keys()].sort().reverse();
+    const label = `SKU cần đánh giá ${monthLabel(r.month)}`;
+    const links =
+      years.length === 1
+        ? `[Xem danh sách SKU](${skuListUrl(s, years[0], byYear.get(years[0])!, label)})`
+        : "Xem danh sách SKU: " +
+          years.map((y) => `[listing ${y} (${byYear.get(y)!.length})](${skuListUrl(s, y, byYear.get(y)!, label)})`).join(" · ");
     elements.push({
       tag: "markdown",
       content: [
-        `**${s.storeName}** · ${s.team} — **${s.total} SKU** cần điền`,
-        line("🔴", `Quá hạn (listing ${monthLabel(addMonths(r.m4Listing, -1))} trở về trước)`, s.late),
-        line("🟠", `Tháng thứ 4 — hạn chót tháng này (listing ${monthLabel(r.m4Listing)})`, s.m4),
-        line("🟡", `Tháng thứ 3 — bắt đầu đánh giá (listing ${monthLabel(r.m3Listing)})`, s.m3),
+        `**${s.storeName}** — **${s.total} SKU** cần điền`,
+        `🔴 Quá hạn (listing ${monthLabel(addMonths(r.m4Listing, -1))} trở về trước): **${s.late.length}** SKU`,
+        `🟠 Tháng thứ 4 — hạn chót tháng này (listing ${monthLabel(r.m4Listing)}): **${s.m4.length}** SKU`,
+        `🟡 Tháng thứ 3 — bắt đầu đánh giá (listing ${monthLabel(r.m3Listing)}): **${s.m3.length}** SKU`,
+        `▸ ${links}`,
       ].join("\n"),
-    });
-    const detail = (
-      [
-        ["🔴 Quá hạn", s.late],
-        ["🟠 Tháng thứ 4", s.m4],
-        ["🟡 Tháng thứ 3", s.m3],
-      ] as const
-    )
-      .filter(([, list]) => list.length)
-      .map(([label, list]) => `**${label}:** ${list.join(", ")}`)
-      .join("\n");
-    if (detail) {
-      elements.push({
-        tag: "collapsible_panel",
-        expanded: false,
-        header: { title: { tag: "markdown", content: "<font color='grey'>Xem danh sách SKU</font>" } },
-        elements: [{ tag: "markdown", content: detail, text_size: "notation" }],
-      });
-    }
-    elements.push({
-      tag: "button",
-      text: { tag: "plain_text", content: `Mở SKU Testing ${s.storeName}` },
-      type: "primary_filled",
-      size: "small",
-      behaviors: [{ type: "open_url", default_url: storeUrl(s.storeName) }],
     });
   }
 
@@ -168,10 +166,6 @@ export function buildSkuEvalReminderCard(r: SkuEvalReminder): Record<string, unk
     header: {
       template: total ? "orange" : "green",
       title: { tag: "plain_text", content: `⏰ SKU CẦN ĐÁNH GIÁ · ${monthLabel(r.month)} — ${total} SKU` },
-      subtitle: {
-        tag: "plain_text",
-        content: "SKU chỉ test 3–4 tháng từ tháng listing · cập nhật Trạng thái (Phát triển / Hủy) trong Bảng mã",
-      },
     },
     body: { elements },
   };
