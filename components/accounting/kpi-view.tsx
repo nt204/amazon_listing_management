@@ -38,6 +38,7 @@ import {
 import { AccountingTopProgressBar, AnimatedTabPill } from "./accounting-skeleton";
 import { KpiDashboardView, type KpiStorePart } from "./kpi-dashboard-view";
 import { KpiPlanView } from "./kpi-plan-view";
+import { TeamTargetsView } from "./team-targets-view";
 import { halfLabel, halfOf } from "@/lib/accounting/kpi-plan-calc";
 import { StoreSelect } from "./store-select";
 
@@ -95,7 +96,7 @@ export interface KpiData {
   generatedAt: string;
 }
 
-type Mode = "dashboard" | "overview" | "dev" | "test" | "plan";
+type Mode = "dashboard" | "overview" | "dev" | "test" | "plan" | "targets";
 type TargetSlot = "cur" | "next";
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2423,8 +2424,10 @@ export function KpiView() {
   const [mode, setMode] = useState<Mode>(() => {
     if (typeof window === "undefined") return "overview";
     try {
+      // Link từ card Lark "Xem / sửa trên web": ?kpi=targets mở thẳng tab Mục tiêu tuần
+      if (new URLSearchParams(window.location.search).get("kpi") === "targets") return "targets";
       const saved = window.sessionStorage.getItem("acc_kpi_mode");
-      return saved === "dev" || saved === "test" || saved === "dashboard" || saved === "plan" ? saved : "overview";
+      return saved === "dev" || saved === "test" || saved === "dashboard" || saved === "plan" || saved === "targets" ? saved : "overview";
     } catch {
       return "overview";
     }
@@ -2668,7 +2671,8 @@ export function KpiView() {
   }, [data]);
 
   let body: ReactNode = null;
-  if (data) {
+  if (viewMode === "targets") body = <TeamTargetsView />;
+  else if (data) {
     if (viewMode === "dashboard") body = <KpiDashboardView key={`${selectedStoreId}:${data.period}`} data={data} storeId={isAll ? "" : selectedStoreId} storeParts={isAll ? storeParts : null} />;
     else if (viewMode === "overview")
       body = (
@@ -2736,9 +2740,11 @@ export function KpiView() {
                 { key: "test", label: `SKU test${data ? ` (${counts.test})` : ""}` },
                 // Kỳ I = T1–T6, Kỳ II = T7–T12 — theo tháng báo cáo đang chọn
                 { key: "plan", label: `Plan (${halfLabel(halfOf(period).year, halfOf(period).half)})` },
+                // Mục tiêu sếp giao cho team qua Lark (không theo store / tháng đang chọn)
+                { key: "targets", label: "Mục tiêu tuần" },
               ] as const
             )
-              .filter((o) => !isAll || o.key === "dashboard" || o.key === "overview" || o.key === "plan")
+              .filter((o) => !isAll || o.key === "dashboard" || o.key === "overview" || o.key === "plan" || o.key === "targets")
               .map((o) => {
               const isActive = viewMode === o.key;
               return (
@@ -2811,7 +2817,7 @@ export function KpiView() {
         <AccountingTopProgressBar loading={loading} variant="indigo" />
         {loading && !data && <div className="p-6 text-center text-xs text-slate-500">Đang tải KPI...</div>}
         {!loading && !data && !error && <div className="p-6 text-center text-xs text-slate-500">Chọn store để xem KPI.</div>}
-        {data && <div className={`flex-1 ${viewMode === "overview" || viewMode === "dashboard" || viewMode === "plan" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
+        {(data || viewMode === "targets") && <div className={`flex-1 ${viewMode === "overview" || viewMode === "dashboard" || viewMode === "plan" || viewMode === "targets" ? "overflow-auto" : "overflow-hidden bg-white"}`}>{body}</div>}
       </div>
 
       {openSkuRow && data && (

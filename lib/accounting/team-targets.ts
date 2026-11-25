@@ -577,3 +577,58 @@ export function teamTargetsBlock(targets: ActiveTeamTarget[], date: string, tota
     .map((t) => targetProgressLine(t, date, totals, weekUnitsInTable && isWeekUnitsTarget(t)));
   return ["**🎯 Mục tiêu sếp giao** " + grey("(số đã chốt tới hết ngày báo cáo)"), ...lines].join("\n");
 }
+
+// ───────────────────────── Xem / xoá mục tiêu, nhập từ web ─────────────────────────
+
+export const TARGET_KINDS = KINDS;
+export const TARGET_METRICS = METRICS;
+
+/** Tên mục tiêu nhập từ web: tuần trùng 1 tuần của tháng → "Tuần 2 T12"; còn lại theo khoảng ngày. */
+export function defaultTargetLabel(kind: TargetKind, startDate: string, endDate: string | null, storeName: string | null): string {
+  const store = storeName ? ` ${storeName}` : "";
+  if (kind === "margin_floor") return `Margin tối thiểu${store}`;
+  if (kind === "month_total" && endDate && startDate.endsWith("-01") && endDate === monthEndOf(startDate.slice(0, 7))) {
+    return `Tổng ${monthShort(startDate.slice(0, 7))}${store}`;
+  }
+  const m = weekMonthOf(startDate);
+  const k = monthWeekBlocks(m).findIndex((b) => b.startDate === startDate && b.endDate === endDate);
+  const week = k >= 0 ? `Tuần ${k + 1} ${monthShort(m)}` : null;
+  if (kind === "week_total") return `${week ?? `Mục tiêu ${rangeLabel(startDate, endDate)}`}${store}`;
+  if (kind === "daily_rate") return `Mỗi ngày${store}${week ? ` (${week})` : ""}`;
+  return `Tổng ${rangeLabel(startDate, endDate)}${store}`;
+}
+
+export interface TargetListCommand {
+  /** true: "xoá / bỏ / huỷ mục tiêu"; false: "xem mục tiêu". */
+  remove: boolean;
+  /** Lọc theo tuần nhắc trong tin ("tuần 2", "tuần cuối tháng 12", "tuần này"). */
+  range: { startDate: string; endDate: string; label: string } | null;
+  team: string | null;
+}
+
+/**
+ * "xoá mục tiêu", "bỏ target tuần 2", "huỷ mục tiêu tuần cuối tháng 12 team 3", "xem mục tiêu" → lệnh; tin khác → null.
+ */
+export function parseTargetListCommand(text: string, today: string, knownTeams: string[]): TargetListCommand | null {
+  const t = text.toLowerCase().replace(/\s+/g, " ").trim();
+  const noun = String.raw`(?:target|mục tiêu|muc tieu|kpi tuần|kpi tuan)`;
+  const remove = new RegExp(String.raw`(?:xoá|xóa|xoa|bỏ|bo|huỷ|hủy|huy|gỡ|go)\s+(?:hết\s+|het\s+|các\s+|cac\s+)?${noun}`).test(t);
+  const list = new RegExp(String.raw`(?:xem|danh sách|danh sach|list|liệt kê|liet ke)\s+(?:các\s+|cac\s+)?${noun}`).test(t);
+  if (!remove && !list) return null;
+
+  let range: TargetListCommand["range"] = null;
+  const w = t.match(/tuần\s*(đầu|giữa|cuối|này|sau|tới|\d{1,2})|tuan\s*(dau|giua|cuoi|nay|sau|toi|\d{1,2})/);
+  if (w) {
+    const ref = w[1] ?? w[2];
+    const mm = t.match(/(?:tháng|thang|\bt)\s*(\d{1,2})\b/);
+    let month = weekMonthOf(today);
+    if (mm) {
+      const m = Number(mm[1]);
+      const y = Number(today.slice(0, 4)) + (m < Number(today.slice(5, 7)) - 6 ? 1 : 0);
+      month = `${y}-${String(m).padStart(2, "0")}`;
+    }
+    const r = resolveWeekRef(month, ref, null, today);
+    if (!("error" in r)) range = { startDate: r.startDate, endDate: r.endDate, label: r.label };
+  }
+  return { remove, range, team: teamMentionedInText(t, knownTeams) };
+}

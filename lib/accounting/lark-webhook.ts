@@ -217,6 +217,16 @@ export async function processLarkCardAction(data: LarkCardActionEvent): Promise<
     const team = typeof value.team === "string" ? value.team : undefined;
     return { status: "response", response: await handleTeamTargetCardAction(actionType, draftId, team, operatorIds) };
   }
+  if (actionType === "TEAM_TARGET_DELETE") {
+    const targetId = typeof value.targetId === "string" ? value.targetId : "";
+    if (!targetId) return { status: "ignored" };
+    const { handleTeamTargetDeleteAction } = await import("@/lib/accounting/team-targets-service");
+    const operatorIds = [
+      data.operator?.open_id, data.operator?.user_id, data.operator?.union_id, data.open_id,
+    ].filter((id): id is string => Boolean(id));
+    const ids = typeof value.ids === "string" ? value.ids.split(",") : [];
+    return { status: "response", response: await handleTeamTargetDeleteAction(targetId, ids, operatorIds) };
+  }
   const sessionId = typeof value.sessionId === "string" ? value.sessionId : "";
   const chatId = data.context?.open_chat_id || data.open_chat_id;
 

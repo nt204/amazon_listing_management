@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  defaultTargetLabel,
   looksLikeTargetMessage,
+  parseTargetListCommand,
   monthWeekBlocks,
   normalizeExtraction,
   parseAiJson,
@@ -224,4 +226,26 @@ test("cột Target tuần / % đạt tuần: hàng Tổng team và hàng store c
   assert.equal(weekTargetCells([base], "2026-11-29", totals, null)!.pct, "<font color='red'>**93.3%** ❌</font>");
   // Chưa tới tuần → null
   assert.equal(weekTargetCells([{ ...base, startDate: "2026-11-30", endDate: "2026-12-06" }], "2026-11-25", totals, null), null);
+});
+
+test("lệnh xoá / xem mục tiêu qua Lark", () => {
+  const today = "2026-11-25";
+  assert.deepEqual(parseTargetListCommand("xoá mục tiêu", today, TEAMS), { remove: true, range: null, team: null });
+  assert.deepEqual(parseTargetListCommand("xem mục tiêu team 3", today, TEAMS), { remove: false, range: null, team: "FBA 3" });
+  // "bỏ target tuần 2" không nói tháng → tháng của tuần hiện tại (T11)
+  assert.deepEqual(parseTargetListCommand("bỏ target tuần 2", today, TEAMS)?.range, { startDate: "2026-11-09", endDate: "2026-11-15", label: "Tuần 2 T11" });
+  assert.deepEqual(parseTargetListCommand("huỷ mục tiêu tuần cuối tháng 12", today, TEAMS)?.range, { startDate: "2026-12-28", endDate: "2027-01-03", label: "Tuần cuối T12" });
+  assert.equal(parseTargetListCommand("hủy target tuần sau", today, TEAMS)?.range?.startDate, "2026-11-30");
+  // Tin giao mục tiêu / câu hỏi thường không phải lệnh
+  assert.equal(parseTargetListCommand("tuần cuối tháng 11 tối thiểu 3000 unit", today, TEAMS), null);
+  assert.equal(parseTargetListCommand("phân tích malfirst", today, TEAMS), null);
+});
+
+test("tên mục tiêu nhập từ web", () => {
+  assert.equal(defaultTargetLabel("week_total", "2026-11-30", "2026-12-06", null), "Tuần 1 T12");
+  assert.equal(defaultTargetLabel("week_total", "2026-11-23", "2026-11-29", "MALFIRST"), "Tuần 4 T11 MALFIRST");
+  assert.equal(defaultTargetLabel("daily_rate", "2026-11-23", "2026-11-29", null), "Mỗi ngày (Tuần 4 T11)");
+  assert.equal(defaultTargetLabel("month_total", "2026-12-01", "2026-12-31", null), "Tổng T12");
+  assert.equal(defaultTargetLabel("week_total", "2026-11-24", "2026-11-28", null), "Mục tiêu 24–28/11");
+  assert.equal(defaultTargetLabel("margin_floor", "2026-11-23", null, "LIMIMA"), "Margin tối thiểu LIMIMA");
 });
