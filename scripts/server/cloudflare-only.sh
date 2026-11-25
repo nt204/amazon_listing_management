@@ -6,14 +6,16 @@
 # với email bất kỳ mà không qua đăng nhập. Sau khi chạy:
 #   - nginx (server ncehub.net :443) chỉ nhận IP Cloudflare + localhost (snippet /etc/nginx/snippets/cloudflare-only.conf,
 #     lấy từ https://www.cloudflare.com/ips/ mỗi lần chạy lại script).
-#   - Cổng 2411 (next-server) bị chặn từ ngoài; nginx, deploy script, worker vẫn dùng localhost:2411.
+#   - Cổng 2411 (next-server) bị chặn từ ngoài, trừ IP trong ALLOW_APP (Mac mini chạy crawler PPC);
+#     nginx, deploy script, worker vẫn dùng localhost:2411.
 #   - Luật tường lửa nằm trong dịch vụ systemd app-port-guard → khởi động lại server vẫn giữ.
 # Hoàn tác: xoá dòng `include snippets/cloudflare-only.conf;` trong site nginx + `systemctl disable --now app-port-guard`
 # rồi `iptables -D INPUT -i eth0 -j APP-GUARD; ip6tables -D INPUT -i eth0 -j APP-GUARD`.
 set -euo pipefail
 SERVER="${SERVER:-root@167.233.26.87}"
+ALLOW_APP="${ALLOW_APP:-171.229.146.62}" # Mac mini: crawler PPC (AmazonPpcCrawler/remote_worker.ts) gọi thẳng :2411 (IP public 2026-11-25)
 
-ssh "$SERVER" 'bash -s' <<'REMOTE'
+ssh "$SERVER" "ALLOW_APP='$ALLOW_APP' bash -s" <<'REMOTE'
 set -euo pipefail
 SITE=/etc/nginx/sites-enabled/ncehub.net
 SNIP=/etc/nginx/snippets/cloudflare-only.conf
@@ -54,15 +56,24 @@ fi
 cat > /usr/local/sbin/app-port-guard.sh <<'EOF'
 #!/bin/sh
 # next-server chạy trực tiếp trên host (không qua docker) nên lọc ở INPUT.
+ALLOW_APP=""
+[ -f /etc/default/app-port-guard ] && . /etc/default/app-port-guard
 IF=eth0
 for t in iptables ip6tables; do
   $t -N APP-GUARD 2>/dev/null || true
   $t -F APP-GUARD
+  if [ "$t" = iptables ]; then
+    for ip in $ALLOW_APP; do $t -A APP-GUARD -p tcp -s "$ip" --dport 2411 -j RETURN; done
+  fi
   $t -A APP-GUARD -p tcp --dport 2411 -j DROP
   $t -C INPUT -i $IF -j APP-GUARD 2>/dev/null || $t -I INPUT 1 -i $IF -j APP-GUARD
 done
 EOF
 chmod +x /usr/local/sbin/app-port-guard.sh
+cat > /etc/default/app-port-guard <<EOF
+# IP được gọi thẳng cổng app 2411 từ ngoài (cách nhau dấu cách). Đổi xong: systemctl restart app-port-guard
+ALLOW_APP="$ALLOW_APP"
+EOF
 cat > /etc/systemd/system/app-port-guard.service <<'EOF'
 [Unit]
 Description=Block public access to Next.js app port 2411 (only via nginx/Cloudflare)
@@ -85,7 +96,7 @@ curl -sk -o /dev/null -w "nginx localhost:443 HTTP %{http_code}\n" --resolve nce
 REMOTE
 
 echo "--- Kiểm tra từ máy này:"
-nc -z -w 5 167.233.26.87 2411 && echo "❌ 2411 vẫn mở" || echo "✅ 2411 đã chặn"
+nc -z -w 5 167.233.26.87 2411 && echo "2411 mở cho máy này (đúng nếu IP nằm trong ALLOW_APP)" || echo "✅ 2411 đã chặn với máy này"
 code=$(curl -sk -o /dev/null -m 10 -w '%{http_code}' --resolve ncehub.net:443:167.233.26.87 https://ncehub.net/ || true)
 [ "$code" = "403" ] && echo "✅ Gọi thẳng IP VPS :443 bị từ chối (403)" || echo "❌ Gọi thẳng IP VPS :443 trả $code"
 code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' https://ncehub.net/ || true)
