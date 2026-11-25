@@ -25,6 +25,7 @@ import {
 import type { ManagedAccountingFile, AccountingFileStats, AccountingReportCategory } from "@/lib/accounting/accounting-file-service";
 import { InventorySheetLinksModal } from "./inventory-sheet-links-modal";
 import { AccountingCrawlerModal } from "./accounting-crawler-modal";
+import { StoreSelect } from "./store-select";
 
 export type ReportCategoryTab = "DAILY" | "MONTHLY" | "INVENTORY" | "ALL";
 
@@ -644,18 +645,13 @@ export function AccountingFileManager() {
           {/* Store Filter */}
           <div className="flex items-center gap-1.5 text-xs text-slate-600">
             <span className="font-semibold text-slate-500">Store:</span>
-            <select
+            <StoreSelect
+              stores={availableStores.map((s) => ({ id: s, name: s }))}
               value={selectedStore}
-              onChange={(e) => setSelectedStore(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-            >
-              <option value="ALL">Tất cả Store</option>
-              {availableStores.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedStore}
+              allOption={{ id: "ALL", name: "Tất cả Store" }}
+              size="sm"
+            />
           </div>
 
           {/* Date Filter */}
@@ -971,17 +967,12 @@ export function AccountingFileManager() {
             <form onSubmit={handleUploadSubmit} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Store:</label>
-                <select
+                <StoreSelect
+                  stores={(availableStores.length > 0 ? availableStores : ["BOZSPACER", "FASTPEACE", "LIMIMA", "MALFIRST", "WARMSTOREY"]).map((s) => ({ id: s, name: s }))}
                   value={uploadStore || (availableStores[0] || "")}
-                  onChange={(e) => setUploadStore(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                >
-                  {(availableStores.length > 0 ? availableStores : ["BOZSPACER", "FASTPEACE", "LIMIMA", "MALFIRST", "WARMSTOREY"]).map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setUploadStore}
+                  className="w-full"
+                />
               </div>
 
               <div>

@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CaretDownIcon, CheckIcon, MagnifyingGlassIcon, StorefrontIcon } from "@phosphor-icons/react";
 
 // Ô chọn store dùng chung cho các tab Accounting (thay <select> mặc định của trình duyệt):
 // nút có icon store + tên store, bấm mở danh sách nổi chữ to, store đang chọn tô nền + dấu ✓.
 // Bàn phím: ↑ ↓ di chuyển, Enter chọn, Esc đóng. Nhiều store (> 8) thì có ô tìm.
+// Danh sách vẽ qua portal (position: fixed) để không bị cắt trong hộp thoại / khung có overflow.
 
 export interface StoreSelectOption {
   id: string;
@@ -44,6 +46,9 @@ export function StoreSelect({
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const options = useMemo(() => (allOption && stores.length > 1 ? [allOption, ...stores] : stores), [allOption, stores]);
   const filtered = useMemo(() => {
@@ -59,10 +64,28 @@ export function StoreSelect({
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  // Đặt danh sách ngay dưới nút; cuộn / đổi cỡ cửa sổ thì đặt lại
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 6, left: r.left, width: Math.max(r.width, 220) });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
   }, [open]);
 
   // Giữ dòng đang trỏ trong khung nhìn khi đi bằng phím
@@ -111,6 +134,7 @@ export function StoreSelect({
   return (
     <div ref={ref} className={`relative inline-block ${open ? "z-[100]" : ""} ${className}`} onKeyDown={onKeyDown}>
       <button
+        ref={btnRef}
         id={id}
         type="button"
         aria-label={ariaLabel}
@@ -127,8 +151,12 @@ export function StoreSelect({
         <CaretDownIcon size={12} weight="bold" className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {open && (
-        <div className="absolute left-0 top-full mt-1.5 z-[100] w-full min-w-[220px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+      {open && pos && typeof document !== "undefined" && createPortal(
+        <div
+          ref={popRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, width: pos.width }}
+          className="font-accounting-system z-[1000] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+        >
           {showSearch && (
             <div className="border-b border-slate-100 p-2">
               <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5">
@@ -172,7 +200,8 @@ export function StoreSelect({
               );
             })}
           </ul>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -22,6 +22,7 @@ import type {
   CrawlerWorker,
 } from "@/lib/accounting/crawler-jobs";
 import { AccountingAnimatedModal } from "./accounting-skeleton";
+import { StoreSelect } from "./store-select";
 
 interface CrawlerOverview {
   crawlers: {
@@ -207,19 +208,14 @@ function CrawlerCard({
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={storeName}
-            onChange={(e) => setStoreName(e.target.value)}
+          <StoreSelect
             aria-label="Store"
-            className="h-9 w-44 rounded-lg border border-slate-300 bg-white px-2 text-sm font-semibold text-slate-800"
-          >
-            <option value="">Tất cả store</option>
-            {stores.map((store) => (
-              <option key={store} value={store}>
-                {store}
-              </option>
-            ))}
-          </select>
+            stores={stores.map((store) => ({ id: store, name: store }))}
+            value={storeName}
+            onChange={setStoreName}
+            allOption={{ id: "", name: "Tất cả store" }}
+            className="w-44"
+          />
           <input
             type="date"
             value={targetDate}
