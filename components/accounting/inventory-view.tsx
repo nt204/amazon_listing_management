@@ -4589,6 +4589,7 @@ function InventoryViewInner() {
     let cellValue: any = (item as any)[cid];
     let displayNode: React.ReactNode = safeDisplay(cellValue);
     let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
+    let tempDisplay = false;
 
     switch (cid) {
       case "sku":
@@ -4644,7 +4645,18 @@ function InventoryViewInner() {
         cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
       case "amazon_received":
-        displayNode = item.amazon_received?.toLocaleString() || "—";
+        // Lô chưa Closed mà chưa có Amazon Received → hiện tạm Quantity (xám nghiêng), chỉ để Base Cost đỡ sai,
+        // không tính vào Discrepancy. Lô Closed / check shipment điền số thật thì hiện số thật.
+        if (!item.amazon_received && String(item.status ?? "").trim().toLowerCase() !== "closed" && item.quantity) {
+          tempDisplay = true;
+          displayNode = (
+            <span className="italic text-slate-400" title="Tạm lấy = Quantity (lô chưa Closed) — chỉ để tính Base Cost, không trừ vào Discrepancy">
+              {item.quantity.toLocaleString()}
+            </span>
+          );
+        } else {
+          displayNode = item.amazon_received?.toLocaleString() || "—";
+        }
         cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "tinh_trang_hang_den_kho":
@@ -4681,7 +4693,7 @@ function InventoryViewInner() {
         break;
     }
     // Chi tiết đi hàng: ô không có giá trị để trống, không hiện gạch ngang
-    if (safeDisplay(cellValue) === "—") displayNode = null;
+    if (!tempDisplay && safeDisplay(cellValue) === "—") displayNode = null;
 
     return (
       <EditableCell

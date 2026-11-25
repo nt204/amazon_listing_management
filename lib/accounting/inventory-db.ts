@@ -4306,6 +4306,16 @@ export const BASE_COST_AUTO_FROM = /^\d{4}-\d{2}$/.test(process.env.BASE_COST_AU
   ? process.env.BASE_COST_AUTO_FROM!
   : "2026-01";
 
+/**
+ * Amazon Received dùng cho Base Cost: lô chưa Closed mà Amazon Received còn trống/0 thì tạm lấy = Quantity (số đi),
+ * để tiền lô không bị bỏ ra khỏi giá. Lô Closed dùng đúng số Amazon Received đã điền.
+ * Chỉ tính lúc đọc (không ghi vào DB/sheet) và KHÔNG dùng cho Discrepancy (vẫn = Quantity − Số lượng Amazon nhận).
+ */
+const EFFECTIVE_AMAZON_RECEIVED_SQL = `CASE
+  WHEN COALESCE(amazon_received, 0) = 0 AND LOWER(TRIM(COALESCE(status, ''))) <> 'closed' THEN COALESCE(quantity, 0)
+  ELSE COALESCE(amazon_received, 0)
+END`;
+
 /** Dòng Base Cost do import Excel (bản chụp sheet) — không coi là khóa của người dùng, app được tính lại. */
 const IMPORT_SNAPSHOT_RULE = "excel_source_snapshot";
 
@@ -4346,14 +4356,14 @@ export async function syncMonthlyBaseCostFromInbound(
       MAX(brand) as brand,
       MAX(product_type) as product_type,
       ${bookMode
-        ? sql`COALESCE(SUM(COALESCE(amazon_received, 0)), 0)::float`
+        ? sql`COALESCE(SUM(${sql.unsafe(EFFECTIVE_AMAZON_RECEIVED_SQL)}), 0)::float`
         : sql`COALESCE(SUM(quantity), 0)::float`} as total_qty,
       -- Sổ: số nhập = Amazon Received → lô Amazon chưa nhận (received trống/0) thì chưa cộng tiền,
       -- nếu không tiền của lô đó dồn vào giá các đơn vị khác (vd EKASPEEK T10: 1,26 → 7,04).
       -- Lô đã nhận vẫn lấy đủ tiền lô (như sheet: tổng tiền / số nhận).
       ${bookMode
         ? sql`COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, 0))
-            FILTER (WHERE COALESCE(amazon_received, 0) > 0), 0)::float`
+            FILTER (WHERE ${sql.unsafe(EFFECTIVE_AMAZON_RECEIVED_SQL)} > 0), 0)::float`
         : sql`COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, 0)), 0)::float`} as total_cost
     FROM accounting_inbound_shipments
     WHERE store_id = ${storeId}
