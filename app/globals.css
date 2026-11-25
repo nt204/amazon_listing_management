@@ -230,14 +230,17 @@ body {
   color: #000000 !important;
 }
 
-/* Bảng Financials (FBA/FBM theo ngày, SKU Win/Test, FBM cố định): tên cột chuẩn như bên FBA theo ngày.
-   Chỉ hàng tiêu đề đầu tiên, không đụng hàng TOTAL. */
+/* Bảng Financials Day (FBA/FBM theo ngày, Lọc SKU Win/Test, FBM cố định) + Month (SKU Monthly): cùng 1 cỡ chữ.
+   Tên cột 15px; mọi ô (dòng TOTAL, dòng tháng, dòng ngày / SKU) 14px — kể cả chữ trong ô đặt text-xs / text-[10px]
+   (gốc html 13px nên text-xs chỉ ~9.75px). */
 .font-accounting-system table.acc-financial-table thead tr:first-child th,
 .font-accounting-system table.acc-financial-table thead tr:first-child th .truncate,
-.font-accounting-system table.acc-financial-table thead tr:first-child th .acc-th-label,
-.font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th,
-.font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th .truncate {
-  font-size: 13.5px !important;
+.font-accounting-system table.acc-financial-table thead tr:first-child th .acc-th-label {
+  font-size: 15px !important;
+}
+.font-accounting-system table.acc-financial-table td,
+.font-accounting-system table.acc-financial-table td *:not(svg):not(svg *) {
+  font-size: 14px !important;
 }
 
 /* Cột chính của mỗi bảng (tên chiến dịch, keyword, search term, sku...): in đậm (font-weight: 700) */
