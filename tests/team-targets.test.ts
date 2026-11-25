@@ -88,6 +88,10 @@ test("tin 2: team từ store, tuần 1/2/3 của kế hoạch 3 tuần, mỗi ng
     { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS },
   );
   assert.equal(out.team, "FBA 2");
+  assert.deepEqual(out.items.map((i) => i.label), [
+    "Tuần cuối T11", "Mỗi ngày (Tuần cuối T11)", "Tuần 1 T12", "Tuần 2 T12", "Tuần 3 T12", "Tổng T12",
+    "Margin tối thiểu LIMIMA", "Margin tối thiểu FASTPEACE",
+  ]);
   const weeks = out.items.filter((i) => i.kind === "week_total").map((i) => `${i.startDate}..${i.endDate}:${i.value}`);
   assert.deepEqual(weeks, [
     "2026-11-23..2026-11-29:5000",
@@ -121,7 +125,10 @@ test("tin 1: không nhắc store → team theo nhóm chat; 'còn thực hiện' 
   assert.equal(out.team, "FBA 3");
   const remaining = out.items.find((i) => i.label.startsWith("Còn lại"))!;
   assert.deepEqual([remaining.startDate, remaining.endDate], ["2026-11-23", "2026-11-30"]);
-  assert.deepEqual(out.items.filter((i) => i.kind === "week_total").map((i) => i.startDate), ["2026-11-23", "2026-11-30", "2026-12-07", "2026-12-14"]);
+  // Thứ tự trên card: tuần của tháng rồi tới tổng tháng
+  assert.deepEqual(out.items.map((i) => i.label), [
+    "Tuần cuối T11", "Còn lại T11", "Tuần đầu T12", "Tuần giữa T12", "Tuần cuối T12", "Tổng T12",
+  ]);
   assert.equal(out.warnings.length, 1);
 });
 

@@ -424,9 +424,16 @@ export function normalizeExtraction(
     }
   }
 
-  // Sắp theo ngày (sếp có thể viết "tuần cuối" trước "tuần đầu"); cùng ngày thì tổng tuần → mỗi ngày → tổng tháng → margin
+  // Sắp cho dễ đọc: theo tháng (tuần vắt 2 tháng tính tháng chứa Thứ 5), trong tháng các tuần theo ngày rồi tới dòng
+  // tổng / còn lại của tháng; margin tối thiểu xuống cuối. Sếp có thể viết "tuần cuối" trước "tuần đầu".
+  const monthKey = (x: TeamTargetItem) =>
+    x.kind === "margin_floor" ? "9999-99" : x.kind === "month_total" ? x.startDate.slice(0, 7) : weekMonthOf(x.startDate);
   const kindOrder: Record<TargetKind, number> = { week_total: 0, daily_rate: 1, month_total: 2, margin_floor: 3 };
-  items.sort((a, b) => a.startDate.localeCompare(b.startDate) || kindOrder[a.kind] - kindOrder[b.kind]);
+  items.sort((a, b) =>
+    monthKey(a).localeCompare(monthKey(b)) ||
+    (a.kind === "month_total" ? 1 : 0) - (b.kind === "month_total" ? 1 : 0) ||
+    a.startDate.localeCompare(b.startDate) ||
+    kindOrder[a.kind] - kindOrder[b.kind]);
 
   return {
     team,
