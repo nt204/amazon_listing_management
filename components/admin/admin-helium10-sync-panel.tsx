@@ -486,7 +486,7 @@ export function AdminHelium10SyncPanel() {
                 <span className="font-mono text-sm font-bold text-slate-900">
                   {latestRun?.cerebro_calls ?? 0}
                   <span className="text-[10px] font-semibold text-slate-500">
-                    {" "}· {formatCount(status?.budget.cerebroUsed)}/{formatCount(status?.budget.cerebroLimit)}
+                    {" "}· {formatCount(status?.budget.cerebroUsed)}/{status?.budget.cerebroLimit ? formatCount(status.budget.cerebroLimit) : "đến khi H10 hết lượt"}
                   </span>
                 </span>
               </div>

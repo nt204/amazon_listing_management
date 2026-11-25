@@ -18,7 +18,6 @@ import {
   PlusIcon,
   SlidersHorizontalIcon,
   FunnelIcon,
-  StorefrontIcon,
   SidebarSimpleIcon,
 } from "@phosphor-icons/react";
 import type { FbaDailyItem, FbaDailyStats } from "@/lib/accounting/fba-daily-db";
@@ -52,6 +51,7 @@ import {
   type MonthFee,
 } from "./daily-month-groups";
 import { DailySummaryPanel } from "./daily-summary-panel";
+import { StoreSelect } from "./store-select";
 
 const FBA_DAILY_COLUMNS_STORAGE_KEY = "acc_fba_daily_columns_global";
 const FBA_DAILY_FROZEN_STORAGE_KEY = "acc_fba_daily_frozen_global";
@@ -703,34 +703,13 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Store Switcher */}
-          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
-            <StorefrontIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
-            <select
-              id={`${channel}-store-select`}
-              value={selectedStoreId}
-              onChange={(e) => handleStoreSelect(e.target.value)}
-              disabled={loadingStores || stores.length === 0}
-              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-                backgroundPosition: "right 0 center",
-                backgroundRepeat: "no-repeat",
-                backgroundSize: "1.25em 1.25em",
-              }}
-            >
-              {loadingStores ? (
-                <option value="">Đang tải store...</option>
-              ) : stores.length === 0 ? (
-                <option value="">Không có store</option>
-              ) : (
-                stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
+          <StoreSelect
+            id={`${channel}-store-select`}
+            stores={stores}
+            value={selectedStoreId}
+            onChange={handleStoreSelect}
+            loading={loadingStores}
+          />
 
           {/* Amazon Date Range Picker */}
           <PpcAmazonDatePicker

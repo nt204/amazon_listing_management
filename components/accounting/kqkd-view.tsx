@@ -11,7 +11,6 @@ import {
   CheckIcon,
   FunnelSimpleIcon,
   MagnifyingGlassIcon,
-  StorefrontIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
@@ -19,6 +18,7 @@ import { storeCanEdit, storeCanView } from "@/lib/accounting/store-teams";
 import type { StoreAccessInfo } from "@/lib/accounting/types";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 import { AccountingTopProgressBar, AccountingViewTransition, AnimatedTabPill } from "./accounting-skeleton";
+import { StoreSelect } from "./store-select";
 
 // Tab KQKD — tham khảo file "BÁO CÁO KQKD SKU TESTING" (tab Tổng quan tháng + SKU TESTING).
 
@@ -2008,28 +2008,14 @@ export function KqkdView() {
       {/* TOOLBAR — tầng 1: bối cảnh (store · năm · chế độ) · tầng 2 (SKU Testing): tìm + lọc · tuỳ chọn hiển thị */}
       <div className="flex shrink-0 flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center gap-2 p-2">
-          <div className="flex h-8 items-center rounded-lg border border-slate-300 bg-white px-2.5 text-xs">
-            <StorefrontIcon size={15} weight="bold" className="mr-1.5 shrink-0 text-slate-500" />
-            <select
-              id="kqkd-store-select"
-              value={selectedStoreId}
-              onChange={(e) => handleStoreSelect(e.target.value)}
-              disabled={loadingStores || stores.length === 0}
-              className="cursor-pointer bg-transparent font-bold text-slate-800 focus:outline-hidden"
-            >
-              {loadingStores ? (
-                <option value="">Đang tải store...</option>
-              ) : stores.length === 0 ? (
-                <option value="">Không có store</option>
-              ) : (
-                stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
+          <StoreSelect
+            id="kqkd-store-select"
+            stores={stores}
+            value={selectedStoreId}
+            onChange={handleStoreSelect}
+            loading={loadingStores}
+            size="sm"
+          />
 
           <select id="kqkd-year-select" aria-label="Năm listing" value={year} onChange={(e) => setYear(Number(e.target.value))} className={selectCls}>
             {years.map((y) => (

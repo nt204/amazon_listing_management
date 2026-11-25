@@ -136,6 +136,7 @@ import type { LinkType, SheetType } from "@/lib/accounting/inventory-sheet-sync"
 import { MonthlyBaseCostView, type MonthlyBaseCostViewRef } from "./monthly-base-cost-view";
 import { PaginationBar } from "./pagination-bar";
 import { FbmPwCostView, type FbmPwCostViewRef } from "./fbm-pw-cost-view";
+import { StoreSelect } from "./store-select";
 
 // Debounce hook for instant, throttled searching (300ms)
 function useDebounce<T>(value: T, delay: number): T {
@@ -5194,26 +5195,15 @@ function InventoryViewInner() {
               >
                 Store
               </label>
-              <select
+              <StoreSelect
                 id="inventory-store-select"
+                stores={stores}
                 value={selectedStoreId}
-                onChange={(event) => handleStoreSelect(event.target.value)}
-                disabled={loadingStores || stores.length === 0}
+                onChange={handleStoreSelect}
+                loading={loadingStores}
                 aria-label="Chọn Store để xem dữ liệu Inventory"
-                className="min-w-[220px] rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 shadow-2xs outline-none transition hover:border-slate-400 hover:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:text-slate-400"
-              >
-                {loadingStores ? (
-                  <option value="">Đang tải danh sách Store...</option>
-                ) : stores.length === 0 ? (
-                  <option value="">Chưa có Store</option>
-                ) : (
-                  stores.map((store) => (
-                    <option key={store.id} value={store.id}>
-                      {store.name}
-                    </option>
-                  ))
-                )}
-              </select>
+                className="min-w-[220px]"
+              />
             </div>
           </div>
 

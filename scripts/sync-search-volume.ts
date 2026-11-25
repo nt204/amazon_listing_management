@@ -52,7 +52,7 @@ async function main() {
   const status = await getSearchVolumeStatus(TEAM_ID, storeName);
   const run = status.recentRuns.find((item) => item.id === started.runId) ?? status.latestRun;
   log(`Kết thúc: ${run?.status} — ${run?.message ?? ""}`);
-  log(`Hạn mức tháng: Cerebro ${status.budget.cerebroUsed}/${status.budget.cerebroLimit}, Magnet ${status.budget.magnetUsed}/${status.budget.magnetLimit}`);
+  log(`Hạn mức tháng: Cerebro ${status.budget.cerebroUsed}/${status.budget.cerebroLimit || "∞"}, Magnet ${status.budget.magnetUsed}/${status.budget.magnetLimit}`);
   return run?.status === "completed" ? 0 : 1;
 }
 

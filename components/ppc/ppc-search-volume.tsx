@@ -172,7 +172,7 @@ export function PpcSearchVolumeSyncButton({ storeName, canWrite = true }: { stor
         title={
           isRunning
             ? status?.latestRun?.message || "Đang đồng bộ..."
-            : `Đã có volume: ${withVolume.toLocaleString()} · Còn thiếu: ${missing.toLocaleString()} · Cerebro ${status?.budget.cerebroUsed || 0}/${status?.budget.cerebroLimit || 0}`
+            : `Đã có volume: ${withVolume.toLocaleString()} · Còn thiếu: ${missing.toLocaleString()} · Cerebro ${status?.budget.cerebroUsed || 0}${status?.budget.cerebroLimit ? `/${status.budget.cerebroLimit}` : " lượt (đến khi H10 hết lượt)"}`
         }
       >
         {isRunning || submitting ? (

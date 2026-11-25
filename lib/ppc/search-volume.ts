@@ -29,8 +29,12 @@ const CEREBRO_ASINS_PER_CALL = 1;
 // 1.457 lượt tháng 11 dừng đúng ở 998–1.000 dòng, keyword target như "gift fo wife" ở trang sau bị bỏ.
 const CEREBRO_ROWS_PER_CALL = Math.max(1000, envInt("PPC_SEARCH_VOLUME_CEREBRO_ROWS", 30000));
 const MAGNET_ROWS_PER_CALL = Math.max(200, envInt("PPC_SEARCH_VOLUME_MAGNET_ROWS", 2000));
-// Diamond: 300 Cerebro / 150 Magnet mỗi tháng
-const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET", 300);
+// Cerebro: 0 = không đặt hạn mức trong app — quét tới khi H10 báo hết lượt ("Not enough uses") thì dừng, giữ checkpoint.
+// (Trước đây 300/tháng chặn job dù H10 vẫn còn lượt; lượt H10 dùng chung với người dùng khác và đặt lại theo chu kỳ thanh toán.)
+// Muốn chừa lượt cho người khác thì đặt PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET > 0.
+const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET", 0);
+const cerebroBudgetReached = (used: number) => CEREBRO_MONTHLY_BUDGET > 0 && used >= CEREBRO_MONTHLY_BUDGET;
+// Magnet: 150 lượt/tháng
 const MAGNET_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_MAGNET_MONTHLY_BUDGET", 150);
 // 0 = không giới hạn: chạy tới khi quét hết ASIN hoặc hết hạn mức tháng (checkpoint giữ phần còn lại)
 const CEREBRO_PER_RUN = envInt("PPC_SEARCH_VOLUME_CEREBRO_PER_RUN", 0);
@@ -633,7 +637,7 @@ export async function startSearchVolumeSync(input: {
 
   const usage = await monthlyUsage(sql);
   const magnetExhausted = usage.magnet >= MAGNET_MONTHLY_BUDGET;
-  if (magnetExhausted && (mode === "magnet" || usage.cerebro >= CEREBRO_MONTHLY_BUDGET)) {
+  if (magnetExhausted && (mode === "magnet" || cerebroBudgetReached(usage.cerebro))) {
     throw new ApiError(
       `Đã dùng hết hạn mức Helium 10 dành cho đồng bộ tháng này (Cerebro ${usage.cerebro}/${CEREBRO_MONTHLY_BUDGET}, Magnet ${usage.magnet}/${MAGNET_MONTHLY_BUDGET}).`,
       429,
@@ -792,7 +796,7 @@ async function runSearchVolumeSync(
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   for (const [index, batch] of batches.entries()) {
-    if (usage.cerebro + cerebroCalls >= CEREBRO_MONTHLY_BUDGET) {
+    if (cerebroBudgetReached(usage.cerebro + cerebroCalls)) {
       stopReason = `Hết hạn mức Cerebro tháng (${CEREBRO_MONTHLY_BUDGET} lượt), sẽ chạy tiếp từ checkpoint.`;
       cerebroExhausted = true;
       break;

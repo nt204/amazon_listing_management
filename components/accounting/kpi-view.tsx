@@ -10,7 +10,6 @@ import {
   CaretRightIcon,
   MagnifyingGlassIcon,
   PencilSimpleIcon,
-  StorefrontIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
@@ -40,6 +39,7 @@ import { AccountingTopProgressBar, AnimatedTabPill } from "./accounting-skeleton
 import { KpiDashboardView, type KpiStorePart } from "./kpi-dashboard-view";
 import { KpiPlanView } from "./kpi-plan-view";
 import { halfLabel, halfOf } from "@/lib/accounting/kpi-plan-calc";
+import { StoreSelect } from "./store-select";
 
 // Mục "KPI kinh doanh" — theo file "<STORE> - KẾ HOẠCH KINH DOANH 2026":
 // Tổng quan tháng (BÁO CÁO THÁNG) · SKU phát triển (CHI TIẾT SKU) · SKU test (CHI TIẾT SKU TEST).
@@ -2698,31 +2698,15 @@ export function KpiView() {
     <div className="flex h-full w-full flex-col gap-2 overflow-auto p-2 font-sans">
       <div className="flex shrink-0 flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center gap-2 p-2">
-          <div className="flex h-8 items-center rounded-lg border border-slate-300 bg-white px-2.5 text-xs">
-            <StorefrontIcon size={15} weight="bold" className="mr-1.5 shrink-0 text-slate-500" />
-            <select
-              id="kpi-store-select"
-              value={selectedStoreId}
-              onChange={(e) => handleStoreSelect(e.target.value)}
-              disabled={loadingStores || stores.length === 0}
-              className="cursor-pointer bg-transparent font-bold text-slate-800 focus:outline-hidden"
-            >
-              {loadingStores ? (
-                <option value="">Đang tải store...</option>
-              ) : stores.length === 0 ? (
-                <option value="">Không có store</option>
-              ) : (
-                <>
-                  {stores.length > 1 && <option value={ALL_STORES}>Tất cả store (All)</option>}
-                  {stores.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </>
-              )}
-            </select>
-          </div>
+          <StoreSelect
+            id="kpi-store-select"
+            stores={stores}
+            value={selectedStoreId}
+            onChange={handleStoreSelect}
+            loading={loadingStores}
+            allOption={{ id: ALL_STORES, name: "Tất cả store (All)" }}
+            size="sm"
+          />
 
           <div className="flex h-8 items-center rounded-lg border border-slate-300 bg-white">
             <button type="button" aria-label="Tháng trước" onClick={() => setPeriod((p) => shiftPeriod(p, -1))} className="flex h-full cursor-pointer items-center px-1.5 text-slate-500 hover:text-slate-900">

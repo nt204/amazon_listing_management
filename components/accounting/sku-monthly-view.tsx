@@ -26,7 +26,6 @@ import {
   PlusIcon,
   SlidersHorizontalIcon,
   FunnelIcon,
-  StorefrontIcon,
 } from "@phosphor-icons/react";
 import type { SkuMonthlyItem, SkuMonthlyStoreSummary } from "@/lib/accounting/sku-monthly-db";
 import {
@@ -45,6 +44,7 @@ import {
   AccountingTableSkeletonRows,
   AccountingTopProgressBar,
 } from "./accounting-skeleton";
+import { StoreSelect } from "./store-select";
 
 // Mỗi kênh lưu cấu hình cột riêng (tab SKU FBM-monthly có bộ cột khác SKU Monthly FBA)
 const CHANNEL_CONFIG = {
@@ -611,27 +611,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0 select-none">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Store Selector */}
-          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
-            <StorefrontIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
-            <select
-              value={selectedStoreId}
-              onChange={(e) => handleStoreSelect(e.target.value)}
-              disabled={stores.length === 0}
-              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-                backgroundPosition: "right 0 center",
-                backgroundRepeat: "no-repeat",
-                backgroundSize: "1.25em 1.25em",
-              }}
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <StoreSelect stores={stores} value={selectedStoreId} onChange={handleStoreSelect} size="sm" />
 
           {/* Chọn tháng / khoảng tháng (lưới 12 tháng, đổi năm bằng mũi tên) */}
           <MonthRangePicker

@@ -49,6 +49,7 @@ import {
   AnimatedTabPill,
   AccountingViewTransition,
 } from "./accounting-skeleton";
+import { StoreSelect } from "./store-select";
 
 const ImportTabLoading = () => (
   <AccountingModuleSkeleton title="Đang tải bảng dữ liệu..." cardsCount={0} />
@@ -1069,25 +1070,15 @@ export function OrderInputView() {
               >
                 Store
               </label>
-              <select
+              <StoreSelect
                 id="order-store-select"
+                stores={stores}
                 value={selectedStoreId}
-                onChange={(e) => handleStoreChange(e.target.value)}
-                disabled={loadingStores || stores.length === 0}
-                className="min-w-[200px] rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-2xs outline-none transition hover:border-slate-400 hover:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed"
-              >
-                {loadingStores ? (
-                  <option value="">Đang tải Store...</option>
-                ) : stores.length === 0 ? (
-                  <option value="">Chưa có Store</option>
-                ) : (
-                  stores.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))
-                )}
-              </select>
+                onChange={handleStoreChange}
+                loading={loadingStores}
+                size="sm"
+                className="min-w-[200px]"
+              />
             </div>
           </div>
 
