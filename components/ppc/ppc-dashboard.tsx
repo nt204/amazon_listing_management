@@ -5488,7 +5488,6 @@ export function PpcDashboard({
                       </td>
                       <td className="py-2.5 px-3.5 font-bold text-slate-900 col-primary">
                         <span className="inline-flex items-center gap-1.5">
-                        <PpcSkuStatusBadge status={s.skuStatus} />
                         <span
                           role="link"
                           tabIndex={0}
@@ -5504,6 +5503,7 @@ export function PpcDashboard({
                         >
                           {s.sku}
                         </span>
+                        <PpcSkuStatusBadge status={s.skuStatus} />
                         </span>
                       </td>
                       {selectedStore === "ALL" && <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>}
