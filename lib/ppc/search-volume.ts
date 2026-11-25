@@ -393,7 +393,7 @@ function buildAsinBatches(queue: AsinQueueRow[]) {
   return batches;
 }
 
-async function saveAsinCheckpoint(
+export async function saveAsinCheckpoint(
   sql: Sql,
   marketplace: string,
   asins: string[],
@@ -422,7 +422,7 @@ async function saveAsinCheckpoint(
   `;
 }
 
-async function upsertVolumes(sql: Sql, marketplace: string, source: string, items: Helium10KeywordItem[]) {
+export async function upsertVolumes(sql: Sql, marketplace: string, source: string, items: Helium10KeywordItem[]) {
   const byKeyword = new Map<string, Helium10KeywordItem>();
   for (const item of items) {
     const keyword = normalizeKeyword(item.keyword);
@@ -470,7 +470,7 @@ async function upsertVolumes(sql: Sql, marketplace: string, source: string, item
 
 let loggedUnknownAsinRow = false;
 
-async function upsertRankings(
+export async function upsertRankings(
   sql: Sql,
   marketplace: string,
   asins: string[],
