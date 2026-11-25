@@ -775,7 +775,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
     // không có thì báo cáo như cũ
     const week = weekTargetCells(activeTargets, targetDate, teamTotals, null);
     const weekLine = week && week.target !== "—"
-      ? `🎯 **Tuần ${week.week}:** Tổng units tuần ${week.cum} · Target units tuần ${week.target} · % đạt ${week.pct}`
+      ? `🎯 **Tuần ${week.week}:** Tổng units ${week.cum} · Target units tuần ${week.target} · % đạt ${week.pct}`
       : "";
 
     const teamTableRows: Array<Record<string, string>> = [];
