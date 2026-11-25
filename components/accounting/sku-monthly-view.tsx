@@ -28,7 +28,7 @@ import {
   FunnelIcon,
   StorefrontIcon,
 } from "@phosphor-icons/react";
-import type { SkuMonthlyItem, SkuMonthlyStoreSummary, AvailableMonthOption } from "@/lib/accounting/sku-monthly-db";
+import type { SkuMonthlyItem, SkuMonthlyStoreSummary } from "@/lib/accounting/sku-monthly-db";
 import {
   type ColumnConfig,
   DEFAULT_SKU_MONTHLY_COLUMNS,
@@ -174,7 +174,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     }
     return 2026;
   });
-  const [availableMonths, setAvailableMonths] = useState<AvailableMonthOption[]>([]);
 
   // Search & Sorting
   const [search, setSearch] = useState("");
@@ -541,9 +540,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       setItems(data.items || []);
       setPage(1);
       setSummary(data.summary || null);
-      if (data.availableMonths && data.availableMonths.length > 0) {
-        setAvailableMonths(data.availableMonths);
-      }
     } catch (err: any) {
       console.error("[SkuMonthlyView] Error:", err);
       setError(err.message || "Không thể tải báo cáo tháng");
