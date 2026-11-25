@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
     const month = monthParam === "all" ? "all" : monthParam ? parseInt(monthParam, 10) : 9;
     const monthToParam = searchParams.get("monthTo");
     const monthTo = monthToParam ? parseInt(monthToParam, 10) || undefined : undefined;
+    const yearTo = searchParams.get("yearTo") ? parseInt(searchParams.get("yearTo")!, 10) || undefined : undefined;
 
     const search = searchParams.get("search") || undefined;
     const productType = searchParams.get("productType") || undefined;
@@ -31,6 +32,7 @@ export async function GET(req: NextRequest) {
       year,
       month,
       monthTo,
+      yearTo,
       search,
       productType,
       status,
@@ -187,7 +189,12 @@ export async function GET(req: NextRequest) {
     }
 
     const csvContent = "\uFEFF" + headers.join(",") + "\n" + rows.join("\n");
-    const monthStr = month === "all" ? "AllMonths" : monthTo && monthTo > month ? `Thang_${month}-${monthTo}` : `Thang_${month}`;
+    const monthStr =
+      month === "all"
+        ? "AllMonths"
+        : monthTo && (yearTo && yearTo > year ? true : monthTo > month)
+        ? `Thang_${month}-${year}_den_${monthTo}-${yearTo || year}`
+        : `Thang_${month}`;
     const filename = `SKU_Monthly_${monthStr}_${year}.csv`;
 
     return new NextResponse(csvContent, {

@@ -153,10 +153,14 @@ export async function listFbmSkuMonthly(
   const monthOpt = options.month ?? (summaryRows[0] ? Number(summaryRows[0].month) : 10);
   const isAllMonths = monthOpt === "all";
   const monthNum = typeof monthOpt === "number" ? monthOpt : 0;
-  // Khoảng tháng [monthNum, monthTo]: gộp như "Tất cả các tháng" nhưng chỉ trong khoảng
-  const monthTo = !isAllMonths && options.monthTo && options.monthTo > monthNum ? Math.min(12, options.monthTo) : null;
-  const isGrouped = isAllMonths || monthTo !== null;
-  const inRange = (m: number) => isAllMonths || (monthTo !== null ? m >= monthNum && m <= monthTo : m === monthNum);
+  // Khoảng tháng (có thể qua năm) [year-month, yearTo-monthTo]: gộp như "Tất cả các tháng" nhưng chỉ trong khoảng
+  const startKey = year * 100 + monthNum;
+  const endKey =
+    !isAllMonths && options.monthTo
+      ? Math.max(year, options.yearTo || year) * 100 + Math.min(12, Math.max(1, options.monthTo))
+      : startKey;
+  const isRange = !isAllMonths && endKey > startKey;
+  const isGrouped = isAllMonths || isRange;
 
   // Mockup theo SKU + ASIN (không có thì dòng đầu của SKU): tính 1 lần cho cả store rồi hash join —
   // LATERAL theo từng dòng quét lại bảng mã cho mỗi SKU (FASTPEACE 3.645 SKU mất ~19 giây).
@@ -187,8 +191,8 @@ export async function listFbmSkuMonthly(
         FROM accounting_fbm_sku_monthly sm
         LEFT JOIN mockups ma ON ma.sku_key = UPPER(sm.sku) AND ma.asin_key = UPPER(sm.asin) AND ma.first_of_asin
         LEFT JOIN mockups ms ON ms.sku_key = UPPER(sm.sku) AND ms.first_of_sku
-        WHERE sm.store_id = ${storeId} AND sm.year = ${year}
-          ${monthTo !== null ? sql`AND sm.month BETWEEN ${monthNum} AND ${monthTo}` : sql``}
+        WHERE sm.store_id = ${storeId}
+          ${isRange ? sql`AND sm.year * 100 + sm.month BETWEEN ${startKey} AND ${endKey}` : sql`AND sm.year = ${year}`}
         GROUP BY sm.sku, sm.asin
       `
     : await sql<Row[]>`
@@ -230,8 +234,15 @@ export async function listFbmSkuMonthly(
 
   // Tổng của kỳ lấy theo toàn bộ SKU (như ô dòng 2 của tab), không theo bộ lọc; YTD cộng phí chủ store các tháng
   const stored = isGrouped ? null : summaryRows.find((r) => Number(r.month) === monthNum);
+  // Phí chủ store: cộng các tháng trong khoảng (khoảng qua năm → đọc thêm bảng tổng các năm đó)
+  const rangeSummaryRows = isRange
+    ? await sql<Row[]>`
+        SELECT month, year, owner_fee FROM accounting_fbm_monthly_store_summary
+        WHERE store_id = ${storeId} AND year * 100 + month BETWEEN ${startKey} AND ${endKey}
+      `
+    : summaryRows;
   const ownerFee = isGrouped
-    ? summaryRows.filter((r) => inRange(Number(r.month))).reduce((s, r) => s + n(r.owner_fee), 0)
+    ? rangeSummaryRows.reduce((s, r) => s + n(r.owner_fee), 0)
     : n(stored?.owner_fee);
   const summary = summaryFromItems(allItems, storeId, year, isGrouped ? 0 : monthNum, ownerFee);
   if (stored) summary.data_source = str(stored.data_source);

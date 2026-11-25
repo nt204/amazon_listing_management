@@ -106,8 +106,9 @@ export interface AvailableMonthOption {
 export interface ListSkuMonthlyOptions {
   year?: number;
   month?: number | "all";
-  /** Xem gộp từ tháng `month` đến tháng `monthTo` (cùng năm). Bỏ trống / bằng month = 1 tháng */
+  /** Xem gộp từ tháng `month`/`year` đến tháng `monthTo`/`yearTo` (yearTo bỏ trống = cùng năm). Bỏ trống / bằng month = 1 tháng */
   monthTo?: number;
+  yearTo?: number;
   search?: string;
   productType?: string;
   status?: string;
@@ -144,9 +145,14 @@ export async function listSkuMonthly(
   }
   const isAllMonths = monthOpt === "all";
   const monthNum = typeof monthOpt === "number" ? monthOpt : 10;
-  // Khoảng tháng: gộp như "Tất cả các tháng" nhưng chỉ trong [monthNum, monthTo]
-  const monthTo = !isAllMonths && options.monthTo && options.monthTo > monthNum ? Math.min(12, options.monthTo) : null;
-  const isGrouped = isAllMonths || monthTo !== null;
+  // Khoảng tháng (có thể qua năm): gộp như "Tất cả các tháng" nhưng chỉ trong [year-month, yearTo-monthTo]
+  const startKey = year * 100 + monthNum;
+  const endKey =
+    !isAllMonths && options.monthTo
+      ? Math.max(year, options.yearTo || year) * 100 + Math.min(12, Math.max(1, options.monthTo))
+      : startKey;
+  const isRange = !isAllMonths && endKey > startKey;
+  const isGrouped = isAllMonths || isRange;
 
   const search = options.search?.trim() || "";
   const productType = options.productType?.trim() || "";
@@ -168,8 +174,8 @@ export async function listSkuMonthly(
   const filterPromise = sql<{ product_type: string; status: string }[]>`
     SELECT DISTINCT product_type, status
     FROM accounting_sku_monthly
-    WHERE store_id = ${storeId} AND year = ${year}
-      ${isAllMonths ? sql`` : monthTo !== null ? sql`AND month BETWEEN ${monthNum} AND ${monthTo}` : sql`AND month = ${monthNum}`}
+    WHERE store_id = ${storeId}
+      ${isRange ? sql`AND year * 100 + month BETWEEN ${startKey} AND ${endKey}` : isAllMonths ? sql`AND year = ${year}` : sql`AND year = ${year} AND month = ${monthNum}`}
   `;
 
   const itemsPromise = isGrouped
@@ -208,8 +214,8 @@ export async function listSkuMonthly(
         MAX(COALESCE(sm.review_month, m.thang_danh_gia)) as review_month
       FROM accounting_sku_monthly sm
       LEFT JOIN accounting_sku_master m ON m.store_id = sm.store_id AND m.sku = sm.sku
-      WHERE sm.store_id = ${storeId} AND sm.year = ${year}
-        ${monthTo !== null ? sql`AND sm.month BETWEEN ${monthNum} AND ${monthTo}` : sql``}
+      WHERE sm.store_id = ${storeId}
+        ${isRange ? sql`AND sm.year * 100 + sm.month BETWEEN ${startKey} AND ${endKey}` : sql`AND sm.year = ${year}`}
       GROUP BY sm.sku
     `
     : sql<Record<string, any>[]>`

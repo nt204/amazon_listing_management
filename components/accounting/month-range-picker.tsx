@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { CalendarBlankIcon, CaretDownIcon, CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
 
-// Chọn tháng / khoảng tháng trong 1 năm (Báo cáo tháng SKU): lưới 12 tháng, bấm tháng đầu rồi tháng cuối, Apply.
+// Chọn tháng / khoảng tháng (Báo cáo tháng SKU): lưới 12 tháng, bấm tháng đầu rồi tháng cuối (đổi năm giữa chừng
+// để chọn qua năm, vd T11/2025 → T2/2026), Apply.
 
 export interface MonthRangeValue {
   year: number;
@@ -11,19 +12,26 @@ export interface MonthRangeValue {
   from: number | "all";
   /** null = chỉ 1 tháng */
   to: number | null;
+  /** Năm của tháng cuối; bỏ trống = cùng năm */
+  toYear?: number;
 }
+
+const key = (y: number, m: number) => y * 100 + m;
+const endKey = (v: MonthRangeValue) =>
+  v.from === "all" || v.to == null ? null : key(v.toYear ?? v.year, v.to);
 
 interface MonthRangePickerProps {
   value: MonthRangeValue;
   onChange: (value: MonthRangeValue) => void;
 }
 
-const monthLabel = (v: MonthRangeValue) =>
-  v.from === "all"
-    ? `Cả năm ${v.year}`
-    : v.to != null && v.to > v.from
-    ? `Tháng ${v.from} — Tháng ${v.to}/${v.year}`
-    : `Tháng ${v.from}/${v.year}`;
+const monthLabel = (v: MonthRangeValue) => {
+  if (v.from === "all") return `Cả năm ${v.year}`;
+  const end = endKey(v);
+  if (end == null || end <= key(v.year, v.from)) return `Tháng ${v.from}/${v.year}`;
+  const toYear = v.toYear ?? v.year;
+  return toYear === v.year ? `Tháng ${v.from} — Tháng ${v.to}/${v.year}` : `Tháng ${v.from}/${v.year} — Tháng ${v.to}/${toYear}`;
+};
 
 function lastSelectableMonth(year: number) {
   const now = new Date();
@@ -33,6 +41,8 @@ function lastSelectableMonth(year: number) {
 export function MonthRangePicker({ value, onChange }: MonthRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<MonthRangeValue>(value);
+  // Năm đang hiện trên lưới (đổi bằng mũi tên, không làm mất tháng đã chọn)
+  const [viewYear, setViewYear] = useState(value.year);
   // Đã bấm tháng đầu, đang chờ bấm tháng cuối
   const [picking, setPicking] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -54,6 +64,7 @@ export function MonthRangePicker({ value, onChange }: MonthRangePickerProps) {
   const toggle = () => {
     if (!open) {
       setDraft(value);
+      setViewYear(value.toYear ?? value.year);
       setPicking(false);
     }
     setOpen(!open);
@@ -61,25 +72,26 @@ export function MonthRangePicker({ value, onChange }: MonthRangePickerProps) {
 
   const pick = (m: number) => {
     if (!picking || draft.from === "all") {
-      setDraft({ year: draft.year, from: m, to: null });
+      setDraft({ year: viewYear, from: m, to: null });
       setPicking(true);
       return;
     }
-    const a = Math.min(draft.from, m);
-    const b = Math.max(draft.from, m);
-    setDraft({ year: draft.year, from: a, to: b > a ? b : null });
+    const a = key(draft.year, draft.from);
+    const b = key(viewYear, m);
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    setDraft(
+      hi > lo
+        ? { year: Math.floor(lo / 100), from: lo % 100, to: hi % 100, toYear: Math.floor(hi / 100) }
+        : { year: viewYear, from: m, to: null },
+    );
     setPicking(false);
   };
 
-  const changeYear = (year: number) => {
-    setDraft({ year, from: Math.min(lastSelectableMonth(year), 12) || 1, to: null });
-    setPicking(false);
-  };
-
-  const maxMonth = lastSelectableMonth(draft.year);
-  const inDraft = (m: number) =>
-    draft.from === "all" ? m <= maxMonth : draft.to != null ? m >= draft.from && m <= draft.to : m === draft.from;
-  const isEdge = (m: number) => draft.from !== "all" && (m === draft.from || m === draft.to);
+  const maxMonth = lastSelectableMonth(viewYear);
+  const startK = draft.from === "all" ? key(draft.year, 1) : key(draft.year, draft.from);
+  const endK = draft.from === "all" ? key(draft.year, 12) : endKey(draft) ?? startK;
+  const inDraft = (m: number) => key(viewYear, m) >= startK && key(viewYear, m) <= endK;
+  const isEdge = (m: number) => draft.from !== "all" && (key(viewYear, m) === startK || key(viewYear, m) === endK);
 
   return (
     <div ref={ref} className={`relative inline-block ${open ? "z-[100]" : ""}`}>
@@ -99,17 +111,17 @@ export function MonthRangePicker({ value, onChange }: MonthRangePickerProps) {
             <button
               type="button"
               aria-label="Năm trước"
-              onClick={() => changeYear(draft.year - 1)}
+              onClick={() => setViewYear(viewYear - 1)}
               className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
             >
               <CaretLeftIcon size={18} weight="bold" />
             </button>
-            <div className="text-base font-bold text-slate-900">{draft.year}</div>
+            <div className="text-base font-bold text-slate-900">{viewYear}</div>
             <button
               type="button"
               aria-label="Năm sau"
-              disabled={lastSelectableMonth(draft.year + 1) === 0}
-              onClick={() => changeYear(draft.year + 1)}
+              disabled={lastSelectableMonth(viewYear + 1) === 0}
+              onClick={() => setViewYear(viewYear + 1)}
               className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
             >
               <CaretRightIcon size={18} weight="bold" />

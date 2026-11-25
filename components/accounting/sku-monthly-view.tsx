@@ -149,20 +149,26 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     }
     return 10; // Default to latest complete month (Tháng 10)
   });
-  // Xem gộp từ tháng (selectedMonth) đến tháng (selectedMonthTo); null hoặc bằng selectedMonth = 1 tháng
-  const [selectedMonthTo, setSelectedMonthTo] = useState<number | null>(() => {
-    if (typeof window !== "undefined") {
-      const saved = Number(localStorage.getItem("acc_selected_month_to"));
-      if (saved >= 1 && saved <= 12) return saved;
+  // Xem gộp từ tháng (selectedYear/selectedMonth) đến tháng cuối (có thể khác năm); null = chỉ 1 tháng.
+  // Lưu "YYYY-MM"; giá trị cũ chỉ có số tháng thì hiểu là cùng năm đang chọn.
+  const [selectedEnd, setSelectedEnd] = useState<{ year: number; month: number } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem("acc_selected_month_to") || "";
+      const ym = raw.match(/^(\d{4})-(\d{1,2})$/);
+      if (ym) return { year: Number(ym[1]), month: Number(ym[2]) };
+      const m = Number(raw);
+      const y = Number(localStorage.getItem("acc_selected_year")) || 2026;
+      return m >= 1 && m <= 12 ? { year: y, month: m } : null;
+    } catch {
+      return null;
     }
-    return null;
   });
-  const monthTo = selectedMonth !== "all" && selectedMonthTo != null && selectedMonthTo > selectedMonth ? selectedMonthTo : null;
-  const saveMonthTo = (val: number | null) => {
-    setSelectedMonthTo(val);
+  const saveEnd = (val: { year: number; month: number } | null) => {
+    setSelectedEnd(val);
     try {
       if (val == null) localStorage.removeItem("acc_selected_month_to");
-      else localStorage.setItem("acc_selected_month_to", String(val));
+      else localStorage.setItem("acc_selected_month_to", `${val.year}-${val.month}`);
     } catch {
       // bỏ qua
     }
@@ -174,6 +180,13 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     }
     return 2026;
   });
+  // Tháng cuối hợp lệ khi sau tháng đầu
+  const rangeEnd =
+    selectedMonth !== "all" && selectedEnd && selectedEnd.year * 100 + selectedEnd.month > selectedYear * 100 + selectedMonth
+      ? selectedEnd
+      : null;
+  const endYear = rangeEnd?.year ?? null;
+  const endMonth = rangeEnd?.month ?? null;
 
   // Search & Sorting
   const [search, setSearch] = useState("");
@@ -531,7 +544,10 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
         year: String(selectedYear),
         month: String(selectedMonth),
       });
-      if (monthTo != null) params.set("monthTo", String(monthTo));
+      if (endYear != null && endMonth != null) {
+        params.set("monthTo", String(endMonth));
+        params.set("yearTo", String(endYear));
+      }
 
       const res = await fetch(`${config.api}?${params.toString()}`);
       if (!res.ok) throw new Error(`Lỗi tải dữ liệu (${res.status})`);
@@ -546,7 +562,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     } finally {
       setLoading(false);
     }
-  }, [config.api, selectedStoreId, selectedYear, selectedMonth, monthTo]);
+  }, [config.api, selectedStoreId, selectedYear, selectedMonth, endYear, endMonth]);
 
   useEffect(() => {
     fetchData();
@@ -619,11 +635,11 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
           {/* Chọn tháng / khoảng tháng (lưới 12 tháng, đổi năm bằng mũi tên) */}
           <MonthRangePicker
-            value={{ year: selectedYear, from: selectedMonth, to: monthTo }}
+            value={{ year: selectedYear, from: selectedMonth, to: rangeEnd?.month ?? null, toYear: rangeEnd?.year }}
             onChange={(v) => {
               setSelectedYear(v.year);
               setSelectedMonth(v.from);
-              saveMonthTo(v.to);
+              saveEnd(v.to != null ? { year: v.toYear ?? v.year, month: v.to } : null);
               try {
                 localStorage.setItem("acc_selected_year", String(v.year));
                 localStorage.setItem("acc_selected_month", String(v.from));
@@ -704,7 +720,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
           {/* Export Excel */}
           <a
-            href={`${config.api}/export?storeId=${selectedStoreId}&month=${selectedMonth}${monthTo != null ? `&monthTo=${monthTo}` : ""}&year=${selectedYear}&search=${encodeURIComponent(
+            href={`${config.api}/export?storeId=${selectedStoreId}&month=${selectedMonth}${rangeEnd ? `&monthTo=${rangeEnd.month}&yearTo=${rangeEnd.year}` : ""}&year=${selectedYear}&search=${encodeURIComponent(
               search
             )}`}
             download

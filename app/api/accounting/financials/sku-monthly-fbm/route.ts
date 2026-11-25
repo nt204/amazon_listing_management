@@ -20,11 +20,13 @@ export async function GET(request: Request) {
     const month = monthParam === "all" ? "all" : monthParam ? parseInt(monthParam, 10) : undefined;
     const monthToParam = searchParams.get("monthTo");
     const monthTo = monthToParam ? parseInt(monthToParam, 10) || undefined : undefined;
+    const yearTo = searchParams.get("yearTo") ? parseInt(searchParams.get("yearTo")!, 10) || undefined : undefined;
 
     const result = await listFbmSkuMonthly(storeId, {
       year,
       month,
       monthTo,
+      yearTo,
       search: searchParams.get("search") || undefined,
       productType: searchParams.get("productType") || undefined,
       status: searchParams.get("status") || undefined,
