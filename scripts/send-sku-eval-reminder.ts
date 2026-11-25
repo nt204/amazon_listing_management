@@ -2,12 +2,14 @@
 //   node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/send-sku-eval-reminder.ts \
 //     [--month 2026-12] [--store LIMIMA[,FASTPEACE]] [--team "FBA 2"] [--send] [--webhook URL] [--json]
 // --team: mã team như báo cáo KPI ngày (TEAMS[].id) — gửi 1 tin gồm mọi store của team, tiêu đề có tên team.
+// --all-teams: chạy y như lịch mùng 3 (mỗi team 1 tin → nhóm tổng + nhóm team nếu có).
 // Không có --send: chỉ in ra số liệu, không gửi Lark.
 import {
   buildSkuEvalReminder,
   buildSkuEvalReminderCard,
   configuredReminderStores,
   reminderWebhookUrl,
+  sendSkuEvalReminderByTeam,
   vietnamNow,
 } from "@/lib/accounting/sku-eval-reminder";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
@@ -20,6 +22,14 @@ function arg(name: string) {
 
 async function main() {
   const month = arg("--month") || vietnamNow().month;
+  if (process.argv.includes("--all-teams")) {
+    const send = process.argv.includes("--send");
+    const results = await sendSkuEvalReminderByTeam(month, { dryRun: !send, mainWebhookUrl: arg("--webhook") });
+    for (const r of results) {
+      console.log(`  ${r.teamName} (${r.teamId}): ${r.stores} store, ${r.total} SKU${send ? ` → ${r.sentTo.join(" + ") || "không gửi"}` : ""}${r.error ? ` — LỖI ${r.error}` : ""}`);
+    }
+    process.exit(results.some((r) => r.error) ? 1 : 0);
+  }
   const storeArg = arg("--store");
   const stores = storeArg ? storeArg.split(",").map((s) => s.trim()).filter(Boolean) : configuredReminderStores();
   const teamId = arg("--team")?.trim().toUpperCase();

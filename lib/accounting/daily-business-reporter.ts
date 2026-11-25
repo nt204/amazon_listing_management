@@ -228,7 +228,7 @@ async function loadTeamLeads(teamId: string): Promise<Record<string, string>> {
  * dạng {"FBA 1": "https://open.larksuite.com/open-apis/bot/v2/hook/...", "FBM": "..."} (khoá = TEAMS[].id
  * trong scripts/send-daily-kpi-report.ts). Nhóm tổng vẫn nhận mọi tin qua LARK_ACCOUNTING_WEBHOOK_URL.
  */
-async function loadTeamWebhooks(teamId: string): Promise<Record<string, string>> {
+export async function loadTeamWebhooks(teamId: string): Promise<Record<string, string>> {
   const sql = await getDatabaseClient();
   const rows = await sql<Array<{ value: unknown }>>`
     SELECT value FROM app_settings

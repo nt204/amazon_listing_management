@@ -8,12 +8,12 @@ import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
 // components/accounting/kqkd-view.tsx evalWindow/evalState): tới tháng listing+3 là đến hạn, listing+4 là hạn chót,
 // sau đó là quá hạn. "Cần điền" = trạng thái Bảng mã chưa phải Phát triển / Hủy.
 //
-// Lịch chạy trong app (instrumentation.ts), TẮT mặc định:
-//   SKU_EVAL_REMINDER_SCHEDULE=on        bật lịch
-//   SKU_EVAL_REMINDER_DAY=3              ngày trong tháng (mặc định 3)
-//   SKU_EVAL_REMINDER_HOUR=8             giờ VN (mặc định 8h)
-//   SKU_EVAL_REMINDER_STORES=LIMIMA      chỉ báo các store này (bỏ trống = mọi store active)
-//   SKU_EVAL_REMINDER_WEBHOOK_URL=...    nhóm nhận (mặc định nhóm tổng LARK_ACCOUNTING_WEBHOOK_URL)
+// Lịch chạy trong app (instrumentation.ts), BẬT mặc định (người dùng yêu cầu 2026-11-25):
+//   mùng 3 hằng tháng 10h sáng giờ VN, mỗi team 1 tin gồm các store team quản lý → nhóm tổng
+//   (LARK_ACCOUNTING_WEBHOOK_URL) + nhóm riêng của team nếu có (app_settings daily_report_team_webhooks).
+//   SKU_EVAL_REMINDER_SCHEDULE=off       tắt lịch
+//   SKU_EVAL_REMINDER_DAY=3 / _HOUR=10   đổi ngày / giờ
+//   SKU_EVAL_REMINDER_WEBHOOK_URL=...    đổi nhóm tổng
 // Gửi tay / xem trước: scripts/send-sku-eval-reminder.ts
 
 const TIME_ZONE = "Asia/Ho_Chi_Minh";
@@ -196,7 +196,59 @@ export async function sendSkuEvalReminder(month: string, storeNames: string[], w
   return reminder;
 }
 
-// ===== Lịch trong app =====
+export interface TeamReminderResult {
+  teamId: string;
+  teamName: string;
+  stores: number;
+  total: number;
+  /** Nơi đã gửi: "tổng", "team" */
+  sentTo: string[];
+  error?: string;
+}
+
+/**
+ * Mỗi team (TEAMS của báo cáo KPI ngày) 1 tin gồm các store team quản lý. Gửi vào nhóm tổng, và thêm nhóm riêng
+ * của team nếu có webhook ở app_settings daily_report_team_webhooks (như báo cáo KPI ngày). Team không có SKU cần điền → bỏ qua.
+ */
+export async function sendSkuEvalReminderByTeam(
+  month: string,
+  options: { teamIds?: string[]; mainWebhookUrl?: string; dryRun?: boolean } = {},
+): Promise<TeamReminderResult[]> {
+  const mainWebhookUrl = options.mainWebhookUrl ?? reminderWebhookUrl();
+  if (!mainWebhookUrl && !options.dryRun) throw new Error("Chưa cấu hình webhook nhóm tổng (LARK_ACCOUNTING_WEBHOOK_URL).");
+  const [{ TEAMS }, { loadTeamWebhooks }] = await Promise.all([
+    import("@/scripts/send-daily-kpi-report"),
+    import("@/lib/accounting/daily-business-reporter"),
+  ]);
+  const teamWebhooks = await loadTeamWebhooks("default");
+  const wanted = options.teamIds?.map((t) => t.trim().toUpperCase());
+  const results: TeamReminderResult[] = [];
+  for (const team of TEAMS) {
+    if (wanted && !wanted.includes(team.id.toUpperCase())) continue;
+    const reminder = await buildSkuEvalReminder(month, [], { teamId: team.id });
+    const total = reminder.stores.reduce((sum, s) => sum + s.total, 0);
+    const res: TeamReminderResult = { teamId: team.id, teamName: team.name, stores: reminder.stores.length, total, sentTo: [] };
+    results.push(res);
+    if (!total || options.dryRun) continue;
+    const card = buildSkuEvalReminderCard(reminder, { titlePrefix: `${team.name.toUpperCase()} (${team.lead.toUpperCase()})` });
+    const targets: Array<[string, string]> = [["tổng", mainWebhookUrl]];
+    const teamUrl = teamWebhooks[team.id.toUpperCase()];
+    if (teamUrl && teamUrl !== mainWebhookUrl) targets.push(["team", teamUrl]);
+    const errors: string[] = [];
+    for (const [label, url] of targets) {
+      try {
+        await sendLarkWebhookNotification(url, { card });
+        res.sentTo.push(label);
+      } catch (error) {
+        errors.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (errors.length) res.error = errors.join("; ");
+  }
+  return results;
+}
+
+// ===== Lịch trong app: mùng 3 hằng tháng 10h sáng (giờ VN), mỗi team 1 tin =====
 
 const CHECK_INTERVAL_MS = 10 * 60_000;
 const MODULE_ID = Symbol("sku-eval-reminder");
@@ -207,8 +259,8 @@ function scheduleDay() {
   return Number.isInteger(d) && d >= 1 && d <= 28 ? d : 3;
 }
 function scheduleHour() {
-  const h = Number(process.env.SKU_EVAL_REMINDER_HOUR || 8);
-  return Number.isInteger(h) && h >= 0 && h <= 23 ? h : 8;
+  const h = Number(process.env.SKU_EVAL_REMINDER_HOUR || 10);
+  return Number.isInteger(h) && h >= 0 && h <= 23 ? h : 10;
 }
 
 async function runIfDue() {
@@ -216,6 +268,7 @@ async function runIfDue() {
   // Chỉ chạy đúng ngày hẹn, từ giờ hẹn trở đi (server bật muộn trong ngày vẫn gửi bù)
   if (now.day !== scheduleDay() || now.hour < scheduleHour()) return;
   const sql = await getDatabaseClient();
+  // Khoá theo tháng: nhiều tiến trình / restart cũng chỉ gửi 1 lần
   const key = `sku_eval_reminder_run:${now.month}`;
   const claimed = await sql<{ key: string }[]>`
     INSERT INTO app_settings (key, value) VALUES (${key}, ${sql.json({ startedAt: new Date().toISOString() })})
@@ -223,12 +276,13 @@ async function runIfDue() {
     RETURNING key
   `;
   if (!claimed.length) return;
-  const stores = configuredReminderStores();
   try {
-    const r = await sendSkuEvalReminder(now.month, stores);
-    const total = r.stores.reduce((sum, s) => sum + s.total, 0);
-    await sql`UPDATE app_settings SET value = value || ${sql.json({ sentAt: new Date().toISOString(), total })}, updated_at = NOW() WHERE key = ${key}`;
-    console.log(`[SkuEvalReminder] Đã gửi nhắc đánh giá ${now.month}: ${total} SKU, ${r.stores.length} store.`);
+    const results = await sendSkuEvalReminderByTeam(now.month);
+    await sql`UPDATE app_settings SET value = value || ${sql.json({ sentAt: new Date().toISOString(), results } as never)}, updated_at = NOW() WHERE key = ${key}`;
+    console.log(
+      `[SkuEvalReminder] Đã gửi nhắc đánh giá ${now.month}: ` +
+        results.map((r) => `${r.teamName} ${r.total} SKU${r.error ? ` (lỗi: ${r.error})` : ""}`).join(", "),
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await sql`UPDATE app_settings SET value = value || ${sql.json({ error: message })}, updated_at = NOW() WHERE key = ${key}`;
@@ -237,7 +291,7 @@ async function runIfDue() {
 }
 
 export function startSkuEvalReminderScheduler() {
-  if (process.env.SKU_EVAL_REMINDER_SCHEDULE !== "on") return;
+  if (process.env.SKU_EVAL_REMINDER_SCHEDULE === "off") return;
   if (g.skuEvalReminderTimer) {
     if (g.skuEvalReminderOwner === MODULE_ID) return;
     clearInterval(g.skuEvalReminderTimer);
