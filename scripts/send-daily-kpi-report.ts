@@ -771,15 +771,12 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       return acc;
     };
     const activeTargets = teamTargets.get(team.id) ?? [];
-    // Có target tuần (Units) đang chạy → thêm cột "Lũy kế" / "Target" / "% tuần" ở cuối bảng (chỉ số,
-    // không nhận xét); không có thì bảng như cũ
-    const weekCols = Boolean(weekTargetCells(activeTargets, targetDate, teamTotals, null));
-    const weekCells = (storeName: string | null): Record<string, string> => {
-      const c = weekCols ? weekTargetCells(activeTargets, targetDate, teamTotals, storeName) : null;
-      if (!c) return {};
-      const dash = (v: string) => (v === "—" ? grey("—") : v);
-      return { weekCum: c.cum, weekTarget: dash(c.target), weekPct: dash(c.pct) };
-    };
+    // Có target tuần (Units) đang chạy → 1 dòng chỉ số ngay trên "Nhận xét team" (không chèn vào bảng, không nhận xét);
+    // không có thì báo cáo như cũ
+    const week = weekTargetCells(activeTargets, targetDate, teamTotals, null);
+    const weekLine = week && week.target !== "—"
+      ? `🎯 **Tuần ${week.week}:** Tổng units tuần ${week.cum} · Target units tuần ${week.target} · % đạt ${week.pct}`
+      : "";
 
     const teamTableRows: Array<Record<string, string>> = [];
 
@@ -788,7 +785,6 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       channel: `**Tổng ${team.name}**`,
       revenue: `**${fmtUsd(teamToday.revenue)}**`,
       units: `**${fmtCount(teamToday.quantity)}**`,
-      ...weekCells(null),
       spend: `**${fmtUsd(teamToday.adsFee)}**`,
       profit: blue(`**${fmtUsd(teamToday.profit)}**`),
       margin: `**${teamToday.revenue > 0 ? fmtPct(teamToday.margin) : "—"}**`,
@@ -805,7 +801,6 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         channel: ch.displayName,
         revenue: fmtUsd(ch.today.revenue),
         units: fmtCount(ch.today.quantity),
-        ...weekCells(ch.displayName.replace(/-FBA|-FBM/i, "").toUpperCase()),
         spend: fmtUsd(ch.today.adsFee),
         profit: blue(`**${fmtUsd(ch.today.profit)}**`),
         margin: hasRevenue ? fmtPct(ch.today.margin) : grey("—"),
@@ -826,9 +821,10 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
     }
 
     // Nhận xét team ở trên, rồi tới các store cần chú ý
+    const summary = weekLine ? `${weekLine}\n${teamSummaryLine}` : teamSummaryLine;
     const commentBlockContent = storeComments.length > 0
-      ? `${teamSummaryLine}\n\n⚠️ **Store cần chú ý:**\n${storeComments.join("\n")}`
-      : teamSummaryLine;
+      ? `${summary}\n\n⚠️ **Store cần chú ý:**\n${storeComments.join("\n")}`
+      : summary;
 
     // Top 10 SKU Profit cao nhất (tốt) và 10 SKU Profit thấp nhất (cần chú ý) của cả team
     const teamSkus = teamChannels.flatMap((c) => skusByChannel.get(c) || []);
@@ -864,8 +860,6 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
           col("margin", "Margin"),
           col("tacos", "TACoS"),
           col("acos", "ACoS"),
-          // Target tuần (Units) để cuối bảng, tiêu đề ngắn cho cột gọn
-          ...(weekCols ? [col("weekCum", "Lũy kế"), col("weekTarget", "Target"), col("weekPct", "% tuần")] : []),
         ],
         rows: teamTableRows,
       },

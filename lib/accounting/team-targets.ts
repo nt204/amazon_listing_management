@@ -537,7 +537,7 @@ export function weekTargetCells(
   date: string,
   totals: TeamTotalsFn,
   storeName: string | null,
-): { cum: string; target: string; pct: string } | null {
+): { cum: string; target: string; pct: string; week: string } | null {
   const active = targets.filter((x) => isWeekUnitsTarget(x) && isTargetActiveOn(x, date) && x.endDate);
   if (!active.length) return null;
   const own = active.find((x) => x.storeName === storeName);
@@ -547,6 +547,7 @@ export function weekTargetCells(
     cum: fmtMetric("units", cum),
     target: own ? fmtMetric("units", own.value) : "—",
     pct: own && own.value > 0 ? `${((cum / own.value) * 100).toFixed(1)}%` : "—",
+    week: rangeLabel(week.startDate, week.endDate),
   };
 }
 

@@ -218,10 +218,10 @@ test("cột Lũy kế tuần / Target tuần / % đạt: chữ thường, hàng 
   };
   const store: ActiveTeamTarget = { ...base, value: 500, storeName: "MALFIRST" };
   // Ngày 3/7 (23–25/11): team 1,200 / 3,000 = 40%
-  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, null), { cum: "1,200", target: "3,000", pct: "40.0%" });
-  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, "MALFIRST"), { cum: "300", target: "500", pct: "60.0%" });
+  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, null), { cum: "1,200", target: "3,000", pct: "40.0%", week: "23–29/11" });
+  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, "MALFIRST"), { cum: "300", target: "500", pct: "60.0%", week: "23–29/11" });
   // Store không có target riêng: lũy kế theo tuần của team, Target / % để "—"
-  assert.deepEqual(weekTargetCells([base], "2026-11-25", totals, "EKASPEEK"), { cum: "300", target: "—", pct: "—" });
+  assert.deepEqual(weekTargetCells([base], "2026-11-25", totals, "EKASPEEK"), { cum: "300", target: "—", pct: "—", week: "23–29/11" });
   // Chưa tới tuần có target → null (bảng như cũ)
   assert.equal(weekTargetCells([{ ...base, startDate: "2026-11-30", endDate: "2026-12-06" }], "2026-11-25", totals, null), null);
 });
