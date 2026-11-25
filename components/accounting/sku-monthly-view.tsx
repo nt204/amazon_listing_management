@@ -14,6 +14,7 @@ import {
   CalendarBlankIcon,
   CaretDownIcon,
   CaretUpIcon,
+  CheckIcon,
   DownloadSimpleIcon,
   EyeIcon,
   EyeSlashIcon,
@@ -197,6 +198,14 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMonthlyItem | null>(null);
+  // Bấm vào SKU = copy SKU (không mở chi tiết); hiện dấu ✓ ngắn bên cạnh SKU vừa copy
+  const [copiedSku, setCopiedSku] = useState<string | null>(null);
+  const copySku = (sku: string) => {
+    void navigator.clipboard?.writeText(sku).then(() => {
+      setCopiedSku(sku);
+      window.setTimeout(() => setCopiedSku((cur) => (cur === sku ? null : cur)), 1200);
+    });
+  };
 
   // Table zoom — mặc định 100% (khóa lưu _v2: bỏ mức zoom 90% cũ đã lưu để mọi người về lại 100%)
   const [zoomLevel, setZoomLevel] = useState<number>(() => {
@@ -796,7 +805,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
           }}
           className="min-w-full inline-block align-top"
         >
-          <table className="acc-financial-table acc-sku-monthly-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
+          <table className="acc-financial-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
             {/* THEAD with Header Row + Sticky TOTAL Row (Đúng màu #ff9900 của Amazon / FBA ngày) */}
             <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
               {/* ROW 1: COLUMN HEADERS */}
@@ -1118,7 +1127,11 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                   return (
                     <tr
                       key={item.id}
-                      onClick={() => setSelectedSkuDetail(item)}
+                      onClick={() => {
+                        // Đang bôi đen chữ để copy thì không mở chi tiết
+                        if (window.getSelection()?.toString()) return;
+                        setSelectedSkuDetail(item);
+                      }}
                       className={`hover:bg-amber-50/40 transition-colors cursor-pointer group ${
                         idx % 2 === 0 ? "bg-white" : "bg-[#f8fafc]/50"
                       }`}
@@ -1184,9 +1197,25 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             {/* SKU */}
                             {col.id === "sku" && (
                               <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-black group-hover:text-amber-700 transition">
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  title="Bấm để copy SKU"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copySku(item.sku);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.stopPropagation();
+                                      copySku(item.sku);
+                                    }
+                                  }}
+                                  className="cursor-copy select-text font-bold text-black hover:text-amber-700 transition"
+                                >
                                   {item.sku}
                                 </span>
+                                {copiedSku === item.sku && <CheckIcon size={12} weight="bold" className="text-emerald-600" aria-label="Đã copy" />}
                               </div>
                             )}
 
