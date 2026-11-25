@@ -74,7 +74,7 @@ test("parseAiJson bỏ ```json", () => {
   assert.equal(parseAiJson("không có"), null);
 });
 
-test("tin 2: team từ store, tuần 1/2/3 của kế hoạch 3 tuần, mỗi ngày × 7 ngày ≈ tổng tuần", () => {
+test("tin 2: nhắc store nhưng không ghi team → team chưa rõ (card hỏi); tuần 1/2/3 của kế hoạch 3 tuần", () => {
   const out = normalizeExtraction(
     {
       team: null,
@@ -90,9 +90,9 @@ test("tin 2: team từ store, tuần 1/2/3 của kế hoạch 3 tuần, mỗi ng
       ],
       context: ["hiện tại đang ~400sale"],
     },
-    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS },
+    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, text: 'tuần cuối tháng 11: Dự kiến units cần đẩy: 5000units, mỗi ngày ~700sale. hiện tại đang ~400sale. cap margin: limima 10% , fastpeace: 7% 3 tuần. tháng 12. Dự kiến: 30000units tuần 1: 6000 units. tuần 2: 10000 units. tuần 3: 14000 units.' },
   );
-  assert.equal(out.team, "FBA 2");
+  assert.equal(out.team, null);
   assert.deepEqual(out.items.map((i) => i.label), [
     "Tuần cuối T11", "Mỗi ngày (Tuần cuối T11)", "Tuần 1 T12", "Tuần 2 T12", "Tuần 3 T12", "Tổng T12",
     "Margin tối thiểu LIMIMA", "Margin tối thiểu FASTPEACE",
@@ -113,7 +113,7 @@ test("tin 2: team từ store, tuần 1/2/3 của kế hoạch 3 tuần, mỗi ng
   assert.deepEqual(out.warnings, ["T12 có 5 tuần (T2–CN), tin nói 3 tuần → lấy 3 tuần đầu; tuần 21–27/12, 28/12–3/1 chưa có mục tiêu tuần."]);
 });
 
-test("tin 1: không nhắc store → team theo nhóm chat; 'còn thực hiện' = từ ngày nhắn tới hết tháng", () => {
+test("tin 1: không ghi team → team chưa rõ (không đoán theo nhóm chat); 'còn thực hiện' = từ ngày nhắn tới hết tháng", () => {
   const out = normalizeExtraction(
     {
       targets: [
@@ -125,9 +125,9 @@ test("tin 1: không nhắc store → team theo nhóm chat; 'còn thực hiện' 
         { kind: "week_total", metric: "units", value: 4000, month: "2026-12", week_ref: "first", weeks_in_plan: 3 },
       ],
     },
-    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, chatTeam: "FBA 3" },
+    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, text: 'Còn thực hiện: 4000units. tuần cuối tháng 11 tối thiếu 3000 unit. còn 17000 cho 3 tuần tháng 12: tuần cuối: 8000 tuần giữa: 5000 tuần đầu: 4000 tham khảo để có hướng đẩy ads' },
   );
-  assert.equal(out.team, "FBA 3");
+  assert.equal(out.team, null);
   const remaining = out.items.find((i) => i.label.startsWith("Còn lại"))!;
   assert.deepEqual([remaining.startDate, remaining.endDate], ["2026-11-23", "2026-11-30"]);
   // Thứ tự trên card: tuần của tháng rồi tới tổng tháng
@@ -137,7 +137,7 @@ test("tin 1: không nhắc store → team theo nhóm chat; 'còn thực hiện' 
   assert.equal(out.warnings.length, 1);
 });
 
-test("'team 3' trong tin thắng nhóm chat; store khác team bị cảnh báo; tổng tuần lệch tổng tháng", () => {
+test("'team 3' trong tin → FBA 3; store khác team bị cảnh báo; tổng tuần lệch tổng tháng", () => {
   const out = normalizeExtraction(
     {
       targets: [
@@ -148,7 +148,7 @@ test("'team 3' trong tin thắng nhóm chat; store khác team bị cảnh báo; 
         { kind: "week_total", metric: "units", value: 8000, month: "2026-12", week_ref: 3, weeks_in_plan: 3 },
       ],
     },
-    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, chatTeam: "FBA 1", text: "team 3 nhé" },
+    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, text: "team 3 nhé, 3 tuần tháng 12" },
   );
   assert.equal(out.team, "FBA 3");
   assert.ok(out.warnings.some((w) => w.includes("LIMIMA không thuộc FBA 3")));
@@ -198,7 +198,7 @@ test("AI quên weeks_in_plan: code đọc '3 tuần. tháng 12' trong tin → tu
         { kind: "week_total", metric: "units", value: 14000, month: "2026-12", week_ref: 3 },
       ],
     },
-    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, chatTeam: "FBA 2", text },
+    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, text },
   );
   assert.deepEqual(out.items.filter((i) => i.kind === "week_total").map((i) => `${i.startDate}..${i.endDate}`), [
     "2026-11-30..2026-12-06", "2026-12-07..2026-12-13", "2026-12-14..2026-12-20",
@@ -248,4 +248,24 @@ test("tên mục tiêu nhập từ web", () => {
   assert.equal(defaultTargetLabel("month_total", "2026-12-01", "2026-12-31", null), "Tổng T12");
   assert.equal(defaultTargetLabel("week_total", "2026-11-24", "2026-11-28", null), "Mục tiêu 24–28/11");
   assert.equal(defaultTargetLabel("margin_floor", "2026-11-23", null, "LIMIMA"), "Margin tối thiểu LIMIMA");
+});
+
+test("AI gán nhầm '3 tuần' cho cả T11 (tin chỉ nói 3 tuần tháng 12) → tuần cuối T11 vẫn là 23–29/11", () => {
+  const out = normalizeExtraction(
+    {
+      targets: [
+        { kind: "week_total", metric: "units", value: 5000, month: "2026-11", week_ref: "last", weeks_in_plan: 3 },
+        { kind: "week_total", metric: "units", value: 6000, month: "2026-12", week_ref: 1, weeks_in_plan: 3 },
+        { kind: "week_total", metric: "units", value: 14000, month: "2026-12", week_ref: 3, weeks_in_plan: 3 },
+      ],
+    },
+    { sentDate: "2026-11-25", knownTeams: TEAMS, storeTeams: STORE_TEAMS, text: "team 2 " + 'tuần cuối tháng 11: Dự kiến units cần đẩy: 5000units, mỗi ngày ~700sale. hiện tại đang ~400sale. cap margin: limima 10% , fastpeace: 7% 3 tuần. tháng 12. Dự kiến: 30000units tuần 1: 6000 units. tuần 2: 10000 units. tuần 3: 14000 units.' },
+  );
+  assert.equal(out.team, "FBA 2");
+  assert.deepEqual(out.items.map((i) => `${i.label} ${i.startDate}..${i.endDate}`), [
+    "Tuần cuối T11 2026-11-23..2026-11-29",
+    "Tuần 1 T12 2026-11-30..2026-12-06",
+    "Tuần 3 T12 2026-12-14..2026-12-20",
+  ]);
+  assert.ok(!out.warnings.some((w) => w.startsWith("T11")));
 });

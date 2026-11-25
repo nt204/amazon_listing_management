@@ -287,9 +287,7 @@ export function normalizeExtraction(
     knownTeams: string[];
     /** Tên store (in hoa) → các team quản lý. */
     storeTeams: Map<string, string[]>;
-    /** Team gắn với nhóm chat (khi tin không nhắc store/team). */
-    chatTeam?: string | null;
-    /** Tin gốc, để bắt "team 3" khi AI bỏ sót. */
+    /** Tin gốc: team ("team 3") và số tuần ("3 tuần tháng 12") chỉ lấy từ câu chữ, không tin AI. */
     text?: string;
   },
 ): NormalizedTargets {
@@ -298,16 +296,13 @@ export function normalizeExtraction(
   const items: TeamTargetItem[] = [];
   const sentMonth = sentDate.slice(0, 7);
 
-  // "N tuần" của 1 tháng: AI có lúc chỉ ghi cho vài mục tiêu (hoặc quên) → lấy từ mục tiêu khác cùng tháng, rồi từ tin gốc
+  // "N tuần" của 1 tháng CHỈ lấy từ câu chữ ("3 tuần. tháng 12"): AI có lúc quên, có lúc gán nhầm cho tháng khác
+  // (2026-11-25: gán "3 tuần" cho cả T11 → "tuần cuối T11" thành 16–22/11)
   const planByMonth = plansFromText(options.text ?? "", sentDate);
-  for (const t of raw.targets ?? []) {
-    const month = t.month && MONTH.test(t.month) ? t.month : sentMonth;
-    if (t.weeks_in_plan && t.weeks_in_plan > 0 && !planByMonth.has(month)) planByMonth.set(month, t.weeks_in_plan);
-  }
 
   for (const t0 of raw.targets ?? []) {
     const m0 = t0.month && MONTH.test(t0.month) ? t0.month : sentMonth;
-    const t = t0.weeks_in_plan ? t0 : { ...t0, weeks_in_plan: planByMonth.get(m0) ?? null };
+    const t = { ...t0, weeks_in_plan: planByMonth.get(m0) ?? null };
     const kind = KINDS.find((k) => k === t.kind);
     const metric = METRICS.find((m) => m === t.metric) ?? (kind === "margin_floor" ? "margin" : undefined);
     const value = num(t.value);
@@ -382,15 +377,8 @@ export function normalizeExtraction(
     if (it.kind === "margin_floor" && it.endDate === null && !it.note) it.note = "áp dụng tới khi có mức mới";
   }
 
-  // Team: AI → nhắc trong tin → store trong tin → nhóm chat
-  const storeTeamSet = new Set(items.flatMap((it) => (it.storeName ? storeTeams.get(it.storeName) ?? [] : [])));
-  let team = normalizeTeamName(raw.team, knownTeams) ?? (options.text ? teamMentionedInText(options.text, knownTeams) : null);
-  if (!team && storeTeamSet.size) {
-    const fba = [...storeTeamSet].filter((x) => /^fba/i.test(x));
-    const candidates = fba.length ? fba : [...storeTeamSet];
-    if (new Set(candidates).size === 1) team = candidates[0];
-  }
-  if (!team && options.chatTeam) team = normalizeTeamName(options.chatTeam, knownTeams);
+  // Team CHỈ lấy khi tin ghi rõ ("team 3", "FBA 2"); không đoán theo store hay nhóm chat — không rõ thì card hỏi team
+  const team = options.text ? teamMentionedInText(options.text, knownTeams) : null;
   if (team) {
     for (const it of items) {
       const teams = it.storeName ? storeTeams.get(it.storeName) : undefined;

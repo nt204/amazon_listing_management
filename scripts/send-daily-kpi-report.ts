@@ -504,15 +504,14 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
   const monthStart = `${targetDate.slice(0, 7)}-01`;
 
   const sql = await getDatabaseClient();
-  // Mục tiêu sếp giao (tag bot trên Lark) đang áp dụng; tuần/tháng nằm trong 1 tháng, chỉ mục tiêu ghi thẳng ngày
-  // mới có thể bắt đầu trước đầu tháng → nạp số liệu từ ngày bắt đầu sớm nhất. Margin tối thiểu tính từ đầu tháng.
-  const teamTargets = await listActiveTeamTargets(targetDate).catch((err) => {
-    console.error("[DailyKpiReport] Không đọc được mục tiêu team:", err);
-    return new Map<string, ActiveTeamTarget[]>();
-  });
-  for (const list of teamTargets.values()) {
-    for (const t of list) if (t.kind === "margin_floor" && t.startDate < monthStart) t.startDate = monthStart;
-  }
+  // Mục tiêu sếp giao (tag bot trên Lark / nhập trên web) đang áp dụng. Trước mắt chỉ theo dõi Units từng tuần
+  // (T2 → CN, tuần đầu tháng có thể bắt đầu từ tháng trước) → nạp số liệu từ ngày bắt đầu sớm nhất.
+  const teamTargets = await listActiveTeamTargets(targetDate)
+    .then((byTeam) => new Map([...byTeam].map(([team, list]) => [team, list.filter(isWeekUnitsTarget)] as const)))
+    .catch((err) => {
+      console.error("[DailyKpiReport] Không đọc được mục tiêu team:", err);
+      return new Map<string, ActiveTeamTarget[]>();
+    });
   const seriesFrom = [...teamTargets.values()].flat().reduce((min, t) => (t.startDate < min ? t.startDate : min), monthStart);
   const [channels, storeList, serviceFeesMap] = await Promise.all([
     loadChannelSeries(targetDate, undefined, seriesFrom),

@@ -100,6 +100,9 @@ async function extractWithAi(text: string, sentDate: string, roster: string, tea
 
 // ───────────────────────── Card ─────────────────────────
 
+/** Mục tiêu đưa vào báo cáo ngày: tổng Units của 1 tuần. */
+const isTrackedItem = (it: Pick<TeamTargetItem, "kind" | "metric">) => it.kind === "week_total" && it.metric === "units";
+
 const fmtValue = (it: Pick<TeamTargetItem, "metric" | "value">) =>
   it.metric === "margin"
     ? `${it.value}%`
@@ -124,9 +127,23 @@ type CardState =
 
 function draftCard(draftId: string, parsed: NormalizedTargets, knownTeams: string[], state: CardState): Record<string, unknown> {
   const team = state.kind === "confirmed" ? state.team : parsed.team;
+  // Trước mắt báo cáo ngày chỉ theo dõi Units của từng tuần; các mục tiêu khác vẫn lưu lại (kèm tin gốc) để tham khảo
+  const tracked = parsed.items.filter(isTrackedItem);
+  const stored = parsed.items.filter((it) => !isTrackedItem(it));
   const elements: Array<Record<string, unknown>> = [
-    { tag: "markdown", content: parsed.items.map(itemLine).join("\n") },
+    {
+      tag: "markdown",
+      content: tracked.length
+        ? ["**📌 Theo dõi trong báo cáo ngày** (Units từng tuần)", ...tracked.map(itemLine)].join("\n")
+        : "<font color='grey'>Không có mục tiêu Units theo tuần nào — báo cáo ngày không đổi.</font>",
+    },
   ];
+  if (stored.length) {
+    elements.push({
+      tag: "markdown",
+      content: ["**🗂 Chỉ lưu lại** <font color='grey'>(chưa đưa vào báo cáo)</font>", ...stored.map(itemLine)].join("\n"),
+    });
+  }
   if (parsed.context.length) {
     elements.push({ tag: "markdown", content: `<font color='grey'>Ghi chú: ${parsed.context.join(" · ")}</font>` });
   }
@@ -152,7 +169,7 @@ function draftCard(draftId: string, parsed: NormalizedTargets, knownTeams: strin
         tag: "markdown",
         content: team
           ? "Kiểm tra khoảng ngày rồi bấm **Lưu**. Sai thì bấm **Huỷ** và tag bot nhắn lại (có thể ghi thẳng ngày, vd \"1–12/12: 6000 units\")."
-          : "Tin không nhắc store/team và nhóm này chưa gắn team: **chọn team để lưu** (bot sẽ nhớ team của nhóm này).",
+          : "Tin chưa ghi team: **chọn team để lưu**. Lần sau ghi luôn trong tin, vd \"team 3: tuần cuối tháng 11 …\".",
       },
       {
         tag: "column_set",
@@ -167,7 +184,7 @@ function draftCard(draftId: string, parsed: NormalizedTargets, knownTeams: strin
       {
         tag: "markdown",
         content: state.kind === "confirmed"
-          ? `✅ **Đã lưu cho ${state.team}** bởi ${state.by}. Báo cáo ngày sẽ hiện tiến độ các mục tiêu này.`
+          ? `✅ **Đã lưu cho ${state.team}** bởi ${state.by}. Báo cáo ngày sẽ hiện Target tuần / % đạt tuần (Units).`
           : `❌ **Đã huỷ** bởi ${state.by}. Không lưu gì.`,
       },
     );
@@ -223,8 +240,7 @@ export async function handleTeamTargetMessage(input: TeamTargetMessageInput): Pr
   if (!raw?.targets?.length) return { handled: false };
 
   const sql = await getDatabaseClient();
-  const chatTeam = (await sql<Array<{ team: string }>>`SELECT team FROM lark_chat_teams WHERE chat_id = ${input.chatId}`)[0]?.team ?? null;
-  const parsed = normalizeExtraction(raw, { sentDate, knownTeams, storeTeams, chatTeam, text: input.message });
+  const parsed = normalizeExtraction(raw, { sentDate, knownTeams, storeTeams, text: input.message });
   if (!parsed.items.length) return { handled: false };
 
   const messageId = input.messageId || `manual:${Date.now()}`;
@@ -301,7 +317,7 @@ export async function handleTeamTargetCardAction(
     RETURNING chat_id, parsed
   `;
   if (!claimed[0]) return { toast: { type: "info", content: "Mục tiêu này đã được xử lý trước đó." } };
-  const { chat_id: chatId, parsed } = claimed[0];
+  const { parsed } = claimed[0];
 
   if (action === "TEAM_TARGET_CANCEL") {
     return {
@@ -319,14 +335,6 @@ export async function handleTeamTargetCardAction(
           (draft_id, team, kind, metric, store_name, start_date, end_date, value, comparator, is_estimate, label, quote, note, created_by)
         VALUES (${draftId}, ${team!}, ${it.kind}, ${it.metric}, ${it.storeName}, ${it.startDate}, ${it.endDate}, ${it.value},
           ${it.comparator}, ${it.isEstimate}, ${it.label}, ${it.quote}, ${it.note}, ${who})
-      `;
-    }
-    // Nhớ team của nhóm chat CHỈ khi bot không tự biết team và người bấm tự chọn team bằng nút (tin không nhắc
-    // team / store, nhóm chưa gắn team). Tin ghi "team 3" gửi trong nhóm chung không được gắn nhóm chung cho FBA 3.
-    if (!parsed.team) {
-      await tx`
-        INSERT INTO lark_chat_teams (chat_id, team, updated_by) VALUES (${chatId}, ${team!}, ${who})
-        ON CONFLICT (chat_id) DO NOTHING
       `;
     }
   });
@@ -449,8 +457,8 @@ async function handleTeamTargetListMessage(input: TeamTargetMessageInput): Promi
   const cmd = parseTargetListCommand(input.message, today, knownTeams);
   if (!cmd) return { handled: false };
   const sql = await getDatabaseClient();
-  const chatTeam = (await sql<Array<{ team: string }>>`SELECT team FROM lark_chat_teams WHERE chat_id = ${input.chatId}`)[0]?.team ?? null;
-  const team = cmd.team ?? chatTeam;
+  // Không ghi team thì liệt kê mọi team (không đoán theo nhóm chat)
+  const team = cmd.team;
   let rows: TargetRow[] = await sql.unsafe<TargetRow[]>(
     `SELECT ${TARGET_COLUMNS} FROM accounting_team_targets
      WHERE status = 'active' AND (end_date IS NULL OR end_date >= $1::date) AND ($2::text IS NULL OR team = $2)

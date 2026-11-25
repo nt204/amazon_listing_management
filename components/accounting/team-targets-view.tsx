@@ -274,7 +274,8 @@ export function TeamTargetsView() {
     <div className="flex flex-col gap-3 p-3">
       <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs leading-relaxed text-slate-600">
         <b className="text-slate-900">Mục tiêu sếp giao cho team.</b> Sếp tag bot trên Lark (vd &quot;tuần cuối tháng 11 tối thiểu 3000 unit&quot;),
-        leader bấm <b>Lưu</b> trên card — hoặc thêm / sửa ngay ở đây. Báo cáo KPI ngày tự hiện cột <b>Target tuần</b> và <b>% đạt tuần</b>.
+        tin phải ghi rõ team (vd &quot;team 3: …&quot;), leader bấm <b>Lưu</b> trên card — hoặc thêm / sửa ngay ở đây.
+        Trước mắt báo cáo KPI ngày chỉ theo dõi <b>Units từng tuần</b> (cột <b>Target tuần</b> / <b>% đạt tuần</b>); các mục tiêu khác chỉ lưu lại.
         Tuần tính T2 → CN, đủ 7 ngày. Xoá qua Lark: tag bot &quot;xoá mục tiêu&quot;.
       </div>
 
@@ -370,7 +371,14 @@ export function TeamTargetsView() {
                   <td className="whitespace-nowrap px-3 py-2 font-bold text-slate-900">{t.team}</td>
                   <td className="px-3 py-2">
                     <div className="font-semibold text-slate-800">{t.label}</div>
-                    <div className="text-[11px] text-slate-400">{KIND_LABEL[t.kind]}</div>
+                    <div className="text-[11px] text-slate-400">
+                      {KIND_LABEL[t.kind]}
+                      {t.kind === "week_total" && t.metric === "units" ? (
+                        <span className="ml-1 font-semibold text-emerald-600">· vào báo cáo ngày</span>
+                      ) : (
+                        <span className="ml-1">· chỉ lưu, chưa vào báo cáo</span>
+                      )}
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-slate-700">
                     {t.endDate ? rangeLabel(t.startDate, t.endDate) : `${rangeLabel(t.startDate, null)} (tới khi có mức mới)`}
