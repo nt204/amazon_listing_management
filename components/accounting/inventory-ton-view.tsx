@@ -70,9 +70,9 @@ function buildColumns(year: number): Col[] {
       hint: "= Tổng hàng ra kho các tháng trong năm (SL bán − Return + Adjustment + Removal, từ file thô Amazon)" },
     { key: "ton", label: "TỒN", width: 76, fmt: "int", head: ORANGE, align: "right", hint: "= Hàng tồn 1/1 + SL đi hàng − Lượng bán" },
     { key: "fba_total", label: "Inventory (FBA)", width: 96, fmt: "int", head: YELLOW, align: "right",
-      hint: "Tồn kho FBA = available + inbound-quantity + Total Reserved — báo cáo FBA Inventory mới nhất, cộng theo ASIN" },
+      hint: "Tồn FBA chốt ngày cuối tháng Lượng bán đang chốt tới (Inventory Ledger, mọi trạng thái hàng), cộng theo ASIN" },
     { key: "awd_total", label: "AWD", width: 86, fmt: "int", head: YELLOW, align: "right",
-      hint: "Tồn kho AWD = Available + Inbound + Reserved in AWD — AWD inventory report mới nhất, cộng theo ASIN" },
+      hint: "Tồn AWD chốt cùng ngày (AWD Inventory Ledger), cộng theo ASIN" },
     { key: "total_amazon", label: "Total (AMAZON)", width: 96, fmt: "int", head: YELLOW, cellBg: YELLOW, align: "right",
       hint: "= Inventory (FBA) + AWD" },
     { key: "gtri_ton", label: "Tổng giá trị tồn", width: 104, fmt: "money", head: YELLOW, align: "right", hint: "= Total (AMAZON) × Basecost TB/năm (Tiền hàng ÷ SL đi hàng; chưa đi hàng thì lấy giá 1/1)" },
@@ -172,7 +172,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
     return out;
   }, [columns]);
 
-  const amazonDate = formatAmazonLabel(query.data?.amazonLabel ?? null);
+  const stockDay = formatAmazonLabel(query.data?.stockDate ?? null);
   const scale = tableZoom / 100;
 
   const toggleSort = (key: Key) =>
@@ -242,10 +242,10 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
           <span
             className="inline-flex items-center gap-1 rounded-lg border border-yellow-300 px-2.5 py-1 font-semibold text-slate-800"
             style={{ background: "#fffbcc" }}
-            title={query.data?.amazonImportedAt ? `Nạp lúc ${new Date(query.data.amazonImportedAt).toLocaleString("vi-VN")}` : undefined}
+            title="Inventory (FBA) / AWD lấy tồn Amazon chốt ngày cuối tháng mà Lượng bán đang chốt tới (Inventory Ledger, chạy mùng 4 hằng tháng)"
           >
             <InfoIcon size={13} weight="bold" />
-            {amazonDate ? `Realtime từ Amazon ngày ${amazonDate} (update 4p.m hàng ngày)` : "Chưa có báo cáo FBA Inventory"}
+            {query.data?.hasFbaStock ? `Tồn Amazon (FBA${query.data.hasAwdStock ? " + AWD" : ""}) chốt ngày ${stockDay}` : `Chưa có tồn Amazon chốt ngày ${stockDay ?? "—"}`}
           </span>
         </div>
       </div>

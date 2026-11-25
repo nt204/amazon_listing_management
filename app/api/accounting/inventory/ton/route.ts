@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 
     const sql = await getDatabaseClient();
     const [store] = await sql<{ name: string }[]>`SELECT name FROM stores WHERE id = ${storeId}`;
-    const buffer = await buildWorkbook(result.rows, year, result.amazonLabel);
+    const buffer = await buildWorkbook(result.rows, year, result.hasFbaStock ? result.stockDate : null);
     const fileName = `TON_${(store?.name || "store").replace(/[^\w-]+/g, "_")}_${year}.xlsx`;
     return new Response(buffer, {
       headers: {
@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 
 type Row = Awaited<ReturnType<typeof queryInventoryTon>>["rows"][number];
 
-async function buildWorkbook(rows: Row[], year: number, amazonLabel: string | null): Promise<ArrayBuffer> {
+async function buildWorkbook(rows: Row[], year: number, stockDate: string | null): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("TỒN", { views: [{ state: "frozen", xSplit: 4, ySplit: 1 }] });
   const money = '"$"#,##0.00';
@@ -72,6 +72,6 @@ async function buildWorkbook(rows: Row[], year: number, amazonLabel: string | nu
     cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
     if (c.fmt) ws.getColumn(i + 1).numFmt = c.fmt;
   });
-  if (amazonLabel) ws.getCell(1, cols.length + 1).value = `Realtime từ Amazon ngày ${amazonLabel}`;
+  if (stockDate) ws.getCell(1, cols.length + 1).value = `Tồn Amazon chốt ngày ${stockDate.split("-").reverse().join("/")}`;
   return (await wb.xlsx.writeBuffer()) as ArrayBuffer;
 }
