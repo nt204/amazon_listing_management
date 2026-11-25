@@ -100,7 +100,7 @@ function loadStateCache(): Record<string, Record<string, CachedShipmentRecord>> 
     const scriptPath = path.join(__dirname, "get_discrepancy_shipments.py");
     const output = execSync(`python3 "${scriptPath}" "--load-all-cached"`, {
       encoding: "utf8",
-      timeout: 30000,
+      timeout: 60000,
     });
     const restored = JSON.parse(output.trim());
     if (restored && typeof restored === "object" && !restored.error) {
@@ -181,7 +181,7 @@ export function classifyShipmentsFromDb(storeName: string): DbShipmentClassifica
     const scriptPath = path.join(__dirname, "get_discrepancy_shipments.py");
     const output = execSync(`python3 "${scriptPath}" "${storeName}"`, {
       encoding: "utf8",
-      timeout: 30000,
+      timeout: 60000,
     });
     const parsed = JSON.parse(output.trim());
     if (parsed.error) {
@@ -293,10 +293,11 @@ async function extractShipmentDiscrepancy(
         const headTexts = Array.from(document.querySelectorAll("kat-table-head kat-table-cell")).map((c) =>
           ((c as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().toLowerCase(),
         );
-        const colOf = (re: RegExp) => headTexts.findIndex((t) => re.test(t));
-        const expectedCol = colOf(/expected/);
-        const locatedCol = colOf(/located/) >= 0 ? colOf(/located/) : colOf(/received/);
-        const discCol = colOf(/discrepanc/);
+        const expectedCol = headTexts.findIndex((t) => /expected/.test(t));
+        const locatedCol = headTexts.findIndex((t) => /located/.test(t)) >= 0
+          ? headTexts.findIndex((t) => /located/.test(t))
+          : headTexts.findIndex((t) => /received/.test(t));
+        const discCol = headTexts.findIndex((t) => /discrepanc/.test(t));
 
         for (const r of rows) {
           const fullText = (r as HTMLElement).innerText || "";
