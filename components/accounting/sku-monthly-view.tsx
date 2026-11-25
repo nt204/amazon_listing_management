@@ -820,11 +820,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             : "text-left"
                         }`}
                       >
-                        {col.id === "stt" && (
-                          <span className="inline-block px-1 py-0.5 rounded bg-amber-200/70 text-amber-950 text-[10px] font-black tracking-wider">
-                            TOTAL
-                          </span>
-                        )}
                         {col.id === "product_type" && (
                           <span className="text-black font-bold">{summary.active_sku_count} active</span>
                         )}
