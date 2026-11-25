@@ -1,6 +1,7 @@
 import { getDatabaseClient } from "@/lib/db";
 import { getWeeklyReport, type WeeklyBrandRow, type WeeklyReport, type WeeklyMetrics } from "@/lib/accounting/weekly-report";
-import { daysInMonthOf, weekSegmentOf, previousWeekSegment, type WeekSegment } from "@/lib/accounting/weekly-report-periods";
+import { daysInMonthOf, weekSegmentOf, previousWeekSegment, nextWeekSegment, type WeekSegment } from "@/lib/accounting/weekly-report-periods";
+import { getWeeklyUnitTargets } from "@/lib/accounting/weekly-unit-target-db";
 import { kpiRatio, kpiTone } from "@/lib/accounting/kpi-progress";
 import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
 
@@ -228,6 +229,9 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
 
   // Dữ liệu SKU ALL (Win + Test)
   const allBrands = brands.map((b) => brandOfGroup(b, "all"));
+  // Mục tiêu units tuần theo team (chốt ở check-in tuần, nhập ở Báo cáo tuần trên web): tuần này + tuần kế tiếp
+  const unitTargets = report.unitTargets ?? {};
+  const nextUnitTargets = await getWeeklyUnitTargets(nextWeekSegment(week).startDate).catch((): Record<string, number> => ({}));
 
   // --- DỰNG LARK CARD ---
   const elements: any[] = [];
@@ -441,6 +445,20 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
     };
 
 
+    // Mục tiêu units tuần (chỉ in khi đã nhập): "Units 2.850 / 3.000 (95%) · Mục tiêu tuần sau 4.000"
+    const unitTarget = unitTargets[team.teamTag];
+    const nextUnitTarget = nextUnitTargets[team.teamTag];
+    const unitParts: string[] = [];
+    if (unitTarget != null) {
+      const ratio = kpiRatio(teamCurTotal.quantity, unitTarget);
+      const tone = kpiTone(ratio);
+      const pctText = ratio == null ? "—" : `${Math.round(ratio * 100)}%`;
+      const colored = tone === "good" ? green(pctText) : tone === "bad" ? red(pctText) : tone === "near" ? `<font color='orange'>${pctText}</font>` : pctText;
+      unitParts.push(`Units **${fmtInt(teamCurTotal.quantity)} / ${fmtInt(unitTarget)}** (${colored})`);
+    }
+    if (nextUnitTarget != null) unitParts.push(`Mục tiêu tuần sau **${fmtInt(nextUnitTarget)}** units`);
+    const unitTargetLine = unitParts.length ? `🎯 **Mục tiêu tuần:** ${unitParts.join(" · ")}` : "";
+
     // Card tổng chỉ gồm tổng quan + đánh giá; mỗi team 1 card riêng (Lark giới hạn số bảng trong 1 card)
     teamCards.push({
       teamId: team.id,
@@ -457,6 +475,7 @@ export async function generateWeeklyKpiReport(targetDate?: string) {
           elements: [
             { tag: "markdown", content: "**📈 1. Hiệu suất kinh doanh tuần**" },
             teamTable,
+            ...(unitTargetLine ? [{ tag: "markdown", content: unitTargetLine }] : []),
             { tag: "markdown", content: "**🎯 2. Tiến độ KPI tháng (lũy kế đến hết tuần / Target tháng)**" },
             teamKpiTable,
           ],
