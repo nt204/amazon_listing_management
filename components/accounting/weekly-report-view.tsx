@@ -26,6 +26,7 @@ import {
 } from "@/lib/accounting/weekly-report-periods";
 import { kpiRatio, kpiTone } from "@/lib/accounting/kpi-progress";
 import { AccountingModuleSkeleton, AccountingTopProgressBar } from "./accounting-skeleton";
+import { StoreSelect } from "./store-select";
 
 // BÁO CÁO TUẦN — mỗi khối 1 nhiệm vụ:
 //   1 Tổng quan (kết quả thế nào?, tiến độ tháng)
@@ -197,19 +198,14 @@ export function WeeklyReportView() {
           </div>
 
           {data && (
-            <select
+            <StoreSelect
               aria-label="Lọc theo Store"
+              stores={data.brands.map((b) => ({ id: b.key, name: b.label }))}
               value={selectedStoreKey}
-              onChange={(e) => setSelectedStoreKey(e.target.value)}
-              className={`${ctrl} cursor-pointer px-2.5`}
-            >
-              <option value="all">Tất cả Store ({data.brands.length})</option>
-              {data.brands.map((b) => (
-                <option key={b.key} value={b.key}>
-                  {b.label}
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedStoreKey}
+              allOption={{ id: "all", name: `Tất cả Store (${data.brands.length})` }}
+              size="sm"
+            />
           )}
 
           {data && (

@@ -50,7 +50,8 @@ export function StoreSelect({
     const q = query.trim().toLowerCase();
     return q ? options.filter((o) => o.name.toLowerCase().includes(q)) : options;
   }, [options, query]);
-  const current = options.find((o) => o.id === value);
+  // Chỉ 1 store thì dòng "Tất cả" ẩn khỏi danh sách nhưng nút vẫn hiện đúng tên khi đang chọn nó
+  const current = options.find((o) => o.id === value) ?? (allOption?.id === value ? allOption : undefined);
   const label = loading ? "Đang tải store..." : stores.length === 0 ? "Không có store" : current?.name || "Chọn store";
   const isDisabled = disabled || loading || stores.length === 0;
   const showSearch = options.length > 8;
