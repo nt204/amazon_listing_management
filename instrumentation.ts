@@ -7,6 +7,8 @@ export async function register() {
     startMockupJobWorker();
     const { startInventorySheetSyncScheduler } = await import("@/lib/accounting/inventory-sheet-scheduler");
     startInventorySheetSyncScheduler();
+    const { startSkuEvalReminderScheduler } = await import("@/lib/accounting/sku-eval-reminder");
+    startSkuEvalReminderScheduler();
     const { startBaseCostResyncWorker } = await import("@/lib/accounting/base-cost-resync");
     startBaseCostResyncWorker();
     const { startManualBidPrewarm } = await import("@/lib/ppc/manual-bid-attribution");
