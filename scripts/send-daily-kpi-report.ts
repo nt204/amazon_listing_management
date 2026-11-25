@@ -6,7 +6,13 @@ import { sendLarkWebhookNotification } from "@/lib/lark-notifications";
 import { listSkuWin, type SkuWinItem } from "@/lib/accounting/sku-win-db";
 import { listFbmSkuFixed } from "@/lib/accounting/fbm-financials-db";
 import { listActiveTeamTargets } from "@/lib/accounting/team-targets-service";
-import { teamTargetsBlock, type ActiveTeamTarget, type TeamTotalsFn } from "@/lib/accounting/team-targets";
+import {
+  isWeekUnitsTarget,
+  teamTargetsBlock,
+  weekTargetCells,
+  type ActiveTeamTarget,
+  type TeamTotalsFn,
+} from "@/lib/accounting/team-targets";
 
 interface MetricSet {
   revenue: number;
@@ -749,6 +755,32 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
 
     const teamSummaryLine = `📌 **Nhận xét ${team.name}:** Revenue ${revSign}, Profit ${profSign} so với TB ngày.`;
 
+    // Tiến độ mục tiêu sếp giao: cộng số các kênh của team (cùng kênh với bảng trên), lọc 1 store khi mục tiêu theo store
+    const teamSeries = team.channels
+      .map((chDef) => findCh(channels, chDef.label))
+      .filter((c): c is ChannelSeriesInput => Boolean(c));
+    const teamTotals: TeamTotalsFn = (from, to, storeName) => {
+      const acc = { quantity: 0, revenue: 0, profit: 0 };
+      for (const c of teamSeries) {
+        if (storeName && c.storeName.trim().toUpperCase() !== storeName) continue;
+        for (const d of c.days) {
+          if (d.date < from || d.date > to) continue;
+          acc.quantity += d.quantity || 0;
+          acc.revenue += d.revenue || 0;
+          acc.profit += d.profit || 0;
+        }
+      }
+      return acc;
+    };
+    const activeTargets = teamTargets.get(team.id) ?? [];
+    // Có target tuần (Units) đang áp dụng → thêm cột "Target tuần" / "% đạt tuần" ngay sau Units; không có thì bảng như cũ
+    const weekCols = activeTargets.some(isWeekUnitsTarget);
+    const weekCells = (storeName: string | null): Record<string, string> => {
+      if (!weekCols) return {};
+      const c = weekTargetCells(activeTargets, targetDate, teamTotals, storeName);
+      return { weekTarget: c?.target ?? grey("—"), weekPct: c?.pct ?? grey("—") };
+    };
+
     const teamTableRows: Array<Record<string, string>> = [];
 
     // Hàng tổng team
@@ -756,6 +788,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       channel: `**Tổng ${team.name}**`,
       revenue: `**${fmtUsd(teamToday.revenue)}**`,
       units: `**${fmtCount(teamToday.quantity)}**`,
+      ...weekCells(null),
       spend: `**${fmtUsd(teamToday.adsFee)}**`,
       profit: blue(`**${fmtUsd(teamToday.profit)}**`),
       margin: `**${teamToday.revenue > 0 ? fmtPct(teamToday.margin) : "—"}**`,
@@ -772,6 +805,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         channel: ch.displayName,
         revenue: fmtUsd(ch.today.revenue),
         units: fmtCount(ch.today.quantity),
+        ...weekCells(ch.displayName.replace(/-FBA|-FBM/i, "").toUpperCase()),
         spend: fmtUsd(ch.today.adsFee),
         profit: blue(`**${fmtUsd(ch.today.profit)}**`),
         margin: hasRevenue ? fmtPct(ch.today.margin) : grey("—"),
@@ -815,27 +849,9 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       return `[${chDef.displayName}](${dailyReportStoreUrl(storeName, isFbm ? "FBM" : "FBA")})`;
     });
 
-    // Tiến độ mục tiêu sếp giao: cộng số các kênh của team (cùng kênh với bảng trên), lọc 1 store khi mục tiêu theo store
-    const teamSeries = team.channels
-      .map((chDef) => findCh(channels, chDef.label))
-      .filter((c): c is ChannelSeriesInput => Boolean(c));
-    const teamTotals: TeamTotalsFn = (from, to, storeName) => {
-      const acc = { quantity: 0, revenue: 0, profit: 0 };
-      for (const c of teamSeries) {
-        if (storeName && c.storeName.trim().toUpperCase() !== storeName) continue;
-        for (const d of c.days) {
-          if (d.date < from || d.date > to) continue;
-          acc.quantity += d.quantity || 0;
-          acc.revenue += d.revenue || 0;
-          acc.profit += d.profit || 0;
-        }
-      }
-      return acc;
-    };
-    const targetsBlock = teamTargetsBlock(teamTargets.get(team.id) ?? [], targetDate, teamTotals);
+    const targetsBlock = teamTargetsBlock(activeTargets, targetDate, teamTotals, weekCols);
 
     const teamElements: Array<Record<string, any>> = [
-      ...(targetsBlock ? [{ tag: "markdown", content: targetsBlock }, { tag: "hr" }] : []),
       {
         tag: "table",
         page_size: Math.min(teamTableRows.length, 10),
@@ -846,6 +862,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
           col("revenue", "Revenue"),
           col("profit", "Profit"),
           col("units", "Units"),
+          ...(weekCols ? [col("weekTarget", "Target tuần"), col("weekPct", "% đạt tuần")] : []),
           col("spend", "Spend"),
           col("margin", "Margin"),
           col("tacos", "TACoS"),
@@ -853,6 +870,8 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         ],
         rows: teamTableRows,
       },
+      // Mục tiêu sếp giao (tag bot trên Lark): tiến độ tuần, mỗi ngày, tổng tháng, margin tối thiểu
+      ...(targetsBlock ? [{ tag: "markdown", content: targetsBlock }] : []),
       {
         tag: "markdown",
         content: commentBlockContent,

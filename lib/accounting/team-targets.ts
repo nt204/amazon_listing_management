@@ -485,7 +485,7 @@ export const isTargetActiveOn = (t: { startDate: string; endDate: string | null 
   t.startDate <= date && (t.endDate === null || date <= t.endDate);
 
 /** 1 dòng markdown tiến độ của 1 mục tiêu tại ngày báo cáo `date` (số đã chốt tới hết ngày đó). */
-export function targetProgressLine(t: ActiveTeamTarget, date: string, totals: TeamTotalsFn): string {
+export function targetProgressLine(t: ActiveTeamTarget, date: string, totals: TeamTotalsFn, compact = false): string {
   const est = t.isEstimate ? grey(" (dự kiến)") : "";
   const goal = `${t.comparator === ">=" ? "≥" : ""}${fmtMetric(t.metric, t.value)}${unit(t.metric)}`;
 
@@ -512,7 +512,11 @@ export function targetProgressLine(t: ActiveTeamTarget, date: string, totals: Te
   const elapsed = Math.min(days, daysBetween(t.startDate, date));
   const actual = metricValue(t.metric, totals(t.startDate, date, t.storeName));
   const pct = t.value > 0 ? (actual / t.value) * 100 : 0;
-  const head = `🎯 **${t.label} (${rangeLabel(t.startDate, t.endDate)})**: **${fmtMetric(t.metric, actual)} / ${goal}**${est} · **${pct.toFixed(0)}%** · ngày ${elapsed}/${days}`;
+  // compact: lũy kế / target / % đã có ở cột bảng → chỉ còn ngày thứ mấy, tiến độ, cần bao nhiêu/ngày
+  const name = t.storeName && !t.label.toUpperCase().includes(t.storeName) ? `${t.label} · ${t.storeName}` : t.label;
+  const head = compact
+    ? `🎯 **${name} (${rangeLabel(t.startDate, t.endDate)})**: ngày ${elapsed}/${days}`
+    : `🎯 **${name} (${rangeLabel(t.startDate, t.endDate)})**: **${fmtMetric(t.metric, actual)} / ${goal}**${est} · **${pct.toFixed(0)}%** · ngày ${elapsed}/${days}`;
   if (date >= end) {
     return `${head} · ${actual >= t.value ? green("✅ ĐẠT") : red(`❌ KHÔNG ĐẠT (thiếu ${fmtMetric(t.metric, t.value - actual)}${unit(t.metric)})`)}`;
   }
@@ -529,13 +533,44 @@ export function targetProgressLine(t: ActiveTeamTarget, date: string, totals: Te
   return `${head} · ${status}${actual < t.value ? ` · cần ~${fmtMetric(t.metric, need)}${unit(t.metric)}/ngày trong ${left} ngày còn lại` : ""}`;
 }
 
-/** Khối "Mục tiêu sếp giao" của 1 team trong báo cáo ngày; rỗng khi không có mục tiêu đang áp dụng. */
-export function teamTargetsBlock(targets: ActiveTeamTarget[], date: string, totals: TeamTotalsFn): string {
+/** Target tuần tính Units, hiện thành cột "Target tuần" / "% đạt tuần" ngay sau Units trong bảng team. */
+export const isWeekUnitsTarget = (t: ActiveTeamTarget) => t.kind === "week_total" && t.metric === "units";
+
+/**
+ * 2 ô "Target tuần" / "% đạt tuần" của 1 hàng bảng team (storeName null = hàng Tổng team). Không có target → null.
+ * % = lũy kế units từ đầu tuần tới hết ngày báo cáo ÷ target; xanh khi theo kịp tiến độ (target × ngày đã qua ÷ 7),
+ * cam khi chậm < 10%, đỏ khi chậm hơn; ngày cuối tuần: ✅ / ❌.
+ */
+export function weekTargetCells(
+  targets: ActiveTeamTarget[],
+  date: string,
+  totals: TeamTotalsFn,
+  storeName: string | null,
+): { target: string; pct: string } | null {
+  const t = targets.find((x) => isWeekUnitsTarget(x) && isTargetActiveOn(x, date) && x.storeName === storeName);
+  if (!t || !t.endDate) return null;
+  const actual = totals(t.startDate, date, storeName).quantity;
+  const pct = t.value > 0 ? (actual / t.value) * 100 : 0;
+  const days = daysBetween(t.startDate, t.endDate);
+  const elapsed = Math.min(days, daysBetween(t.startDate, date));
+  const pace = (t.value * elapsed) / days;
+  const text = `${pct.toFixed(1)}%`;
+  const pctCell = date >= t.endDate
+    ? actual >= t.value ? green(`**${text}** ✅`) : red(`**${text}** ❌`)
+    : actual >= pace ? green(`**${text}**`) : actual >= pace * 0.9 ? orange(`**${text}**`) : red(`**${text}**`);
+  return { target: `${t.comparator === ">=" ? "≥" : ""}${fmtMetric("units", t.value)}`, pct: pctCell };
+}
+
+/**
+ * Khối "Mục tiêu sếp giao" của 1 team trong báo cáo ngày; rỗng khi không có mục tiêu đang áp dụng.
+ * `weekUnitsInTable`: target tuần (Units) đã hiện ở cột bảng → dòng của nó chỉ còn tiến độ / cần bao nhiêu mỗi ngày.
+ */
+export function teamTargetsBlock(targets: ActiveTeamTarget[], date: string, totals: TeamTotalsFn, weekUnitsInTable = false): string {
   const active = targets.filter((t) => isTargetActiveOn(t, date));
   if (!active.length) return "";
   const order: Record<TargetKind, number> = { week_total: 0, daily_rate: 1, month_total: 2, margin_floor: 3 };
   const lines = [...active]
     .sort((a, b) => order[a.kind] - order[b.kind] || a.startDate.localeCompare(b.startDate))
-    .map((t) => targetProgressLine(t, date, totals));
+    .map((t) => targetProgressLine(t, date, totals, weekUnitsInTable && isWeekUnitsTarget(t)));
   return ["**🎯 Mục tiêu sếp giao** " + grey("(số đã chốt tới hết ngày báo cáo)"), ...lines].join("\n");
 }
