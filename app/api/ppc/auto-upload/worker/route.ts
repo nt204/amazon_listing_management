@@ -171,7 +171,7 @@ export async function PATCH(request: Request) {
       } else if (status === "RESULT_TIMEOUT") {
         statusIcon = "⏳";
         statusText = body?.error_message
-          ? `Chưa rõ kết quả — ${String(body.error_message)}`
+          ? String(body.error_message)
           : "Hết thời gian chờ phản hồi kết quả từ Amazon Ads";
       }
 

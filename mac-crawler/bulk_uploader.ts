@@ -298,14 +298,11 @@ const isBrowserClosedError = (error: unknown) =>
   /target page, context or browser has been closed|browser has been closed|target closed|connection closed/i
     .test(error instanceof Error ? error.message : String(error));
 
-const closedBeforeSubmitMessage = (storeName: string) =>
-  `Trình duyệt AdsPower của ${storeName} bị đóng giữa chừng (profile đang bị tiến trình khác hoặc người khác dùng/đóng). `
-  + "File CHƯA được gửi lên Amazon — có thể upload lại.";
+const closedBeforeSubmitMessage = (_storeName: string) =>
+  "Trình duyệt bị đóng giữa chừng, file CHƯA gửi lên Amazon — upload lại được.";
 
-const closedAfterSubmitMessage = (storeName: string, fileName: string) =>
-  `ĐÃ BẤM UPLOAD lên Amazon nhưng trình duyệt AdsPower của ${storeName} bị đóng trước khi đọc được kết quả `
-  + "(profile đang bị tiến trình khác hoặc người khác dùng/đóng). Amazon có thể ĐÃ NHẬN file. "
-  + `Vào Amazon Ads → Bulk operations kiểm tra file "${fileName}" trước khi upload lại, tránh tạo trùng campaign/bid.`;
+const closedAfterSubmitMessage = (_storeName: string, _fileName: string) =>
+  "Đã gửi file nhưng trình duyệt bị đóng trước khi có kết quả — kiểm tra Amazon Ads (Bulk operations) trước khi upload lại.";
 
 async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileName: string): Promise<AmazonBulkResult> {
   const endpoint = await startAdsPowerProfile(store.profile_id);

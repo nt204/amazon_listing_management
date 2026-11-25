@@ -252,7 +252,7 @@ export async function notifyBulkUploadResult(params: {
   const title = isOk
     ? "TẢI LÊN AMAZON BULKSHEET THÀNH CÔNG"
     : isUnknown
-      ? "ĐÃ GỬI BULKSHEET — CHƯA RÕ KẾT QUẢ, KIỂM TRA TRƯỚC KHI UPLOAD LẠI"
+      ? "ĐÃ GỬI BULKSHEET — CHƯA RÕ KẾT QUẢ"
       : "TẢI LÊN AMAZON BULKSHEET THẤT BẠI";
 
   const lines = [
