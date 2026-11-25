@@ -1264,14 +1264,6 @@ function StoresPerformance({
         <h2 className="text-lg font-bold text-slate-900">Stores Performance</h2>
         <div className="flex items-center gap-2">
           {groupData.loading && <ArrowClockwiseIcon size={13} weight="bold" className="animate-spin text-indigo-500" />}
-          {totalStockUnits != null && (
-            <span className="text-[12px] text-slate-400" title={stockTitle}>
-              Tồn kho cập nhật{" "}
-              {stockDates.length
-                ? stockDates.map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`).join(", ")
-                : "—"}
-            </span>
-          )}
           <div className="inline-flex rounded-lg bg-slate-100 p-0.5" role="tablist" aria-label="Nhóm SKU">
             {SKU_GROUP_OPTIONS.map((o) => (
               <button
@@ -1443,6 +1435,14 @@ function StoresPerformance({
         </table>
       </div>
       </div>
+      {totalStockUnits != null && (
+        <p className="mt-1.5 text-right text-[11px] italic text-slate-400" title={stockTitle}>
+          * Tồn kho cập nhật{" "}
+          {stockDates.length
+            ? stockDates.map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`).join(", ")
+            : "—"}
+        </p>
+      )}
     </Card>
   );
 }
