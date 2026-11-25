@@ -38,7 +38,7 @@ cat <<EOF > "$TARGET_PLIST"
     </array>
 
     <!-- Chạy tự động lúc 04:00 sáng Thứ Tư hàng tuần (Weekday 3: Thứ 4 trong launchd)
-         và 04:00 sáng mùng 1 hằng tháng (chốt tồn kho AWD ngày cuối tháng trước) -->
+         và 04:00 sáng mùng 4 hằng tháng (chốt tồn kho AWD ngày cuối tháng trước) -->
     <key>StartCalendarInterval</key>
     <array>
         <dict>
@@ -51,7 +51,7 @@ cat <<EOF > "$TARGET_PLIST"
         </dict>
         <dict>
             <key>Day</key>
-            <integer>1</integer>
+            <integer>4</integer>
             <key>Hour</key>
             <integer>4</integer>
             <key>Minute</key>

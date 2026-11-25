@@ -60,8 +60,28 @@ fi
 echo "[Environment] Node: $(which node)"
 echo "[Environment] TSX: $TSX_BIN"
 
-# 3. Chạy crawler tồn kho AWD
-"$TSX_BIN" "$SCRIPT_DIR/awd_inventory_crawler.ts" "$@"
+# 3. Chạy crawler
+#    - Có tham số (--date / --store, do worker hoặc người chạy tay): chạy đúng như yêu cầu.
+#    - Lịch launchd: ngày {MONTH_END_RUN_DAY:-4} hằng tháng → chốt tồn NGÀY CUỐI THÁNG TRƯỚC (30/31/28/29; tới ngày 4 Amazon
+#      chắc chắn đã có báo cáo — chạy ngày 1 thì bên Mỹ vẫn đang là ngày cuối tháng, file tải về rỗng).
+#      Ngày chạy tuần (thứ 3 theo `date +%u`) → tồn thứ 7 tuần trước. Trùng cả hai thì chạy cả hai.
+if [ "$#" -gt 0 ]; then
+  "$TSX_BIN" "$SCRIPT_DIR/awd_inventory_crawler.ts" "$@"
+else
+  MONTH_END_RUN_DAY="${MONTH_END_RUN_DAY:-4}"
+  WEEKLY_RUN_WEEKDAY="${WEEKLY_RUN_WEEKDAY:-3}"
+  RAN=0
+  if [ "$((10#$(date +%d)))" -eq "$MONTH_END_RUN_DAY" ]; then
+    MONTH_END="$(date -v1d -v-1d +%Y-%m-%d)"
+    echo "[Lịch] Ngày $MONTH_END_RUN_DAY → chốt tồn cuối tháng $MONTH_END"
+    "$TSX_BIN" "$SCRIPT_DIR/awd_inventory_crawler.ts" "--date=$MONTH_END"
+    RAN=1
+  fi
+  if [ "$(date +%u)" = "$WEEKLY_RUN_WEEKDAY" ] || [ "$RAN" -eq 0 ]; then
+    echo "[Lịch] Chạy tồn tuần (thứ 7 tuần trước)"
+    "$TSX_BIN" "$SCRIPT_DIR/awd_inventory_crawler.ts"
+  fi
+fi
 
 echo ""
 echo "######################################################################"

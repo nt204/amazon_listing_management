@@ -235,8 +235,8 @@ export function getTargetAwdSaturday(refDate = new Date()): { isoDate: string; u
 }
 
 /**
- * Lượt chạy mùng 1 hằng tháng: chốt tồn kho AWD ngày cuối tháng trước (30/31),
- * làm tồn đầu kỳ cho Base Cost tháng mới. Ví dụ mùng 1/11 -> 31/10.
+ * Ngày cuối tháng trước (run_*_weekly.sh truyền --date lúc chạy mùng 4 hằng tháng): chốt tồn kho AWD ngày cuối tháng trước (30/31),
+ * làm tồn đầu kỳ cho Base Cost tháng mới. Ví dụ mùng 4/11 -> 31/10.
  */
 export function getPreviousMonthEnd(refDate = new Date()): { isoDate: string; usDate: string } {
   const d = new Date(refDate.getFullYear(), refDate.getMonth(), 0);
@@ -577,9 +577,8 @@ export async function runAwdInventoryLedgerCrawler(): Promise<void> {
     if (requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
       const [y, m, d] = requestedDate.split("-");
       targetSaturday = { isoDate: requestedDate, usDate: `${m}/${d}/${y}` };
-    } else if (new Date().getDate() === 1) {
-      targetSaturday = getPreviousMonthEnd(new Date());
     } else {
+      // Chốt tồn cuối tháng do run_*_weekly.sh truyền --date (chạy ngày 4 hằng tháng), không tự đoán theo ngày ở đây
       targetSaturday = getTargetAwdSaturday(new Date());
     }
 
