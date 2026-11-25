@@ -771,7 +771,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       return acc;
     };
     const activeTargets = teamTargets.get(team.id) ?? [];
-    // Có target tuần (Units) đang chạy → thêm cột "Lũy kế tuần" / "Target tuần" / "% đạt" ngay sau Units (chỉ số,
+    // Có target tuần (Units) đang chạy → thêm cột "Lũy kế" / "Target" / "% tuần" ở cuối bảng (chỉ số,
     // không nhận xét); không có thì bảng như cũ
     const weekCols = Boolean(weekTargetCells(activeTargets, targetDate, teamTotals, null));
     const weekCells = (storeName: string | null): Record<string, string> => {
@@ -860,11 +860,12 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
           col("revenue", "Revenue"),
           col("profit", "Profit"),
           col("units", "Units"),
-          ...(weekCols ? [col("weekCum", "Lũy kế tuần"), col("weekTarget", "Target tuần"), col("weekPct", "% đạt")] : []),
           col("spend", "Spend"),
           col("margin", "Margin"),
           col("tacos", "TACoS"),
           col("acos", "ACoS"),
+          // Target tuần (Units) để cuối bảng, tiêu đề ngắn cho cột gọn
+          ...(weekCols ? [col("weekCum", "Lũy kế"), col("weekTarget", "Target"), col("weekPct", "% tuần")] : []),
         ],
         rows: teamTableRows,
       },
