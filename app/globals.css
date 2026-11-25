@@ -225,7 +225,8 @@ body {
 /* Bảng Financials (FBA/FBM theo ngày, SKU Win/Test, FBM cố định): tên cột to hơn cho dễ đọc.
    Chỉ hàng tiêu đề đầu tiên, không đụng hàng TOTAL. */
 .font-accounting-system table.acc-financial-table thead tr:first-child th,
-.font-accounting-system table.acc-financial-table thead tr:first-child th .truncate {
+.font-accounting-system table.acc-financial-table thead tr:first-child th .truncate,
+.font-accounting-system table.acc-financial-table thead tr:first-child th .acc-th-label {
   font-size: 13.5px !important;
 }
 

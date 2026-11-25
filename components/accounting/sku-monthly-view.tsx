@@ -860,7 +860,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                         <span className="inline-flex min-w-0 cursor-pointer items-center gap-1" title={`Bấm để sắp xếp / lọc / tuỳ chọn cột ${col.label}`}>
                           <TwoLineHeaderLabel
                             text={col.label}
-                            className={col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}
+                            className={`acc-th-label ${col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}`}
                           />
                           {isSorted && (
                             <span className="shrink-0 text-white">
