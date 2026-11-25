@@ -39,6 +39,8 @@ import { PpcBidOutcomesView } from "./ppc-bid-outcomes-view";
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
 import { PpcSaleKwView } from "./ppc-sale-kw-view";
 import { PpcPagination } from "./ppc-pagination";
+import { PpcSkuStatusBadge, PpcSkuStatusFilter } from "./ppc-sku-status";
+import { getSkuStatus, type SkuStatusFilter } from "@/lib/ppc/sku-status";
 import {
   extractSkuFromText,
   extractCampaignDate,
@@ -706,6 +708,8 @@ export function PpcDashboard({
   const [skuCategoryFilter, setSkuCategoryFilter] = useState<"ALL" | "HERO" | "BLEEDING" | "POTENTIAL" | "ZERO_CLICKS" | "ZERO_SPEND">("ALL");
   const [skuNicheFilter, setSkuNicheFilter] = useState<string>("ALL");
   const [skuPicFilter, setSkuPicFilter] = useState<string>("ALL");
+  // Trạng thái SKU theo Bảng mã (WIN / TEST / FAIL)
+  const [skuStatusFilter, setSkuStatusFilter] = useState<SkuStatusFilter>("ALL");
   const [hidePausedSkus, setHidePausedSkus] = useState(false);
 
 
@@ -2656,6 +2660,9 @@ export function PpcDashboard({
     if (skuPicFilter !== "ALL") {
       list = list.filter((s) => (s.picMkt || "").trim() === skuPicFilter);
     }
+    if (skuStatusFilter !== "ALL") {
+      list = list.filter((s) => getSkuStatus(s.skuStatus) === skuStatusFilter);
+    }
     if (parsedSkuRanges.length) {
       list = list.filter((s) => passesMetricRanges(s, parsedSkuRanges));
     }
@@ -2684,7 +2691,7 @@ export function PpcDashboard({
       return skuSortDir === "asc" ? valA - valB : valB - valA;
     });
     return list;
-  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuPicFilter, skuQuery, skuSortField, skuSortDir, parsedSkuRanges, liveStock]);
+  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuPicFilter, skuStatusFilter, skuQuery, skuSortField, skuSortDir, parsedSkuRanges, liveStock]);
 
   // Paginated SKUs
   const totalSkuPages = Math.max(1, Math.ceil(filteredSortedSkus.length / skuPageSize));
@@ -5313,6 +5320,15 @@ export function PpcDashboard({
                 </select>
               </div>
 
+              {/* Trạng thái SKU (Bảng mã): WIN / TEST / FAIL */}
+              <PpcSkuStatusFilter
+                value={skuStatusFilter}
+                onChange={(next) => {
+                  setSkuStatusFilter(next);
+                  setSkuPage(1);
+                }}
+              />
+
               {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
               <PpcMetricRangeFilter
                 value={skuRanges}
@@ -5471,6 +5487,8 @@ export function PpcDashboard({
                         )}
                       </td>
                       <td className="py-2.5 px-3.5 font-bold text-slate-900 col-primary">
+                        <span className="inline-flex items-center gap-1.5">
+                        <PpcSkuStatusBadge status={s.skuStatus} />
                         <span
                           role="link"
                           tabIndex={0}
@@ -5485,6 +5503,7 @@ export function PpcDashboard({
                           title={`Mở đề xuất Auto Bid cho SKU: ${s.sku}`}
                         >
                           {s.sku}
+                        </span>
                         </span>
                       </td>
                       {selectedStore === "ALL" && <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>}
