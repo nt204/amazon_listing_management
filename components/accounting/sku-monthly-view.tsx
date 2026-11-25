@@ -624,8 +624,6 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
           {/* Chọn tháng / khoảng tháng (lưới 12 tháng, đổi năm bằng mũi tên) */}
           <MonthRangePicker
             value={{ year: selectedYear, from: selectedMonth, to: monthTo }}
-            monthSkus={Object.fromEntries(availableMonths.filter((m) => m.year === selectedYear).map((m) => [m.month, m.activeSkus]))}
-            monthSkusYear={selectedYear}
             onChange={(v) => {
               setSelectedYear(v.year);
               setSelectedMonth(v.from);
