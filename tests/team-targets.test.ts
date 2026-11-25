@@ -206,7 +206,7 @@ test("AI quên weeks_in_plan: code đọc '3 tuần. tháng 12' trong tin → tu
   assert.equal(out.warnings.length, 1);
 });
 
-test("cột Target tuần / % đạt tuần: hàng Tổng team và hàng store có target riêng; không có target → null", () => {
+test("cột Lũy kế tuần / Target tuần / % đạt: chữ thường, hàng không có target riêng vẫn có lũy kế", () => {
   // 400 units/ngày cả team, 100 units/ngày MALFIRST
   const totals = (from: string, to: string, store: string | null): PeriodTotals => {
     const days = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
@@ -217,14 +217,12 @@ test("cột Target tuần / % đạt tuần: hàng Tổng team và hàng store c
     storeName: null, comparator: ">=", isEstimate: false, label: "Tuần cuối T11",
   };
   const store: ActiveTeamTarget = { ...base, value: 500, storeName: "MALFIRST" };
-  // Ngày 3/7: 1,200 / 3,000 = 40% (tiến độ 1,286 → chậm < 10% → cam)
-  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, null), { target: "≥3,000", pct: "<font color='orange'>**40.0%**</font>" });
-  // MALFIRST: 300 / 500 = 60% ≥ tiến độ 214 → xanh
-  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, "MALFIRST"), { target: "≥500", pct: "<font color='green'>**60.0%**</font>" });
-  assert.equal(weekTargetCells([base], "2026-11-25", totals, "EKASPEEK"), null);
-  // Ngày cuối tuần: 2,800 / 3,000 → ❌
-  assert.equal(weekTargetCells([base], "2026-11-29", totals, null)!.pct, "<font color='red'>**93.3%** ❌</font>");
-  // Chưa tới tuần → null
+  // Ngày 3/7 (23–25/11): team 1,200 / 3,000 = 40%
+  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, null), { cum: "1,200", target: "3,000", pct: "40.0%" });
+  assert.deepEqual(weekTargetCells([base, store], "2026-11-25", totals, "MALFIRST"), { cum: "300", target: "500", pct: "60.0%" });
+  // Store không có target riêng: lũy kế theo tuần của team, Target / % để "—"
+  assert.deepEqual(weekTargetCells([base], "2026-11-25", totals, "EKASPEEK"), { cum: "300", target: "—", pct: "—" });
+  // Chưa tới tuần có target → null (bảng như cũ)
   assert.equal(weekTargetCells([{ ...base, startDate: "2026-11-30", endDate: "2026-12-06" }], "2026-11-25", totals, null), null);
 });
 

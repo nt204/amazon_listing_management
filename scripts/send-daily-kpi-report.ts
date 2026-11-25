@@ -8,7 +8,6 @@ import { listFbmSkuFixed } from "@/lib/accounting/fbm-financials-db";
 import { listActiveTeamTargets } from "@/lib/accounting/team-targets-service";
 import {
   isWeekUnitsTarget,
-  teamTargetsBlock,
   weekTargetCells,
   type ActiveTeamTarget,
   type TeamTotalsFn,
@@ -772,12 +771,14 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       return acc;
     };
     const activeTargets = teamTargets.get(team.id) ?? [];
-    // Có target tuần (Units) đang áp dụng → thêm cột "Target tuần" / "% đạt tuần" ngay sau Units; không có thì bảng như cũ
-    const weekCols = activeTargets.some(isWeekUnitsTarget);
+    // Có target tuần (Units) đang chạy → thêm cột "Lũy kế tuần" / "Target tuần" / "% đạt" ngay sau Units (chỉ số,
+    // không nhận xét); không có thì bảng như cũ
+    const weekCols = Boolean(weekTargetCells(activeTargets, targetDate, teamTotals, null));
     const weekCells = (storeName: string | null): Record<string, string> => {
-      if (!weekCols) return {};
-      const c = weekTargetCells(activeTargets, targetDate, teamTotals, storeName);
-      return { weekTarget: c?.target ?? grey("—"), weekPct: c?.pct ?? grey("—") };
+      const c = weekCols ? weekTargetCells(activeTargets, targetDate, teamTotals, storeName) : null;
+      if (!c) return {};
+      const dash = (v: string) => (v === "—" ? grey("—") : v);
+      return { weekCum: c.cum, weekTarget: dash(c.target), weekPct: dash(c.pct) };
     };
 
     const teamTableRows: Array<Record<string, string>> = [];
@@ -848,8 +849,6 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
       return `[${chDef.displayName}](${dailyReportStoreUrl(storeName, isFbm ? "FBM" : "FBA")})`;
     });
 
-    const targetsBlock = teamTargetsBlock(activeTargets, targetDate, teamTotals, weekCols);
-
     const teamElements: Array<Record<string, any>> = [
       {
         tag: "table",
@@ -861,7 +860,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
           col("revenue", "Revenue"),
           col("profit", "Profit"),
           col("units", "Units"),
-          ...(weekCols ? [col("weekTarget", "Target tuần"), col("weekPct", "% đạt tuần")] : []),
+          ...(weekCols ? [col("weekCum", "Lũy kế tuần"), col("weekTarget", "Target tuần"), col("weekPct", "% đạt")] : []),
           col("spend", "Spend"),
           col("margin", "Margin"),
           col("tacos", "TACoS"),
@@ -869,8 +868,6 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         ],
         rows: teamTableRows,
       },
-      // Mục tiêu sếp giao (tag bot trên Lark): tiến độ tuần, mỗi ngày, tổng tháng, margin tối thiểu
-      ...(targetsBlock ? [{ tag: "markdown", content: targetsBlock }] : []),
       {
         tag: "markdown",
         content: commentBlockContent,

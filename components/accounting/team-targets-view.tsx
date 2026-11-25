@@ -348,10 +348,9 @@ export function TeamTargetsView() {
   return (
     <div className="flex flex-col gap-3 p-3">
       <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs leading-relaxed text-slate-600">
-        <b className="text-slate-900">Mục tiêu sếp giao cho team.</b> Sếp tag bot trên Lark (vd &quot;tuần cuối tháng 11 tối thiểu 3000 unit&quot;),
-        tin phải ghi rõ team (vd &quot;team 3: …&quot;), leader bấm <b>Lưu</b> trên card — hoặc thêm / sửa ngay ở đây.
-        Trước mắt báo cáo KPI ngày chỉ theo dõi <b>Units từng tuần</b> (cột <b>Target tuần</b> / <b>% đạt tuần</b>); các mục tiêu khác chỉ lưu lại.
-        Tuần tính T2 → CN, đủ 7 ngày. Xoá qua Lark: tag bot &quot;xoá mục tiêu&quot;.
+        <b className="text-slate-900">Mục tiêu units theo tuần của team.</b> Tag bot trên Lark kèm team (vd &quot;team 3: tuần cuối tháng 11 3000 unit&quot;)
+        rồi bấm <b>Lưu</b>, hoặc thêm / sửa ngay ở đây. Báo cáo KPI ngày thêm cột <b>Lũy kế tuần</b>, <b>Target tuần</b>, <b>% đạt</b>
+        cho team có target tuần đang chạy. Tuần tính T2 → CN. Xoá qua Lark: tag bot &quot;xoá mục tiêu&quot;.
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

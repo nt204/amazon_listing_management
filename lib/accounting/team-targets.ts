@@ -528,28 +528,26 @@ export function targetProgressLine(t: ActiveTeamTarget, date: string, totals: Te
 export const isWeekUnitsTarget = (t: ActiveTeamTarget) => t.kind === "week_total" && t.metric === "units";
 
 /**
- * 2 ô "Target tuần" / "% đạt tuần" của 1 hàng bảng team (storeName null = hàng Tổng team). Không có target → null.
- * % = lũy kế units từ đầu tuần tới hết ngày báo cáo ÷ target; xanh khi theo kịp tiến độ (target × ngày đã qua ÷ 7),
- * cam khi chậm < 10%, đỏ khi chậm hơn; ngày cuối tuần: ✅ / ❌.
+ * 3 ô "Lũy kế tuần" / "Target tuần" / "% đạt" của 1 hàng bảng team (storeName null = hàng Tổng team), chữ thường,
+ * không tô màu / đánh giá. Tuần lấy theo target tuần (Units) đang chạy của team; hàng không có target riêng vẫn có
+ * lũy kế, Target / % để "—". Không có target tuần nào → null.
  */
 export function weekTargetCells(
   targets: ActiveTeamTarget[],
   date: string,
   totals: TeamTotalsFn,
   storeName: string | null,
-): { target: string; pct: string } | null {
-  const t = targets.find((x) => isWeekUnitsTarget(x) && isTargetActiveOn(x, date) && x.storeName === storeName);
-  if (!t || !t.endDate) return null;
-  const actual = totals(t.startDate, date, storeName).quantity;
-  const pct = t.value > 0 ? (actual / t.value) * 100 : 0;
-  const days = daysBetween(t.startDate, t.endDate);
-  const elapsed = Math.min(days, daysBetween(t.startDate, date));
-  const pace = (t.value * elapsed) / days;
-  const text = `${pct.toFixed(1)}%`;
-  const pctCell = date >= t.endDate
-    ? actual >= t.value ? green(`**${text}** ✅`) : red(`**${text}** ❌`)
-    : actual >= pace ? green(`**${text}**`) : actual >= pace * 0.9 ? orange(`**${text}**`) : red(`**${text}**`);
-  return { target: `${t.comparator === ">=" ? "≥" : ""}${fmtMetric("units", t.value)}`, pct: pctCell };
+): { cum: string; target: string; pct: string } | null {
+  const active = targets.filter((x) => isWeekUnitsTarget(x) && isTargetActiveOn(x, date) && x.endDate);
+  if (!active.length) return null;
+  const own = active.find((x) => x.storeName === storeName);
+  const week = own ?? active.find((x) => x.storeName === null) ?? active[0];
+  const cum = totals(week.startDate, date, storeName).quantity;
+  return {
+    cum: fmtMetric("units", cum),
+    target: own ? fmtMetric("units", own.value) : "—",
+    pct: own && own.value > 0 ? `${((cum / own.value) * 100).toFixed(1)}%` : "—",
+  };
 }
 
 /**
@@ -563,7 +561,7 @@ export function teamTargetsBlock(targets: ActiveTeamTarget[], date: string, tota
   const lines = [...active]
     .sort((a, b) => order[a.kind] - order[b.kind] || a.startDate.localeCompare(b.startDate))
     .map((t) => targetProgressLine(t, date, totals, weekUnitsInTable && isWeekUnitsTarget(t)));
-  return ["**🎯 Mục tiêu sếp giao** " + grey("(số đã chốt tới hết ngày báo cáo)"), ...lines].join("\n");
+  return ["**🎯 Mục tiêu team** " + grey("(số đã chốt tới hết ngày báo cáo)"), ...lines].join("\n");
 }
 
 // ───────────────────────── Xem / xoá mục tiêu, nhập từ web ─────────────────────────
