@@ -13,9 +13,11 @@ interface MetricSet {
   adsFee: number;
   revenueAds: number;
   returnCost: number;
+  basecost: number;
   margin: number;
   acos: number;
   tacos: number;
+  roi: number;
 }
 
 function emptyMetrics(): MetricSet {
@@ -26,9 +28,11 @@ function emptyMetrics(): MetricSet {
     adsFee: 0,
     revenueAds: 0,
     returnCost: 0,
+    basecost: 0,
     margin: 0,
     acos: 0,
     tacos: 0,
+    roi: 0,
   };
 }
 
@@ -40,6 +44,7 @@ function extractMetrics(day?: DashboardDay): MetricSet {
   const adsFee = day.adsFee || 0;
   const revenueAds = day.revenueAds || 0;
   const returnCost = day.returnCost || 0;
+  const basecost = day.basecost || 0;
   return {
     revenue,
     quantity,
@@ -47,9 +52,11 @@ function extractMetrics(day?: DashboardDay): MetricSet {
     adsFee,
     revenueAds,
     returnCost,
+    basecost,
     margin: revenue > 0 ? (profit / revenue) * 100 : 0,
     acos: revenueAds > 0 ? (adsFee / revenueAds) * 100 : 0,
     tacos: revenue > 0 ? (adsFee / revenue) * 100 : 0,
+    roi: basecost > 0 ? (profit / basecost) * 100 : 0,
   };
 }
 
@@ -62,10 +69,12 @@ function sumMetrics(list: MetricSet[]): MetricSet {
     res.adsFee += m.adsFee;
     res.revenueAds += m.revenueAds;
     res.returnCost += m.returnCost;
+    res.basecost += m.basecost;
   }
   res.margin = res.revenue > 0 ? (res.profit / res.revenue) * 100 : 0;
   res.acos = res.revenueAds > 0 ? (res.adsFee / res.revenueAds) * 100 : 0;
   res.tacos = res.revenue > 0 ? (res.adsFee / res.revenue) * 100 : 0;
+  res.roi = res.basecost > 0 ? (res.profit / res.basecost) * 100 : 0;
   return res;
 }
 
@@ -104,6 +113,14 @@ function deltaPointVsAvg(cur: number, avg: number): string {
   const diff = cur - avg;
   if (Math.abs(diff) < 0.05) return grey("0.0đ");
   return diff > 0 ? green(`△ +${diff.toFixed(1)}đ`) : red(`▼ -${Math.abs(diff).toFixed(1)}đ`);
+}
+
+// Spend: chỉ là mức chi, không tốt/xấu → màu xám, mũi tên đặc
+function deltaSpendVsAvg(cur: number, avg: number): string {
+  if (avg <= 0) return grey("—");
+  const diff = ((cur - avg) / avg) * 100;
+  if (Math.abs(diff) < 0.05) return grey("0.0%");
+  return grey(diff > 0 ? `▲ +${diff.toFixed(1)}%` : `▼ -${Math.abs(diff).toFixed(1)}%`);
 }
 
 // Cho TACoS: giảm là tốt (▽ xanh), tăng là xấu (▲ đỏ)
@@ -519,13 +536,16 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         adsFee: priorDays.reduce((s, x) => s + (x.adsFee || 0), 0) / priorCount,
         revenueAds: priorDays.reduce((s, x) => s + (x.revenueAds || 0), 0) / priorCount,
         returnCost: priorDays.reduce((s, x) => s + (x.returnCost || 0), 0) / priorCount,
+        basecost: priorDays.reduce((s, x) => s + (x.basecost || 0), 0) / priorCount,
         margin: 0,
         acos: 0,
         tacos: 0,
+        roi: 0,
       };
       priorAvg.margin = priorAvg.revenue > 0 ? (priorAvg.profit / priorAvg.revenue) * 100 : 0;
       priorAvg.acos = priorAvg.revenueAds > 0 ? (priorAvg.adsFee / priorAvg.revenueAds) * 100 : 0;
       priorAvg.tacos = priorAvg.revenue > 0 ? (priorAvg.adsFee / priorAvg.revenue) * 100 : 0;
+      priorAvg.roi = priorAvg.basecost > 0 ? (priorAvg.profit / priorAvg.basecost) * 100 : 0;
 
       const isFbm = chDef.displayName.includes("FBM");
       const baseName = chDef.label.replace(/-FBA|-FBM/i, "").toUpperCase();
@@ -568,7 +588,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
 
   const companyDailyTotals: MetricSet[] = [];
   for (const dateStr of priorDayDates) {
-    let rev = 0, prof = 0, qty = 0, ads = 0, revAds = 0, ret = 0;
+    let rev = 0, prof = 0, qty = 0, ads = 0, revAds = 0, ret = 0, bc = 0;
     for (const ch of channels) {
       const dRecord = ch.days.find((x) => x.date === dateStr);
       if (dRecord) {
@@ -578,6 +598,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         ads += dRecord.adsFee || 0;
         revAds += dRecord.revenueAds || 0;
         ret += dRecord.returnCost || 0;
+        bc += dRecord.basecost || 0;
       }
     }
     if (rev > 0 || prof !== 0 || qty > 0) {
@@ -588,9 +609,11 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         adsFee: ads,
         revenueAds: revAds,
         returnCost: ret,
+        basecost: bc,
         margin: rev > 0 ? (prof / rev) * 100 : 0,
         acos: revAds > 0 ? (ads / revAds) * 100 : 0,
         tacos: rev > 0 ? (ads / rev) * 100 : 0,
+        roi: bc > 0 ? (prof / bc) * 100 : 0,
       });
     }
   }
@@ -603,13 +626,16 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
     adsFee: companyDailyTotals.reduce((s, x) => s + x.adsFee, 0) / companyPriorCount,
     revenueAds: companyDailyTotals.reduce((s, x) => s + x.revenueAds, 0) / companyPriorCount,
     returnCost: companyDailyTotals.reduce((s, x) => s + x.returnCost, 0) / companyPriorCount,
+    basecost: companyDailyTotals.reduce((s, x) => s + x.basecost, 0) / companyPriorCount,
     margin: 0,
     acos: 0,
     tacos: 0,
+    roi: 0,
   };
   companyPriorAvg.margin = companyPriorAvg.revenue > 0 ? (companyPriorAvg.profit / companyPriorAvg.revenue) * 100 : 0;
   companyPriorAvg.acos = companyPriorAvg.revenueAds > 0 ? (companyPriorAvg.adsFee / companyPriorAvg.revenueAds) * 100 : 0;
   companyPriorAvg.tacos = companyPriorAvg.revenue > 0 ? (companyPriorAvg.adsFee / companyPriorAvg.revenue) * 100 : 0;
+  companyPriorAvg.roi = companyPriorAvg.basecost > 0 ? (companyPriorAvg.profit / companyPriorAvg.basecost) * 100 : 0;
 
   const targetDdMm = `${targetDate.slice(8, 10)}/${targetDate.slice(5, 7)}`;
   const yestDdMm = `${yesterdayDate.slice(8, 10)}/${yesterdayDate.slice(5, 7)}`;
@@ -618,7 +644,7 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
   // 1. BẢNG TỔNG CÔNG TY: Thay Units bằng TACoS, Thêm cột Hôm qua
   const companyTable = {
     tag: "table",
-    page_size: 5,
+    page_size: 10,
     row_height: "low",
     header_style: TABLE_HEADER,
     columns: [
@@ -644,6 +670,20 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         delta: deltaUsdVsAvg(companyToday.profit, companyPriorAvg.profit),
       },
       {
+        metric: "**Units**",
+        today: `**${fmtCount(companyToday.quantity)}**`,
+        yesterday: fmtCount(companyYesterday.quantity),
+        priorAvg: fmtCount(companyPriorAvg.quantity),
+        delta: deltaPctVsAvg(companyToday.quantity, companyPriorAvg.quantity),
+      },
+      {
+        metric: "**Spend**",
+        today: `**${fmtUsd(companyToday.adsFee)}**`,
+        yesterday: fmtUsd(companyYesterday.adsFee),
+        priorAvg: fmtUsd(companyPriorAvg.adsFee),
+        delta: deltaSpendVsAvg(companyToday.adsFee, companyPriorAvg.adsFee),
+      },
+      {
         metric: "**Margin**",
         today: `**${fmtPct(companyToday.margin)}**`,
         yesterday: fmtPct(companyYesterday.margin),
@@ -656,6 +696,13 @@ export async function generateDailyKpiReport(targetDate: string): Promise<DailyK
         yesterday: fmtPct(companyYesterday.tacos),
         priorAvg: fmtPct(companyPriorAvg.tacos),
         delta: deltaPointInvertedVsAvg(companyToday.tacos, companyPriorAvg.tacos),
+      },
+      {
+        metric: "**ROI**",
+        today: `**${fmtPct(companyToday.roi)}**`,
+        yesterday: fmtPct(companyYesterday.roi),
+        priorAvg: fmtPct(companyPriorAvg.roi),
+        delta: deltaPointVsAvg(companyToday.roi, companyPriorAvg.roi),
       },
     ],
   };
