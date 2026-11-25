@@ -1053,7 +1053,7 @@ export function PpcNewCampView() {
               const done = j.status === "SUCCESS";
               const warn = j.status === "PARTIAL_SUCCESS" || j.status === "RESULT_TIMEOUT";
               const fail = j.status === "FAILED" || j.status === "CANCELLED";
-              const label = done ? "Thành công" : warn ? (j.status === "PARTIAL_SUCCESS" ? "Một phần lỗi" : "Chờ kết quả quá lâu") : fail ? (j.status === "CANCELLED" ? "Đã huỷ" : "Thất bại") : j.status === "RUNNING" ? "Đang upload" : "Chờ Mac mini";
+              const label = done ? "Thành công" : warn ? (j.status === "PARTIAL_SUCCESS" ? "Một phần lỗi" : "Đã gửi, chưa rõ kết quả") : fail ? (j.status === "CANCELLED" ? "Đã huỷ" : "Thất bại") : j.status === "RUNNING" ? "Đang upload" : "Chờ Mac mini";
               return (
                 <div key={j.id} className="rounded-lg border border-slate-200 px-3 py-2">
                   <div className="flex items-center gap-3 text-sm">

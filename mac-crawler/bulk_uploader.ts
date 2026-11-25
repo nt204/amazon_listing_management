@@ -292,12 +292,28 @@ async function readDisabledButtonReason(
   }).catch(() => "");
 }
 
+// Trình duyệt AdsPower bị đóng giữa chừng — thường do tiến trình khác trên Mac mini (crawler lệch kho, kế toán, AWD…)
+// hoặc người dùng mở/đóng cùng profile của store (25/11: crawler lệch kho đóng profile MALFIRST lúc upload đang chờ kết quả).
+const isBrowserClosedError = (error: unknown) =>
+  /target page, context or browser has been closed|browser has been closed|target closed|connection closed/i
+    .test(error instanceof Error ? error.message : String(error));
+
+const closedBeforeSubmitMessage = (storeName: string) =>
+  `Trình duyệt AdsPower của ${storeName} bị đóng giữa chừng (profile đang bị tiến trình khác hoặc người khác dùng/đóng). `
+  + "File CHƯA được gửi lên Amazon — có thể upload lại.";
+
+const closedAfterSubmitMessage = (storeName: string, fileName: string) =>
+  `ĐÃ BẤM UPLOAD lên Amazon nhưng trình duyệt AdsPower của ${storeName} bị đóng trước khi đọc được kết quả `
+  + "(profile đang bị tiến trình khác hoặc người khác dùng/đóng). Amazon có thể ĐÃ NHẬN file. "
+  + `Vào Amazon Ads → Bulk operations kiểm tra file "${fileName}" trước khi upload lại, tránh tạo trùng campaign/bid.`;
+
 async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileName: string): Promise<AmazonBulkResult> {
   const endpoint = await startAdsPowerProfile(store.profile_id);
   const browser = await chromium.connectOverCDP(endpoint);
   const context = browser.contexts()[0];
   if (!context) throw new Error("Không tìm thấy browser context của AdsPower.");
   const page = await context.newPage();
+  let submitted = false;
   try {
     const entityId = await resolveAmazonAdsEntityId(context, page, store.store_name);
     if (!entityId) {
@@ -422,6 +438,7 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
       const detail = lastUploadClickError instanceof Error ? lastUploadClickError.message : String(lastUploadClickError);
       throw new Error(`Không thể bấm nút xác nhận Upload sau 3 lần thử. ${detail}`);
     }
+    submitted = true;
 
     console.log("[Bulk Uploader] Đã click nút Upload thành công! Chờ Amazon tiếp nhận file...");
     // Chờ modal đóng lại xác nhận lệnh upload đã gửi đi
@@ -436,6 +453,14 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
     }
     await page.waitForTimeout(3_000);
     return await waitForAmazonResult(page, fileName);
+  } catch (error) {
+    if (!isBrowserClosedError(error)) throw error;
+    console.error(`[Bulk Uploader] Trình duyệt bị đóng giữa chừng (${submitted ? "sau" : "trước"} khi bấm Upload): ${(error as Error).message}`);
+    // Đã gửi file → không báo FAILED (người dùng sẽ upload lại → trùng campaign); báo "đã gửi, chưa rõ kết quả"
+    if (submitted) {
+      return { status: "RESULT_TIMEOUT", amazonUploadId: null, summary: closedAfterSubmitMessage(store.store_name, fileName) };
+    }
+    throw new Error(closedBeforeSubmitMessage(store.store_name));
   } finally {
     await page.close({ runBeforeUnload: false }).catch(() => {});
     await browser.close().catch(() => {});

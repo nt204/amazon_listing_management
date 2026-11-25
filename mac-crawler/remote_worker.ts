@@ -217,14 +217,18 @@ async function processBulkUploadJob(job: RemoteBulkUploadJob) {
       progress_pct: 100,
       amazon_upload_id: result.amazonUploadId || undefined,
       result_summary: result.summary,
+      // Web app hiện error_message ngay dưới dòng file → người upload thấy phải làm gì
+      ...(result.status === "RESULT_TIMEOUT" ? { error_message: result.summary } : {}),
     });
     if (result.status !== "SUCCESS") {
-      const resultMessage = `Amazon trả kết quả ${result.status}: ${result.summary}`;
+      const resultMessage = result.status === "RESULT_TIMEOUT"
+        ? result.summary
+        : `Amazon trả kết quả ${result.status}: ${result.summary}`;
       console.error(`[Bulk Upload] ❌ ${resultMessage}`);
       await notifyBulkUploadResult({
         storeName: job.store_name,
         fileName: job.file_name,
-        status: "FAILED",
+        status: result.status === "RESULT_TIMEOUT" ? "UNKNOWN" : "FAILED",
         error: resultMessage,
         jobId: job.id,
       });

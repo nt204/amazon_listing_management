@@ -240,14 +240,20 @@ export async function notifyCrawlerSummary(params: {
 export async function notifyBulkUploadResult(params: {
   storeName: string;
   fileName: string;
-  status: "SUCCESS" | "FAILED";
+  /** UNKNOWN = đã gửi lên Amazon nhưng không đọc được kết quả → kiểm tra trên Amazon Ads trước khi upload lại */
+  status: "SUCCESS" | "FAILED" | "UNKNOWN";
   error?: string;
   jobId?: string;
 }): Promise<void> {
   if (!isTelegramConfigured()) return;
   const isOk = params.status === "SUCCESS";
-  const icon = isOk ? "📤 ✅" : "📤 ❌";
-  const title = isOk ? "TẢI LÊN AMAZON BULKSHEET THÀNH CÔNG" : "TẢI LÊN AMAZON BULKSHEET THẤT BẠI";
+  const isUnknown = params.status === "UNKNOWN";
+  const icon = isOk ? "📤 ✅" : isUnknown ? "📤 ⚠️" : "📤 ❌";
+  const title = isOk
+    ? "TẢI LÊN AMAZON BULKSHEET THÀNH CÔNG"
+    : isUnknown
+      ? "ĐÃ GỬI BULKSHEET — CHƯA RÕ KẾT QUẢ, KIỂM TRA TRƯỚC KHI UPLOAD LẠI"
+      : "TẢI LÊN AMAZON BULKSHEET THẤT BẠI";
 
   const lines = [
     `${icon} <b>[PPC AUTO UPLOAD] ${title}</b>`,
@@ -256,7 +262,7 @@ export async function notifyBulkUploadResult(params: {
   ];
 
   if (!isOk && params.error) {
-    lines.push(`❌ <b>Lỗi:</b> <pre>${escapeHtml(params.error.slice(0, 400))}</pre>`);
+    lines.push(`${isUnknown ? "⚠️ <b>Chi tiết:</b>" : "❌ <b>Lỗi:</b>"} <pre>${escapeHtml(params.error.slice(0, 500))}</pre>`);
   }
 
   await sendTelegramMessage(lines.join("\n"));

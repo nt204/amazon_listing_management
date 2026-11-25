@@ -170,7 +170,9 @@ export async function PATCH(request: Request) {
         statusText = `Thất bại: ${body?.error_message || "Lỗi xử lý file từ Amazon Ads"}`;
       } else if (status === "RESULT_TIMEOUT") {
         statusIcon = "⏳";
-        statusText = "Hết thời gian chờ phản hồi kết quả từ Amazon Ads";
+        statusText = body?.error_message
+          ? `Chưa rõ kết quả — ${String(body.error_message)}`
+          : "Hết thời gian chờ phản hồi kết quả từ Amazon Ads";
       }
 
       const skuText = Array.isArray(jobRecord.skus) && jobRecord.skus.length > 0
