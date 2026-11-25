@@ -3960,20 +3960,25 @@ export function PpcDashboard({
                     <tr key={i} className="hover:bg-slate-50/80 transition group">
                       {/* Portfolio Name: Clickable to view Campaigns directly */}
                       <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px] acc-normal-weight">
-                        <button
-                          type="button"
+                        <span
+                          role="link"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") (e.currentTarget as HTMLElement).click();
+                          }}
                           onClick={() => {
+                            if (window.getSelection()?.toString()) return; // đang bôi đen để copy
                             setSelectedPortfolioForDrilldown(p.portfolioName);
                             setCampaignQuery("");
                             setCampaignStatusFilter(portfolioActiveOnly ? "ACTIVE" : "ALL");
                             setCampaignPage(1);
                             setActiveTab("campaigns");
                           }}
-                          className="text-left font-bold text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
+                          className="text-left font-bold text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block select-text"
                           title="Nhấn vào tên Portfolio để xem các Campaign của Portfolio này"
                         >
                           {p.portfolioName === "__NONE__" ? "(Chưa phân loại / Không có Portfolio)" : p.portfolioName}
-                        </button>
+                        </span>
                       </td>
 
                       {selectedStore === "ALL" && <td className="py-2.5 px-3 text-slate-500 font-normal whitespace-nowrap">{p.storeName}</td>}
@@ -4403,21 +4408,45 @@ export function PpcDashboard({
                       <tr key={i} className="hover:bg-slate-50/80 transition group">
                         {/* Campaign Name: Clickable to view Targets directly (in thường) */}
                         <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px] acc-normal-weight">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedCampaignForDrilldown(c.campaignName);
-                              setSelectedCampaignIdForDrilldown(c.campaignId || null);
-                              setSelectedAdGroupForDrilldown(null);
-                              setTargetQuery("");
-                              setTargetPage(1);
-                              setActiveTab("targets");
-                            }}
-                            className="text-left text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
-                            title="Nhấn vào tên Campaign để xem các Target / Keyword của Campaign này"
-                          >
-                            {c.campaignName}
-                          </button>
+                          <div className="flex items-start gap-1">
+                            {/* span thay vì button: chữ trong <button> không bôi đen được. Đang bôi đen thì không mở Target. */}
+                            <span
+                              role="link"
+                              tabIndex={0}
+                              onClick={() => {
+                                if (window.getSelection()?.toString()) return;
+                                setSelectedCampaignForDrilldown(c.campaignName);
+                                setSelectedCampaignIdForDrilldown(c.campaignId || null);
+                                setSelectedAdGroupForDrilldown(null);
+                                setTargetQuery("");
+                                setTargetPage(1);
+                                setActiveTab("targets");
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") (e.currentTarget as HTMLElement).click();
+                              }}
+                              className="text-left text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words select-text"
+                              title="Nhấn vào tên Campaign để xem các Target / Keyword của Campaign này (kéo chuột để bôi đen / copy)"
+                            >
+                              {c.campaignName}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(c.campaignName);
+                                  notify("Đã copy tên campaign");
+                                } catch {
+                                  notify("Trình duyệt không cho phép ghi vào clipboard.", "error");
+                                }
+                              }}
+                              className="shrink-0 mt-0.5 p-0.5 rounded text-slate-400 hover:text-indigo-600 hover:bg-slate-100 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
+                              title="Copy tên campaign"
+                              aria-label="Copy tên campaign"
+                            >
+                              <Copy size={12} />
+                            </button>
+                          </div>
                         </td>
 
                         {selectedStore === "ALL" && <td className="py-2.5 px-3 text-slate-500 font-normal whitespace-nowrap">{c.storeName}</td>}
@@ -5442,14 +5471,21 @@ export function PpcDashboard({
                         )}
                       </td>
                       <td className="py-2.5 px-3.5 font-bold text-slate-900 col-primary">
-                        <button
-                          type="button"
-                          onClick={() => handleJumpToAutoBid(s.sku)}
-                          className="truncate max-w-[280px] font-bold text-slate-900 font-mono hover:text-indigo-600 hover:underline cursor-pointer text-left transition inline-block"
+                        <span
+                          role="link"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleJumpToAutoBid(s.sku);
+                          }}
+                          onClick={() => {
+                            if (window.getSelection()?.toString()) return; // đang bôi đen để copy
+                            handleJumpToAutoBid(s.sku);
+                          }}
+                          className="truncate max-w-[280px] font-bold text-slate-900 font-mono hover:text-indigo-600 hover:underline cursor-pointer text-left transition inline-block align-bottom select-text"
                           title={`Mở đề xuất Auto Bid cho SKU: ${s.sku}`}
                         >
                           {s.sku}
-                        </button>
+                        </span>
                       </td>
                       {selectedStore === "ALL" && <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>}
                       <td className="py-2.5 px-3 text-right font-medium text-slate-700">
