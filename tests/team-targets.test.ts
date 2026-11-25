@@ -56,6 +56,8 @@ test("W50 (ISO), tuần này, tuần sau", () => {
   assert.equal(range(resolveWeekRef("2026-12", "W50", null, "2026-11-23")), "2026-12-07..2026-12-13");
   assert.equal(range(resolveWeekRef("2026-11", "this", null, "2026-11-25")), "2026-11-23..2026-11-29");
   assert.equal(range(resolveWeekRef("2026-11", "next", null, "2026-11-25")), "2026-11-30..2026-12-06");
+  const next = resolveWeekRef("2026-11", "next", null, "2026-11-25");
+  assert.equal("label" in next && next.label, "Tuần 1 T12");
 });
 
 test("lọc tin: tin giao mục tiêu qua, câu hỏi bị loại", () => {

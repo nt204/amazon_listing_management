@@ -153,8 +153,11 @@ export function resolveWeekRef(
   const week = (start: string) => ({ startDate: start, endDate: addDaysIso(start, 6) });
 
   if (word === "this" || word === "next") {
+    // Nhãn theo vị trí trong tháng ("Tuần 1 T12") để báo cáo các ngày sau vẫn rõ là tuần nào
     const monday = addDaysIso(mondayOf(sentDate), word === "next" ? 7 : 0);
-    return { ...week(monday), label: word === "this" ? "Tuần này" : "Tuần sau", note: null };
+    const m = weekMonthOf(monday);
+    const k = monthWeekBlocks(m).findIndex((b) => b.startDate === monday) + 1;
+    return { ...week(monday), label: `Tuần ${k} ${monthShort(m)}`, note: word === "this" ? "tuần này" : "tuần sau" };
   }
 
   const blocks = monthWeekBlocks(month);
