@@ -1010,11 +1010,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                           </span>
                         )}
                         {col.id === "margin" && (
-                          <span
-                            className={`font-bold tabular-nums ${
-                              (summary.margin || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
-                            }`}
-                          >
+                          <span className="font-bold text-slate-950 tabular-nums">
                             {formatPercent(summary.margin)}
                           </span>
                         )}
@@ -1356,11 +1352,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* Margin % */}
                             {col.id === "margin" && (
-                              <span
-                                className={`font-semibold tabular-nums ${
-                                  (item.margin || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
-                                }`}
-                              >
+                              <span className="font-normal tabular-nums text-black">
                                 {formatPercent(item.margin)}
                               </span>
                             )}
@@ -1388,13 +1380,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* Profit/Item */}
                             {col.id === "profit_per_item" && (
-                              <span
-                                className={`tabular-nums font-medium ${
-                                  item.profit_per_item != null && item.profit_per_item >= 0
-                                    ? "text-emerald-600"
-                                    : "text-rose-600"
-                                }`}
-                              >
+                              <span className="font-normal tabular-nums text-black">
                                 {formatCurrency(item.profit_per_item)}
                               </span>
                             )}
