@@ -5017,7 +5017,7 @@ function InventoryViewInner() {
   };
 
   return (
-    <div className="w-full space-y-2.5">
+    <div className="flex h-full min-h-0 w-full flex-col gap-2.5">
       {/* Toast Alert */}
       {toast && (
         <div
@@ -5257,7 +5257,7 @@ function InventoryViewInner() {
                   href={`/api/accounting/inventory/ton?store_id=${selectedStoreId}&format=xlsx`}
                   download
                   className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
-                  title="Xuất tab TỒN ra file Excel"
+                  title="Xuất tab TỒN KHO ra file Excel"
                 >
                   <FileXlsIcon size={15} weight="bold" />
                   <span>Xuất Excel</span>
@@ -5266,7 +5266,7 @@ function InventoryViewInner() {
                   type="button"
                   onClick={() => tonRef.current?.reload()}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
-                  title="Tải lại tab TỒN"
+                  title="Tải lại tab TỒN KHO"
                 >
                   <ArrowClockwiseIcon size={16} weight="bold" />
                 </button>
@@ -5537,7 +5537,7 @@ function InventoryViewInner() {
             }`}
           >
             <WarehouseIcon size={16} weight="bold" />
-            <span>Tồn</span>
+            <span>Tồn kho</span>
           </button>
           </>
           )}
@@ -6608,7 +6608,7 @@ function InventoryViewInner() {
 
       {/* TAB 5: TỒN (giống tab TỒN của file <STORE> INVENTORY) */}
       {visitedTabs.ton && selectedStoreId && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col h-[calc(100vh-230px)] min-h-[580px] ${shownTab === "ton" ? "" : "hidden"}`}>
+        <div className={`min-h-[420px] flex-1 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xs flex-col sm:min-h-[520px] lg:min-h-[580px] ${shownTab === "ton" ? "flex" : "hidden"}`}>
           {/* Ẩn thì không dựng lại bảng TỒN (hàng nghìn dòng) mỗi lần trang Inventory render — như các tab khác */}
           <FreezeWhenHidden active={shownTab === "ton"} frozen={tabSwitchPending} render={() => (
             <InventoryTonView ref={tonRef} storeId={selectedStoreId} tableZoom={tableZoom} />

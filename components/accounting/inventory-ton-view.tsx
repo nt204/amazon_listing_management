@@ -1,13 +1,15 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
+import { forwardRef, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CaretDownIcon, CaretUpIcon, InfoIcon, MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { CaretDownIcon, CaretUpIcon, MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react";
 import type { InventoryTonResult, InventoryTonRow } from "@/lib/accounting/inventory-ton-db";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
+import { PaginationBar } from "./pagination-bar";
 
-// Tab TỒN — dựng giống tab "TỒN" file <STORE> INVENTORY 2026 (màu header, màu ô, định dạng số, khoá 4 cột đầu,
-// nhóm cột G–H thu gọn được, cột BASECOST ẩn sẵn như sheet). Công thức: lib/accounting/inventory-ton-db.ts.
+// Tab TỒN KHO dựa trên tab "TỒN" trong file <STORE> INVENTORY 2026.
+// Công thức: lib/accounting/inventory-ton-db.ts.
 
 export interface InventoryTonViewRef {
   reload: () => void;
@@ -32,8 +34,6 @@ interface Col {
   bgWhenPositive?: string;
   bold?: boolean;
   align?: "left" | "center" | "right";
-  group?: "opening";
-  hiddenByDefault?: boolean;
   hint?: string;
 }
 
@@ -43,6 +43,11 @@ const PEACH = "#fce5cd";
 const CREAM = "#fff2cc";
 const GREEN = "#b7e1cd";
 const FROZEN = 4;
+const ROW_HEIGHT = 52;
+const TOTAL_COLUMNS: Key[] = [
+  "ton_dau_nam", "gtri_dau_nam", "sl_di_hang", "tien_hang", "luong_ban", "ton",
+  "fba_total", "awd_total", "total_amazon", "gtri_ton",
+];
 // Nền header là class Tailwind (không chỉ style) — luật .acc-black-grid trong globals.css tô trắng mọi th không có class bg-*.
 const HEAD_BG: Record<string, string> = {
   [ORANGE]: "bg-[#ff9900]",
@@ -54,18 +59,16 @@ function buildColumns(year: number): Col[] {
   return [
     { key: "product_type", label: "Product Type", width: 130, fmt: "text", head: ORANGE, align: "center" },
     { key: "mockup_url", label: "Mockup", width: 72, fmt: "text", head: ORANGE, align: "center" },
-    { key: "sku", label: "SKU", width: 160, fmt: "text", head: ORANGE, align: "left" },
-    { key: "asin", label: "ASIN", width: 112, fmt: "text", head: ORANGE, bold: true, align: "left" },
+    { key: "sku", label: "SKU", width: 160, fmt: "text", head: ORANGE, bold: true, align: "left" },
+    { key: "asin", label: "ASIN", width: 112, fmt: "text", head: ORANGE, align: "left" },
     { key: "ton_dau_nam", label: `Hàng tồn 1/1/${year}`, width: 86, fmt: "int", head: ORANGE, cellBg: CREAM, align: "center",
       hint: `Tồn đầu kỳ tháng 1/${year} của Basecost Tháng (nạp từ tab TỒN của sheet)` },
-    { key: "gtri_dau_nam", label: "Tổng giá trị tồn đầu năm", width: 104, fmt: "money", head: ORANGE, align: "right", group: "opening",
+    { key: "gtri_dau_nam", label: "Tổng giá trị tồn đầu năm", width: 104, fmt: "money", head: ORANGE, align: "right",
       hint: "= Hàng tồn 1/1 × Trung bình giá 1/1" },
     { key: "sl_di_hang", label: "SL ĐI HÀNG /NĂM", width: 86, fmt: "int", head: ORANGE, align: "right",
       hint: "= Tổng Quantity của SKU ở Chi Tiết Đi Hàng" },
     { key: "tien_hang", label: "TIỀN HÀNG/NĂM", width: 112, fmt: "money", head: ORANGE, bgWhenPositive: GREEN, align: "center",
       hint: "= Tổng Total Basecost của SKU ở Chi Tiết Đi Hàng" },
-    { key: "basecost", label: "BASECOST", width: 86, fmt: "money", head: ORANGE, bgWhenPositive: GREEN, align: "center", hiddenByDefault: true,
-      hint: "Số nhập tay trên sheet (đồng bộ từ tab TỒN hằng ngày)" },
     { key: "luong_ban", label: "LƯỢNG BÁN /NĂM", width: 80, fmt: "int", head: ORANGE, align: "right",
       hint: "= Tổng hàng ra kho các tháng trong năm (SL bán − Return + Adjustment + Removal, từ file thô Amazon)" },
     { key: "ton", label: "TỒN", width: 76, fmt: "int", head: ORANGE, align: "right", hint: "= Hàng tồn 1/1 + SL đi hàng − Lượng bán" },
@@ -92,18 +95,13 @@ function formatValue(value: unknown, fmt: Fmt): string {
   return `${n < 0 ? "-" : ""}$${decFmt.format(Math.abs(n))}`;
 }
 
-/** "2026-11-24" → "24/11/2026"; nhãn khác giữ nguyên */
-function formatAmazonLabel(label: string | null): string | null {
-  if (!label) return null;
-  const m = label.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : label;
-}
-
 export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function InventoryTonView({ storeId, tableZoom = 100 }, ref) {
   const [search, setSearch] = useState("");
+  const [limit, setLimit] = useState(50);
+  const [pagination, setPagination] = useState<{ rows: InventoryTonRow[]; page: number } | null>(null);
+  const deferredSearch = useDeferredValue(search);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [statusFilter, setStatusFilter] = useState("");
-  const [openingCollapsed, setOpeningCollapsed] = useState(false);
-  const [showBasecost, setShowBasecost] = useState(false);
   const [sort, setSort] = useState<{ key: Key; dir: 1 | -1 } | null>(null);
 
   const query = useQuery({
@@ -120,13 +118,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
   useImperativeHandle(ref, () => ({ reload: () => void query.refetch() }), [query]);
 
   const year = query.data?.year ?? new Date().getFullYear();
-  const columns = useMemo(
-    () =>
-      buildColumns(year).filter(
-        (c) => !(openingCollapsed && c.group === "opening") && !(c.hiddenByDefault && !showBasecost),
-      ),
-    [year, openingCollapsed, showBasecost],
-  );
+  const columns = useMemo(() => buildColumns(year), [year]);
 
   const statuses = useMemo(
     () => [...new Set((query.data?.rows ?? []).map((r) => r.status?.trim()).filter(Boolean) as string[])].sort(),
@@ -134,7 +126,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
   );
 
   const rows = useMemo(() => {
-    const term = search.trim().toLowerCase();
+    const term = deferredSearch.trim().toLowerCase();
     let list = (query.data?.rows ?? []).filter((r) => {
       if (statusFilter && (r.status?.trim() || "") !== statusFilter) return false;
       if (!term) return true;
@@ -150,16 +142,17 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
       });
     }
     return list;
-  }, [query.data, search, statusFilter, sort]);
+  }, [query.data, deferredSearch, statusFilter, sort]);
 
+  const totalPages = Math.max(1, Math.ceil(rows.length / limit));
+  const page = pagination?.rows === rows ? Math.min(pagination.page, totalPages) : 1;
+  const pageRows = rows.slice((page - 1) * limit, page * limit);
   const totals = useMemo(() => {
-    const sum = (k: Key) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
-    return {
-      ton: sum("ton"),
-      total: sum("total_amazon"),
-      gtriDauNam: sum("gtri_dau_nam"),
-      gtriTon: sum("gtri_ton"),
-    };
+    const sums: Partial<Record<Key, number>> = {};
+    for (const key of TOTAL_COLUMNS) {
+      sums[key] = rows.reduce((sum, row) => sum + (Number(row[key]) || 0), 0);
+    }
+    return sums;
   }, [rows]);
 
   const leftOffsets = useMemo(() => {
@@ -172,8 +165,31 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
     return out;
   }, [columns]);
 
-  const stockDay = formatAmazonLabel(query.data?.stockDate ?? null);
   const scale = tableZoom / 100;
+  // The scroll container measures zoomed pixels, while spacer rows are inside the zoomed table.
+  const virtualizer = useVirtualizer({
+    count: pageRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT * scale,
+    overscan: 8,
+  });
+  useEffect(() => {
+    virtualizer.measure();
+  }, [scale, virtualizer]);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [storeId, deferredSearch, statusFilter, sort, page, limit]);
+
+  const visibleRows = virtualizer.getVirtualItems();
+  const firstRow = visibleRows[0];
+  const lastRow = visibleRows.at(-1);
+  const topSpacer = (firstRow?.start ?? 0) / scale;
+  const bottomSpacer = (virtualizer.getTotalSize() - (lastRow?.end ?? 0)) / scale;
+  const spacer = (height: number) => height > 0 && (
+    <tr aria-hidden="true">
+      <td colSpan={columns.length} className="border-0! p-0!" style={{ height }} />
+    </tr>
+  );
 
   const toggleSort = (key: Key) =>
     setSort((prev) => (prev?.key === key ? (prev.dir === 1 ? { key, dir: -1 } : null) : { key, dir: 1 }));
@@ -212,42 +228,6 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-          <input type="checkbox" checked={!openingCollapsed} onChange={(e) => setOpeningCollapsed(!e.target.checked)} className="cursor-pointer" />
-          Giá trị tồn đầu năm
-        </label>
-        <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-          <input type="checkbox" checked={showBasecost} onChange={(e) => setShowBasecost(e.target.checked)} className="cursor-pointer" />
-          Cột BASECOST
-        </label>
-
-        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
-          <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">
-            Tồn: <strong>{intFmt.format(totals.ton)}</strong> · Total Amazon: <strong>{intFmt.format(totals.total)}</strong>
-          </span>
-          <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-900">
-            Giá trị tồn: <strong className="font-mono">{formatValue(totals.gtriTon, "money")}</strong>
-          </span>
-          <span
-            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-600"
-            title="Lượng bán = hàng ra kho đã chốt theo tháng (SL bán − Return + Adjustment + Removal, từ file thô Amazon). Tháng vừa xong được chốt lúc 4h30 ngày 2 tháng sau."
-          >
-            Lượng bán chốt đến{" "}
-            <strong>
-              {query.data?.salesClosedThrough
-                ? `T${Number(query.data.salesClosedThrough.slice(5))}/${query.data.salesClosedThrough.slice(0, 4)}`
-                : "—"}
-            </strong>
-          </span>
-          <span
-            className="inline-flex items-center gap-1 rounded-lg border border-yellow-300 px-2.5 py-1 font-semibold text-slate-800"
-            style={{ background: "#fffbcc" }}
-            title="Inventory (FBA) / AWD lấy tồn Amazon chốt ngày cuối tháng mà Lượng bán đang chốt tới (Inventory Ledger, chạy mùng 4 hằng tháng)"
-          >
-            <InfoIcon size={13} weight="bold" />
-            {query.data?.hasFbaStock ? `Tồn Amazon (FBA${query.data.hasAwdStock ? " + AWD" : ""}) chốt ngày ${stockDay}` : `Chưa có tồn Amazon chốt ngày ${stockDay ?? "—"}`}
-          </span>
-        </div>
       </div>
 
       {query.isError ? (
@@ -255,8 +235,9 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
       ) : query.isLoading ? (
         <div className="p-6 text-sm text-slate-500">Đang tải tab TỒN...</div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-auto">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto [overflow-anchor:none]">
           <table
+            aria-rowcount={pageRows.length + (pageRows.length ? 2 : 1)}
             className="border-separate border-spacing-0 text-[13px] text-slate-900"
             style={{ zoom: scale, tableLayout: "fixed", width: columns.reduce((s, c) => s + c.width, 0) }}
           >
@@ -288,6 +269,19 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
                   );
                 })}
               </tr>
+              {rows.length > 0 && (
+                <tr aria-label="Tổng toàn bộ kết quả lọc">
+                  {columns.map((col, index) => (
+                    <td
+                      key={col.key}
+                      className={`border-b border-r bg-[#fff2cc] px-1.5 py-1.5 font-bold tabular-nums ${index < FROZEN ? "sticky z-10" : ""}`}
+                      style={{ left: index < FROZEN ? leftOffsets[index] : undefined, textAlign: col.align }}
+                    >
+                      {col.key === "sku" ? "Tổng" : formatValue(totals[col.key], col.fmt)}
+                    </td>
+                  ))}
+                </tr>
+              )}
             </thead>
             <tbody>
               {rows.length === 0 ? (
@@ -297,8 +291,12 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
                   </td>
                 </tr>
               ) : (
-                rows.map((r) => (
-                  <tr key={r.id} className="group">
+                <>
+                {spacer(topSpacer)}
+                {visibleRows.map(({ index }) => {
+                  const r = pageRows[index];
+                  return (
+                  <tr key={r.id} aria-rowindex={index + 3} className="group">
                     {columns.map((c, i) => {
                       const frozen = i < FROZEN;
                       const raw = r[c.key];
@@ -323,12 +321,12 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
                       return (
                         <td
                           key={c.key}
-                          className={`h-[52px] border-b border-r border-slate-200 px-1.5 group-hover:brightness-95 ${c.bold ? "font-bold" : ""} ${
+                          className={`border-b border-r border-slate-200 px-1.5 group-hover:brightness-95 ${c.bold ? "font-bold" : ""} ${
                             frozen ? "sticky z-10" : ""
                           } ${i === FROZEN - 1 ? "border-r-2 border-r-slate-600" : ""} ${negative ? "text-rose-600" : ""} ${
                             c.fmt === "text" ? "truncate" : "tabular-nums"
                           }`}
-                          style={{ background: bg, left: frozen ? leftOffsets[i] : undefined, textAlign: c.align }}
+                          style={{ height: ROW_HEIGHT, background: bg, left: frozen ? leftOffsets[i] : undefined, textAlign: c.align }}
                           title={c.fmt === "text" && typeof raw === "string" ? raw : undefined}
                         >
                           {content}
@@ -336,15 +334,40 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
                       );
                     })}
                   </tr>
-                ))
+                  );
+                })}
+                {spacer(bottomSpacer)}
+                </>
               )}
             </tbody>
           </table>
         </div>
       )}
-      <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
-        Hiển thị <strong>{rows.length}</strong> / {query.data?.rows.length ?? 0} SKU · Tổng giá trị tồn đầu năm{" "}
-        <strong className="font-mono">{formatValue(totals.gtriDauNam, "money")}</strong>
+      <div className="shrink-0">
+        {query.isSuccess && (
+          <PaginationBar
+            page={page}
+            totalPages={totalPages}
+            totalItems={rows.length}
+            limit={limit}
+            onPageChange={(nextPage) => setPagination({ rows, page: nextPage })}
+            onLimitChange={(nextLimit) => {
+              setLimit(nextLimit);
+              setPagination(null);
+            }}
+            label="SKU"
+          />
+        )}
+        {query.data?.stockDate && (
+          <time dateTime={query.data.stockDate} className="block bg-slate-50 px-3 pb-1.5 text-right text-[11px] text-slate-500">
+            {(() => {
+              const [y, m, d] = query.data.stockDate.split("-");
+              const day = `${d}/${m}/${y}`;
+              if (!query.data.hasFbaStock) return `Chưa có tồn Amazon chốt ngày ${day} — cột Inventory (FBA) / AWD để trống`;
+              return `Tồn Amazon (FBA${query.data.hasAwdStock ? " + AWD" : ""}) chốt ngày ${day}`;
+            })()}
+          </time>
+        )}
       </div>
     </div>
   );
