@@ -278,6 +278,24 @@ export function parseAiJson(content: string): ExtractedMessage | null {
   }
 }
 
+/** "3 tuần tháng 12", "3 tuần. tháng 12", "tháng 12 chia 3 tuần" → {"2026-12" → 3} (tháng < tháng nhắn thì sang năm sau). */
+export function plansFromText(text: string, sentDate: string): Map<string, number> {
+  const out = new Map<string, number>();
+  const year = Number(sentDate.slice(0, 4));
+  const sentM = Number(sentDate.slice(5, 7));
+  const put = (weeks: string, month: string) => {
+    const m = Number(month);
+    const w = Number(weeks);
+    if (m < 1 || m > 12 || w < 1 || w > 6) return;
+    const key = `${m < sentM ? year + 1 : year}-${String(m).padStart(2, "0")}`;
+    if (!out.has(key)) out.set(key, w);
+  };
+  const t = text.toLowerCase();
+  for (const x of t.matchAll(/(\d)\s*(?:tuần|tuan)[\s.,:;-]{0,4}(?:của\s*|cua\s*|cho\s*|trong\s*)?(?:tháng|thang|t)\s*(\d{1,2})\b/g)) put(x[1], x[2]);
+  for (const x of t.matchAll(/(?:tháng|thang)\s*(\d{1,2})\b[^\d]{0,15}?(\d)\s*(?:tuần|tuan)/g)) put(x[2], x[1]);
+  return out;
+}
+
 const KIND_LABEL: Record<TargetKind, string> = {
   week_total: "",
   daily_rate: "Mỗi ngày",
@@ -307,7 +325,16 @@ export function normalizeExtraction(
   const items: TeamTargetItem[] = [];
   const sentMonth = sentDate.slice(0, 7);
 
+  // "N tuần" của 1 tháng: AI có lúc chỉ ghi cho vài mục tiêu (hoặc quên) → lấy từ mục tiêu khác cùng tháng, rồi từ tin gốc
+  const planByMonth = plansFromText(options.text ?? "", sentDate);
   for (const t of raw.targets ?? []) {
+    const month = t.month && MONTH.test(t.month) ? t.month : sentMonth;
+    if (t.weeks_in_plan && t.weeks_in_plan > 0 && !planByMonth.has(month)) planByMonth.set(month, t.weeks_in_plan);
+  }
+
+  for (const t0 of raw.targets ?? []) {
+    const m0 = t0.month && MONTH.test(t0.month) ? t0.month : sentMonth;
+    const t = t0.weeks_in_plan ? t0 : { ...t0, weeks_in_plan: planByMonth.get(m0) ?? null };
     const kind = KINDS.find((k) => k === t.kind);
     const metric = METRICS.find((m) => m === t.metric) ?? (kind === "margin_floor" ? "margin" : undefined);
     const value = num(t.value);

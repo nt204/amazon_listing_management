@@ -6,6 +6,7 @@ import {
   monthWeekBlocks,
   normalizeExtraction,
   parseAiJson,
+  plansFromText,
   resolveWeekRef,
   targetProgressLine,
   teamTargetsBlock,
@@ -169,4 +170,26 @@ test("tiến độ tuần: % đạt, chậm tiến độ, cần bao nhiêu/ngày
   assert.ok(block.includes("Tuần cuối T11"));
   assert.ok(!block.includes("Tuần 1 T12"));
   assert.equal(teamTargetsBlock([dec], "2026-11-25", totals), "");
+});
+
+test("AI quên weeks_in_plan: code đọc '3 tuần. tháng 12' trong tin → tuần 3 = 20–31/12", () => {
+  const text = "tuần cuối tháng 11: Dự kiến units cần đẩy: 5000units, mỗi ngày ~700sale. 3 tuần. tháng 12. Dự kiến: 30000units tuần 1: 6000 units. tuần 2: 10000 units. tuần 3: 14000 units.";
+  assert.deepEqual([...plansFromText(text, "2026-11-23")], [["2026-12", 3]]);
+  assert.deepEqual([...plansFromText("còn 17000 cho 3 tuần tháng 12:", "2026-11-23")], [["2026-12", 3]]);
+  assert.deepEqual([...plansFromText("tháng 1 chia 4 tuần", "2026-11-23")], [["2027-01", 4]]);
+  const out = normalizeExtraction(
+    {
+      targets: [
+        { kind: "month_total", metric: "units", value: 30000, month: "2026-12" },
+        { kind: "week_total", metric: "units", value: 6000, month: "2026-12", week_ref: 1 },
+        { kind: "week_total", metric: "units", value: 10000, month: "2026-12", week_ref: 2 },
+        { kind: "week_total", metric: "units", value: 14000, month: "2026-12", week_ref: 3 },
+      ],
+    },
+    { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, chatTeam: "FBA 2", text },
+  );
+  assert.deepEqual(out.items.filter((i) => i.kind === "week_total").map((i) => `${i.startDate}..${i.endDate}`), [
+    "2026-12-01..2026-12-05", "2026-12-06..2026-12-19", "2026-12-20..2026-12-31",
+  ]);
+  assert.equal(out.warnings.length, 0);
 });
