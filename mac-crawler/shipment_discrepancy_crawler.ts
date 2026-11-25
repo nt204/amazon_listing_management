@@ -66,9 +66,11 @@ interface DbShipmentClassification {
   shipment_status?: Record<string, string>;
 }
 
-/** Lô đã chốt: Closed và không còn dòng "Action required" → giữ cache, không mở lại Seller Central */
+/** Lô đã chốt: Closed và không còn dòng "Action required" → giữ cache, không mở lại Seller Central.
+ *  Cache đọc bằng bản cũ (Located − Expected ≠ Discrepancy, do đọc nhầm cột) → coi như chưa chốt để đọc lại. */
 function isSettled(status: string | undefined, items: DiscrepancyRow[]): boolean {
   if ((status || "").trim().toLowerCase() !== "closed") return false;
+  if (items.some((it) => Number(it.so_luong_amazon_nhan) - Number(it.amazon_received) !== Number(it.discrepancy))) return false;
   return !items.some((it) => /action required/i.test(it.status || ""));
 }
 
