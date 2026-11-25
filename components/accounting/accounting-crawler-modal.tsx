@@ -213,7 +213,7 @@ function CrawlerCard({
             stores={stores.map((store) => ({ id: store, name: store }))}
             value={storeName}
             onChange={setStoreName}
-            allOption={{ id: "", name: "Tất cả store" }}
+            allOption={{ id: "", name: "All" }}
             className="w-44"
           />
           <input

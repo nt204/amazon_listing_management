@@ -203,7 +203,7 @@ export function WeeklyReportView() {
               stores={data.brands.map((b) => ({ id: b.key, name: b.label }))}
               value={selectedStoreKey}
               onChange={setSelectedStoreKey}
-              allOption={{ id: "all", name: `Tất cả Store (${data.brands.length})` }}
+              allOption={{ id: "all", name: "All" }}
               size="sm"
             />
           )}

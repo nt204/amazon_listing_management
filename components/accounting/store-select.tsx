@@ -2,11 +2,11 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CaretDownIcon, CheckIcon, MagnifyingGlassIcon, StorefrontIcon } from "@phosphor-icons/react";
+import { CaretDownIcon, CheckIcon, StorefrontIcon } from "@phosphor-icons/react";
 
 // Ô chọn store dùng chung cho các tab Accounting (thay <select> mặc định của trình duyệt):
 // nút có icon store + tên store, bấm mở danh sách nổi chữ to, store đang chọn tô nền + dấu ✓.
-// Bàn phím: ↑ ↓ di chuyển, Enter chọn, Esc đóng. Nhiều store (> 8) thì có ô tìm.
+// Bàn phím: ↑ ↓ di chuyển, Enter chọn, Esc đóng.
 // Danh sách vẽ qua portal (position: fixed) để không bị cắt trong hộp thoại / khung có overflow.
 
 export interface StoreSelectOption {
@@ -42,7 +42,6 @@ export function StoreSelect({
   "aria-label": ariaLabel = "Chọn store",
 }: StoreSelectProps) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -51,15 +50,11 @@ export function StoreSelect({
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const options = useMemo(() => (allOption && stores.length > 1 ? [allOption, ...stores] : stores), [allOption, stores]);
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? options.filter((o) => o.name.toLowerCase().includes(q)) : options;
-  }, [options, query]);
+  const filtered = options;
   // Chỉ 1 store thì dòng "Tất cả" ẩn khỏi danh sách nhưng nút vẫn hiện đúng tên khi đang chọn nó
   const current = options.find((o) => o.id === value) ?? (allOption?.id === value ? allOption : undefined);
   const label = loading ? "Đang tải store..." : stores.length === 0 ? "Không có store" : current?.name || "Chọn store";
   const isDisabled = disabled || loading || stores.length === 0;
-  const showSearch = options.length > 8;
 
   useEffect(() => {
     if (!open) return;
@@ -96,7 +91,6 @@ export function StoreSelect({
 
   const openList = () => {
     if (isDisabled) return;
-    setQuery("");
     setActive(Math.max(0, options.findIndex((o) => o.id === value)));
     setOpen(true);
   };
@@ -157,25 +151,7 @@ export function StoreSelect({
           style={{ position: "fixed", top: pos.top, left: pos.left, width: pos.width }}
           className="font-accounting-system z-[1000] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150"
         >
-          {showSearch && (
-            <div className="border-b border-slate-100 p-2">
-              <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5">
-                <MagnifyingGlassIcon size={14} weight="bold" className="text-slate-400" />
-                <input
-                  autoFocus
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
-                    setActive(0);
-                  }}
-                  placeholder="Tìm store..."
-                  className="h-8 w-full bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400"
-                />
-              </div>
-            </div>
-          )}
           <ul ref={listRef} role="listbox" aria-label={ariaLabel} className="max-h-80 overflow-y-auto p-1.5">
-            {filtered.length === 0 && <li className="px-3 py-2.5 text-sm text-slate-400">Không tìm thấy store</li>}
             {filtered.map((o, i) => {
               const selected = o.id === value;
               return (

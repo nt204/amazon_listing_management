@@ -649,7 +649,7 @@ export function AccountingFileManager() {
               stores={availableStores.map((s) => ({ id: s, name: s }))}
               value={selectedStore}
               onChange={setSelectedStore}
-              allOption={{ id: "ALL", name: "Tất cả Store" }}
+              allOption={{ id: "ALL", name: "All" }}
               size="sm"
             />
           </div>

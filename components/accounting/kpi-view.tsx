@@ -2704,7 +2704,7 @@ export function KpiView() {
             value={selectedStoreId}
             onChange={handleStoreSelect}
             loading={loadingStores}
-            allOption={{ id: ALL_STORES, name: "Tất cả store (All)" }}
+            allOption={{ id: ALL_STORES, name: "All" }}
             size="sm"
           />
 
