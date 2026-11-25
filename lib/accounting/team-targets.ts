@@ -1,14 +1,15 @@
 // Mục tiêu sếp giao cho team qua Lark (tag bot): "tuần cuối tháng 11 tối thiểu 3000 unit", "tuần 2: 10000 units",
 // "mỗi ngày ~700", "cap margin: limima 10%". AI chỉ bóc ý (tháng, vị trí tuần, con số); code đổi ra khoảng ngày
-// theo kỳ của BÁO CÁO TUẦN (weekly-report-periods: CN → T7, cắt theo tháng) để tiến độ trong báo cáo ngày
-// khớp báo cáo tuần. Thuần, không truy cập DB.
+// theo tuần 7 ngày. Thuần, không truy cập DB.
 //
-// Quy tắc tuần:
-//   - Kỳ lẻ ≤ 2 ngày ở mép tháng gộp vào tuần liền kề cùng tháng (T11/2026: 22–28 + 29–30 → "tuần cuối" 22–30, 9 ngày).
-//   - Sếp nói tháng có N tuần mà tháng có nhiều kỳ hơn (T12/2026 có 5 kỳ, sếp nói "3 tuần"): chia các kỳ thành N nhóm
-//     liền nhau, nhóm đầu ít kỳ nhất (5 kỳ / 3 tuần → 1–5 | 6–19 | 20–31). Card xác nhận hiện rõ ngày để sửa nếu sai.
+// Quy tắc tuần (chốt 2026-11-25):
+//   - Mỗi tuần đúng 7 ngày T2 → CN, không gộp, không cắt theo tháng. Tuần vắt 2 tháng thuộc tháng chứa Thứ 5
+//     (T11/2026: tuần cuối = 23–29/11; 30/11–6/12 là tuần đầu T12).
+//   - Sếp nói tháng có N tuần mà tháng có nhiều tuần hơn (T12/2026 có 5 tuần, sếp nói "3 tuần"): lấy N tuần đầu,
+//     "tuần cuối" = tuần thứ N, card cảnh báo các tuần còn lại chưa có mục tiêu để người xác nhận sửa nếu sai.
+//   - Khác Báo cáo tuần (weekly-report-periods: CN → T7, cắt theo tháng).
 
-import { addDaysIso, daysInMonthOf, weekSegmentOf, nextWeekSegment } from "./weekly-report-periods";
+import { addDaysIso, daysInMonthOf } from "./weekly-report-periods";
 
 export type TargetKind = "week_total" | "daily_rate" | "month_total" | "margin_floor";
 export type TargetMetric = "units" | "revenue" | "profit" | "margin";
@@ -90,41 +91,36 @@ export const rangeLabel = (start: string, end: string | null) => {
 };
 const monthShort = (month: string) => `T${Number(month.slice(5, 7))}`;
 
-/** Các tuần của tháng theo kỳ báo cáo tuần, kỳ lẻ ≤ 2 ngày ở mép tháng gộp vào tuần liền kề. */
+/** Thứ 2 của tuần chứa `date`. */
+function mondayOf(date: string): string {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay(); // 0 = CN
+  return addDaysIso(date, -((dow + 6) % 7));
+}
+
+/** Số tuần ISO 8601 (tuần T2 → CN, tuần 1 chứa Thứ 5 đầu tiên của năm). */
+export function isoWeekNumber(date: string): number {
+  const thursday = addDaysIso(mondayOf(date), 3);
+  const jan1 = `${thursday.slice(0, 4)}-01-01`;
+  return Math.floor(dayDiff(jan1, thursday) / 7) + 1;
+}
+
+/**
+ * Các tuần của tháng: mỗi tuần đúng 7 ngày T2 → CN, không cắt theo tháng. Tuần vắt 2 tháng thuộc tháng chứa
+ * Thứ 5 của tuần (tháng có ≥ 4 ngày): T11/2026 = 2–8 · 9–15 · 16–22 · 23–29; T12/2026 = 30/11–6/12 · … · 28/12–3/1.
+ */
 export function monthWeekBlocks(month: string): WeekBlock[] {
-  const end = monthEndOf(month);
-  const segs = [];
-  let seg = weekSegmentOf(`${month}-01`);
-  while (seg.startDate <= end) {
-    segs.push(seg);
-    seg = nextWeekSegment(seg);
+  const blocks: WeekBlock[] = [];
+  let monday = mondayOf(`${month}-01`);
+  if (addDaysIso(monday, 3).slice(0, 7) < month) monday = addDaysIso(monday, 7);
+  while (addDaysIso(monday, 3).slice(0, 7) === month) {
+    blocks.push({ startDate: monday, endDate: addDaysIso(monday, 6), days: 7, weeks: [isoWeekNumber(monday)] });
+    monday = addDaysIso(monday, 7);
   }
-  const blocks: WeekBlock[] = segs.map((s) => ({ startDate: s.startDate, endDate: s.endDate, days: s.days, weeks: [s.week] }));
-  const merge = (a: WeekBlock, b: WeekBlock): WeekBlock => ({
-    startDate: a.startDate,
-    endDate: b.endDate,
-    days: a.days + b.days,
-    weeks: [...a.weeks, ...b.weeks],
-  });
-  if (blocks.length > 1 && blocks[0].days <= 2) blocks.splice(0, 2, merge(blocks[0], blocks[1]));
-  const n = blocks.length;
-  if (n > 1 && blocks[n - 1].days <= 2) blocks.splice(n - 2, 2, merge(blocks[n - 2], blocks[n - 1]));
   return blocks;
 }
 
-/** Chia `blocks` thành `n` nhóm liền nhau, nhóm đầu ít kỳ nhất (5 kỳ / 3 → 1, 2, 2). */
-function groupBlocks(blocks: WeekBlock[], n: number): WeekBlock[][] {
-  const base = Math.floor(blocks.length / n);
-  const extra = blocks.length % n;
-  const groups: WeekBlock[][] = [];
-  let i = 0;
-  for (let g = 0; g < n; g++) {
-    const size = base + (g >= n - extra ? 1 : 0);
-    groups.push(blocks.slice(i, i + size));
-    i += size;
-  }
-  return groups;
-}
+/** Tháng mà tuần chứa `date` thuộc về (tháng của Thứ 5). */
+const weekMonthOf = (date: string) => addDaysIso(mondayOf(date), 3).slice(0, 7);
 
 const ORDINAL_WORDS: Record<string, string> = {
   first: "first", "đầu": "first", dau: "first", "đầu tiên": "first",
@@ -142,8 +138,9 @@ interface ResolvedRange {
 }
 
 /**
- * Đổi vị trí tuần ("first" / "middle" / "last" / số thứ tự / "W50" / "this" / "next") trong tháng ra khoảng ngày.
- * `weeksInPlan`: số tuần sếp nói cho tháng đó ("3 tuần tháng 12"), null nếu không nói.
+ * Đổi vị trí tuần ("first" / "middle" / "last" / số thứ tự / "W50" / "this" / "next") trong tháng ra 1 tuần 7 ngày.
+ * `weeksInPlan`: số tuần sếp nói cho tháng đó ("3 tuần tháng 12"); ít hơn số tuần của tháng thì lấy N tuần đầu
+ * ("tuần cuối" = tuần thứ N).
  */
 export function resolveWeekRef(
   month: string,
@@ -151,69 +148,42 @@ export function resolveWeekRef(
   weeksInPlan: number | null | undefined,
   sentDate: string,
 ): ResolvedRange | { error: string } {
-  const blocks = monthWeekBlocks(month);
   const raw = String(ref).trim().toLowerCase();
   const word = ORDINAL_WORDS[raw] ?? raw;
-  const span = (group: WeekBlock[]) => ({
-    startDate: group[0].startDate,
-    endDate: group[group.length - 1].endDate,
-  });
-  const describe = (group: WeekBlock[]) => group.flatMap((b) => b.weeks).map((w) => `W${w}`).join(" + ");
+  const week = (start: string) => ({ startDate: start, endDate: addDaysIso(start, 6) });
 
   if (word === "this" || word === "next") {
-    const sentBlocks = monthWeekBlocks(sentDate.slice(0, 7));
-    let idx = sentBlocks.findIndex((b) => b.startDate <= sentDate && sentDate <= b.endDate);
-    let list = sentBlocks;
-    if (word === "next") {
-      idx += 1;
-      if (idx >= sentBlocks.length) {
-        list = monthWeekBlocks(addDaysIso(monthEndOf(sentDate.slice(0, 7)), 1).slice(0, 7));
-        idx = 0;
-      }
-    }
-    const b = list[idx];
-    if (!b) return { error: `Không xác định được tuần "${ref}".` };
-    return { ...span([b]), label: word === "this" ? "Tuần này" : "Tuần sau", note: null };
+    const monday = addDaysIso(mondayOf(sentDate), word === "next" ? 7 : 0);
+    return { ...week(monday), label: word === "this" ? "Tuần này" : "Tuần sau", note: null };
   }
 
+  const blocks = monthWeekBlocks(month);
   const wMatch = raw.match(/^w\s*(\d{1,2})$/);
   if (wMatch) {
-    const week = Number(wMatch[1]);
-    const b = blocks.find((x) => x.weeks.includes(week));
-    if (!b) return { error: `W${week} không thuộc ${monthShort(month)}.` };
-    return { ...span([b]), label: `W${week} ${monthShort(month)}`, note: b.weeks.length > 1 ? `gộp ${describe([b])}` : null };
+    const w = Number(wMatch[1]);
+    const b = blocks.find((x) => x.weeks.includes(w));
+    if (!b) return { error: `W${w} không thuộc ${monthShort(month)}.` };
+    return { ...week(b.startDate), label: `W${w} ${monthShort(month)}`, note: null };
   }
 
   const plan = weeksInPlan && weeksInPlan > 0 && weeksInPlan < blocks.length ? weeksInPlan : null;
-  const groups = plan ? groupBlocks(blocks, plan) : blocks.map((b) => [b]);
-  const n = groups.length;
+  const n = plan ?? blocks.length;
   const numMatch = raw.match(/^(?:tuần\s*|tuan\s*|week\s*)?(\d{1,2})$/);
   let index: number | null = null;
   let name = "";
+  let note: string | null = null;
   if (word === "first") [index, name] = [0, "Tuần đầu"];
   else if (word === "last") [index, name] = [n - 1, "Tuần cuối"];
   else if (word === "middle") {
-    // Không rõ số tuần: "tuần giữa" = các tuần nằm giữa tuần đầu và tuần cuối
-    if (n >= 3 && !plan && n !== 3) {
-      const mid = groups.slice(1, n - 1).flat();
-      return {
-        ...span(mid),
-        label: `Tuần giữa ${monthShort(month)}`,
-        note: `"tuần giữa" lấy các tuần giữa tháng (${describe(mid)})`,
-      };
-    }
     [index, name] = [Math.floor((n - 1) / 2), "Tuần giữa"];
+    if (n % 2 === 0) note = `${monthShort(month)} có ${n} tuần, "tuần giữa" lấy tuần thứ ${index + 1}`;
   } else if (numMatch) {
     const k = Number(numMatch[1]);
-    if (k < 1 || k > n) return { error: `${monthShort(month)} chỉ có ${n} tuần, không có tuần ${k}.` };
+    if (k < 1 || k > blocks.length) return { error: `${monthShort(month)} chỉ có ${blocks.length} tuần, không có tuần ${k}.` };
     [index, name] = [k - 1, `Tuần ${k}`];
   }
-  if (index === null || !groups[index]?.length) return { error: `Không hiểu vị trí tuần "${ref}".` };
-  const group = groups[index];
-  const notes: string[] = [];
-  if (plan) notes.push(`${monthShort(month)} có ${blocks.length} kỳ tuần, chia thành ${plan} tuần theo tin nhắn`);
-  if (group.length > 1 || group[0].weeks.length > 1) notes.push(`gộp ${describe(group)}`);
-  return { ...span(group), label: `${name} ${monthShort(month)}`, note: notes.length ? notes.join("; ") : null };
+  if (index === null || !blocks[index]) return { error: `Không hiểu vị trí tuần "${ref}".` };
+  return { ...week(blocks[index].startDate), label: `${name} ${monthShort(month)}`, note };
 }
 
 const num = (v: unknown): number | null => {
@@ -428,18 +398,21 @@ export function normalizeExtraction(
   // Kiểm tra chéo: tổng các tuần = tổng tháng; mỗi ngày × số ngày ≈ tổng tuần
   const fmt = (v: number) => Math.round(v).toLocaleString("en-US");
   for (const mt of items.filter((x) => x.kind === "month_total" && x.startDate.endsWith("-01"))) {
-    const weeks = items.filter((x) => x.kind === "week_total" && x.metric === mt.metric && !x.storeName && x.startDate.slice(0, 7) === mt.startDate.slice(0, 7));
+    const weeks = items.filter((x) => x.kind === "week_total" && x.metric === mt.metric && !x.storeName && weekMonthOf(x.startDate) === mt.startDate.slice(0, 7));
     if (weeks.length >= 2) {
       const sum = weeks.reduce((s, x) => s + x.value, 0);
       if (Math.abs(sum - mt.value) > mt.value * 0.01) {
         warnings.push(`Các tuần ${monthShort(mt.startDate.slice(0, 7))} cộng lại ${fmt(sum)} ≠ tổng tháng ${fmt(mt.value)}.`);
       }
-      const covered = weeks.reduce((s, x) => s + daysBetween(x.startDate, x.endDate!), 0);
-      const monthDays = daysInMonthOf(mt.startDate);
-      if (covered < monthDays) {
-        warnings.push(`Các tuần ${monthShort(mt.startDate.slice(0, 7))} chỉ phủ ${covered}/${monthDays} ngày — kiểm tra lại khoảng ngày.`);
-      }
     }
+  }
+  // Sếp nói N tuần mà tháng có nhiều tuần hơn: đã lấy N tuần đầu → báo các tuần còn lại chưa có mục tiêu
+  for (const [month, plan] of planByMonth) {
+    const blocks = monthWeekBlocks(month);
+    const hasWeeks = items.some((x) => x.kind === "week_total" && weekMonthOf(x.startDate) === month);
+    if (!hasWeeks || plan >= blocks.length) continue;
+    const rest = blocks.slice(plan).map((b) => rangeLabel(b.startDate, b.endDate)).join(", ");
+    warnings.push(`${monthShort(month)} có ${blocks.length} tuần (T2–CN), tin nói ${plan} tuần → lấy ${plan} tuần đầu; tuần ${rest} chưa có mục tiêu tuần.`);
   }
   for (const dr of items.filter((x) => x.kind === "daily_rate" && x.endDate)) {
     const wk = items.find((x) => x.kind === "week_total" && x.metric === dr.metric && x.storeName === dr.storeName && x.startDate === dr.startDate && x.endDate === dr.endDate);
@@ -450,6 +423,10 @@ export function normalizeExtraction(
       warnings.push(`${fmt(dr.value)}/ngày × ${days} ngày (${rangeLabel(dr.startDate, dr.endDate)}) = ${fmt(implied)}, khác mục tiêu tuần ${fmt(wk.value)}.`);
     }
   }
+
+  // Sắp theo ngày (sếp có thể viết "tuần cuối" trước "tuần đầu"); cùng ngày thì tổng tuần → mỗi ngày → tổng tháng → margin
+  const kindOrder: Record<TargetKind, number> = { week_total: 0, daily_rate: 1, month_total: 2, margin_floor: 3 };
+  items.sort((a, b) => a.startDate.localeCompare(b.startDate) || kindOrder[a.kind] - kindOrder[b.kind]);
 
   return {
     team,

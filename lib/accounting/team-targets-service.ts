@@ -174,7 +174,7 @@ function draftCard(draftId: string, parsed: NormalizedTargets, knownTeams: strin
         tag: "plain_text",
         content: `🎯 Mục tiêu ${team ?? "team"} — ${state.kind === "pending" ? "chờ xác nhận" : state.kind === "confirmed" ? "đã lưu" : "đã huỷ"}`,
       },
-      subtitle: { tag: "plain_text", content: "Bot đọc từ tin nhắn, tính tuần như Báo cáo tuần (CN → T7)" },
+      subtitle: { tag: "plain_text", content: "Bot đọc từ tin nhắn · tuần T2 → CN, đủ 7 ngày" },
     },
     body: { elements },
   };

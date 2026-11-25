@@ -23,38 +23,38 @@ const STORE_TEAMS = new Map([
 ]);
 const range = (r: ReturnType<typeof resolveWeekRef>) => ("error" in r ? r.error : `${r.startDate}..${r.endDate}`);
 
-test("tuần của tháng theo báo cáo tuần, kỳ lẻ ≤ 2 ngày gộp vào tuần liền kề", () => {
+test("tuần đúng 7 ngày T2 → CN, tuần vắt 2 tháng thuộc tháng chứa Thứ 5", () => {
   assert.deepEqual(
     monthWeekBlocks("2026-11").map((b) => `${b.startDate}..${b.endDate}`),
-    ["2026-11-01..2026-11-07", "2026-11-08..2026-11-14", "2026-11-15..2026-11-21", "2026-11-22..2026-11-30"],
+    ["2026-11-02..2026-11-08", "2026-11-09..2026-11-15", "2026-11-16..2026-11-22", "2026-11-23..2026-11-29"],
   );
-  assert.equal(monthWeekBlocks("2026-11")[3].days, 9);
-  // T12/2026: 1–5 và 27–31 đều 5 ngày nên giữ nguyên 5 kỳ
   assert.deepEqual(
-    monthWeekBlocks("2026-12").map((b) => `${b.startDate.slice(8)}-${b.endDate.slice(8)}`),
-    ["01-05", "06-12", "13-19", "20-26", "27-31"],
+    monthWeekBlocks("2026-12").map((b) => `${b.startDate}..${b.endDate}`),
+    ["2026-11-30..2026-12-06", "2026-12-07..2026-12-13", "2026-12-14..2026-12-20", "2026-12-21..2026-12-27", "2026-12-28..2027-01-03"],
   );
+  assert.ok(monthWeekBlocks("2026-12").every((b) => b.days === 7));
 });
 
-test("tuần cuối T11 = 22–30/11 (9 ngày)", () => {
-  assert.equal(range(resolveWeekRef("2026-11", "last", null, "2026-11-23")), "2026-11-22..2026-11-30");
-  assert.equal(range(resolveWeekRef("2026-11", "cuối", null, "2026-11-23")), "2026-11-22..2026-11-30");
+test("tuần cuối T11 = 23–29/11", () => {
+  assert.equal(range(resolveWeekRef("2026-11", "last", null, "2026-11-23")), "2026-11-23..2026-11-29");
+  assert.equal(range(resolveWeekRef("2026-11", "cuối", null, "2026-11-23")), "2026-11-23..2026-11-29");
 });
 
-test("3 tuần tháng 12: chia 5 kỳ thành 1–5 | 6–19 | 20–31", () => {
-  assert.equal(range(resolveWeekRef("2026-12", "first", 3, "2026-11-23")), "2026-12-01..2026-12-05");
-  assert.equal(range(resolveWeekRef("2026-12", "middle", 3, "2026-11-23")), "2026-12-06..2026-12-19");
-  assert.equal(range(resolveWeekRef("2026-12", "last", 3, "2026-11-23")), "2026-12-20..2026-12-31");
-  assert.equal(range(resolveWeekRef("2026-12", 2, 3, "2026-11-23")), "2026-12-06..2026-12-19");
-  assert.equal(range(resolveWeekRef("2026-12", "3", 3, "2026-11-23")), "2026-12-20..2026-12-31");
-  assert.match(range(resolveWeekRef("2026-12", 4, 3, "2026-11-23")), /chỉ có 3 tuần/);
+test("3 tuần tháng 12 (T12 có 5 tuần): lấy 3 tuần đầu, tuần cuối = tuần thứ 3", () => {
+  assert.equal(range(resolveWeekRef("2026-12", "first", 3, "2026-11-23")), "2026-11-30..2026-12-06");
+  assert.equal(range(resolveWeekRef("2026-12", "middle", 3, "2026-11-23")), "2026-12-07..2026-12-13");
+  assert.equal(range(resolveWeekRef("2026-12", "last", 3, "2026-11-23")), "2026-12-14..2026-12-20");
+  assert.equal(range(resolveWeekRef("2026-12", 2, 3, "2026-11-23")), "2026-12-07..2026-12-13");
+  assert.equal(range(resolveWeekRef("2026-12", "3", 3, "2026-11-23")), "2026-12-14..2026-12-20");
+  // Không nói số tuần: tuần cuối = tuần cuối thật của tháng
+  assert.equal(range(resolveWeekRef("2026-12", "last", null, "2026-11-23")), "2026-12-28..2027-01-03");
+  assert.match(range(resolveWeekRef("2026-12", 6, 3, "2026-11-23")), /chỉ có 5 tuần/);
 });
 
-test("W50, tuần này, tuần sau", () => {
-  assert.equal(range(resolveWeekRef("2026-12", "W50", null, "2026-11-23")), "2026-12-06..2026-12-12");
-  assert.equal(range(resolveWeekRef("2026-11", "this", null, "2026-11-23")), "2026-11-22..2026-11-30");
-  // Tuần sau của tuần cuối tháng là tuần đầu tháng sau
-  assert.equal(range(resolveWeekRef("2026-11", "next", null, "2026-11-23")), "2026-12-01..2026-12-05");
+test("W50 (ISO), tuần này, tuần sau", () => {
+  assert.equal(range(resolveWeekRef("2026-12", "W50", null, "2026-11-23")), "2026-12-07..2026-12-13");
+  assert.equal(range(resolveWeekRef("2026-11", "this", null, "2026-11-25")), "2026-11-23..2026-11-29");
+  assert.equal(range(resolveWeekRef("2026-11", "next", null, "2026-11-25")), "2026-11-30..2026-12-06");
 });
 
 test("lọc tin: tin giao mục tiêu qua, câu hỏi bị loại", () => {
@@ -69,7 +69,7 @@ test("parseAiJson bỏ ```json", () => {
   assert.equal(parseAiJson("không có"), null);
 });
 
-test("tin 2: team từ store, tuần 1/2/3 của kế hoạch 3 tuần, kiểm tra chéo mỗi ngày × 9 ngày", () => {
+test("tin 2: team từ store, tuần 1/2/3 của kế hoạch 3 tuần, mỗi ngày × 7 ngày ≈ tổng tuần", () => {
   const out = normalizeExtraction(
     {
       team: null,
@@ -90,19 +90,18 @@ test("tin 2: team từ store, tuần 1/2/3 của kế hoạch 3 tuần, kiểm t
   assert.equal(out.team, "FBA 2");
   const weeks = out.items.filter((i) => i.kind === "week_total").map((i) => `${i.startDate}..${i.endDate}:${i.value}`);
   assert.deepEqual(weeks, [
-    "2026-11-22..2026-11-30:5000",
-    "2026-12-01..2026-12-05:6000",
-    "2026-12-06..2026-12-19:10000",
-    "2026-12-20..2026-12-31:14000",
+    "2026-11-23..2026-11-29:5000",
+    "2026-11-30..2026-12-06:6000",
+    "2026-12-07..2026-12-13:10000",
+    "2026-12-14..2026-12-20:14000",
   ]);
   const margins = out.items.filter((i) => i.kind === "margin_floor");
   assert.deepEqual(margins.map((m) => [m.storeName, m.value, m.startDate, m.endDate]), [
     ["LIMIMA", 10, "2026-11-23", null],
     ["FASTPEACE", 7, "2026-11-23", null],
   ]);
-  // 700 × 9 = 6,300 ≠ 5,000 → cảnh báo; 6k + 10k + 14k = 30k → không cảnh báo tổng tháng
-  assert.ok(out.warnings.some((w) => w.includes("700/ngày × 9 ngày")));
-  assert.ok(!out.warnings.some((w) => w.includes("cộng lại")));
+  // 700 × 7 = 4,900 ≈ 5,000 → không cảnh báo; 6k + 10k + 14k = 30k → không cảnh báo tổng tháng; báo 2 tuần cuối T12 chưa có mục tiêu
+  assert.deepEqual(out.warnings, ["T12 có 5 tuần (T2–CN), tin nói 3 tuần → lấy 3 tuần đầu; tuần 21–27/12, 28/12–3/1 chưa có mục tiêu tuần."]);
 });
 
 test("tin 1: không nhắc store → team theo nhóm chat; 'còn thực hiện' = từ ngày nhắn tới hết tháng", () => {
@@ -122,7 +121,8 @@ test("tin 1: không nhắc store → team theo nhóm chat; 'còn thực hiện' 
   assert.equal(out.team, "FBA 3");
   const remaining = out.items.find((i) => i.label.startsWith("Còn lại"))!;
   assert.deepEqual([remaining.startDate, remaining.endDate], ["2026-11-23", "2026-11-30"]);
-  assert.equal(out.warnings.length, 0);
+  assert.deepEqual(out.items.filter((i) => i.kind === "week_total").map((i) => i.startDate), ["2026-11-23", "2026-11-30", "2026-12-07", "2026-12-14"]);
+  assert.equal(out.warnings.length, 1);
 });
 
 test("'team 3' trong tin thắng nhóm chat; store khác team bị cảnh báo; tổng tuần lệch tổng tháng", () => {
@@ -172,7 +172,7 @@ test("tiến độ tuần: % đạt, chậm tiến độ, cần bao nhiêu/ngày
   assert.equal(teamTargetsBlock([dec], "2026-11-25", totals), "");
 });
 
-test("AI quên weeks_in_plan: code đọc '3 tuần. tháng 12' trong tin → tuần 3 = 20–31/12", () => {
+test("AI quên weeks_in_plan: code đọc '3 tuần. tháng 12' trong tin → tuần 3 = 14–20/12", () => {
   const text = "tuần cuối tháng 11: Dự kiến units cần đẩy: 5000units, mỗi ngày ~700sale. 3 tuần. tháng 12. Dự kiến: 30000units tuần 1: 6000 units. tuần 2: 10000 units. tuần 3: 14000 units.";
   assert.deepEqual([...plansFromText(text, "2026-11-23")], [["2026-12", 3]]);
   assert.deepEqual([...plansFromText("còn 17000 cho 3 tuần tháng 12:", "2026-11-23")], [["2026-12", 3]]);
@@ -189,7 +189,7 @@ test("AI quên weeks_in_plan: code đọc '3 tuần. tháng 12' trong tin → tu
     { sentDate: "2026-11-23", knownTeams: TEAMS, storeTeams: STORE_TEAMS, chatTeam: "FBA 2", text },
   );
   assert.deepEqual(out.items.filter((i) => i.kind === "week_total").map((i) => `${i.startDate}..${i.endDate}`), [
-    "2026-12-01..2026-12-05", "2026-12-06..2026-12-19", "2026-12-20..2026-12-31",
+    "2026-11-30..2026-12-06", "2026-12-07..2026-12-13", "2026-12-14..2026-12-20",
   ]);
-  assert.equal(out.warnings.length, 0);
+  assert.equal(out.warnings.length, 1);
 });
