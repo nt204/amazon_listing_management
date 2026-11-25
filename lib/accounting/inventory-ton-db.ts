@@ -12,7 +12,8 @@ import { getDatabaseClient } from "@/lib/db";
 //   L BASECOST            = số nhập tay trên sheet (accounting_sku_master.ton_basecost)
 //   M Lượng bán/năm       = SUM(hàng ra kho các tháng trong năm) — sheet LƯỢNG BÁN; app lấy sl_ra_kho của Base Cost tháng
 //   N Tồn                 = F + I − M
-//   O/P/Q Available / Inbound / Reserved = báo cáo FBA Inventory mới nhất (crawler 16h10), cộng theo ASIN như sheet
+//   O/P/Q Available / Inbound / Reserved = FBA (báo cáo FBA Inventory) + AWD (AWD inventory report) mới nhất
+//         (crawler 16h10), cộng theo ASIN như sheet
 //   R Total (Amazon)      = O + P + Q
 //   S Tổng giá trị tồn    = R × K
 //   T Giá trị đang đi đường = P × K
@@ -87,7 +88,7 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
           SUM(available)::float AS o, SUM(inbound)::float AS p, SUM(reserved)::float AS q,
           SUM(estimated_storage_cost)::float AS u
         FROM accounting_live_inventory
-        WHERE store_id = ${storeId} AND source = 'FBA' AND COALESCE(asin, '') <> ''
+        WHERE store_id = ${storeId} AND COALESCE(asin, '') <> ''
         GROUP BY 1
       )
       SELECT asm.id::text AS id, asm.brand, asm.product_type, asm.mockup_url, asm.sku, asm.asin, asm.status,

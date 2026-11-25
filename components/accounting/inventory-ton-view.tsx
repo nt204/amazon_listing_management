@@ -6,7 +6,7 @@ import { CaretDownIcon, CaretUpIcon, InfoIcon, MagnifyingGlassIcon, XIcon } from
 import type { InventoryTonResult, InventoryTonRow } from "@/lib/accounting/inventory-ton-db";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 
-// Tab TỒN — dựng giống tab "TỒN" file <STORE> INVENTORY 2026 (màu header, màu ô, định dạng số, khoá 5 cột đầu,
+// Tab TỒN — dựng giống tab "TỒN" file <STORE> INVENTORY 2026 (màu header, màu ô, định dạng số, khoá 4 cột đầu,
 // nhóm cột G–H thu gọn được, cột BASECOST ẩn sẵn như sheet). Công thức: lib/accounting/inventory-ton-db.ts.
 
 export interface InventoryTonViewRef {
@@ -42,7 +42,7 @@ const YELLOW = "#ffff00";
 const PEACH = "#fce5cd";
 const CREAM = "#fff2cc";
 const GREEN = "#b7e1cd";
-const FROZEN = 5;
+const FROZEN = 4;
 // Nền header là class Tailwind (không chỉ style) — luật .acc-black-grid trong globals.css tô trắng mọi th không có class bg-*.
 const HEAD_BG: Record<string, string> = {
   [ORANGE]: "bg-[#ff9900]",
@@ -52,7 +52,6 @@ const HEAD_BG: Record<string, string> = {
 
 function buildColumns(year: number): Col[] {
   return [
-    { key: "brand", label: "Brand", width: 120, fmt: "text", head: ORANGE, bold: true, align: "center" },
     { key: "product_type", label: "Product Type", width: 130, fmt: "text", head: ORANGE, align: "center" },
     { key: "mockup_url", label: "Mockup", width: 72, fmt: "text", head: ORANGE, align: "center" },
     { key: "sku", label: "SKU", width: 160, fmt: "text", head: ORANGE, align: "left" },
@@ -74,12 +73,12 @@ function buildColumns(year: number): Col[] {
     { key: "luong_ban", label: "LƯỢNG BÁN /NĂM", width: 80, fmt: "int", head: ORANGE, align: "right",
       hint: "= Tổng hàng ra kho các tháng trong năm (SL bán − Return + Adjustment + Removal, từ file thô Amazon)" },
     { key: "ton", label: "TỒN", width: 76, fmt: "int", head: ORANGE, align: "right", hint: "= Hàng tồn 1/1 + SL đi hàng − Lượng bán" },
-    { key: "available", label: "Available AMAZON", width: 80, fmt: "int", head: YELLOW, align: "right",
-      hint: "available — báo cáo FBA Inventory mới nhất, cộng theo ASIN" },
-    { key: "inbound", label: "Inbound-quantity AMAZON", width: 80, fmt: "int", head: YELLOW, align: "right",
-      hint: "inbound-quantity — báo cáo FBA Inventory mới nhất, cộng theo ASIN" },
-    { key: "reserved", label: "Total Reserved Quantity (AMAZON)", width: 96, fmt: "int", head: YELLOW, align: "right",
-      hint: "Total Reserved Quantity — báo cáo FBA Inventory mới nhất, cộng theo ASIN" },
+    { key: "available", label: "Available AMAZON (FBA + AWD)", width: 80, fmt: "int", head: YELLOW, align: "right",
+      hint: "Available FBA + Available in AWD — báo cáo mới nhất, cộng theo ASIN" },
+    { key: "inbound", label: "Inbound-quantity AMAZON (FBA + AWD)", width: 80, fmt: "int", head: YELLOW, align: "right",
+      hint: "inbound-quantity FBA + Inbound to AWD — báo cáo mới nhất, cộng theo ASIN" },
+    { key: "reserved", label: "Total Reserved Quantity (FBA + AWD)", width: 96, fmt: "int", head: YELLOW, align: "right",
+      hint: "Total Reserved Quantity FBA + Reserved in AWD — báo cáo mới nhất, cộng theo ASIN" },
     { key: "total_amazon", label: "Total (AMAZON)", width: 96, fmt: "int", head: YELLOW, cellBg: YELLOW, align: "right",
       hint: "= Available + Inbound + Reserved" },
     { key: "gtri_ton", label: "Tổng giá trị tồn", width: 104, fmt: "money", head: YELLOW, align: "right", hint: "= Total (AMAZON) × Basecost TB/năm" },

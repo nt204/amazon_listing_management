@@ -42,10 +42,9 @@ type Row = Awaited<ReturnType<typeof queryInventoryTon>>["rows"][number];
 
 async function buildWorkbook(rows: Row[], year: number, amazonLabel: string | null): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("TỒN", { views: [{ state: "frozen", xSplit: 5, ySplit: 1 }] });
+  const ws = wb.addWorksheet("TỒN", { views: [{ state: "frozen", xSplit: 4, ySplit: 1 }] });
   const money = '"$"#,##0.00';
   const cols: { header: string; key: keyof Row; width: number; fmt?: string; fill: string }[] = [
-    { header: "Brand", key: "brand", width: 16, fill: "FFFF9900" },
     { header: "Product Type", key: "product_type", width: 18, fill: "FFFF9900" },
     { header: "Mockup", key: "mockup_url", width: 12, fill: "FFFF9900" },
     { header: "SKU", key: "sku", width: 22, fill: "FFFF9900" },
@@ -59,9 +58,9 @@ async function buildWorkbook(rows: Row[], year: number, amazonLabel: string | nu
     { header: "BASECOST", key: "basecost", width: 12, fmt: money, fill: "FFFF9900" },
     { header: "LƯỢNG BÁN /NĂM", key: "luong_ban", width: 11, fmt: "#,##0", fill: "FFFF9900" },
     { header: "TỒN", key: "ton", width: 10, fmt: "#,##0", fill: "FFFF9900" },
-    { header: "Available AMAZON", key: "available", width: 10, fmt: "#,##0", fill: "FFFFFF00" },
-    { header: "Inbound-quantity AMAZON", key: "inbound", width: 10, fmt: "#,##0", fill: "FFFFFF00" },
-    { header: "Total Reserved Quantity (AMAZON)", key: "reserved", width: 12, fmt: "#,##0", fill: "FFFFFF00" },
+    { header: "Available AMAZON (FBA + AWD)", key: "available", width: 10, fmt: "#,##0", fill: "FFFFFF00" },
+    { header: "Inbound-quantity AMAZON (FBA + AWD)", key: "inbound", width: 10, fmt: "#,##0", fill: "FFFFFF00" },
+    { header: "Total Reserved Quantity (FBA + AWD)", key: "reserved", width: 12, fmt: "#,##0", fill: "FFFFFF00" },
     { header: "Total (AMAZON)", key: "total_amazon", width: 13, fmt: "#,##0", fill: "FFFFFF00" },
     { header: "Tổng giá trị tồn", key: "gtri_ton", width: 14, fmt: money, fill: "FFFFFF00" },
     { header: "Tổng giá trị hàng đang đi đường", key: "gtri_di_duong", width: 13, fmt: money, fill: "FFFFFF00" },
