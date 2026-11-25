@@ -321,11 +321,14 @@ export async function handleTeamTargetCardAction(
           ${it.comparator}, ${it.isEstimate}, ${it.label}, ${it.quote}, ${it.note}, ${who})
       `;
     }
-    // Nhớ team của nhóm chat khi chưa có (lần sau tin không nhắc store vẫn biết team)
-    await tx`
-      INSERT INTO lark_chat_teams (chat_id, team, updated_by) VALUES (${chatId}, ${team!}, ${who})
-      ON CONFLICT (chat_id) DO NOTHING
-    `;
+    // Nhớ team của nhóm chat CHỈ khi bot không tự biết team và người bấm tự chọn team bằng nút (tin không nhắc
+    // team / store, nhóm chưa gắn team). Tin ghi "team 3" gửi trong nhóm chung không được gắn nhóm chung cho FBA 3.
+    if (!parsed.team) {
+      await tx`
+        INSERT INTO lark_chat_teams (chat_id, team, updated_by) VALUES (${chatId}, ${team!}, ${who})
+        ON CONFLICT (chat_id) DO NOTHING
+      `;
+    }
   });
 
   return {
