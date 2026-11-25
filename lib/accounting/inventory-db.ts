@@ -3713,6 +3713,9 @@ export async function syncCheckShipmentsToInbound(
         c.units_located,
         c.status AS c_status,
         c.created_date AS c_created_date,
+        -- Chỉ lô Amazon đã bắt đầu nhận (Receiving / Closed) mới có số nhận + Discrepancy.
+        -- In transit / Shipped / Delivered / Checked in: Units located = 0 vì chưa nhận, không phải thiếu.
+        (LOWER(TRIM(COALESCE(c.status, ''))) IN ('receiving', 'closed')) AS c_received,
         ROW_NUMBER() OVER (
           PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
           ORDER BY
@@ -3750,6 +3753,7 @@ export async function syncCheckShipmentsToInbound(
       so_luong_amazon_nhan = CASE
         WHEN r.has_manual_split THEN s.so_luong_amazon_nhan
         WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN COALESCE(r.quantity, 0)
+        WHEN NOT r.c_received THEN NULL
         WHEN r.rn = 1 THEN r.units_located
         ELSE NULL
       END,
@@ -3769,6 +3773,7 @@ export async function syncCheckShipmentsToInbound(
       discrepancy = CASE
         WHEN r.has_manual_split THEN s.discrepancy
         WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN 0
+        WHEN NOT r.c_received THEN NULL
         WHEN r.rn = 1 THEN (
           CASE
             WHEN r.units_located IS NOT NULL THEN (r.total_shipment_qty - r.units_located)
@@ -3786,6 +3791,7 @@ export async function syncCheckShipmentsToInbound(
           CASE
             WHEN r.has_manual_split THEN s.so_luong_amazon_nhan
             WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN COALESCE(r.quantity, 0)
+            WHEN NOT r.c_received THEN NULL
             WHEN r.rn = 1 THEN r.units_located
             ELSE NULL
           END
@@ -3794,6 +3800,7 @@ export async function syncCheckShipmentsToInbound(
           CASE
             WHEN r.has_manual_split THEN s.discrepancy
             WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN 0
+            WHEN NOT r.c_received THEN NULL
             WHEN r.rn = 1 THEN (
               CASE
                 WHEN r.units_located IS NOT NULL THEN (r.total_shipment_qty - r.units_located)
