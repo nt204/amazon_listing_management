@@ -51,6 +51,8 @@ export interface InventoryTonResult {
   /** Ngày Amazon ghi trong báo cáo FBA Inventory (snapshot-date) + lúc nạp */
   amazonLabel: string | null;
   amazonImportedAt: string | null;
+  /** Tháng cuối đã chốt hàng ra kho từ file thô (pipeline tháng, 4h30 ngày 2) — "YYYY-MM"; Lượng bán tính đến hết tháng này */
+  salesClosedThrough: string | null;
 }
 
 const num = (v: unknown) => {
@@ -61,7 +63,7 @@ const num = (v: unknown) => {
 export async function queryInventoryTon(storeId: string, year: number): Promise<InventoryTonResult> {
   const sql = await getDatabaseClient();
   const opening = `${year}-01`;
-  const [rows, meta] = await Promise.all([
+  const [rows, meta, closedRows] = await Promise.all([
     sql<Record<string, unknown>[]>`
       WITH op AS (
         SELECT UPPER(TRIM(sku)) AS k, SUM(sl_ton_dau_ky)::float AS f, MAX(basecost_dau_ky)::float AS g
@@ -106,12 +108,19 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
       SELECT MAX(report_label) AS label, MAX(imported_at) AS at
       FROM accounting_live_inventory WHERE store_id = ${storeId} AND source = 'FBA'
     `,
+    sql<{ p: string | null }[]>`
+      SELECT MAX(period) AS p FROM accounting_monthly_base_cost
+      WHERE store_id = ${storeId} AND period BETWEEN ${`${year}-01`} AND ${`${year}-12`}
+        AND deleted_at IS NULL AND sl_ra_kho_source = 'ingest'
+    `,
   ]);
+  const closed = closedRows[0]?.p ?? null;
 
   return {
     year,
     amazonLabel: meta[0]?.label ?? null,
     amazonImportedAt: meta[0]?.at ? new Date(meta[0].at).toISOString() : null,
+    salesClosedThrough: closed,
     rows: rows.map((r) => {
       const f = num(r.f);
       const g = num(r.g);

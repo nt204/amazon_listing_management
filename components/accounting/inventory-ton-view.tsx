@@ -246,6 +246,17 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
             Phí lưu kho tháng sau: <strong className="font-mono">{formatValue(totals.storage, "money")}</strong>
           </span>
           <span
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-slate-600"
+            title="Lượng bán = hàng ra kho đã chốt theo tháng (SL bán − Return + Adjustment + Removal, từ file thô Amazon). Tháng vừa xong được chốt lúc 4h30 ngày 2 tháng sau."
+          >
+            Lượng bán chốt đến{" "}
+            <strong>
+              {query.data?.salesClosedThrough
+                ? `T${Number(query.data.salesClosedThrough.slice(5))}/${query.data.salesClosedThrough.slice(0, 4)}`
+                : "—"}
+            </strong>
+          </span>
+          <span
             className="inline-flex items-center gap-1 rounded-lg border border-yellow-300 px-2.5 py-1 font-semibold text-slate-800"
             style={{ background: "#fffbcc" }}
             title={query.data?.amazonImportedAt ? `Nạp lúc ${new Date(query.data.amazonImportedAt).toLocaleString("vi-VN")}` : undefined}
