@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PencilSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { monthWeekBlocks, rangeLabel, type TargetKind, type TargetMetric } from "@/lib/accounting/team-targets";
-import type { TeamTargetDto } from "@/lib/accounting/team-targets-service";
+import type { PendingDraftDto, TeamTargetDto } from "@/lib/accounting/team-targets-service";
 
 // KPI kinh doanh → tab "Mục tiêu tuần": mục tiêu sếp giao cho team (qua Lark, tag bot) hoặc nhập tay ở đây.
 // Báo cáo KPI ngày đọc các mục tiêu đang áp dụng để hiện cột Target tuần / % đạt tuần.
 
 interface ListResponse {
   today: string;
+  pendingDrafts: PendingDraftDto[];
   teams: string[];
   stores: Array<{ name: string; teams: string[] }>;
   targets: TeamTargetDto[];
@@ -184,6 +185,80 @@ function TargetForm({
   );
 }
 
+const fmtUnits = (v: number) => `${Math.round(v).toLocaleString("en-US")} units`;
+
+/** Tin nhắn gốc, đọc lại được (giữ xuống dòng). */
+function MessageQuote({ text }: { text: string }) {
+  return (
+    <blockquote className="whitespace-pre-wrap rounded-lg border-l-4 border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700">
+      {text}
+    </blockquote>
+  );
+}
+
+/** 1 tin nhắn tag bot đang chờ xác nhận: tin gốc, các tuần + số units, chọn team rồi Lưu / Huỷ. */
+function PendingDraftCard({
+  draft,
+  teams,
+  onDecide,
+}: {
+  draft: PendingDraftDto;
+  teams: string[];
+  onDecide: (id: string, action: "confirm" | "cancel", team?: string) => Promise<void>;
+}) {
+  const [team, setTeam] = useState(draft.team ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (action: "confirm" | "cancel") => {
+    if (action === "confirm" && !team) return setError("Chọn team trước khi lưu.");
+    setBusy(true);
+    setError(null);
+    try {
+      await onDecide(draft.id, action, team);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+      <div className="text-[11px] font-semibold text-slate-500">
+        {draft.sender ?? "Tin nhắn"} · {draft.createdAt}
+      </div>
+      <MessageQuote text={draft.message} />
+      <div className="text-xs text-slate-800">
+        {draft.weeks.length ? (
+          draft.weeks.map((w) => (
+            <div key={w.startDate}>
+              {w.label} ({rangeLabel(w.startDate, w.endDate)}): <b>{fmtUnits(w.value)}</b>
+            </div>
+          ))
+        ) : (
+          <div className="text-slate-500">Không có mục tiêu units theo tuần.</div>
+        )}
+        {draft.others.length > 0 && (
+          <div className="mt-1 text-[11px] text-slate-500">
+            Chỉ lưu lại (chưa vào báo cáo): {draft.others.map((o) => `${o.label} ${fmtValue({ ...o, comparator: ">=" })}`).join(" · ")}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select className={input} value={team} onChange={(e) => setTeam(e.target.value)} aria-label="Team">
+          <option value="">Chọn team…</option>
+          {teams.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <button type="button" disabled={busy} onClick={() => run("confirm")} className={`${btn} bg-blue-600 text-white hover:bg-blue-700`}>
+          ✅ Lưu
+        </button>
+        <button type="button" disabled={busy} onClick={() => run("cancel")} className={`${btn} border border-red-200 bg-white text-red-600 hover:bg-red-50`}>
+          Huỷ
+        </button>
+        {error && <span className="text-xs font-semibold text-red-600">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function TeamTargetsView() {
   const [data, setData] = useState<ListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -303,6 +378,20 @@ export function TeamTargetsView() {
         </button>
       </div>
 
+      {data.pendingDrafts.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="text-xs font-bold text-amber-700">⏳ Chờ xác nhận ({data.pendingDrafts.length})</div>
+          {data.pendingDrafts.map((d) => (
+            <PendingDraftCard
+              key={d.id}
+              draft={d}
+              teams={data.teams}
+              onDecide={(id, action, t) => send(`/api/accounting/team-targets/drafts/${id}`, "POST", { action, team: t })}
+            />
+          ))}
+        </div>
+      )}
+
       {adding && (
         <TargetForm
           initial={blankForm}
@@ -391,9 +480,16 @@ export function TeamTargetsView() {
                   <td className="px-3 py-2">
                     <span className={`rounded-md border px-1.5 py-0.5 text-[11px] font-bold ${st.cls}`}>{st.label}</span>
                   </td>
-                  <td className="max-w-[260px] px-3 py-2 text-[11px] text-slate-500">
+                  <td className="w-[300px] max-w-[300px] px-3 py-2 align-top text-[11px] text-slate-500">
                     <div>{t.updatedBy ? `Sửa bởi ${t.updatedBy}` : `Lưu bởi ${t.createdBy ?? "—"}`}</div>
-                    {t.quote && <div className="truncate italic text-slate-400" title={t.quote}>“{t.quote}”</div>}
+                    {t.message ? (
+                      <details className="mt-0.5">
+                        <summary className="cursor-pointer font-semibold text-blue-600 hover:underline">Tin nhắn gốc</summary>
+                        <div className="mt-1"><MessageQuote text={t.message} /></div>
+                      </details>
+                    ) : (
+                      <div className="text-slate-400">Nhập trên web</div>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right">
                     <button

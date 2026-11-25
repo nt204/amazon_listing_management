@@ -32,6 +32,9 @@ export function teamTargetIntakeEnabled(): boolean {
   return process.env.LARK_TEAM_TARGETS?.trim() === "1";
 }
 
+const KPI_TARGETS_URL = "https://ncehub.net/?view=accounting&section=kpi&kpi=targets";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const vnToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
 
 async function loadRoster() {
@@ -125,32 +128,26 @@ type CardState =
   | { kind: "confirmed"; by: string; team: string }
   | { kind: "cancelled"; by: string };
 
+/** "Tuần cuối T11 (23–29/11): 5,000 units" — card chỉ cần tuần + số lượng. */
+const shortLine = (it: TeamTargetItem) =>
+  `${it.label} (${rangeLabel(it.startDate, it.endDate)}): **${Math.round(it.value).toLocaleString("en-US")}** units`;
+
 function draftCard(draftId: string, parsed: NormalizedTargets, knownTeams: string[], state: CardState): Record<string, unknown> {
   const team = state.kind === "confirmed" ? state.team : parsed.team;
-  // Trước mắt báo cáo ngày chỉ theo dõi Units của từng tuần; các mục tiêu khác vẫn lưu lại (kèm tin gốc) để tham khảo
+  // Card thật ngắn: chỉ tuần + số Units (cái báo cáo ngày theo dõi). Các chỉ số khác + tin gốc vẫn lưu, xem trên web.
   const tracked = parsed.items.filter(isTrackedItem);
-  const stored = parsed.items.filter((it) => !isTrackedItem(it));
-  const elements: Array<Record<string, unknown>> = [
-    {
-      tag: "markdown",
-      content: tracked.length
-        ? ["**📌 Theo dõi trong báo cáo ngày** (Units từng tuần)", ...tracked.map(itemLine)].join("\n")
-        : "<font color='grey'>Không có mục tiêu Units theo tuần nào — báo cáo ngày không đổi.</font>",
-    },
-  ];
-  if (stored.length) {
-    elements.push({
-      tag: "markdown",
-      content: ["**🗂 Chỉ lưu lại** <font color='grey'>(chưa đưa vào báo cáo)</font>", ...stored.map(itemLine)].join("\n"),
-    });
-  }
-  if (parsed.context.length) {
-    elements.push({ tag: "markdown", content: `<font color='grey'>Ghi chú: ${parsed.context.join(" · ")}</font>` });
-  }
-  if (parsed.warnings.length) {
-    elements.push({ tag: "markdown", content: parsed.warnings.map((w) => `<font color='orange'>⚠️ ${w}</font>`).join("\n") });
-  }
+  const others = parsed.items.length - tracked.length;
+  const lines = tracked.length ? tracked.map(shortLine) : ["Không có mục tiêu units theo tuần."];
+  if (others) lines.push(`<font color='grey'>+ ${others} chỉ số khác (lưu lại, xem trên web)</font>`);
+  const elements: Array<Record<string, unknown>> = [{ tag: "markdown", content: lines.join("\n") }];
 
+  const webButton = {
+    tag: "button",
+    text: { tag: "plain_text", content: "🌐 Xác nhận trên web" },
+    type: "default",
+    width: "fill",
+    multi_url: { url: KPI_TARGETS_URL, pc_url: KPI_TARGETS_URL, android_url: KPI_TARGETS_URL, ios_url: KPI_TARGETS_URL },
+  };
   if (state.kind === "pending") {
     const button = (label: string, type: string, value: Record<string, string>) => ({
       tag: "button",
@@ -160,34 +157,21 @@ function draftCard(draftId: string, parsed: NormalizedTargets, knownTeams: strin
       value: { ...value, draftId },
     });
     const confirmButtons = team
-      ? [button(`✅ Lưu cho ${team}`, "primary", { action: "TEAM_TARGET_CONFIRM", team })]
-      : knownTeams.map((t) => button(`Lưu cho ${t}`, "primary", { action: "TEAM_TARGET_CONFIRM", team: t }));
-    const all = [...confirmButtons, button("❌ Huỷ", "danger", { action: "TEAM_TARGET_CANCEL" })];
-    elements.push(
-      { tag: "hr" },
-      {
-        tag: "markdown",
-        content: team
-          ? "Kiểm tra khoảng ngày rồi bấm **Lưu**. Sai thì bấm **Huỷ** và tag bot nhắn lại (có thể ghi thẳng ngày, vd \"1–12/12: 6000 units\")."
-          : "Tin chưa ghi team: **chọn team để lưu**. Lần sau ghi luôn trong tin, vd \"team 3: tuần cuối tháng 11 …\".",
-      },
-      {
-        tag: "column_set",
-        flex_mode: "flow",
-        background_style: "default",
-        columns: all.map((b) => ({ tag: "column", width: "weighted", weight: 1, elements: [b] })),
-      },
-    );
+      ? [button("✅ Lưu", "primary", { action: "TEAM_TARGET_CONFIRM", team })]
+      : knownTeams.map((t) => button(`Lưu ${t}`, "primary", { action: "TEAM_TARGET_CONFIRM", team: t }));
+    const all = [...confirmButtons, button("❌ Huỷ", "danger", { action: "TEAM_TARGET_CANCEL" }), webButton];
+    if (!team) elements.push({ tag: "markdown", content: "<font color='grey'>Tin chưa ghi team — chọn team để lưu.</font>" });
+    elements.push({
+      tag: "column_set",
+      flex_mode: "flow",
+      background_style: "default",
+      columns: all.map((b) => ({ tag: "column", width: "weighted", weight: 1, elements: [b] })),
+    });
   } else {
-    elements.push(
-      { tag: "hr" },
-      {
-        tag: "markdown",
-        content: state.kind === "confirmed"
-          ? `✅ **Đã lưu cho ${state.team}** bởi ${state.by}. Báo cáo ngày sẽ hiện Target tuần / % đạt tuần (Units).`
-          : `❌ **Đã huỷ** bởi ${state.by}. Không lưu gì.`,
-      },
-    );
+    elements.push({
+      tag: "markdown",
+      content: state.kind === "confirmed" ? `✅ Đã lưu · ${state.by}` : `❌ Đã huỷ · ${state.by}`,
+    });
   }
 
   return {
@@ -197,9 +181,8 @@ function draftCard(draftId: string, parsed: NormalizedTargets, knownTeams: strin
       template: state.kind === "pending" ? "orange" : state.kind === "confirmed" ? "green" : "grey",
       title: {
         tag: "plain_text",
-        content: `🎯 Mục tiêu ${team ?? "team"} — ${state.kind === "pending" ? "chờ xác nhận" : state.kind === "confirmed" ? "đã lưu" : "đã huỷ"}`,
+        content: `🎯 Mục tiêu ${team ?? "(chưa rõ team)"} — ${state.kind === "pending" ? "chờ xác nhận" : state.kind === "confirmed" ? "đã lưu" : "đã huỷ"}`,
       },
-      subtitle: { tag: "plain_text", content: "Bot đọc từ tin nhắn · tuần T2 → CN, đủ 7 ngày" },
     },
     body: { elements },
   };
@@ -230,12 +213,14 @@ export async function handleTeamTargetMessage(input: TeamTargetMessageInput): Pr
   const { stores, storeTeams, knownTeams } = await loadRoster();
   const roster = stores.map((s) => `${s.name}: ${s.team}`).join("\n");
 
-  let raw;
-  try {
-    raw = await extractWithAi(input.message, sentDate, roster, knownTeams);
-  } catch (err) {
-    console.error("[TeamTargets] Lỗi gọi AI bóc mục tiêu:", err);
-    return { handled: false };
+  // Tin đã qua bộ lọc "giống tin giao mục tiêu": AI lỗi / trả rỗng thì thử lại 1 lần (model nhẹ đôi khi trả rỗng)
+  let raw: Awaited<ReturnType<typeof extractWithAi>> = null;
+  for (let attempt = 1; attempt <= 2 && !raw?.targets?.length; attempt++) {
+    try {
+      raw = await extractWithAi(input.message, sentDate, roster, knownTeams);
+    } catch (err) {
+      console.error(`[TeamTargets] Lỗi gọi AI bóc mục tiêu (lần ${attempt}):`, err);
+    }
   }
   if (!raw?.targets?.length) return { handled: false };
 
@@ -294,6 +279,46 @@ async function supersedeOverlaps(
   `;
 }
 
+type DraftDecision =
+  | { ok: true; parsed: NormalizedTargets; team: string | null; knownTeams: string[] }
+  | { ok: false; message: string; status: number };
+
+/**
+ * Lưu / huỷ 1 bản nháp (dùng chung cho nút trên card Lark và nút trên web). Lưu: ghi các mục tiêu vào
+ * accounting_team_targets, mục tiêu cũ trùng khoảng ngày → 'superseded'. Chỉ lần bấm đầu tiên được xử lý.
+ */
+async function decideDraft(draftId: string, action: "confirm" | "cancel", teamArg: string | undefined, who: string): Promise<DraftDecision> {
+  const { knownTeams } = await loadRoster();
+  const team = action === "confirm" ? knownTeams.find((t) => t === teamArg) : undefined;
+  if (action === "confirm" && !team) return { ok: false, message: `Team không hợp lệ: ${teamArg ?? "—"}`, status: 400 };
+  if (!UUID.test(draftId)) return { ok: false, message: "Không tìm thấy tin chờ xác nhận.", status: 404 };
+  const sql = await getDatabaseClient();
+  const parsed = await sql.begin(async (tx) => {
+    const claimed = await tx<Array<{ parsed: NormalizedTargets }>>`
+      UPDATE accounting_team_target_drafts
+      SET status = ${action === "confirm" ? "confirmed" : "cancelled"}, team = COALESCE(${team ?? null}, team),
+          decided_by = ${who}, decided_at = NOW()
+      WHERE id = ${draftId} AND status = 'pending'
+      RETURNING parsed
+    `;
+    if (!claimed[0]) return null;
+    if (action === "confirm") {
+      for (const it of claimed[0].parsed.items) {
+        await supersedeOverlaps(tx, { ...it, team: team! }, null);
+        await tx`
+          INSERT INTO accounting_team_targets
+            (draft_id, team, kind, metric, store_name, start_date, end_date, value, comparator, is_estimate, label, quote, note, created_by)
+          VALUES (${draftId}, ${team!}, ${it.kind}, ${it.metric}, ${it.storeName}, ${it.startDate}, ${it.endDate}, ${it.value},
+            ${it.comparator}, ${it.isEstimate}, ${it.label}, ${it.quote}, ${it.note}, ${who})
+        `;
+      }
+    }
+    return claimed[0].parsed;
+  });
+  if (!parsed) return { ok: false, message: "Tin này đã được xác nhận hoặc huỷ trước đó.", status: 409 };
+  return { ok: true, parsed, team: team ?? null, knownTeams };
+}
+
 export async function handleTeamTargetCardAction(
   action: "TEAM_TARGET_CONFIRM" | "TEAM_TARGET_CANCEL",
   draftId: string,
@@ -302,47 +327,25 @@ export async function handleTeamTargetCardAction(
 ): Promise<Record<string, unknown>> {
   const who = await larkOperatorName(operatorIds);
   if (!who) return NOT_LINKED;
-  const sql = await getDatabaseClient();
-
-  const { knownTeams } = await loadRoster();
-  const team = action === "TEAM_TARGET_CONFIRM" ? knownTeams.find((t) => t === teamArg) : undefined;
-  if (action === "TEAM_TARGET_CONFIRM" && !team) return { toast: { type: "error", content: `Team không hợp lệ: ${teamArg ?? "—"}` } };
-
-  // Chỉ lần bấm đầu tiên được xử lý (bấm 2 lần / 2 người cùng bấm)
-  const claimed = await sql<Array<{ chat_id: string; parsed: NormalizedTargets }>>`
-    UPDATE accounting_team_target_drafts
-    SET status = ${action === "TEAM_TARGET_CONFIRM" ? "confirmed" : "cancelled"}, team = COALESCE(${team ?? null}, team),
-        decided_by = ${who}, decided_at = NOW()
-    WHERE id = ${draftId} AND status = 'pending'
-    RETURNING chat_id, parsed
-  `;
-  if (!claimed[0]) return { toast: { type: "info", content: "Mục tiêu này đã được xử lý trước đó." } };
-  const { parsed } = claimed[0];
-
+  const r = await decideDraft(draftId, action === "TEAM_TARGET_CONFIRM" ? "confirm" : "cancel", teamArg, who);
+  if (!r.ok) return { toast: { type: r.status === 409 ? "info" : "error", content: r.message } };
   if (action === "TEAM_TARGET_CANCEL") {
     return {
       toast: { type: "info", content: "Đã huỷ, không lưu gì." },
-      card: { type: "raw", data: draftCard(draftId, parsed, knownTeams, { kind: "cancelled", by: who }) },
+      card: { type: "raw", data: draftCard(draftId, r.parsed, r.knownTeams, { kind: "cancelled", by: who }) },
     };
   }
-
-  await sql.begin(async (tx) => {
-    for (const it of parsed.items) {
-      // Mục tiêu cũ cùng loại + chỉ số + store, khoảng ngày chồng lên → thay bằng mục tiêu mới
-      await supersedeOverlaps(tx, { ...it, team: team! }, null);
-      await tx`
-        INSERT INTO accounting_team_targets
-          (draft_id, team, kind, metric, store_name, start_date, end_date, value, comparator, is_estimate, label, quote, note, created_by)
-        VALUES (${draftId}, ${team!}, ${it.kind}, ${it.metric}, ${it.storeName}, ${it.startDate}, ${it.endDate}, ${it.value},
-          ${it.comparator}, ${it.isEstimate}, ${it.label}, ${it.quote}, ${it.note}, ${who})
-      `;
-    }
-  });
-
   return {
-    toast: { type: "success", content: `Đã lưu ${parsed.items.length} mục tiêu cho ${team}.` },
-    card: { type: "raw", data: draftCard(draftId, parsed, knownTeams, { kind: "confirmed", by: who, team: team! }) },
+    toast: { type: "success", content: `Đã lưu cho ${r.team}.` },
+    card: { type: "raw", data: draftCard(draftId, r.parsed, r.knownTeams, { kind: "confirmed", by: who, team: r.team! }) },
   };
+}
+
+/** Nút Lưu / Huỷ trên web (tab Mục tiêu tuần → Chờ xác nhận). */
+export async function decideDraftFromWeb(draftId: string, action: "confirm" | "cancel", team: string | undefined, who: string) {
+  const r = await decideDraft(draftId, action, team, who);
+  if (!r.ok) throw new ApiError(r.message, r.status);
+  return { ok: true, team: r.team };
 }
 
 // ───────────────────────── Báo cáo ngày ─────────────────────────
@@ -374,7 +377,6 @@ export async function listActiveTeamTargets(date: string): Promise<Map<string, A
 
 // ───────────────────────── Xem / xoá qua Lark ─────────────────────────
 
-const KPI_TARGETS_URL = "https://ncehub.net/?view=accounting&section=kpi&kpi=targets";
 
 interface TargetRow {
   id: string;
@@ -395,10 +397,13 @@ interface TargetRow {
   created_at: string;
   updated_by: string | null;
   updated_at: string | null;
+  /** Tin nhắn gốc của sếp (mục tiêu lưu từ Lark); null khi nhập trên web. */
+  message: string | null;
 }
 
 const TARGET_COLUMNS = `id, team, kind, metric, store_name, start_date::text, end_date::text, value::text, comparator,
-  is_estimate, label, quote, note, status, created_by, created_at::text, updated_by, updated_at::text`;
+  is_estimate, label, quote, note, status, created_by, created_at::text, updated_by, updated_at::text,
+  (SELECT d.raw_text FROM accounting_team_target_drafts d WHERE d.id = accounting_team_targets.draft_id) AS message`;
 
 function rowLine(r: TargetRow): string {
   const item = {
@@ -523,12 +528,29 @@ export interface TeamTargetDto {
   createdAt: string;
   updatedBy: string | null;
   updatedAt: string | null;
+  message: string | null;
+}
+
+/** Tin nhắn tag bot đang chờ xác nhận (hiện trên web để Lưu / Huỷ khi nút trên Lark không dùng được). */
+export interface PendingDraftDto {
+  id: string;
+  message: string;
+  team: string | null;
+  sender: string | null;
+  sentDate: string;
+  /** "13:53 25/11/2026" (giờ VN). */
+  createdAt: string;
+  /** Mục tiêu Units theo tuần (vào báo cáo ngày). */
+  weeks: Array<{ label: string; startDate: string; endDate: string | null; value: number }>;
+  /** Các chỉ số khác chỉ lưu lại. */
+  others: Array<{ label: string; startDate: string; endDate: string | null; value: number; metric: TargetMetric; kind: TargetKind }>;
 }
 
 const toDto = (r: TargetRow): TeamTargetDto => ({
   id: r.id, team: r.team, kind: r.kind, metric: r.metric, storeName: r.store_name, startDate: r.start_date,
   endDate: r.end_date, value: Number(r.value), comparator: r.comparator, isEstimate: r.is_estimate, label: r.label,
   quote: r.quote, status: r.status, createdBy: r.created_by, createdAt: r.created_at, updatedBy: r.updated_by, updatedAt: r.updated_at,
+  message: r.message,
 });
 
 /** Mục tiêu đang + sắp áp dụng (kèm đã qua trong `pastDays` ngày) của mọi team, và danh sách team / store để chọn. */
@@ -541,9 +563,28 @@ export async function listTeamTargetsForWeb(pastDays = 35) {
      ORDER BY start_date DESC, team, kind`,
     [today, pastDays],
   );
+  const drafts = await sql<Array<{ id: string; raw_text: string; team: string | null; sender: string | null; sent_date: string; created_at: string; parsed: NormalizedTargets }>>`
+    SELECT d.id, d.raw_text, d.team, d.sent_date::text, d.parsed,
+      to_char(d.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'HH24:MI DD/MM/YYYY') AS created_at,
+      (SELECT COALESCE(NULLIF(u.display_name, ''), u.username)
+       FROM lark_user_connections c JOIN app_users u ON u.team_id = c.team_id AND u.user_id = c.actor_id
+       WHERE c.receive_id = d.sender_open_id LIMIT 1) AS sender
+    FROM accounting_team_target_drafts d
+    WHERE d.status = 'pending' AND d.created_at > NOW() - INTERVAL '30 days'
+    ORDER BY d.created_at DESC LIMIT 20
+  `;
+  const pendingDrafts: PendingDraftDto[] = drafts.map((d) => {
+    const pick = (it: TeamTargetItem) => ({ label: it.label, startDate: it.startDate, endDate: it.endDate, value: it.value });
+    return {
+      id: d.id, message: d.raw_text, team: d.team, sender: d.sender, sentDate: d.sent_date, createdAt: d.created_at,
+      weeks: d.parsed.items.filter(isTrackedItem).map(pick),
+      others: d.parsed.items.filter((it) => !isTrackedItem(it)).map((it) => ({ ...pick(it), metric: it.metric, kind: it.kind })),
+    };
+  });
   const { stores, knownTeams } = await loadRoster();
   return {
     today,
+    pendingDrafts,
     teams: knownTeams,
     stores: stores.map((s) => ({ name: s.name.trim().toUpperCase(), teams: parseStoreTeams(s.team) })),
     targets: rows.map(toDto),
@@ -597,8 +638,6 @@ export async function createTeamTarget(raw: Partial<TeamTargetInput>, actor: str
   });
   return toDto(rows[0]);
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function updateTeamTarget(id: string, raw: Partial<TeamTargetInput>, actor: string): Promise<TeamTargetDto> {
   if (!UUID.test(id)) throw new ApiError("Không tìm thấy mục tiêu.", 404);

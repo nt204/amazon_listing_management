@@ -87,7 +87,13 @@ function cleanMessageText(rawText: string, mentions: LarkMention[], botKeys: Set
     if (!mention.key) continue;
     text = text.split(mention.key).join(botKeys.has(mention.key) ? "" : `@${mention.name || ""}`);
   }
-  return text.replace(/@_user_\d+/g, "").replace(/\s+/g, " ").trim();
+  // Giữ xuống dòng (tin giao mục tiêu nhiều dòng được lưu nguyên để đọc lại trên web), gộp khoảng trắng trong dòng
+  return text
+    .replace(/@_user_\d+/g, "")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
 }
 
 export async function processLarkMessageEvent(
