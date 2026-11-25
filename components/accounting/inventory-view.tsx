@@ -4667,9 +4667,9 @@ function InventoryViewInner() {
         ) : (
           "—"
         );
-        // Discrepancy dương (Amazon nhận thiếu) → tô nền đỏ cả ô
+        // Discrepancy dương (Amazon nhận thiếu) → tô nền vàng cả ô
         cellClass = `py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200${
-          item.discrepancy != null && item.discrepancy > 0 ? " !bg-rose-200 [&_span]:!font-semibold [&_span]:!text-rose-800" : ""
+          item.discrepancy != null && item.discrepancy > 0 ? " !bg-yellow-200 [&_span]:!font-semibold [&_span]:!text-rose-700" : ""
         }`;
         break;
       case "note":
