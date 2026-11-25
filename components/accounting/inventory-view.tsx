@@ -4554,7 +4554,7 @@ function InventoryViewInner() {
           id={item.id}
           field={col.id}
           value={item.custom_fields?.[col.id] ?? ""}
-          display={safeDisplay(item.custom_fields?.[col.id])}
+          display={safeDisplay(item.custom_fields?.[col.id]) === "—" ? null : safeDisplay(item.custom_fields?.[col.id])}
           style={f.style}
           className={`py-1 px-2.5 text-[12.5px] ${f.className || "border-r border-slate-200"}`}
           inlineEditing={inlineEditing}
@@ -4659,6 +4659,8 @@ function InventoryViewInner() {
         displayNode = <EntityBadge value={item.trang_thai} />;
         break;
     }
+    // Chi tiết đi hàng: ô không có giá trị để trống, không hiện gạch ngang
+    if (safeDisplay(cellValue) === "—") displayNode = null;
 
     return (
       <EditableCell
