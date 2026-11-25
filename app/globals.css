@@ -229,6 +229,12 @@ body {
   font-size: 13.5px !important;
 }
 
+/* Báo cáo tháng SKU (SKU Monthly FBA/FBM): tên cột to hơn nữa */
+.font-accounting-system table.acc-sku-monthly-table thead tr:first-child th,
+.font-accounting-system table.acc-sku-monthly-table thead tr:first-child th .truncate {
+  font-size: 15px !important;
+}
+
 /* SKU Win/Test, FBM cố định mặc định zoom 100% (FBA/FBM theo ngày zoom 90%): 12px ≈ 13.5px × 90% để nhìn bằng nhau */
 .font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th,
 .font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th .truncate {

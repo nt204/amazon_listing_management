@@ -106,6 +106,8 @@ export interface AvailableMonthOption {
 export interface ListSkuMonthlyOptions {
   year?: number;
   month?: number | "all";
+  /** Xem gộp từ tháng `month` đến tháng `monthTo` (cùng năm). Bỏ trống / bằng month = 1 tháng */
+  monthTo?: number;
   search?: string;
   productType?: string;
   status?: string;
@@ -142,6 +144,9 @@ export async function listSkuMonthly(
   }
   const isAllMonths = monthOpt === "all";
   const monthNum = typeof monthOpt === "number" ? monthOpt : 10;
+  // Khoảng tháng: gộp như "Tất cả các tháng" nhưng chỉ trong [monthNum, monthTo]
+  const monthTo = !isAllMonths && options.monthTo && options.monthTo > monthNum ? Math.min(12, options.monthTo) : null;
+  const isGrouped = isAllMonths || monthTo !== null;
 
   const search = options.search?.trim() || "";
   const productType = options.productType?.trim() || "";
@@ -164,10 +169,10 @@ export async function listSkuMonthly(
     SELECT DISTINCT product_type, status
     FROM accounting_sku_monthly
     WHERE store_id = ${storeId} AND year = ${year}
-      ${isAllMonths ? sql`` : sql`AND month = ${monthNum}`}
+      ${isAllMonths ? sql`` : monthTo !== null ? sql`AND month BETWEEN ${monthNum} AND ${monthTo}` : sql`AND month = ${monthNum}`}
   `;
 
-  const itemsPromise = isAllMonths
+  const itemsPromise = isGrouped
     ? sql<Record<string, any>[]>`
       SELECT 
         sm.sku,
@@ -204,6 +209,7 @@ export async function listSkuMonthly(
       FROM accounting_sku_monthly sm
       LEFT JOIN accounting_sku_master m ON m.store_id = sm.store_id AND m.sku = sm.sku
       WHERE sm.store_id = ${storeId} AND sm.year = ${year}
+        ${monthTo !== null ? sql`AND sm.month BETWEEN ${monthNum} AND ${monthTo}` : sql``}
       GROUP BY sm.sku
     `
     : sql<Record<string, any>[]>`
@@ -273,7 +279,7 @@ export async function listSkuMonthly(
       id: r.id || `${storeId}_${year}_${monthNum}_${r.sku}`,
       store_id: storeId,
       year,
-      month: isAllMonths ? 0 : monthNum,
+      month: isGrouped ? 0 : monthNum,
       sku: r.sku,
       asin: r.asin || null,
       product_type: r.product_type || null,
@@ -344,7 +350,7 @@ export async function listSkuMonthly(
 
   // 6. Calculate store summary
   let summary: SkuMonthlyStoreSummary;
-  if (!isAllMonths) {
+  if (!isGrouped) {
     const storedSummary = summaryRows.find((r) => Number(r.month) === monthNum);
     if (storedSummary) {
       summary = {

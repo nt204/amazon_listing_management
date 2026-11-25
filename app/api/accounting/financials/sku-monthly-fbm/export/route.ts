@@ -16,9 +16,12 @@ export async function GET(request: Request) {
     const year = searchParams.get("year") ? parseInt(searchParams.get("year")!, 10) : 2026;
     const monthParam = searchParams.get("month");
     const month = monthParam === "all" ? "all" : monthParam ? parseInt(monthParam, 10) : undefined;
+    const monthToParam = searchParams.get("monthTo");
+    const monthTo = monthToParam ? parseInt(monthToParam, 10) || undefined : undefined;
     const { items, summary: s } = await listFbmSkuMonthly(storeId, {
       year,
       month,
+      monthTo,
       search: searchParams.get("search") || undefined,
     });
 
@@ -51,7 +54,7 @@ export async function GET(request: Request) {
       ),
     ];
 
-    const filename = `SKU_FBM_Monthly_${month === "all" ? "AllMonths" : `Thang_${s.month}`}_${year}.csv`;
+    const filename = `SKU_FBM_Monthly_${month === "all" ? "AllMonths" : monthTo && typeof month === "number" && monthTo > month ? `Thang_${month}-${monthTo}` : `Thang_${s.month}`}_${year}.csv`;
     return new Response("﻿" + lines.join("\n"), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",

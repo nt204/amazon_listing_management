@@ -153,6 +153,10 @@ export async function listFbmSkuMonthly(
   const monthOpt = options.month ?? (summaryRows[0] ? Number(summaryRows[0].month) : 10);
   const isAllMonths = monthOpt === "all";
   const monthNum = typeof monthOpt === "number" ? monthOpt : 0;
+  // Khoảng tháng [monthNum, monthTo]: gộp như "Tất cả các tháng" nhưng chỉ trong khoảng
+  const monthTo = !isAllMonths && options.monthTo && options.monthTo > monthNum ? Math.min(12, options.monthTo) : null;
+  const isGrouped = isAllMonths || monthTo !== null;
+  const inRange = (m: number) => isAllMonths || (monthTo !== null ? m >= monthNum && m <= monthTo : m === monthNum);
 
   // Mockup theo SKU + ASIN (không có thì dòng đầu của SKU): tính 1 lần cho cả store rồi hash join —
   // LATERAL theo từng dòng quét lại bảng mã cho mỗi SKU (FASTPEACE 3.645 SKU mất ~19 giây).
@@ -168,7 +172,7 @@ export async function listFbmSkuMonthly(
     )
   `;
   // Mỗi dòng = 1 sản phẩm SKU + ASIN
-  const rawItems = isAllMonths
+  const rawItems = isGrouped
     ? await sql<Row[]>`
         ${mockups}
         SELECT sm.sku, sm.asin,
@@ -184,6 +188,7 @@ export async function listFbmSkuMonthly(
         LEFT JOIN mockups ma ON ma.sku_key = UPPER(sm.sku) AND ma.asin_key = UPPER(sm.asin) AND ma.first_of_asin
         LEFT JOIN mockups ms ON ms.sku_key = UPPER(sm.sku) AND ms.first_of_sku
         WHERE sm.store_id = ${storeId} AND sm.year = ${year}
+          ${monthTo !== null ? sql`AND sm.month BETWEEN ${monthNum} AND ${monthTo}` : sql``}
         GROUP BY sm.sku, sm.asin
       `
     : await sql<Row[]>`
@@ -195,7 +200,7 @@ export async function listFbmSkuMonthly(
         WHERE sm.store_id = ${storeId} AND sm.year = ${year} AND sm.month = ${monthNum}
       `;
 
-  const allItems = rawItems.map((r) => toItem(r, storeId, year, monthNum));
+  const allItems = rawItems.map((r) => toItem(r, storeId, year, isGrouped ? 0 : monthNum));
   const productTypes = Array.from(new Set(allItems.map((i) => i.product_type).filter(Boolean))) as string[];
   const statuses = Array.from(new Set(allItems.map((i) => i.status).filter(Boolean))) as string[];
 
@@ -224,11 +229,11 @@ export async function listFbmSkuMonthly(
   }
 
   // Tổng của kỳ lấy theo toàn bộ SKU (như ô dòng 2 của tab), không theo bộ lọc; YTD cộng phí chủ store các tháng
-  const stored = isAllMonths ? null : summaryRows.find((r) => Number(r.month) === monthNum);
-  const ownerFee = isAllMonths
-    ? summaryRows.reduce((s, r) => s + n(r.owner_fee), 0)
+  const stored = isGrouped ? null : summaryRows.find((r) => Number(r.month) === monthNum);
+  const ownerFee = isGrouped
+    ? summaryRows.filter((r) => inRange(Number(r.month))).reduce((s, r) => s + n(r.owner_fee), 0)
     : n(stored?.owner_fee);
-  const summary = summaryFromItems(allItems, storeId, year, isAllMonths ? 0 : monthNum, ownerFee);
+  const summary = summaryFromItems(allItems, storeId, year, isGrouped ? 0 : monthNum, ownerFee);
   if (stored) summary.data_source = str(stored.data_source);
 
   const sortField = options.sortField || "revenue";

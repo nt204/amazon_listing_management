@@ -148,6 +148,24 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     }
     return 10; // Default to latest complete month (Tháng 10)
   });
+  // Xem gộp từ tháng (selectedMonth) đến tháng (selectedMonthTo); null hoặc bằng selectedMonth = 1 tháng
+  const [selectedMonthTo, setSelectedMonthTo] = useState<number | null>(() => {
+    if (typeof window !== "undefined") {
+      const saved = Number(localStorage.getItem("acc_selected_month_to"));
+      if (saved >= 1 && saved <= 12) return saved;
+    }
+    return null;
+  });
+  const monthTo = selectedMonth !== "all" && selectedMonthTo != null && selectedMonthTo > selectedMonth ? selectedMonthTo : null;
+  const saveMonthTo = (val: number | null) => {
+    setSelectedMonthTo(val);
+    try {
+      if (val == null) localStorage.removeItem("acc_selected_month_to");
+      else localStorage.setItem("acc_selected_month_to", String(val));
+    } catch {
+      // bỏ qua
+    }
+  };
   const [selectedYear, setSelectedYear] = useState<number>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("acc_selected_year");
@@ -505,6 +523,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
         year: String(selectedYear),
         month: String(selectedMonth),
       });
+      if (monthTo != null) params.set("monthTo", String(monthTo));
 
       const res = await fetch(`${config.api}?${params.toString()}`);
       if (!res.ok) throw new Error(`Lỗi tải dữ liệu (${res.status})`);
@@ -522,7 +541,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
     } finally {
       setLoading(false);
     }
-  }, [config.api, selectedStoreId, selectedYear, selectedMonth]);
+  }, [config.api, selectedStoreId, selectedYear, selectedMonth, monthTo]);
 
   useEffect(() => {
     fetchData();
@@ -623,6 +642,8 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                 if (typeof window !== "undefined") {
                   localStorage.setItem("acc_selected_month", String(val));
                 }
+                // Từ tháng mới vượt quá Đến tháng → về xem 1 tháng
+                if (val === "all" || (selectedMonthTo != null && selectedMonthTo <= val)) saveMonthTo(null);
               }}
               className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
               style={{
@@ -654,6 +675,34 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
               <option value="all">Tất cả các tháng (YTD)</option>
             </select>
           </div>
+
+          {/* Đến tháng: gộp số từ tháng đã chọn đến tháng này */}
+          {selectedMonth !== "all" && (
+            <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
+              <span className="mr-1.5 shrink-0 font-semibold text-slate-500">đến</span>
+              <select
+                aria-label="Đến tháng"
+                value={monthTo ?? ""}
+                onChange={(e) => saveMonthTo(e.target.value ? parseInt(e.target.value, 10) : null)}
+                className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                  backgroundPosition: "right 0 center",
+                  backgroundRepeat: "no-repeat",
+                  backgroundSize: "1.25em 1.25em",
+                }}
+              >
+                <option value="">(chỉ tháng {selectedMonth})</option>
+                {monthOptions
+                  .filter((m) => m.month > selectedMonth)
+                  .map((m) => (
+                    <option key={m.month} value={m.month}>
+                      {m.label}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
 
           {/* Search SKU, ASIN */}
           <div className="relative flex items-center">
@@ -726,7 +775,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
           {/* Export Excel */}
           <a
-            href={`${config.api}/export?storeId=${selectedStoreId}&month=${selectedMonth}&year=${selectedYear}&search=${encodeURIComponent(
+            href={`${config.api}/export?storeId=${selectedStoreId}&month=${selectedMonth}${monthTo != null ? `&monthTo=${monthTo}` : ""}&year=${selectedYear}&search=${encodeURIComponent(
               search
             )}`}
             download
@@ -747,7 +796,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
           }}
           className="min-w-full inline-block align-top"
         >
-          <table className="acc-financial-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
+          <table className="acc-financial-table acc-sku-monthly-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
             {/* THEAD with Header Row + Sticky TOTAL Row (Đúng màu #ff9900 của Amazon / FBA ngày) */}
             <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
               {/* ROW 1: COLUMN HEADERS */}
@@ -1114,13 +1163,13 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* Mockup */}
                             {col.id === "mockup" && (
-                              <div className="relative mx-auto h-7 w-7 rounded bg-slate-100 overflow-hidden border border-slate-200 shrink-0">
+                              <div className="relative mx-auto h-[44px] w-[44px] rounded bg-slate-100 overflow-hidden border border-slate-200 shrink-0">
                                 {item.mockup_url ? (
                                   <Image
                                     src={item.mockup_url}
                                     alt={item.sku}
                                     fill
-                                    sizes="28px"
+                                    sizes="44px"
                                     className="object-cover"
                                     unoptimized
                                   />
@@ -1303,7 +1352,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* ROI */}
                             {col.id === "roi" && (
-                              <span className="font-semibold tabular-nums text-black">
+                              <span className="font-normal tabular-nums text-black">
                                 {formatPercent(item.roi)}
                               </span>
                             )}
@@ -1382,14 +1431,14 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
                             {/* Tháng listing */}
                             {col.id === "listing_month" && (
-                              <span className="text-black text-xs">
+                              <span className="text-black">
                                 {item.listing_month || "—"}
                               </span>
                             )}
 
                             {/* Tháng đánh giá */}
                             {col.id === "review_month" && (
-                              <span className="text-black text-xs">
+                              <span className="text-black">
                                 {item.review_month || "—"}
                               </span>
                             )}
@@ -1397,7 +1446,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             {/* Trạng thái */}
                             {col.id === "status" && (
                               item.status ? (
-                                <span className="inline-block px-1.5 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700">
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
                                   {item.status}
                                 </span>
                               ) : (
@@ -1408,7 +1457,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
                             {/* FNSKU */}
                             {col.id === "fnsku" && (
                               item.fnsku ? (
-                                <span className="font-mono text-[11px] text-slate-600">
+                                <span className="text-slate-600">
                                   {item.fnsku}
                                 </span>
                               ) : (
