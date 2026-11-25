@@ -33,14 +33,12 @@
     "store_name": "EVERPHANT",
     "profile_id": "k1j4bpmc",
     "enabled": true,
-    "ppc": false,
-    "description": "Store EVERPHANT (chỉ crawl accounting, không chạy PPC)"
+    "description": "Store EVERPHANT"
   },
   {
     "store_name": "EKASPEEK",
     "profile_id": "k1j878fy",
     "enabled": true,
-    "ppc": false,
-    "description": "Store EKASPEEK (chỉ crawl accounting, không chạy PPC)"
+    "description": "Store EKASPEEK"
   }
 ]
