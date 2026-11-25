@@ -161,11 +161,14 @@ export function buildSkuEvalReminderCard(r: SkuEvalReminder, options: { titlePre
       tag: "markdown",
       content: [
         `**${s.storeName}** — **${s.total} SKU** cần điền`,
-        `🔴 Quá hạn (listing ${monthLabel(addMonths(r.m4Listing, -1))} trở về trước): **${s.late.length}** SKU`,
-        `🟠 Tháng thứ 4 — hạn chót tháng này (listing ${monthLabel(r.m4Listing)}): **${s.m4.length}** SKU`,
-        `🟡 Tháng thứ 3 — bắt đầu đánh giá (listing ${monthLabel(r.m3Listing)}): **${s.m3.length}** SKU`,
+        // Nhóm 0 SKU thì không in dòng đó
+        s.late.length ? `🔴 Quá hạn (listing ${monthLabel(addMonths(r.m4Listing, -1))} trở về trước): **${s.late.length}** SKU` : "",
+        s.m4.length ? `🟠 Tháng thứ 4 — hạn chót tháng này (listing ${monthLabel(r.m4Listing)}): **${s.m4.length}** SKU` : "",
+        s.m3.length ? `🟡 Tháng thứ 3 — bắt đầu đánh giá (listing ${monthLabel(r.m3Listing)}): **${s.m3.length}** SKU` : "",
         `▸ ${links}`,
-      ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
     });
   }
 
