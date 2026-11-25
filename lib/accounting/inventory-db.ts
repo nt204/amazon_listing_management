@@ -3721,7 +3721,8 @@ export async function syncCheckShipmentsToInbound(
         units_expected,
         units_located,
         status,
-        created_date
+        created_date,
+        first_receiving_date
       FROM accounting_amazon_check_shipments
       WHERE store_id = ${storeId}
         AND deleted_at IS NULL
@@ -3741,7 +3742,10 @@ export async function syncCheckShipmentsToInbound(
         s.id, s.shipment_id, LOWER(TRIM(s.shipment_id)) AS sid, UPPER(TRIM(s.sku)) AS sku_key,
         COALESCE(s.quantity, 0) AS qty,
         s.so_luong_amazon_nhan AS cur_recv, s.discrepancy AS cur_disc, s.ngay_di AS cur_ngay_di,
+        s.amazon_received AS cur_amz_recv,
         c.units_expected, c.units_located, c.status AS c_status, c.created_date AS c_created_date,
+        c.first_receiving_date AS c_first_receiving,
+        (LOWER(TRIM(COALESCE(c.status, ''))) = 'closed') AS c_closed,
         (LOWER(TRIM(COALESCE(c.status, ''))) IN ('receiving', 'closed')) AS c_received,
         cr.d_expected, cr.d_located,
         ROW_NUMBER() OVER (
@@ -3785,7 +3789,14 @@ export async function syncCheckShipmentsToInbound(
       FROM rows_ r JOIN lot l USING (sid)
     ),
     target AS (
-      SELECT id, c_status, c_created_date, cur_recv, cur_disc, cur_ngay_di,
+      SELECT id, c_status, c_created_date, c_first_receiving, cur_recv, cur_disc, cur_ngay_di,
+        -- Amazon Received (số dùng cho Base Cost): lô Closed có số nhận chắc chắn theo SKU (1 SKU / crawler khớp lô)
+        -- → ghi số thật của Amazon; còn lại giữ số trên sheet (lô chưa Closed tạm tính = Quantity lúc đọc).
+        CASE
+          WHEN c_closed AND mode = 'single' THEN units_located
+          WHEN c_closed AND mode = 'crawler' THEN COALESCE(d_located, qty)
+          ELSE cur_amz_recv
+        END AS new_amz_recv,
         CASE mode
           WHEN 'star' THEN qty
           WHEN 'pending' THEN NULL
@@ -3808,6 +3819,12 @@ export async function syncCheckShipmentsToInbound(
     SET
       so_luong_amazon_nhan = t.new_recv,
       discrepancy = t.new_disc,
+      amazon_received = t.new_amz_recv,
+      -- Ngày đến: sheet để trống thì lấy ngày đầu tiên Check Shipment thấy lô Receiving/Closed
+      ngay_den = CASE
+        WHEN (s.ngay_den IS NULL OR TRIM(s.ngay_den) = '') AND t.c_first_receiving IS NOT NULL THEN t.c_first_receiving
+        ELSE s.ngay_den
+      END,
       status = CASE
         WHEN t.c_status IS NOT NULL AND t.c_status != '' AND t.c_status NOT LIKE '%object Object%' THEN t.c_status
         ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
@@ -3828,6 +3845,8 @@ export async function syncCheckShipmentsToInbound(
       AND (
         s.so_luong_amazon_nhan IS DISTINCT FROM t.new_recv OR
         s.discrepancy IS DISTINCT FROM t.new_disc OR
+        s.amazon_received IS DISTINCT FROM t.new_amz_recv OR
+        ((s.ngay_den IS NULL OR TRIM(s.ngay_den) = '') AND t.c_first_receiving IS NOT NULL) OR
         s.status IS DISTINCT FROM t.c_status OR
         s.tinh_trang_hang_den_kho IS DISTINCT FROM t.c_status OR
         (t.c_created_date IS NOT NULL AND TRIM(t.c_created_date) != '' AND s.ngay_di IS DISTINCT FROM t.c_created_date)
