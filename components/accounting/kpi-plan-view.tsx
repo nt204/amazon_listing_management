@@ -34,8 +34,8 @@ function fmt(v: number | null, kind: "usd" | "int" | "pct") {
 /** Dòng mà Result cao hơn kế hoạch là tốt (tô xanh / đỏ khi so với kế hoạch) */
 const HIGHER_IS_BETTER = new Set(["revenue", "quantity", "profit", "roi", "margin"]);
 
-const hd = "border-r border-b border-black px-2 py-1 text-[11px] font-extrabold text-black whitespace-nowrap";
-const cell = "border-r border-b border-black px-2 py-1 whitespace-nowrap";
+const hd = "border-r border-b border-black px-2.5 py-2.5 text-[13.5px] font-extrabold text-black whitespace-nowrap";
+const cell = "border-r border-b border-black px-2 py-1.5 whitespace-nowrap";
 
 export function KpiPlanView({
   storeIds,
@@ -208,7 +208,7 @@ export function KpiPlanView({
                 </th>
               </tr>
               <tr>
-                <th className={`${hd} sticky left-0 z-10 bg-[#ff9900] text-left text-xs font-black`}>Chỉ số</th>
+                <th className={`${hd} sticky left-0 z-10 bg-[#ff9900] text-left text-[13.5px] font-black`}>Chỉ số</th>
                 {months.map((m) => (
                   <MonthHead key={m.period} month={m} />
                 ))}

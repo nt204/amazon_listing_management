@@ -970,23 +970,23 @@ function KpiPhoiPicTable({
             </colgroup>
             <thead>
               <tr className="border-b border-slate-300">
-                <th colSpan={4} className="border-r-2 border-slate-300 bg-blue-200 py-2 text-center font-bold text-blue-950 text-xs">
+                <th colSpan={4} className="border-r-2 border-slate-300 bg-blue-200 py-2.5 text-center font-bold text-blue-950 text-[13.5px]">
                   R&amp;D Testing ({periodLabel(period)})
                 </th>
-                <th colSpan={5} className="bg-emerald-200 py-2 text-center font-bold text-emerald-950 text-xs">
+                <th colSpan={5} className="bg-emerald-200 py-2.5 text-center font-bold text-emerald-950 text-[13.5px]">
                   Đánh giá SKU WIN ({periodLabel(period)})
                 </th>
               </tr>
-              <tr className="border-b border-slate-300 text-[11.5px]">
-                <th className="bg-blue-100 py-2 text-left font-bold text-blue-950">{nameLabel}</th>
-                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950" title="KPI số mẫu test đi hàng của cả store, đặt đầu tháng (nhập ở dòng Tổng)">Target</th>
-                <th className="bg-blue-100 py-2 text-right font-bold text-blue-950" title="Số SKU test thực tế đi hàng (listing) trong tháng">Result</th>
-                <th className="border-r-2 border-slate-300 bg-blue-100 py-2 text-right font-bold text-blue-950" title="Result ÷ Target">% mục tiêu</th>
-                <th className="bg-emerald-100 py-2 text-left font-bold text-emerald-950">{nameLabel}</th>
-                <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">Số SKU</th>
-                <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">Mục tiêu</th>
-                <th className="bg-emerald-100 py-2 text-right font-bold text-emerald-950">WIN thực tế</th>
-                <th className="bg-emerald-100 py-2 text-center font-bold text-emerald-950">Tỉ lệ WIN</th>
+              <tr className="border-b border-slate-300 text-[13px]">
+                <th className="bg-blue-100 py-2.5 text-left font-bold text-blue-950">{nameLabel}</th>
+                <th className="bg-blue-100 py-2.5 text-right font-bold text-blue-950" title="KPI số mẫu test đi hàng của cả store, đặt đầu tháng (nhập ở dòng Tổng)">Target</th>
+                <th className="bg-blue-100 py-2.5 text-right font-bold text-blue-950" title="Số SKU test thực tế đi hàng (listing) trong tháng">Result</th>
+                <th className="border-r-2 border-slate-300 bg-blue-100 py-2.5 text-right font-bold text-blue-950" title="Result ÷ Target">% mục tiêu</th>
+                <th className="bg-emerald-100 py-2.5 text-left font-bold text-emerald-950">{nameLabel}</th>
+                <th className="bg-emerald-100 py-2.5 text-right font-bold text-emerald-950">Số SKU</th>
+                <th className="bg-emerald-100 py-2.5 text-right font-bold text-emerald-950">Mục tiêu</th>
+                <th className="bg-emerald-100 py-2.5 text-right font-bold text-emerald-950">WIN thực tế</th>
+                <th className="bg-emerald-100 py-2.5 text-center font-bold text-emerald-950">Tỉ lệ WIN</th>
               </tr>
             </thead>
             <tbody>
@@ -1229,8 +1229,8 @@ function OverviewPage({
   const dirty = note !== (data.note?.note ?? "");
 
   // Bảng BÁO CÁO THÁNG: lưới đen, tên cột như sheet
-  const hd = "border-r border-b border-black px-2 py-1 text-[11px] font-extrabold text-black whitespace-nowrap";
-  const cell = "border-r border-b border-black px-2 py-1 whitespace-nowrap";
+  const hd = "border-r border-b border-black px-2.5 py-2.5 text-[13.5px] font-extrabold text-black whitespace-nowrap";
+  const cell = "border-r border-b border-black px-2.5 py-1.5 whitespace-nowrap";
 
   // Phân nhóm màu sắc trực quan theo yêu cầu:
   // - Cột Chỉ số: màu cam #ff9900 chuẩn theo ảnh chụp
@@ -1465,15 +1465,15 @@ function OverviewPage({
               </tr>
               {/* Cấp 2: Từng cột chỉ số */}
               <tr>
-                <th className={`${hd} sticky left-0 z-10 bg-[#ff9900] text-black text-left font-black text-xs`}>Chỉ số</th>
+                <th className={`${hd} sticky left-0 z-10 bg-[#ff9900] text-black text-left font-black text-[13.5px]`}>Chỉ số</th>
                 {REPORT_COLS.map((c) => (
                   <th
                     key={c.key}
                     title={c.title}
-                    className={`${hd} text-right align-bottom leading-tight ${c.headCls} ${c.divider ? "border-r-2 border-r-black" : ""}`}
+                    className={`${hd} text-right align-bottom leading-snug ${c.headCls} ${c.divider ? "border-r-2 border-r-black" : ""}`}
                   >
                     {c.label.map((line, i) => (
-                      <span key={i} className={`block font-black text-black ${i === 0 ? "text-[11px]" : "text-[12px]"}`}>
+                      <span key={i} className="block font-black text-black text-[13px]">
                         {line}
                       </span>
                     ))}
@@ -1870,31 +1870,32 @@ function SkuTable({
   // Lưới kẻ đen như bảng SKU Testing: mỗi ô kẻ phải + dưới, bảng kẻ trên + trái; đầu mỗi nhóm cột kẻ đậm
   const grid = "border-r border-b border-black";
   const fixCls = `sticky z-10 bg-white group-hover:bg-yellow-50 ${grid}`;
-  const th = `px-2 py-1.5 text-right text-[11px] font-bold text-black whitespace-nowrap ${grid}`;
-  const td = `px-2 py-1 text-right tabular-nums whitespace-nowrap ${grid}`;
+  const th = `px-2.5 py-2.5 text-right text-[13px] font-bold text-black whitespace-nowrap ${grid}`;
+  const td = `px-2 py-1.5 text-right tabular-nums whitespace-nowrap ${grid}`;
   const pal = (g: ColGroup) => GROUP_PALETTE[g.key] || GROUP_PALETTE.info;
+  const groupDivider = (g: ColGroup) => (g.key === "info" ? "" : "border-l-2 border-l-black");
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-auto">
-        <table className="border-separate border-spacing-0 border-l border-t border-black text-xs">
+        <table className="acc-kpi-sku-table border-separate border-spacing-0 border-l border-t border-black text-xs">
           <thead className="sticky top-0 z-20">
             <tr>
-              <th colSpan={FIX.length} className={`sticky left-0 z-30 ${MONTH_BG} px-2 py-1.5 text-left text-[11px] font-bold uppercase text-black ${grid}`}>
+              <th colSpan={FIX.length} className={`sticky left-0 z-30 ${MONTH_BG} px-2.5 py-2.5 text-left text-[13.5px] font-bold uppercase text-black ${grid}`}>
                 Bóc tách chi tiết · {skus.length} SKU
               </th>
               {shown.map((g) => (
-                <th key={g.key} colSpan={g.cols.length} className={`px-2 py-1 text-center text-[11px] font-bold text-black ${grid} ${g.sub || g.key === "info" ? MONTH_BG : "bg-white"}`}>
+                <th key={g.key} colSpan={g.cols.length} className={`px-2.5 py-2.5 text-center text-[13.5px] font-bold text-black ${grid} ${groupDivider(g)} ${g.sub || g.key === "info" ? MONTH_BG : "bg-white"}`}>
                   {g.sub}
                 </th>
               ))}
             </tr>
             <tr>
-              <th colSpan={FIX.length} className={`sticky left-0 z-30 ${GROUP_PALETTE.info.head} px-2 py-1.5 text-left text-[11px] font-bold uppercase text-black ${grid}`}>
+              <th colSpan={FIX.length} className={`sticky left-0 z-30 ${GROUP_PALETTE.info.head} px-2.5 py-2.5 text-left text-[13.5px] font-bold uppercase text-black ${grid}`}>
                 Thông tin sản phẩm
               </th>
               {shown.map((g) => (
-                <th key={g.key} colSpan={g.cols.length} className={`px-2 py-1.5 text-center text-[11px] font-bold text-black ${grid} ${pal(g).head}`}>
+                <th key={g.key} colSpan={g.cols.length} className={`px-2.5 py-2.5 text-center text-[13.5px] font-bold text-black ${grid} ${groupDivider(g)} ${pal(g).head}`}>
                   {g.key === "info" ? "" : g.title}
                 </th>
               ))}
@@ -1906,18 +1907,18 @@ function SkuTable({
                   data-kpi-edit-col={f.label.includes("✎") ? f.label : undefined}
                   data-kpi-sticky={f.label.includes("✎") ? "1" : undefined}
                   style={{ left: leftOf(i), minWidth: f.w, maxWidth: f.w }}
-                  className={`sticky z-30 ${GROUP_PALETTE.info.sub} px-2 py-1.5 ${f.label.startsWith("Price") ? "text-right" : "text-left"} text-[11px] font-bold text-black ${grid}`}
+                  className={`sticky z-30 ${GROUP_PALETTE.info.sub} px-2.5 py-2.5 ${f.label.startsWith("Price") ? "text-right" : "text-left"} text-[13px] font-bold text-black ${grid}`}
                 >
                   {f.label}
                 </th>
               ))}
               {shown.map((g) =>
-                g.cols.map((col) => (
+                g.cols.map((col, colIndex) => (
                   <th
                     key={col.id}
                     data-kpi-edit-col={col.render ? col.label : undefined}
                     style={col.width ? { minWidth: col.width } : undefined}
-                    className={`${th} ${pal(g).sub} ${col.kind === "text" ? "text-left" : ""}`}
+                    className={`${th} ${pal(g).sub} ${colIndex === 0 ? groupDivider(g) : ""} ${col.kind === "text" ? "text-left" : ""}`}
                   >
                     {col.label}
                   </th>
@@ -1926,12 +1927,12 @@ function SkuTable({
             </tr>
             <tr className="font-bold">
               {/* Dòng Tổng tô vàng nhạt để tách khỏi tiêu đề và các dòng SKU */}
-              <td colSpan={FIX.length} className={`sticky left-0 z-30 border-b-2 bg-[#FFF2CC] px-2 py-1.5 text-left text-black ${grid}`}>
+              <td colSpan={FIX.length} className={`sticky left-0 z-30 border-b-2 bg-[#FFF2CC] px-2.5 py-2 text-left text-xs text-black ${grid}`}>
                 Tổng
               </td>
               {shown.map((g) =>
-                g.cols.map((col) => (
-                  <td key={col.id} className={`${td} border-b-2 bg-[#FFF2CC] text-black`}>
+                g.cols.map((col, colIndex) => (
+                  <td key={col.id} className={`${td} border-b-2 bg-[#FFF2CC] text-black ${colIndex === 0 ? groupDivider(g) : ""}`}>
                     {totalCell(col)}
                   </td>
                 )),
@@ -1968,12 +1969,12 @@ function SkuTable({
                   />
                 </td>
                 {shown.map((g) =>
-                  g.cols.map((col) => {
+                  g.cols.map((col, colIndex) => {
                     const v = col.value ? col.value(c) : null;
                     return (
                       <td
                         key={col.id}
-                        className={`${td} bg-white text-black group-hover:bg-yellow-50 ${toneCls(col, v)} ${col.kind === "text" ? "text-left" : ""}`}
+                        className={`${td} bg-white text-black group-hover:bg-yellow-50 ${colIndex === 0 ? groupDivider(g) : ""} ${toneCls(col, v)} ${col.kind === "text" ? "text-left" : ""}`}
                       >
                         {col.render ? col.render(c) : fmtCell(col, v)}
                       </td>
@@ -2100,9 +2101,9 @@ function SkuDrawer({
             <table className="w-full border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="px-2.5 py-2 text-left text-[11px] font-semibold text-slate-600">Chỉ số</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-700">Chỉ số</th>
                   {cols.map((c) => (
-                    <th key={c.label} className={`px-2.5 py-2 text-right text-[11px] font-semibold text-slate-600 ${c.tone || ""}`}>
+                    <th key={c.label} className={`px-3 py-2.5 text-right text-xs font-semibold text-slate-700 ${c.tone || ""}`}>
                       {c.label}
                     </th>
                   ))}

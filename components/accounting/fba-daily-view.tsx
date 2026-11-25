@@ -173,16 +173,18 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
             const defaultMap = new Map(defaultColumns.map((c) => [c.id, c]));
-            const restored = parsed.map((col: ColumnConfig) => {
-              const def = defaultMap.get(col.id);
-              return {
-                ...col,
-                label: col.label?.replace(/\s*\(\$\)\s*/g, "").trim() || def?.label || col.id,
-                defaultLabel: def?.defaultLabel || col.defaultLabel || col.label,
-                align: col.align || def?.align,
-                width: col.width || def?.width,
-              };
-            });
+            const restored = parsed
+              .filter((col: ColumnConfig) => col.id !== "stt")
+              .map((col: ColumnConfig) => {
+                const def = defaultMap.get(col.id);
+                return {
+                  ...col,
+                  label: col.label?.replace(/\s*\(\$\)\s*/g, "").trim() || def?.label || col.id,
+                  defaultLabel: def?.defaultLabel || col.defaultLabel || col.label,
+                  align: col.align || def?.align,
+                  width: col.width || def?.width,
+                };
+              });
             // Cột mới thêm vào mặc định (vd Net Profit của FBM) chèn ngay sau cột đứng trước nó trong mặc định
             const out: ColumnConfig[] = [...restored];
             defaultColumns.forEach((col, i) => {
@@ -207,13 +209,13 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) return parsed;
+          if (Array.isArray(parsed)) return parsed.filter((id: string) => id !== "stt");
         } catch {
           // fallback
         }
       }
     }
-    return ["stt", "week", "date"];
+    return ["week", "date"];
   });
 
   const [showColumnModal, setShowColumnModal] = useState(false);
@@ -302,7 +304,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       localStorage.removeItem(frozenStorageKey);
     }
     setColumns(defaultColumns);
-    setFrozenColumns(["stt", "week", "date"]);
+    setFrozenColumns(["week", "date"]);
   };
 
   const handleSetFrozenThrough = useCallback(
@@ -320,7 +322,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   );
 
   const handleResetFrozenColumns = useCallback(() => {
-    const defaultFrozenColumns = ["stt", "week", "date"];
+    const defaultFrozenColumns = ["week", "date"];
     setFrozenColumns(defaultFrozenColumns);
     if (typeof window !== "undefined") {
       localStorage.setItem(frozenStorageKey, JSON.stringify(defaultFrozenColumns));
@@ -700,8 +702,8 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   return (
     <div className="flex h-full flex-col bg-slate-50 text-slate-800">
       {/* TOOLBAR: Store, Date Range, Search, Actions */}
-      <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="bg-slate-200/70 p-2 sm:p-2.5 rounded-xl border border-slate-300 flex items-center justify-between gap-2.5 flex-wrap shadow-2xs shrink-0">
+        <div className="flex items-center gap-2.5 flex-wrap">
           {/* Store Switcher */}
           <StoreSelect
             id={`${channel}-store-select`}
@@ -735,46 +737,48 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
               placeholder="Tìm ngày, tuần, tháng..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-44 rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 py-1 text-xs text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:outline-hidden shadow-2xs"
+              className="w-44 sm:w-52 h-9 rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:outline-hidden shadow-2xs"
             />
           </div>
+        </div>
 
+        {/* Right Toolbar Actions */}
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Zoom Controls */}
-          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
+          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs h-9">
             <button
               type="button"
               onClick={() => handleZoomChange(-5)}
               title="Thu nhỏ"
-              className="px-1.5 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="px-2 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer h-full flex items-center justify-center"
             >
               <MinusIcon size={12} weight="bold" />
             </button>
-            <span className="px-1.5 text-[11px] font-mono font-bold text-slate-700 select-none">
+            <span className="px-2 text-xs font-mono font-bold text-slate-700 select-none min-w-[42px] text-center">
               {zoomLevel}%
             </span>
             <button
               type="button"
               onClick={() => handleZoomChange(5)}
               title="Phóng to"
-              className="px-1.5 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="px-2 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer h-full flex items-center justify-center"
             >
               <PlusIcon size={12} weight="bold" />
             </button>
           </div>
-        </div>
 
-        {/* Right Toolbar Actions */}
-        <div className="flex items-center gap-2">
+          <span className="h-6 w-px bg-slate-300 mx-0.5 hidden sm:inline-block" aria-hidden="true" />
+
           {/* Refresh */}
           <button
             type="button"
             onClick={() => fetchData()}
             disabled={loading}
             title="Tải lại dữ liệu"
-            className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
           >
             <ArrowClockwiseIcon
-              size={14}
+              size={15}
               className={loading ? "animate-spin text-amber-600" : "text-slate-600"}
             />
             <span>Làm mới</span>
@@ -956,13 +960,10 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                             : "text-left"
                         }`}
                       >
-                        {col.id === "stt" && (
-                          <span className="inline-block px-1 py-0.5 rounded bg-amber-200/70 text-amber-950 text-[10px] font-black tracking-wider">
+                        {col.id === "week" && (
+                          <span className="inline-block px-1.5 py-0.5 rounded bg-amber-200/70 text-amber-950 text-[10px] font-black tracking-wider">
                             TOTAL
                           </span>
-                        )}
-                        {col.id === "week" && (
-                          <span className="text-slate-400 text-[11px]">—</span>
                         )}
                         {col.id === "date" && (
                           <span className="font-bold text-slate-950 text-xs">
@@ -1167,13 +1168,6 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                                 : "text-left"
                             }`}
                           >
-                            {/* STT */}
-                            {col.id === "stt" && (
-                              <span className="text-slate-400 text-[11px] font-mono">
-                                {index + 1}
-                              </span>
-                            )}
-
                             {/* Tuần */}
                             {col.id === "week" && (
                               <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">

@@ -299,8 +299,8 @@ export const DEFAULT_SERVICE_FEE_INPUT_COLUMNS: ColumnConfig[] = [
 
 export const DEFAULT_SKU_WIN_COLUMNS: ColumnConfig[] = [
   { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 72 },
-  { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: 150 },
-  { id: "mockup", label: "Image", defaultLabel: "Image", visible: true, isFrozen: true, align: "center", width: 72 },
+  { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: 160 },
+  { id: "mockup", label: "Image", defaultLabel: "Image", visible: true, isFrozen: true, align: "center", width: 84 },
   { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 180 },
   { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 115 },
   { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 100 },
@@ -339,7 +339,6 @@ export const DEFAULT_SKU_TEST_COLUMNS: ColumnConfig[] = [
 ];
 
 export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
-  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 60 },
   { id: "week", label: "Tuần", defaultLabel: "Tuần", visible: true, isFrozen: true, align: "center", width: 85 },
   { id: "date", label: "Date", defaultLabel: "Date", visible: true, isFrozen: true, align: "center", width: 110 },
   { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 125 },

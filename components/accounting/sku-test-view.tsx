@@ -852,8 +852,8 @@ export function SkuTestView() {
       )}
 
       {/* TOOLBAR: Store, Date Range, Search, Zoom, Actions */}
-      <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="bg-slate-200/70 p-2 sm:p-2.5 rounded-xl border border-slate-300 flex items-center justify-between gap-2.5 flex-wrap shadow-2xs shrink-0">
+        <div className="flex items-center gap-2.5 flex-wrap">
           {/* Store Selector */}
           <StoreSelect
             id="skutest-store-select"
@@ -878,8 +878,8 @@ export function SkuTestView() {
           />
 
           {/* Search */}
-          <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
-            <MagnifyingGlassIcon size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="relative w-44 sm:w-52 focus-within:!w-64 transition-all duration-200">
+            <MagnifyingGlassIcon size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="text"
               placeholder="Tìm SKU, ASIN, Type..."
@@ -888,55 +888,57 @@ export function SkuTestView() {
                 setSearch(e.target.value);
                 setPage(1);
               }}
-              className="w-full rounded-lg border border-slate-300 bg-white pl-7 pr-5 py-1 text-xs font-medium text-slate-800 placeholder-slate-400 outline-hidden transition focus:border-amber-500 shadow-2xs"
+              className="w-full h-9 rounded-lg border border-slate-300 bg-white pl-8 pr-6 text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 outline-hidden transition focus:border-amber-500 shadow-2xs"
             />
             {search && (
               <button
                 type="button"
                 onClick={() => setSearch("")}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
-                <XIcon size={10} />
+                <XIcon size={12} weight="bold" />
               </button>
             )}
           </div>
+        </div>
 
-          {/* Zoom Controls */}
-          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
+        {/* Right Toolbar Actions */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Zoom Controls (Đưa sang cụm công cụ hiển thị bên phải) */}
+          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs h-9">
             <button
               type="button"
               onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
-              className="px-1.5 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="px-2 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer h-full flex items-center justify-center"
               title="Thu nhỏ bảng (-10%)"
             >
-              <MinusIcon size={11} weight="bold" />
+              <MinusIcon size={12} weight="bold" />
             </button>
-            <span className="px-1.5 text-[11px] font-mono font-bold text-slate-700 select-none min-w-[36px] text-center">
+            <span className="px-2 text-xs font-mono font-bold text-slate-700 select-none min-w-[42px] text-center">
               {tableZoom}%
             </span>
             <button
               type="button"
               onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
-              className="px-1.5 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="px-2 py-1 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer h-full flex items-center justify-center"
               title="Phóng to bảng (+10%)"
             >
-              <PlusIcon size={11} weight="bold" />
+              <PlusIcon size={12} weight="bold" />
             </button>
           </div>
-        </div>
 
-        {/* Right Toolbar Actions */}
-        <div className="flex items-center gap-2">
+          <span className="h-6 w-px bg-slate-300 mx-0.5 hidden sm:inline-block" aria-hidden="true" />
+
           {/* Refresh */}
           <button
             type="button"
             onClick={fetchData}
             disabled={loading}
             title="Tải lại bảng dữ liệu"
-            className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
           >
             <ArrowClockwiseIcon
-              size={14}
+              size={15}
               className={loading ? "animate-spin text-amber-600" : "text-slate-600"}
             />
             <span>Làm mới</span>
@@ -947,9 +949,9 @@ export function SkuTestView() {
             type="button"
             onClick={() => setShowColumnModal(true)}
             title={`Cấu hình cột LỌC SKU TEST (${visibleColumns.length}/${columns.length})`}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
           >
-            <SlidersHorizontalIcon size={14} className="text-slate-600" />
+            <SlidersHorizontalIcon size={15} className="text-slate-600" />
             <span>Tùy chỉnh cột</span>
           </button>
 
@@ -957,10 +959,10 @@ export function SkuTestView() {
           <a
             href={exportUrl}
             download
-            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-700 transition-colors shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 h-9 rounded-lg bg-emerald-600 px-3.5 text-xs sm:text-sm font-bold text-white hover:bg-emerald-700 transition-colors shadow-2xs cursor-pointer"
             title="Xuất file Excel đúng chuẩn format LỌC SKU TEST"
           >
-            <FileXlsIcon size={14} weight="bold" />
+            <FileXlsIcon size={15} weight="bold" />
             <span>Xuất Excel</span>
           </a>
         </div>
@@ -1023,20 +1025,23 @@ export function SkuTestView() {
                     : Number.parseInt(column.width || "", 10);
                   const width = column.id === "stt"
                     ? `${Math.max(configuredWidth || 55, 72)}px`
-                    : typeof column.width === "number"
-                      ? `${column.width}px`
-                      : column.width || "110px";
+                    : column.id === "mockup"
+                      ? `${Math.max(configuredWidth || 72, 84)}px`
+                      : typeof column.width === "number"
+                        ? `${column.width}px`
+                        : column.width || "110px";
                   return <col key={column.id} style={{ width }} />;
                 })}
               </colgroup>
 
               {/* Header màu cam chuẩn Bảng Mã (#ff9900) với ColumnHeaderCell (drag, resize, auto-fit, context menu) */}
-              <thead className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs">
-                <tr className="text-[15px] tracking-[0.02em]">
+              <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
+                {/* ROW 1: COLUMN HEADERS */}
+                <tr className="text-[13.5px] font-bold shadow-xs">
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
                     const isSorted = sortField === col.id;
-                    const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
+                    const bgStyle = f.isFrozen ? { backgroundColor: "#ff9900" } : {};
                     let displayColLabel = (col.label || "").replace(/\s*\(\$\)/g, "").trim();
                     if (col.id === "revenue" && (displayColLabel.toLowerCase() === "revenue" || !displayColLabel)) {
                       displayColLabel = "Revenue";
@@ -1050,9 +1055,8 @@ export function SkuTestView() {
                         col={col}
                         isFrozen={f.isFrozen}
                         isBoundary={f.isBoundary}
-                        style={f.style}
-                        className={`py-1.5 px-2 text-[15px] bg-[#ff9900] text-slate-950 select-none ${profitColClass(col.id, "head")} ${isKeyBoldCol ? "font-bold text-slate-950" : "font-bold text-slate-900"
-                          } ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}
+                        style={{ ...f.style, ...bgStyle }}
+                        className={`py-2 px-2.5 whitespace-nowrap bg-[#ff9900] text-slate-950 ${profitColClass(col.id, "head")}`}
                         draggable={true}
                         isDragging={headerDragId === col.id}
                         isDragOver={headerDragOverId === col.id}
@@ -1082,23 +1086,22 @@ export function SkuTestView() {
                         }}
                       >
                         <div
-                          className={`flex items-center w-full min-h-[38px] relative group/title px-0.5 ${col.align === "center" ? "justify-center" : col.align === "right" ? "justify-end" : "justify-start"
-                            }`}
+                          className={`group/title flex min-h-[38px] w-full items-center gap-1 ${
+                            col.align === "center"
+                              ? "justify-center"
+                              : col.align === "right"
+                              ? "justify-end"
+                              : "justify-start"
+                          }`}
                         >
-                          {/* Bấm vào tiêu đề → menu sắp xếp / lọc / tuỳ chọn cột (không còn nút nhỏ dễ bấm nhầm khi kéo dãn) */}
-                          <span className="inline-flex min-w-0 cursor-pointer items-center gap-1" title={`Bấm để sắp xếp / lọc / tuỳ chọn cột ${displayColLabel}`}>
-                            <span
-                              className={`line-clamp-2 whitespace-normal break-words leading-tight ${col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}`}
-                            >
-                              {displayColLabel.replace(/\//g, "/\u200B")}
-                            </span>
-                            {isSorted ? (
-                              sortDirection === "asc" ? (
-                                <CaretUpIcon size={12} weight="bold" className="shrink-0 text-slate-950" />
-                              ) : (
-                                <CaretDownIcon size={12} weight="bold" className="shrink-0 text-slate-950" />
-                              )
-                            ) : null}
+                          {/* Bấm vào tiêu đề → menu sắp xếp / lọc / tuỳ chọn cột */}
+                          <span className="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate" title={`Bấm để sắp xếp / lọc / tuỳ chọn cột ${displayColLabel}`}>
+                            <span className="truncate">{displayColLabel}</span>
+                            {isSorted && (
+                              <span className="shrink-0 text-slate-950">
+                                {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
+                              </span>
+                            )}
                             {columnFilters[col.id] && <FunnelIcon size={11} weight="fill" className="shrink-0 text-slate-900" />}
                           </span>
                         </div>
@@ -1109,7 +1112,7 @@ export function SkuTestView() {
 
                 {/* ROW 2: TOTAL / SUM ROW ĐỨNG NGAY TRÊN ĐẦU MỖI CỘT TƯƠNG ỨNG */}
                 {stats && (
-                  <tr className="bg-[#FFE699] text-slate-950 border-b border-amber-300 text-xs select-none shadow-2xs">
+                  <tr className="bg-[#FFE699] text-slate-950 border-b border-amber-300 text-xs sm:text-[13px] select-none shadow-2xs">
                     {visibleColumns.map((col) => {
                       const f = getCellFreezeProps(col.id, true);
                       const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
@@ -1125,7 +1128,7 @@ export function SkuTestView() {
                         <td
                           key={`total-${col.id}`}
                           style={{ ...f.style, ...bgStyle }}
-                          className={`${profitColor ? "" : profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap ${
+                          className={`${profitColor ? "" : profitColClass(col.id, "total")} py-2 px-2.5 text-xs sm:text-[13px] border-b border-amber-300 whitespace-nowrap ${
                             f.isBoundary
                               ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                               : "border-r border-amber-200/80"
@@ -1313,7 +1316,7 @@ export function SkuTestView() {
                     return (
                       <tr
                         key={item.id}
-                        className={`h-[36px] hover:bg-amber-50/70 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200 ${isEven ? "bg-white" : "bg-[#f8fafc]"
+                        className={`min-h-[50px] hover:bg-amber-50/70 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200 ${isEven ? "bg-white" : "bg-[#f8fafc]"
                           }`}
                       >
                         {visibleColumns.map((col) => {
@@ -1331,7 +1334,7 @@ export function SkuTestView() {
                             <td
                               key={col.id}
                               style={{ ...f.style, ...bgStyle }}
-                              className={`${profitColor ? "" : profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs text-slate-900 border-b border-slate-200 transition-colors ${
+                              className={`${profitColor ? "" : profitColClass(col.id, "body")} py-2 px-2.5 text-xs sm:text-[13px] text-slate-900 border-b border-slate-200 transition-colors ${
                                 f.isBoundary
                                   ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                                   : "border-r border-slate-200"
@@ -1345,15 +1348,15 @@ export function SkuTestView() {
                             >
                               {/* STT + Edit */}
                               {col.id === "stt" && (
-                                <div className="flex items-center justify-center gap-1">
-                                  <span className="text-slate-500">{stt}</span>
+                                <div className="flex items-center justify-center gap-1.5 font-semibold text-slate-600">
+                                  <span>{stt}</span>
                                   <button
                                     type="button"
                                     onClick={() => handleOpenTargetModal(item)}
-                                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-amber-100 hover:text-amber-800 transition cursor-pointer"
+                                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-amber-100 hover:text-amber-800 transition cursor-pointer"
                                     title="Cài đặt mục tiêu / Giá bán SKU"
                                   >
-                                    <PencilSimpleIcon size={12} weight="bold" />
+                                    <PencilSimpleIcon size={13} weight="bold" />
                                   </button>
                                 </div>
                               )}
@@ -1365,12 +1368,12 @@ export function SkuTestView() {
 
                               {/* Product Type */}
                               {col.id === "product_type" && (
-                                <span className="font-normal text-slate-800">{item.product_type || "—"}</span>
+                                <span className="font-medium text-slate-800 text-xs sm:text-[13px]">{item.product_type || "—"}</span>
                               )}
 
                               {/* Image / Mockup */}
                               {col.id === "mockup" && (
-                                <div className="flex justify-center items-center">
+                                <div className="flex justify-center items-center py-0.5">
                                   {item.mockup_url || item.mockup ? (
                                     <button
                                       type="button"
@@ -1380,19 +1383,19 @@ export function SkuTestView() {
                                           title: `${item.sku} - ${item.product_type}`,
                                         })
                                       }
-                                      className="h-7 w-7 rounded-md border border-slate-200 overflow-hidden bg-slate-100 hover:ring-2 hover:ring-amber-500 transition cursor-pointer"
+                                      className="h-11 w-11 rounded-lg border border-slate-300 overflow-hidden bg-white hover:ring-2 hover:ring-amber-500 hover:border-amber-500 shadow-2xs transition-all cursor-pointer p-0.5 shrink-0 flex items-center justify-center"
                                       title="Nhấn để xem ảnh phóng to"
                                     >
                                       <img
-                                        src={getOptimizedThumbnailUrl(item.mockup_url || item.mockup, 64) || item.mockup_url || item.mockup || ""}
+                                        src={getOptimizedThumbnailUrl(item.mockup_url || item.mockup, 120) || item.mockup_url || item.mockup || ""}
                                         alt={item.sku}
-                                        className="h-full w-full object-cover"
+                                        className="h-full w-full object-contain rounded"
                                         loading="lazy"
                                       />
                                     </button>
                                   ) : (
-                                    <div className="h-7 w-7 rounded bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400">
-                                      <PackageIcon size={14} />
+                                    <div className="h-11 w-11 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                                      <PackageIcon size={18} />
                                     </div>
                                   )}
                                 </div>

@@ -217,23 +217,27 @@ body {
 .font-accounting-system table.acc-kpi-report-table thead th *,
 .font-accounting-system table.acc-kpi-report-table thead span,
 .font-accounting-system table.acc-kpi-subtable thead th,
-.font-accounting-system table.acc-kpi-subtable thead th * {
-  font-weight: 800 !important;
+.font-accounting-system table.acc-kpi-subtable thead th *,
+.font-accounting-system table.acc-kpi-sku-table thead th,
+.font-accounting-system table.acc-kpi-sku-table thead th *,
+.font-accounting-system table.acc-sku-testing-table thead th,
+.font-accounting-system table.acc-sku-testing-table thead th *,
+.font-accounting-system table.acc-sku-testing-table thead span,
+.font-accounting-system table.acc-sku-testing-table thead button {
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: normal !important;
   color: #000000 !important;
 }
 
-/* Bảng Financials (FBA/FBM theo ngày, SKU Win/Test, FBM cố định): tên cột to hơn cho dễ đọc.
+/* Bảng Financials (FBA/FBM theo ngày, SKU Win/Test, FBM cố định): tên cột chuẩn như bên FBA theo ngày.
    Chỉ hàng tiêu đề đầu tiên, không đụng hàng TOTAL. */
 .font-accounting-system table.acc-financial-table thead tr:first-child th,
 .font-accounting-system table.acc-financial-table thead tr:first-child th .truncate,
-.font-accounting-system table.acc-financial-table thead tr:first-child th .acc-th-label {
-  font-size: 13.5px !important;
-}
-
-/* SKU Win/Test, FBM cố định mặc định zoom 100% (FBA/FBM theo ngày zoom 90%): 12px ≈ 13.5px × 90% để nhìn bằng nhau */
+.font-accounting-system table.acc-financial-table thead tr:first-child th .acc-th-label,
 .font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th,
 .font-accounting-system table.acc-financial-table-unzoomed thead tr:first-child th .truncate {
-  font-size: 12px !important;
+  font-size: 13.5px !important;
 }
 
 /* Cột chính của mỗi bảng (tên chiến dịch, keyword, search term, sku...): in đậm (font-weight: 700) */

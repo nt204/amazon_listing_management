@@ -813,7 +813,7 @@ function StatusDonut({
 
 // Lưới kẻ mảnh mọi ô; vạch dọc đậm hơn (SEP) ở đầu mỗi nhóm cột.
 // Màu chữ trên td/th phải dùng "!" vì CSS chung của Accounting đặt màu cho table td/th.
-const TH_BASE = "border border-slate-300 px-2 py-1.5 text-[11px] font-bold whitespace-nowrap";
+const TH_BASE = "border border-slate-300 px-3 py-2.5 text-[13.5px] font-bold whitespace-nowrap";
 const TH = `${TH_BASE} bg-slate-100 !text-slate-900`;
 const TD = "border border-slate-100 px-2 py-1 text-right font-mono tabular-nums whitespace-nowrap";
 const TDL = "border border-slate-100 px-2 py-1 text-left whitespace-nowrap";
@@ -1294,13 +1294,13 @@ function KqkdPeople({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1100px] border-collapse text-[13px] [&_td]:py-2.5">
+        <table className="acc-sku-testing-table w-full min-w-[1100px] border-collapse text-[13px] [&_td]:py-2.5">
           <thead>
             <tr>
               <th rowSpan={2} className={`${H} w-10 text-center align-bottom bg-slate-200 !text-black font-black`}>STT</th>
               <SortTh k="name" sort={sort} onSort={onSort} align="left" rowSpan={2} className={`${H} text-left align-bottom bg-slate-200 !text-black font-black`}>Người</SortTh>
-              <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-blue-300 !text-black font-black text-xs uppercase tracking-wide`}>SKU</th>
-              <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-purple-300 !text-black font-black text-xs uppercase tracking-wide`}>Tiền</th>
+              <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-blue-300 !text-black font-black text-[13.5px] uppercase tracking-wide`}>SKU</th>
+              <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-purple-300 !text-black font-black text-[13.5px] uppercase tracking-wide`}>Tiền</th>
             </tr>
             <tr>
               <SortTh k="n" sort={sort} onSort={onSort} className={`${TH_BASE} ${SEP} text-right bg-blue-200 !text-black font-bold`}>Tổng</SortTh>
@@ -2299,7 +2299,7 @@ export function KqkdView() {
               </div>
               {/* table-fixed + colgroup: độ rộng cột cố định, mở/đóng tháng không làm bảng co giãn */}
               {/* Đường giữa tên cột và dòng Tổng: kẻ thường (bỏ nét đậm chung của lưới đen) */}
-              <table className="w-full min-w-[960px] table-fixed border-collapse text-[13px] [&_td]:py-2.5 [&_td]:!text-[13px] [&_thead_th]:![border-bottom-width:1px]">
+              <table className="acc-sku-testing-table w-full min-w-[960px] table-fixed border-collapse text-[13px] [&_td]:py-2.5 [&_td]:!text-[13px] [&_thead_th]:![border-bottom-width:1px]">
                 <colgroup>
                   <col className="w-[6%]" />
                   <col className="w-[16%]" />
@@ -2315,8 +2315,8 @@ export function KqkdView() {
                 <thead>
                   <tr>
                     <th rowSpan={2} className={`${TH} text-left align-bottom bg-slate-200 !text-black font-black`}>Tháng</th>
-                    <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-blue-300 !text-black font-black text-xs uppercase tracking-wide`}>R&amp;D Testing</th>
-                    <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-emerald-300 !text-black font-black text-xs uppercase tracking-wide`}>Đánh giá SKU WIN</th>
+                    <th colSpan={4} className={`${TH_BASE} ${SEP} text-center bg-blue-300 !text-black font-black text-[13.5px] uppercase tracking-wide`}>R&amp;D Testing</th>
+                    <th colSpan={5} className={`${TH_BASE} ${SEP} text-center bg-emerald-300 !text-black font-black text-[13.5px] uppercase tracking-wide`}>Đánh giá SKU WIN</th>
                   </tr>
                   <tr>
                     <th className={`${TH_BASE} ${SEP} text-left bg-blue-200 !text-black font-bold`}>{nameLabel}</th>
@@ -2543,7 +2543,7 @@ export function KqkdView() {
           <AccountingViewTransition transitionKey="skus" className="flex-1 overflow-auto scrollbar-thin">
             {/* border-separate: tiêu đề dính (sticky) mang theo viền của ô — border-collapse để lại khe trong suốt giữa các dòng khi cuộn.
                 Bỏ viền trên/trái của từng ô để không bị viền đôi; giữ vạch dọc đậm (kq-sep) đầu mỗi nhóm cột. */}
-            <table className="min-w-max border-separate border-spacing-0 text-xs [&_td]:!border-black [&_th]:!border-black [&_td]:border-t-0 [&_th]:border-t-0 [&_td:not(.kq-sep)]:border-l-0 [&_th:not(.kq-sep)]:border-l-0 [&_thead_tr:last-child>td]:border-b-2 [&_thead_tr:last-child>td]:border-b-slate-300">
+            <table className="acc-sku-testing-table min-w-max border-separate border-spacing-0 text-xs [&_td]:!border-black [&_th]:!border-black [&_td]:border-t-0 [&_th]:border-t-0 [&_td:not(.kq-sep)]:border-l-0 [&_th:not(.kq-sep)]:border-l-0 [&_thead_tr:last-child>td]:border-b-2 [&_thead_tr:last-child>td]:border-b-slate-300">
               <thead className="sticky top-0 z-20">
                 <tr>
                   <th colSpan={3} className={`${TH_BASE} text-left bg-[#FF8C00] !text-black !border-black !border-t !border-l sticky left-0 z-30`}>Thông tin cơ bản</th>
