@@ -965,7 +965,7 @@ async function main() {
 import psycopg2, os
 from psycopg2.extras import RealDictCursor
 try:
-    conn = psycopg2.connect("postgresql://listing_desk:listing_desk@167.233.26.87:2412/listing_desk", connect_timeout=4)
+    conn = psycopg2.connect(os.environ.get("DATABASE_URL") or "postgresql://listing_desk:listing_desk@100.95.98.3:2412/listing_desk", connect_timeout=4)
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("""
         SELECT s.name, m.total_revenue, m.awd_subscription_fees, m.vat_tax_adjustment, m.total_sku_profit, m.net_profit

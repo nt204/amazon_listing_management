@@ -80,6 +80,8 @@ def load_owner_fee_rules(conn):
 def get_db_connection():
     db_urls = [
         os.getenv("DATABASE_URL"),
+        # VPS qua Tailscale (Mac mini) — IP public 167.233.26.87:2412 chỉ mở cho máy trong ALLOW_DB
+        "postgresql://listing_desk:listing_desk@100.95.98.3:2412/listing_desk",
         "postgresql://listing_desk:listing_desk@167.233.26.87:2412/listing_desk",
         "postgresql://listing_desk:listing_desk@localhost:2412/listing_desk",
     ]
@@ -91,7 +93,7 @@ def get_db_connection():
             return conn
         except Exception:
             continue
-    raise ConnectionError("Không thể kết nối tới cơ sở dữ liệu PostgreSQL (đã thử DATABASE_URL, 167.233.26.87:2412, localhost:2412)")
+    raise ConnectionError("Không thể kết nối tới cơ sở dữ liệu PostgreSQL (đã thử DATABASE_URL, Tailscale 100.95.98.3:2412, 167.233.26.87:2412, localhost:2412)")
 
 def resolve_store(conn, store_arg):
     cur = conn.cursor()

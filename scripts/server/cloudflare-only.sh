@@ -13,7 +13,7 @@
 # rồi `iptables -D INPUT -i eth0 -j APP-GUARD; ip6tables -D INPUT -i eth0 -j APP-GUARD`.
 set -euo pipefail
 SERVER="${SERVER:-root@167.233.26.87}"
-ALLOW_APP="${ALLOW_APP:-171.229.146.62}" # Mac mini: crawler PPC (AmazonPpcCrawler/remote_worker.ts) gọi thẳng :2411 (IP public 2026-11-25)
+ALLOW_APP="${ALLOW_APP:-}" # IP public được gọi thẳng :2411. Mac mini (crawler PPC + kế toán) gọi qua Tailscale http://100.95.98.3:2411 — luật chỉ lọc eth0 nên không cần IP public.
 
 ssh "$SERVER" "ALLOW_APP='$ALLOW_APP' bash -s" <<'REMOTE'
 set -euo pipefail

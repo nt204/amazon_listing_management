@@ -9,7 +9,7 @@
 # Đổi IP được phép: sửa /etc/default/db-port-guard trên server rồi `systemctl restart db-port-guard`.
 set -euo pipefail
 SERVER="${SERVER:-root@167.233.26.87}"
-ALLOW_DB="${ALLOW_DB:-113.190.144.23 171.229.146.62}" # máy văn phòng, Mac mini crawler (IP public đổi 2026-11-25, trước là 115.72.61.254)
+ALLOW_DB="${ALLOW_DB:-113.190.144.23}" # máy văn phòng. Mac mini vào qua Tailscale (VPS 100.95.98.3) — luật chỉ lọc eth0 nên không cần IP public.
 
 ssh "$SERVER" "ALLOW_DB='$ALLOW_DB' bash -s" <<'REMOTE'
 set -euo pipefail
