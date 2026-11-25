@@ -6609,7 +6609,10 @@ function InventoryViewInner() {
       {/* TAB 5: TỒN (giống tab TỒN của file <STORE> INVENTORY) */}
       {visitedTabs.ton && selectedStoreId && (
         <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col h-[calc(100vh-230px)] min-h-[580px] ${shownTab === "ton" ? "" : "hidden"}`}>
-          <InventoryTonView ref={tonRef} storeId={selectedStoreId} tableZoom={tableZoom} />
+          {/* Ẩn thì không dựng lại bảng TỒN (hàng nghìn dòng) mỗi lần trang Inventory render — như các tab khác */}
+          <FreezeWhenHidden active={shownTab === "ton"} frozen={tabSwitchPending} render={() => (
+            <InventoryTonView ref={tonRef} storeId={selectedStoreId} tableZoom={tableZoom} />
+          )} />
         </div>
       )}
 
