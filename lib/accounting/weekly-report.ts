@@ -14,6 +14,7 @@ import { getWeeklyPrepaid, type WeeklyPrepaid } from "@/lib/accounting/weekly-pr
 import { getWeeklyCashflow } from "@/lib/accounting/weekly-cashflow-db";
 import { getFbmMonthTarget } from "@/lib/accounting/kpi-fbm-targets";
 import { getWeeklyNote, type WeeklyNote } from "@/lib/accounting/weekly-note-db";
+import { getWeeklyUnitTargets } from "@/lib/accounting/weekly-unit-target-db";
 import type { WeeklyCashflow } from "@/lib/accounting/weekly-cashflow";
 import {
   daysInMonthOf,
@@ -108,6 +109,8 @@ export interface WeeklyReport {
   canEditPrepaid: boolean;
   /** Đánh giá tuần (thẻ "Đánh giá") — mọi người xem, admin / kế toán sửa */
   note: WeeklyNote;
+  /** Mục tiêu units tuần theo team (chốt ở check-in tuần): team → units; team chưa có = không có khoá */
+  unitTargets: Record<string, number>;
   /** Tài chính & dòng tiền (kế toán nhập + web tính) — null = không có quyền xem */
   cashflow: WeeklyCashflow | null;
   /** null = người xem không có quyền xem tiền về */
@@ -328,6 +331,7 @@ export async function getWeeklyReport(options: {
   });
 
   const note = await getWeeklyNote(week.startDate).catch((): WeeklyNote => ({ text: "", updatedBy: null, updatedAt: null }));
+  const unitTargets = await getWeeklyUnitTargets(week.startDate).catch((): Record<string, number> => ({}));
   const [payout, payoutMonth, cashflow] = options.canViewPayout
     ? await Promise.all([
         loadPayout(week, previousWeek, win.byStore.map((s) => s.storeName)),
@@ -351,6 +355,7 @@ export async function getWeeklyReport(options: {
     stock,
     canEditPrepaid: Boolean(options.canEditPrepaid),
     note,
+    unitTargets,
     cashflow,
     payout,
     payoutMonth,
