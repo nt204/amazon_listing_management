@@ -7,7 +7,7 @@ SRC_PLIST="$SCRIPT_DIR/$PLIST_NAME"
 TARGET_DIR="$HOME/Library/LaunchAgents"
 TARGET_PLIST="$TARGET_DIR/$PLIST_NAME"
 
-echo "=== CÀI ĐẶT DỊCH VỤ TỰ ĐỘNG QUÉT SHIPMENT DISCREPANCY (02:00 SÁNG THỨ 2 HẰNG TUẦN) ==="
+echo "=== CÀI ĐẶT DỊCH VỤ TỰ ĐỘNG QUÉT SHIPMENT DISCREPANCY (02:00 SÁNG HẰNG NGÀY) ==="
 
 mkdir -p "$TARGET_DIR"
 
@@ -23,6 +23,6 @@ cp "$SRC_PLIST" "$TARGET_PLIST"
 launchctl load -w "$TARGET_PLIST"
 
 echo "✅ Đã cài đặt dịch vụ thành công!"
-echo "   Lịch chạy: 02:00 sáng thứ 2 hằng tuần"
+echo "   Lịch chạy: 02:00 sáng hằng ngày (Telegram tổng hợp: sáng thứ 2)"
 echo "   File log: $HOME/Library/Logs/mac-shipment-discrepancy.log"
 launchctl list | grep "com.amazon.shipment.discrepancy" || true

@@ -287,6 +287,13 @@ async function extractShipmentDiscrepancy(
       const pageItems = await contentFrame.evaluate(() => {
         const rows = Array.from(document.querySelectorAll("kat-table-body kat-table-row"));
         const extracted: any[] = [];
+        // Tìm cột theo tiêu đề (nếu bảng có tiêu đề) thay vì vị trí cố định
+        const headTexts = Array.from(document.querySelectorAll("kat-table-head kat-table-cell")).map((c) =>
+          ((c as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().toLowerCase(),
+        );
+        const colOf = (re: RegExp) => headTexts.findIndex((t) => re.test(t));
+        const expectedCol = colOf(/expected/);
+        const discCol = colOf(/discrepanc/);
 
         for (const r of rows) {
           const fullText = (r as HTMLElement).innerText || "";
@@ -308,7 +315,10 @@ async function extractShipmentDiscrepancy(
           let unitsExpected = 0;
           let unitsLocated = 0;
 
-          if (cells[3] && /^\d+$/.test((cells[3] as HTMLElement).innerText?.trim())) {
+          const expCell = expectedCol >= 0 ? cells[expectedCol] : cells[3];
+          if (expCell && /^\d+$/.test((expCell as HTMLElement).innerText?.trim())) {
+            unitsExpected = parseInt((expCell as HTMLElement).innerText.trim(), 10);
+          } else if (cells[3] && /^\d+$/.test((cells[3] as HTMLElement).innerText?.trim())) {
             unitsExpected = parseInt((cells[3] as HTMLElement).innerText.trim(), 10);
           }
           if (cells[6] && /^\d+$/.test((cells[6] as HTMLElement).innerText?.trim())) {
@@ -323,6 +333,7 @@ async function extractShipmentDiscrepancy(
 
           let discrepancy = unitsLocated - unitsExpected;
           const discCell =
+            (discCol >= 0 ? cells[discCol] : undefined) ||
             cells.find((c) => {
               const cls = c.className || "";
               const t = (c as HTMLElement).innerText?.trim() || "";
@@ -331,6 +342,9 @@ async function extractShipmentDiscrepancy(
 
           if (discCell && /^[+-]?\d+$/.test((discCell as HTMLElement).innerText?.trim())) {
             discrepancy = parseInt((discCell as HTMLElement).innerText.trim(), 10);
+            // Ô Discrepancy là số Amazon tự tính (đối chiếu 19–20/11: luôn khớp tổng lệch của lô theo Check Shipment),
+            // còn cột Located đọc theo vị trí hay lệch → Located = Expected + Discrepancy cho 3 số luôn khớp nhau.
+            unitsLocated = unitsExpected + discrepancy;
           }
 
           // Xử lý status chuẩn xác (không bao giờ ra 'null')
@@ -371,7 +385,10 @@ async function extractShipmentDiscrepancy(
             status,
           });
         }
-        return extracted;
+        return { items: extracted, headTexts };
+      }).then((res: any) => {
+        if (pageNum === 1) console.log(`  [${shipmentId}] Tiêu đề bảng contents: ${JSON.stringify(res.headTexts)}`);
+        return res.items as any[];
       });
 
       for (const item of pageItems) {
@@ -728,6 +745,8 @@ export async function runShipmentDiscrepancyCrawler(options?: {
   allStores?: boolean;
   limit?: number;
   shipmentIds?: string[];
+  /** false: chỉ cập nhật DB + Google Sheet, không gửi Telegram (chạy hằng ngày, Telegram chỉ sáng thứ 2) */
+  notify?: boolean;
 }) {
   const storesPath = path.join(__dirname, "stores.json");
   let stores: StoreConfig[] = [];
@@ -785,7 +804,9 @@ export async function runShipmentDiscrepancyCrawler(options?: {
         messageParts.push(`🌐 Google Sheet: [Mở Bảng Đối Soát Online](${sheetUrl})`);
       }
 
-      await sendTelegramMessage(messageParts.join("\n")).catch((e) => console.warn(`Telegram error: ${e.message}`));
+      if (options?.notify !== false) {
+        await sendTelegramMessage(messageParts.join("\n")).catch((e) => console.warn(`Telegram error: ${e.message}`));
+      }
     }
   } else {
     const targetStoreName = (options?.storeName || "FASTPEACE").toUpperCase();
@@ -838,9 +859,11 @@ if (require.main === module) {
   let allStores = false;
   let limit: number | undefined;
   const specificIds: string[] = [];
+  let notify = true;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--all") allStores = true;
+    if (args[i] === "--no-notify") notify = false;
     if (args[i] === "--store" && args[i + 1]) store = args[++i];
     if (args[i] === "--limit" && args[i + 1]) limit = parseInt(args[++i], 10);
     if (args[i] === "--id" && args[i + 1]) specificIds.push(args[++i]);
@@ -851,6 +874,7 @@ if (require.main === module) {
     allStores,
     shipmentIds: specificIds.length > 0 ? specificIds : undefined,
     limit,
+    notify,
   }).catch((err) => {
     console.error("FATAL ERROR:", err);
     process.exit(1);

@@ -11,11 +11,10 @@
         <string>/Users/ad/mac-crawler/run_shipment_discrepancy_daily.sh</string>
     </array>
 
-    <!-- Chạy tự động 1 lần / tuần: 02:00 sáng thứ 2 (Weekday 1). Mỗi lần quét toàn bộ lô từ DB nên không sót lô. -->
+    <!-- Chạy hằng ngày 02:00 sáng: lô đã chốt (Closed, hết Action required) dùng cache, chỉ mở Seller Central
+         cho lô đang Receiving / còn Action required → số theo SKU không bị cũ cả tuần. Telegram chỉ gửi sáng thứ 2. -->
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Weekday</key>
-        <integer>1</integer>
         <key>Hour</key>
         <integer>2</integer>
         <key>Minute</key>

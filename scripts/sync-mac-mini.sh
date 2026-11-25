@@ -23,6 +23,11 @@ ITEMS=(
   "mac-crawler/run_accounting_daily.sh:run_accounting_daily.sh"
   # Crawler lệch kho (thứ 2, 2h): phân loại lô + tính chi tiết theo SKU cho lô 1 SKU
   "mac-crawler/get_discrepancy_shipments.py:get_discrepancy_shipments.py"
+  "mac-crawler/shipment_discrepancy_crawler.ts:shipment_discrepancy_crawler.ts"
+  "mac-crawler/run_shipment_discrepancy_daily.sh:run_shipment_discrepancy_daily.sh"
+  # Lịch chạy (đổi lịch phải nạp lại: bash install_shipment_discrepancy_service.sh trên Mac mini)
+  "mac-crawler/com.amazon.shipment.discrepancy.plist:com.amazon.shipment.discrepancy.plist"
+  "mac-crawler/install_shipment_discrepancy_service.sh:install_shipment_discrepancy_service.sh"
 )
 
 cd "$(dirname "$0")/.."
