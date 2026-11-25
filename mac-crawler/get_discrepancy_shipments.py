@@ -99,6 +99,8 @@ def main():
                   AND s.deleted_at IS NULL
                   AND s.shipment_id IS NOT NULL
                   AND TRIM(s.shipment_id) != ''
+                  -- Lô AWD (STAR-…) đối soát theo thùng ở web (file 08), không có trang contents FBA
+                  AND LOWER(TRIM(s.shipment_id)) NOT LIKE 'star%%'
                   AND LOWER(TRIM(COALESCE(s.status, ''))) NOT IN (
                     'in transit', 'working', 'shipped', 'ready to ship', 'created', 'delivered',
                     'cancelled', 'canceled', 'deleted', '[object object]'

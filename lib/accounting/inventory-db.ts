@@ -3769,6 +3769,8 @@ export async function syncCheckShipmentsToInbound(
         BOOL_OR(d_located IS NOT NULL) AS has_crawler,
         SUM(CASE WHEN d_located IS NOT NULL THEN d_located ELSE qty END) AS crawler_located,
         MAX(units_located) AS units_located,
+        MAX(units_expected) AS units_expected,
+        SUM(qty) AS lot_qty,
         -- Sheet tự chia số nhận theo SKU (dòng sau dòng đầu có số) và không phải chép cùng 1 số cho mọi dòng
         (COUNT(*) > 1
           AND BOOL_OR(rn > 1 AND cur_recv IS NOT NULL)
@@ -3777,8 +3779,16 @@ export async function syncCheckShipmentsToInbound(
       GROUP BY sid
     ),
     computed AS (
-      SELECT r.*,
+      SELECT r.*, l.lot_qty,
+        -- Số cái Amazon nhận của lô AWD = thùng nhận × (số đi của lô ÷ thùng gửi)
+        ROUND(l.units_located::numeric * l.lot_qty / NULLIF(l.units_expected, 0))::int AS awd_lot_recv,
         CASE
+          -- Lô AWD (STAR-…): file 08 của Amazon đếm theo THÙNG. Chỉ lô đã Closed mà số thùng nhận khác số thùng gửi
+          -- mới đối soát (đổi thùng ra cái theo số đi trên sheet); còn lại coi như nhận đủ như trước.
+          -- Closed mà nhận 0 thùng thường là lô huỷ / chuyển đi → không tự tính thiếu cả lô, để team kiểm tra.
+          WHEN r.sid LIKE 'star%' AND r.c_closed AND COALESCE(l.units_expected, 0) > 0
+            AND COALESCE(l.units_located, 0) > 0
+            AND l.units_located <> l.units_expected THEN 'awd_short'
           WHEN r.sid LIKE 'star%' THEN 'star'
           WHEN NOT r.c_received THEN 'pending'
           WHEN l.n_rows = 1 THEN 'single'
@@ -3795,10 +3805,12 @@ export async function syncCheckShipmentsToInbound(
         CASE
           WHEN c_closed AND mode = 'single' THEN units_located
           WHEN c_closed AND mode = 'crawler' THEN COALESCE(d_located, qty)
+          WHEN mode = 'awd_short' AND rn = 1 AND lot_qty = qty THEN awd_lot_recv
           ELSE cur_amz_recv
         END AS new_amz_recv,
         CASE mode
           WHEN 'star' THEN qty
+          WHEN 'awd_short' THEN CASE WHEN rn = 1 THEN awd_lot_recv END
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN units_located
           WHEN 'crawler' THEN COALESCE(d_located, qty)
@@ -3807,6 +3819,7 @@ export async function syncCheckShipmentsToInbound(
         END AS new_recv,
         CASE mode
           WHEN 'star' THEN 0
+          WHEN 'awd_short' THEN CASE WHEN rn = 1 THEN lot_qty - awd_lot_recv END
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN COALESCE(units_expected, qty) - units_located
           WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE 0 END
@@ -3854,16 +3867,26 @@ export async function syncCheckShipmentsToInbound(
     RETURNING s.id
   `;
 
-  // Luôn đảm bảo toàn bộ shipment STAR trong kho có so_luong_amazon_nhan = quantity và discrepancy = 0
+  // Shipment STAR (AWD) coi như nhận đủ: so_luong_amazon_nhan = quantity, discrepancy = 0 —
+  // trừ lô đã Closed mà số thùng nhận khác số thùng gửi (đã đối soát ở trên).
   await sql`
-    UPDATE accounting_inbound_shipments
+    UPDATE accounting_inbound_shipments s
     SET
       so_luong_amazon_nhan = COALESCE(quantity, 0),
       discrepancy = 0,
       updated_at = NOW()
-    WHERE store_id = ${storeId}
-      AND deleted_at IS NULL
-      AND LOWER(TRIM(shipment_id)) LIKE 'star%'
+    WHERE s.store_id = ${storeId}
+      AND s.deleted_at IS NULL
+      AND LOWER(TRIM(s.shipment_id)) LIKE 'star%'
+      AND NOT EXISTS (
+        SELECT 1 FROM accounting_amazon_check_shipments c
+        WHERE c.store_id = s.store_id AND c.deleted_at IS NULL
+          AND LOWER(TRIM(c.shipment_id)) = LOWER(TRIM(s.shipment_id))
+          AND LOWER(TRIM(COALESCE(c.status, ''))) = 'closed'
+          AND COALESCE(c.units_expected, 0) > 0
+          AND COALESCE(c.units_located, 0) > 0
+          AND c.units_located <> c.units_expected
+      )
       AND (
         so_luong_amazon_nhan IS DISTINCT FROM COALESCE(quantity, 0)
         OR discrepancy IS DISTINCT FROM 0
