@@ -62,6 +62,7 @@ export interface PpcSearchTermRow {
   campaignId?: string;
   adGroupId?: string;
   keywordId?: string;
+  asin?: string | null;
   // Helium 10 (keyword_search_volumes & ppc_asin_keyword_rankings): volume tháng, trend %, impression share, rank
   searchVolume?: number | null;
   searchVolumeTrend?: number | null;

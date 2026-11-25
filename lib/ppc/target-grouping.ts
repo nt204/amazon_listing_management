@@ -100,6 +100,19 @@ export async function loadTargetsGroupedBySku(input: {
     SELECT * FROM g ORDER BY ${orderBy} LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
   `;
 
+  const [skuInfo] = await sql<Array<{ mockup_url: string | null; asin: string | null }>>`
+    SELECT COALESCE(NULLIF(trim(mockup_url), ''), NULLIF(trim(mockup), '')) AS mockup_url,
+           NULLIF(upper(trim(asin)), '') AS asin
+    FROM (
+      SELECT mockup_url, mockup, asin, 1 as prio FROM accounting_sku_master WHERE deleted_at IS NULL AND upper(trim(sku)) IN ${sql(skuTokens.map((t) => t.toUpperCase()))}
+      UNION ALL
+      SELECT NULL, NULL, asin, 2 as prio FROM accounting_sku_master_fbm WHERE deleted_at IS NULL AND upper(trim(sku)) IN ${sql(skuTokens.map((t) => t.toUpperCase()))}
+    ) u
+    ORDER BY (asin IS NOT NULL) DESC, prio
+    LIMIT 1
+  `;
+  const resolvedAsin = skuInfo?.asin || null;
+
   const baseItems: PpcTargetPerformance[] = rows.map((r) => {
     const metrics = roundedPerformanceMetrics({
       spend: Number(r.spend || 0),
@@ -118,6 +131,7 @@ export async function loadTargetsGroupedBySku(input: {
       adType: r.ad_types as PpcAdType,
       grouped: true,
       campaignCount: r.campaign_count,
+      asin: resolvedAsin,
       ...metrics,
     };
   });
@@ -148,14 +162,6 @@ export async function loadTargetsGroupedBySku(input: {
     acos: summaryMetrics.acos,
   };
 
-  const [image] = await sql<Array<{ mockup_url: string | null }>>`
-    SELECT COALESCE(NULLIF(trim(mockup_url), ''), NULLIF(trim(mockup), '')) AS mockup_url
-    FROM accounting_sku_master
-    WHERE deleted_at IS NULL AND upper(trim(sku)) IN ${sql(skuTokens.map((token) => token.toUpperCase()))}
-      AND (NULLIF(trim(mockup_url), '') IS NOT NULL OR NULLIF(trim(mockup), '') IS NOT NULL)
-    LIMIT 1
-  `;
-
   return {
     items,
     total,
@@ -171,7 +177,7 @@ export async function loadTargetsGroupedBySku(input: {
       totalSales: summary.sales,
       totalOrders: summary.orders,
       acos: summary.acos,
-      mockupUrl: image?.mockup_url || null,
+      mockupUrl: skuInfo?.mockup_url || null,
     }],
     groupedBy: "target" as const,
   };

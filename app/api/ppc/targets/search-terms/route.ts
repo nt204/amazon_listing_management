@@ -2,6 +2,7 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
+import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
 import type { PpcSearchTermRow } from "@/lib/ppc/types";
 import { getCachedOrFetch } from "@/lib/redis";
 
@@ -136,8 +137,35 @@ export async function GET(request: Request) {
       };
     });
 
+    const extractedSkus = Array.from(new Set(
+      terms.map((t) => extractSkuFromText(t.campaignName) || extractSkuFromText(t.adGroupName)).filter(Boolean)
+    )) as string[];
+
+    const skuToAsin = new Map<string, string>();
+    if (extractedSkus.length > 0) {
+      try {
+        const skuRows = await sql<Array<{ sku: string; asin: string }>>`
+          SELECT upper(trim(sku)) AS sku, upper(trim(asin)) AS asin
+          FROM (
+            SELECT sku, asin FROM accounting_sku_master WHERE deleted_at IS NULL AND upper(trim(sku)) IN ${sql(extractedSkus)} AND asin IS NOT NULL AND trim(asin) <> ''
+            UNION ALL
+            SELECT sku, asin FROM accounting_sku_master_fbm WHERE deleted_at IS NULL AND upper(trim(sku)) IN ${sql(extractedSkus)} AND asin IS NOT NULL AND trim(asin) <> ''
+          ) u
+        `;
+        for (const r of skuRows) skuToAsin.set(r.sku, r.asin);
+      } catch {}
+    }
+
+    const termsWithAsin = terms.map((term) => {
+      const extractedSku = extractSkuFromText(term.campaignName) || extractSkuFromText(term.adGroupName);
+      return {
+        ...term,
+        asin: extractedSku ? (skuToAsin.get(extractedSku) || null) : null,
+      };
+    });
+
     // Dòng ở đây là theo ngày lẻ nên chỉ gắn volume, không tính impression share
-    return attachSearchVolumes(sql, terms, {
+    return attachSearchVolumes(sql, termsWithAsin, {
       keywordOf: (term) => term.customerSearchTerm,
       coverageDaysOf: () => 1,
       shareApplies: () => false,

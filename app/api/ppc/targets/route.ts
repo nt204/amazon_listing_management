@@ -11,6 +11,7 @@ import { channelCacheSuffix, ppcChannelWhere, resolvePpcChannelScope } from "@/l
 import { campaignStatusCacheSuffix, getActiveCampaignNames, parseCampaignStatus, ppcActiveCampaignWhere } from "@/lib/ppc/campaign-status-filter";
 import { decodeMetricRanges, encodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
+import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
@@ -423,6 +424,25 @@ export async function GET(request: Request) {
       LIMIT ${pageSize} OFFSET ${offset}
     `;
 
+    const extractedSkus = Array.from(new Set(
+      rows.map((r) => extractSkuFromText(r.campaign_name) || extractSkuFromText(r.ad_group_name)).filter(Boolean)
+    )) as string[];
+
+    const skuToAsin = new Map<string, string>();
+    if (extractedSkus.length > 0) {
+      try {
+        const skuRows = await sql<Array<{ sku: string; asin: string }>>`
+          SELECT upper(trim(sku)) AS sku, upper(trim(asin)) AS asin
+          FROM (
+            SELECT sku, asin FROM accounting_sku_master WHERE deleted_at IS NULL AND upper(trim(sku)) IN ${sql(extractedSkus)} AND asin IS NOT NULL AND trim(asin) <> ''
+            UNION ALL
+            SELECT sku, asin FROM accounting_sku_master_fbm WHERE deleted_at IS NULL AND upper(trim(sku)) IN ${sql(extractedSkus)} AND asin IS NOT NULL AND trim(asin) <> ''
+          ) u
+        `;
+        for (const r of skuRows) skuToAsin.set(r.sku, r.asin);
+      } catch {}
+    }
+
     const baseItems: PpcTargetPerformance[] = rows.map((row) => {
       let matchType = row.match_type as MatchType;
       const campName = (row.campaign_name || "").toLowerCase();
@@ -452,6 +472,9 @@ export async function GET(request: Request) {
         impressions: Number(row.impressions || 0),
       });
 
+      const extractedSku = extractSkuFromText(row.campaign_name) || extractSkuFromText(row.ad_group_name);
+      const targetAsin = extractedSku ? (skuToAsin.get(extractedSku) || null) : null;
+
       return {
         storeId: row.store_id,
         campaignId: row.campaign_id || "",
@@ -466,6 +489,7 @@ export async function GET(request: Request) {
         state: row.state || "enabled",
         currentBid: row.bid ? Number(row.bid) : undefined,
         statusBadge: metrics.acos <= 30 ? "EXCELLENT" : metrics.acos <= 45 ? "GOOD" : "WARNING",
+        asin: targetAsin,
         ...metrics,
       };
     });
