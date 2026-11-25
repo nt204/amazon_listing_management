@@ -295,6 +295,7 @@ async function extractShipmentDiscrepancy(
         );
         const colOf = (re: RegExp) => headTexts.findIndex((t) => re.test(t));
         const expectedCol = colOf(/expected/);
+        const locatedCol = colOf(/located/) >= 0 ? colOf(/located/) : colOf(/received/);
         const discCol = colOf(/discrepanc/);
 
         for (const r of rows) {
@@ -323,7 +324,11 @@ async function extractShipmentDiscrepancy(
           } else if (cells[3] && /^\d+$/.test((cells[3] as HTMLElement).innerText?.trim())) {
             unitsExpected = parseInt((cells[3] as HTMLElement).innerText.trim(), 10);
           }
-          if (cells[6] && /^\d+$/.test((cells[6] as HTMLElement).innerText?.trim())) {
+          const locCell = locatedCol >= 0 ? cells[locatedCol] : undefined;
+          const locatedFromHeader = !!locCell && /^\d+$/.test((locCell as HTMLElement).innerText?.trim());
+          if (locatedFromHeader) {
+            unitsLocated = parseInt((locCell as HTMLElement).innerText.trim(), 10);
+          } else if (cells[6] && /^\d+$/.test((cells[6] as HTMLElement).innerText?.trim())) {
             unitsLocated = parseInt((cells[6] as HTMLElement).innerText.trim(), 10);
           } else {
             const numCells = cells.filter((c) => /^\d+$/.test((c as HTMLElement).innerText?.trim()));
@@ -342,11 +347,20 @@ async function extractShipmentDiscrepancy(
               return (cls.includes("red-text") || cls.includes("green-text")) && /^[+-]?\d+$/.test(t);
             }) || cells[8];
 
-          if (discCell && /^[+-]?\d+$/.test((discCell as HTMLElement).innerText?.trim())) {
-            discrepancy = parseInt((discCell as HTMLElement).innerText.trim(), 10);
-            // Ô Discrepancy là số Amazon tự tính (đối chiếu 19–20/11: luôn khớp tổng lệch của lô theo Check Shipment),
-            // còn cột Located đọc theo vị trí hay lệch → Located = Expected + Discrepancy cho 3 số luôn khớp nhau.
-            unitsLocated = unitsExpected + discrepancy;
+          // Discrepancy = Located − Expected. Located đọc ở cột có tiêu đề "Located".
+          // Không dò được tiêu đề thì ô Located theo vị trí (ô thứ 7) hay lệch (đối chiếu 19–20/11: ô Discrepancy
+          // của Amazon khớp tổng lệch của lô, ô thứ 7 thì không) → khi đó Located = Expected + ô Discrepancy.
+          const amazonDisc =
+            discCell && /^[+-]?\d+$/.test((discCell as HTMLElement).innerText?.trim())
+              ? parseInt((discCell as HTMLElement).innerText.trim(), 10)
+              : null;
+          let mismatch = false;
+          if (locatedFromHeader) {
+            discrepancy = unitsLocated - unitsExpected;
+            mismatch = amazonDisc != null && amazonDisc !== discrepancy;
+          } else if (amazonDisc != null) {
+            discrepancy = amazonDisc;
+            unitsLocated = unitsExpected + amazonDisc;
           }
 
           // Xử lý status chuẩn xác (không bao giờ ra 'null')
@@ -385,6 +399,9 @@ async function extractShipmentDiscrepancy(
             unitsLocated,
             discrepancy,
             status,
+            mismatch,
+            amazonDisc,
+            source: locatedFromHeader ? "header" : amazonDisc != null ? "disc-cell" : "position",
           });
         }
         return { items: extracted, headTexts };
@@ -394,6 +411,11 @@ async function extractShipmentDiscrepancy(
       });
 
       for (const item of pageItems) {
+        if (item.mismatch) {
+          console.warn(`  ⚠️ [${shipmentId}] ${item.sku}: Located ${item.unitsLocated} − Expected ${item.unitsExpected} = ${item.discrepancy} nhưng ô Discrepancy của Amazon ghi ${item.amazonDisc}`);
+        } else if (item.source !== "header") {
+          console.warn(`  ⚠️ [${shipmentId}] ${item.sku}: không dò được cột Located theo tiêu đề (dùng ${item.source})`);
+        }
         results.push({
           store: storeName,
           sku: item.sku,
