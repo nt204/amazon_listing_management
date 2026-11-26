@@ -74,7 +74,12 @@ function isSettled(status: string | undefined, items: DiscrepancyRow[]): boolean
   return !items.some((it) => /action required/i.test(it.status || ""));
 }
 
+/** Đổi cách đọc bảng contents thì tăng số này → cache đọc bằng cách cũ bị bỏ, đọc lại Seller Central.
+ *  2 (26/11/2026): Units located lấy ở kat-link trong ô "Units expected / Units located", bỏ ô của popover lồng bên trong. */
+const PARSER_VERSION = 2;
+
 interface CachedShipmentRecord {
+  parser?: number;
   shipment_id: string;
   store: string;
   items: DiscrepancyRow[];
@@ -287,23 +292,22 @@ async function extractShipmentDiscrepancy(
 
     while (hasNextPage) {
       const pageItems = await contentFrame.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll("kat-table-body kat-table-row"));
+        // Bảng "Show discrepancies only" (Amazon bật sẵn): chỉ liệt kê SKU bị lệch — SKU không có trong bảng là nhận đủ.
+        // Mỗi ô "Units expected / Units located" có bảng popover lồng bên trong (kat-table-row / kat-table-cell
+        // "Quantity / Reason") → chỉ lấy dòng / ô trực tiếp của bảng chính, bỏ phần nằm trong kat-popover.
+        const rows = Array.from(document.querySelectorAll("kat-table-body kat-table-row")).filter((r) => !r.closest("kat-popover"));
         const extracted: any[] = [];
-        // Tìm cột theo tiêu đề (nếu bảng có tiêu đề) thay vì vị trí cố định
-        const headTexts = Array.from(document.querySelectorAll("kat-table-head kat-table-cell")).map((c) =>
-          ((c as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().toLowerCase(),
-        );
-        const expectedCol = headTexts.findIndex((t) => /expected/.test(t));
-        const locatedCol = headTexts.findIndex((t) => /located/.test(t)) >= 0
-          ? headTexts.findIndex((t) => /located/.test(t))
-          : headTexts.findIndex((t) => /received/.test(t));
+        const headTexts = Array.from(document.querySelectorAll("kat-table-head kat-table-cell"))
+          .filter((c) => !c.closest("kat-popover"))
+          .map((c) => ((c as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().toLowerCase());
+        const qtyCol = headTexts.findIndex((t) => /expected/.test(t));
         const discCol = headTexts.findIndex((t) => /discrepanc/.test(t));
 
         for (const r of rows) {
           const fullText = (r as HTMLElement).innerText || "";
           if (!fullText.includes("ASIN:")) continue;
 
-          const cells = Array.from(r.querySelectorAll("kat-table-cell"));
+          const cells = Array.from(r.children).filter((c) => c.tagName.toLowerCase() === "kat-table-cell");
           if (cells.length < 4) continue;
 
           // SKU (cell 0)
@@ -315,49 +319,22 @@ async function extractShipmentDiscrepancy(
           const asinMatch = asinText.match(/ASIN:\s*([A-Z0-9]{10})/i);
           const asin = asinMatch ? asinMatch[1] : "";
 
-          // Units expected & Units located
-          let unitsExpected = 0;
-          let unitsLocated = 0;
+          // Ô số lượng: <div>Units expected</div> + <kat-link label="Units located"> (mở popover chi tiết)
+          const qCell = cells[qtyCol >= 0 ? qtyCol : 3];
+          const expText = ((qCell?.querySelector(":scope > div") as HTMLElement | null)?.textContent || "").trim();
+          const unitsExpected = /^\d+$/.test(expText) ? parseInt(expText, 10) : 0;
+          const locLabel = (qCell?.querySelector("kat-link[label]")?.getAttribute("label") || "").trim();
+          const locatedFromHeader = /^\d+$/.test(locLabel);
+          let unitsLocated = locatedFromHeader ? parseInt(locLabel, 10) : unitsExpected;
 
-          const expCell = expectedCol >= 0 ? cells[expectedCol] : cells[3];
-          if (expCell && /^\d+$/.test((expCell as HTMLElement).innerText?.trim())) {
-            unitsExpected = parseInt((expCell as HTMLElement).innerText.trim(), 10);
-          } else if (cells[3] && /^\d+$/.test((cells[3] as HTMLElement).innerText?.trim())) {
-            unitsExpected = parseInt((cells[3] as HTMLElement).innerText.trim(), 10);
-          }
-          const locCell = locatedCol >= 0 ? cells[locatedCol] : undefined;
-          const locatedFromHeader = !!locCell && /^\d+$/.test((locCell as HTMLElement).innerText?.trim());
-          if (locatedFromHeader) {
-            unitsLocated = parseInt((locCell as HTMLElement).innerText.trim(), 10);
-          } else if (cells[6] && /^\d+$/.test((cells[6] as HTMLElement).innerText?.trim())) {
-            unitsLocated = parseInt((cells[6] as HTMLElement).innerText.trim(), 10);
-          } else {
-            const numCells = cells.filter((c) => /^\d+$/.test((c as HTMLElement).innerText?.trim()));
-            if (numCells.length >= 2) {
-              unitsExpected = parseInt((numCells[0] as HTMLElement).innerText.trim(), 10);
-              unitsLocated = parseInt((numCells[1] as HTMLElement).innerText.trim(), 10);
-            }
-          }
+          // Ô Discrepancy của Amazon ("-3" / "+1")
+          const discCell = cells[discCol >= 0 ? discCol : 4];
+          const discText = ((discCell as HTMLElement)?.innerText || "").replace(/\s+/g, "").trim();
+          const amazonDisc = /^[+-]?\d+$/.test(discText) ? parseInt(discText, 10) : null;
 
           let discrepancy = unitsLocated - unitsExpected;
-          const discCell =
-            (discCol >= 0 ? cells[discCol] : undefined) ||
-            cells.find((c) => {
-              const cls = c.className || "";
-              const t = (c as HTMLElement).innerText?.trim() || "";
-              return (cls.includes("red-text") || cls.includes("green-text")) && /^[+-]?\d+$/.test(t);
-            }) || cells[8];
-
-          // Discrepancy = Located − Expected. Located đọc ở cột có tiêu đề "Located".
-          // Không dò được tiêu đề thì ô Located theo vị trí (ô thứ 7) hay lệch (đối chiếu 19–20/11: ô Discrepancy
-          // của Amazon khớp tổng lệch của lô, ô thứ 7 thì không) → khi đó Located = Expected + ô Discrepancy.
-          const amazonDisc =
-            discCell && /^[+-]?\d+$/.test((discCell as HTMLElement).innerText?.trim())
-              ? parseInt((discCell as HTMLElement).innerText.trim(), 10)
-              : null;
           let mismatch = false;
           if (locatedFromHeader) {
-            discrepancy = unitsLocated - unitsExpected;
             mismatch = amazonDisc != null && amazonDisc !== discrepancy;
           } else if (amazonDisc != null) {
             discrepancy = amazonDisc;
@@ -690,7 +667,10 @@ async function processStore(
     const cached = stateCache[storeName][sId];
     // Lô chưa chốt (Receiving…) hoặc còn "Action required" thì số lệch còn đổi → mở lại Seller Central
     const forceRecheck = !!options?.specificShipmentIds?.includes(sId);
-    if (cached && cached.items && cached.items.length > 0 && !forceRecheck && isSettled(shipmentStatus[sId], cached.items)) {
+    if (
+      cached && cached.parser === PARSER_VERSION && cached.items && cached.items.length > 0 && !forceRecheck &&
+      isSettled(shipmentStatus[sId], cached.items)
+    ) {
       cachedRows.push(...cached.items);
     } else {
       needBrowserCheck.push(sId);
@@ -732,6 +712,7 @@ async function processStore(
         browserCheckedRows.push(...items);
 
         stateCache[storeName][sId] = {
+          parser: PARSER_VERSION,
           shipment_id: sId,
           store: storeName,
           items,

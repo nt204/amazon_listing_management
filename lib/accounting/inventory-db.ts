@@ -3713,8 +3713,10 @@ export async function syncCheckShipmentsToInbound(
   // "Số lượng Amazon nhận" = Units located của CẢ LÔ trong báo cáo Check Shipment, ghi ở dòng đầu của lô.
   // - Lô chưa Closed (Receiving…): dòng đầu = số cả lô hiện tại; Discrepancy để trống (chưa nhận xong ≠ thiếu).
   // - Lô Closed nhận đủ (Units located = Units expected): dòng đầu = số cả lô, Discrepancy 0; các dòng sau để trống.
-  // - Lô Closed bị lệch: lấy số từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) để biết SKU nào thiếu;
-  //   SKU crawler không liệt kê giữ số trên sheet. Chưa có crawler → số cả lô + Discrepancy cả lô ở dòng đầu.
+  // - Lô Closed bị lệch: lấy số từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) để biết SKU nào thiếu.
+  //   Trang Amazon chỉ liệt kê SKU bị lệch ("Show discrepancies only") → SKU crawler không liệt kê = nhận đủ (= Quantity).
+  //   Chỉ dùng khi cộng lại khớp Units located của cả lô; chưa có crawler / không khớp (số crawler cũ, Amazon tự hạ
+  //   số dự kiến…) → số cả lô + Discrepancy cả lô ở dòng đầu.
   // - Lô 1 SKU Closed: số nhận = Units located; Discrepancy = Units expected − Units located.
   const updatedRows = await sql<{ id: string }[]>`
     WITH check_data AS (
@@ -3798,7 +3800,7 @@ export async function syncCheckShipmentsToInbound(
           -- Lô nhiều SKU Closed nhận đủ (Amazon nhận = Amazon dự kiến = tổng số gửi): số cả lô ở dòng đầu, không cần crawler
           WHEN l.units_located IS NOT NULL AND l.units_located = l.units_expected AND l.units_located = l.lot_qty THEN 'lot_full'
           -- Lô Closed bị lệch: crawler cho biết SKU nào thiếu
-          WHEN l.n_sku = l.n_rows AND l.has_crawler THEN 'crawler'
+          WHEN l.n_sku = l.n_rows AND l.has_crawler AND l.crawler_located = l.units_located THEN 'crawler'
           WHEN l.has_manual_split THEN 'manual'
           ELSE 'lot_total'
         END AS mode
@@ -3810,8 +3812,8 @@ export async function syncCheckShipmentsToInbound(
         -- → ghi số thật của Amazon; còn lại giữ số trên sheet (lô chưa Closed tạm tính = Quantity lúc đọc).
         CASE
           WHEN c_closed AND mode = 'single' THEN units_located
-          -- Lô có crawler: SKU crawler có số → đúng số crawler; SKU crawler không có → giữ số trên sheet (không tự coi là nhận đủ)
-          WHEN c_closed AND mode = 'crawler' THEN COALESCE(d_located, cur_amz_recv)
+          -- Lô có crawler (khớp số cả lô): SKU crawler có số → đúng số crawler; SKU không bị liệt kê → nhận đủ
+          WHEN c_closed AND mode = 'crawler' THEN COALESCE(d_located, qty)
           WHEN c_closed AND mode = 'lot_full' THEN qty
           WHEN mode = 'awd_short' AND rn = 1 AND lot_qty = qty THEN awd_lot_recv
           ELSE cur_amz_recv
@@ -3821,7 +3823,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN 'awd_short' THEN CASE WHEN rn = 1 THEN awd_lot_recv END
           WHEN 'pending' THEN CASE WHEN rn = 1 THEN units_located END
           WHEN 'single' THEN units_located
-          WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN d_located ELSE cur_recv END
+          WHEN 'crawler' THEN COALESCE(d_located, qty)
           WHEN 'lot_full' THEN CASE WHEN rn = 1 THEN units_located END
           WHEN 'manual' THEN cur_recv
           ELSE CASE WHEN rn = 1 THEN units_located END
@@ -3831,7 +3833,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN 'awd_short' THEN CASE WHEN rn = 1 THEN lot_qty - awd_lot_recv END
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN COALESCE(units_expected, qty) - units_located
-          WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE cur_disc END
+          WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE 0 END
           WHEN 'lot_full' THEN CASE WHEN rn = 1 THEN 0 END
           WHEN 'manual' THEN cur_disc
           ELSE CASE WHEN rn = 1 THEN COALESCE(units_expected, qty) - units_located END
