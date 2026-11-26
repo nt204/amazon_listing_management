@@ -3710,7 +3710,8 @@ export async function syncCheckShipmentsToInbound(
   const storeName = storeRow?.name ?? "";
 
   // Quy ước cột Discrepancy của Đi Hàng: dương = Amazon nhận THIẾU, âm = thừa.
-  // - Lô chưa nhận (In transit / Shipped / Delivered / Checked in): để trống số nhận + Discrepancy (chưa nhận ≠ thiếu).
+  // - Lô chưa Closed (In transit / Shipped / Delivered / Checked in / Receiving): để trống số nhận + Discrepancy
+  //   (chưa nhận xong ≠ thiếu) — chỉ lô Closed mới đối soát lệch.
   // - Lô 1 SKU: số nhận = Units located; Discrepancy = Units expected (Amazon) − Units located.
   // - Lô nhiều SKU: lấy số theo từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) khi crawler đã cào
   //   chi tiết (SKU crawler không liệt kê = nhận đủ số đi). Chưa có crawler → tổng lô ở dòng đầu.
@@ -3746,7 +3747,8 @@ export async function syncCheckShipmentsToInbound(
         c.units_expected, c.units_located, c.status AS c_status, c.created_date AS c_created_date,
         c.first_receiving_date AS c_first_receiving,
         (LOWER(TRIM(COALESCE(c.status, ''))) = 'closed') AS c_closed,
-        (LOWER(TRIM(COALESCE(c.status, ''))) IN ('receiving', 'closed')) AS c_received,
+        -- Chỉ lô đã Closed mới đối soát số nhận / Discrepancy; Receiving là Amazon còn đang nhận → chưa check
+        (LOWER(TRIM(COALESCE(c.status, ''))) = 'closed') AS c_received,
         cr.d_expected, cr.d_located,
         ROW_NUMBER() OVER (
           PARTITION BY LOWER(TRIM(s.shipment_id))
