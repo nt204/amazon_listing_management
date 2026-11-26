@@ -110,6 +110,10 @@ function lastYearValue(item: DailyItem, colId: string): number | null {
   }
 }
 
+/** Nhóm cột thu gọn được như Group/Outline của Excel: Net Profit → Profit/item (nút −/+ ở hàng tiêu đề trên cùng) */
+const FOLD_COLUMN_IDS = new Set(["net_profit", "balance", "roi", "tacos", "acos", "margin", "margin_pre_ads", "profit_per_item"]);
+const HEADER_ORANGE = "#ff9900";
+
 const dailyValue = (item: DailyItem, colId: string) =>
   colId.startsWith("ly_") ? lastYearValue(item, colId) : (item as unknown as Record<string, unknown>)[colId];
 
@@ -299,9 +303,30 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   } | null>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
 
+  // Nhóm Net Profit → Profit/item: mặc định mở; bấm − thu gọn (ẩn các cột), bấm + mở lại. Nhớ theo trình duyệt.
+  const foldStorageKey = fbm ? "acc_fbm_daily_fold_metrics" : "acc_fba_daily_fold_metrics";
+  const [metricsFolded, setMetricsFolded] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem(foldStorageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleMetricsFold = useCallback(() => {
+    setMetricsFolded((prev) => {
+      try {
+        localStorage.setItem(foldStorageKey, prev ? "0" : "1");
+      } catch {
+        // bỏ qua
+      }
+      return !prev;
+    });
+  }, [foldStorageKey]);
+
   const visibleColumns = useMemo(
-    () => columns.filter((col) => col.visible !== false),
-    [columns]
+    () => columns.filter((col) => col.visible !== false && !(metricsFolded && FOLD_COLUMN_IDS.has(col.id))),
+    [columns, metricsFolded]
   );
 
   const handleResizeColumn = useCallback((colId: string, width: number) => {
@@ -624,20 +649,39 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
     if (years.size === 0 && dateRange.endDate) years.add(Number(dateRange.endDate.slice(0, 4)) - 1);
     return years.size === 1 ? `SO SÁNH NĂM ${[...years][0]}` : "SO SÁNH NĂM TRƯỚC";
   }, [items, dateRange.endDate]);
-  // Hàng tiêu đề gộp như hàng 1 của sheet: các cột năm nay → "BÁO CÁO DOANH THU - FBA", các cột ly_* → "SO SÁNH NĂM …".
-  // Cột đang khoá giữ ô riêng (sticky); last = id cột cuối của đoạn (để kẻ vạch ngăn).
+  // Hàng tiêu đề gộp như hàng 1 của sheet: các cột năm nay → "BÁO CÁO DOANH THU - …", các cột ly_* → "SO SÁNH NĂM …",
+  // nhóm Net Profit → Profit/item ("fold") có nút − như Group của Excel. Cột đang khoá giữ ô riêng (sticky);
+  // last = id cột cuối của đoạn (để kẻ vạch ngăn); plus = nhóm đang thu gọn, nút + nằm ở đầu đoạn này (cột ngay sau nhóm).
   const headerGroups = useMemo(() => {
-    const groups: { key: string; span: number; kind: "frozen" | "cur" | "ly"; colId: string; last: string }[] = [];
+    let plusAt: string | null = null;
+    if (metricsFolded) {
+      const shown = columns.filter((c) => c.visible !== false);
+      let lastFold = -1;
+      shown.forEach((c, i) => {
+        if (FOLD_COLUMN_IDS.has(c.id)) lastFold = i;
+      });
+      if (lastFold >= 0) {
+        plusAt = shown.slice(lastFold + 1).find((c) => !FOLD_COLUMN_IDS.has(c.id))?.id ?? visibleColumns[visibleColumns.length - 1]?.id ?? null;
+      }
+    }
+    type Group = { key: string; span: number; kind: "frozen" | "cur" | "ly" | "fold"; colId: string; last: string; plus: boolean };
+    const groups: Group[] = [];
     for (const col of visibleColumns) {
-      const kind = frozenColumns.includes(col.id) ? "frozen" : col.id.startsWith("ly_") ? "ly" : "cur";
+      const kind: Group["kind"] = frozenColumns.includes(col.id)
+        ? "frozen"
+        : FOLD_COLUMN_IDS.has(col.id)
+        ? "fold"
+        : col.id.startsWith("ly_")
+        ? "ly"
+        : "cur";
       const prev = groups[groups.length - 1];
-      if (kind !== "frozen" && prev?.kind === kind) {
+      if (kind !== "frozen" && prev?.kind === kind && col.id !== plusAt) {
         prev.span += 1;
         prev.last = col.id;
-      } else groups.push({ key: col.id, span: 1, kind, colId: col.id, last: col.id });
+      } else groups.push({ key: col.id, span: 1, kind, colId: col.id, last: col.id, plus: col.id === plusAt });
     }
-    return groups.some((g) => g.kind === "ly") ? groups : null;
-  }, [visibleColumns, frozenColumns]);
+    return groups;
+  }, [visibleColumns, frozenColumns, columns, metricsFolded]);
   // Cột năm nay đứng ngay trước khối năm trước → vạch đen đậm bên phải (ngăn năm nay | năm trước) ở mọi dòng
   const lyBoundaryId = useMemo(() => {
     if (fbm) return null;
@@ -983,32 +1027,61 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           <table className="acc-financial-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
             {/* THEAD with Header Row + Sticky TOTAL Row */}
             <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
-              {/* ROW 0: tiêu đề gộp "SO SÁNH NĂM …" trên các cột năm trước, như hàng 1 của sheet */}
-              {!fbm && headerGroups && (
-                <tr className="text-[12px] font-black tracking-wider">
-                  {headerGroups.map((g) => {
-                    if (g.kind === "frozen") {
-                      const f = getCellFreezeProps(g.colId, true);
-                      return (
-                        <th
-                          key={`grp-${g.key}`}
-                          style={{ ...f.style, backgroundColor: "#fde3c3" }}
-                          className={`py-1.5 bg-[#fde3c3] border-b border-r${lySep(g.last)}`}
-                        />
-                      );
-                    }
+              {/* ROW 0: tiêu đề gộp như hàng 1 của sheet + nút −/+ thu gọn nhóm Net Profit → Profit/item (như Group của Excel) */}
+              <tr className="text-[12px] font-black tracking-wider">
+                {headerGroups.map((g, gi) => {
+                  const foldBtn = (folded: boolean) => (
+                    <button
+                      type="button"
+                      onClick={toggleMetricsFold}
+                      title={folded ? "Mở nhóm cột Net Profit → Profit/item" : "Thu gọn nhóm cột Net Profit → Profit/item"}
+                      className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border border-slate-900 bg-white text-slate-900 hover:bg-amber-100"
+                    >
+                      {folded ? <PlusIcon size={10} weight="bold" /> : <MinusIcon size={10} weight="bold" />}
+                    </button>
+                  );
+                  if (g.kind === "frozen") {
+                    const f = getCellFreezeProps(g.colId, true);
+                    return (
+                      <th
+                        key={`grp-${g.key}`}
+                        style={{ ...f.style, backgroundColor: HEADER_ORANGE }}
+                        className={`py-1.5 px-1.5 bg-[#ff9900] border-b border-r${lySep(g.last)}`}
+                      >
+                        {g.plus && foldBtn(true)}
+                      </th>
+                    );
+                  }
+                  if (g.kind === "fold") {
+                    // Đường ngoặc của nhóm như outline Excel: nút − rồi vạch ngang tới cột cuối nhóm
                     return (
                       <th
                         key={`grp-${g.key}`}
                         colSpan={g.span}
-                        className={`py-1.5 px-2.5 text-center whitespace-nowrap bg-[#fde3c3] text-slate-950 border-b border-r${lySep(g.last)}`}
+                        className={`py-1.5 px-1.5 bg-[#ff9900] border-b border-r${lySep(g.last)}`}
                       >
-                        <span className="sticky left-0 right-0">{g.kind === "ly" ? lastYearTitle : "BÁO CÁO DOANH THU - FBA"}</span>
+                        <div className="flex items-center gap-1">
+                          {foldBtn(false)}
+                          <span className="h-0.5 flex-1 bg-slate-900" />
+                          <span className="h-2.5 w-0.5 bg-slate-900" />
+                        </div>
                       </th>
                     );
-                  })}
-                </tr>
-              )}
+                  }
+                  const firstCur = g.kind === "cur" && !headerGroups.slice(0, gi).some((x) => x.kind === "cur");
+                  const label = g.kind === "ly" ? lastYearTitle : firstCur ? `BÁO CÁO DOANH THU - ${channelLabel}` : "";
+                  return (
+                    <th
+                      key={`grp-${g.key}`}
+                      colSpan={g.span}
+                      className={`relative py-1.5 px-2.5 text-center whitespace-nowrap bg-[#ff9900] text-slate-950 border-b border-r${lySep(g.last)}`}
+                    >
+                      {g.plus && <span className="absolute left-1.5 top-1/2 -translate-y-1/2 flex">{foldBtn(true)}</span>}
+                      {label}
+                    </th>
+                  );
+                })}
+              </tr>
               {/* ROW 1: COLUMN HEADERS */}
               <tr className="acc-col-head-row text-[15px] font-bold shadow-xs">
                 {visibleColumns.map((col) => {
