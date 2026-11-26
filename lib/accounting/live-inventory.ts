@@ -166,8 +166,12 @@ export async function replaceLiveInventory(
     report_label: parsed.reportLabel,
     file_name: fileName,
   }));
-  // Lịch sử từng ngày (migration 172): 1 ảnh chụp / store / kho / ngày giờ VN, nạp lại trong ngày thì ghi đè
-  const snapshotDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+  // Lịch sử từng ngày (migration 172): 1 ảnh chụp / store / kho / ngày, nạp lại trong ngày thì ghi đè.
+  // Crawler chạy ~16h giờ VN = ~1h sáng giờ Mỹ hôm sau → ảnh là tồn CUỐI NGÀY hôm trước (ngày VN − 1).
+  const vnToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+  const d = new Date(`${vnToday}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  const snapshotDate = d.toISOString().slice(0, 10);
   const daily = parsed.rows.map((r) => ({
     store_id: storeId,
     source,

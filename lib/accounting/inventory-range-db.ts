@@ -4,7 +4,8 @@ import { getDatabaseClient } from "@/lib/db";
 
 // Tab TỒN → "Theo ngày": tồn kho theo ngày / khoảng ngày bằng số thật của Amazon, không ước tính.
 //   Tồn tại cuối 1 ngày D (FBA + AWD) = ảnh chụp gần nhất có ngày ≤ D, ưu tiên:
-//     1. Lịch sử tồn từng ngày (accounting_live_inventory_daily, crawler kế toán 16h10 — có từ migration 172):
+//     1. Lịch sử tồn từng ngày (accounting_live_inventory_daily, crawler kế toán 16h10 — có từ migration 172;
+//        snapshot_date = tồn cuối ngày đó theo giờ Mỹ):
 //        tồn = Available + Reserved; hàng đang về (Inbound) để riêng.
 //     2. Inventory Ledger hằng tuần / cuối tháng (FBA: ending_warehouse_balance hàng SELLABLE; AWD: ton_kho_units)
 //        khi trước D chưa có ảnh từng ngày, hoặc ảnh Ledger mới hơn.
