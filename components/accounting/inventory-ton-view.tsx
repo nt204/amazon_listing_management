@@ -80,7 +80,7 @@ function buildColumns(year: number): Col[] {
       hint: "= Inventory (FBA) + AWD" },
     { key: "gtri_ton", label: "Tổng giá trị tồn", width: 104, fmt: "money", head: YELLOW, align: "right", hint: "= Total (AMAZON) × Basecost TB/năm (Tiền hàng ÷ SL đi hàng; chưa đi hàng thì lấy giá 1/1)" },
     { key: "stockout_date", label: "Ngày dự kiến hết hàng", width: 126, fmt: "text", head: YELLOW, align: "center",
-      hint: "Tồn hiện tại (FBA bán được mới nhất − số đã bán sau ngày chụp + AWD mới nhất) chia cho tốc độ bán (40% TB 14 ngày + 40% TB 28 ngày + 20% TB 56 ngày) × hệ số mùa vụ từng tháng — cùng thuật toán gợi ý nhập hàng của bot. \"Đã hết\" = tồn hiện tại ≤ 0 mà vẫn đang bán. Chỉ tính trong 365 ngày, chưa cộng hàng đang về." },
+      hint: "Tồn hiện tại (FBA bán được mới nhất − số đã bán sau ngày chụp + AWD mới nhất) ÷ tốc độ bán trung bình 1 năm gần nhất (units FBA 365 ngày ÷ số ngày; SKU bán chưa đủ năm thì ÷ số ngày từ đơn đầu tiên). \"Đã hết\" = tồn hiện tại ≤ 0 mà vẫn đang bán. Chỉ tính trong 365 ngày, chưa cộng hàng đang về." },
   ];
 }
 

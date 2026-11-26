@@ -1,8 +1,8 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
-import { HISTORY_DAYS, loadDemandContext, loadStockRows, stockThresholds } from "./lark-insight-tools";
-import { planRestock, shiftDate, vnToday } from "./lark-insights-calc";
+import { loadStockRows, stockThresholds } from "./lark-insight-tools";
+import { shiftDate, vnToday } from "./lark-insights-calc";
 
 // Tab TỒN của Inventory — tính giống tab "TỒN" file <STORE> INVENTORY 2026, mỗi cột lấy từ dữ liệu server:
 //   F Hàng tồn 1/1        = sl_ton_dau_ky kỳ <năm>-01 của Base Cost tháng (nạp từ chính tab TỒN của sheet)
@@ -143,51 +143,64 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
   ]);
   const hasFbaStock = !!meta[0]?.fba;
   const hasAwdStock = !!meta[0]?.awd;
-  // Ngày dự kiến hết hàng — dùng chung thuật toán gợi ý nhập hàng của bot (planRestock):
+  // Ngày dự kiến hết hàng:
   //   tồn hiện tại = FBA bán được (Inventory Ledger mới nhất) − số đã bán sau ngày chụp + AWD mới nhất;
-  //   tốc độ bán = 40% TB 14 ngày + 40% TB 28 ngày + 20% TB 56 ngày, nhân hệ số mùa vụ từng tháng tới;
-  //   đếm từ ngày có dữ liệu mới nhất (không từ ngày chụp tồn cũ). Chưa cộng hàng đang về.
+  //   tốc độ bán = trung bình 1 năm gần nhất: units FBA 365 ngày tới ngày có đơn mới nhất ÷ số ngày
+  //   (SKU bán chưa đủ năm thì ÷ số ngày từ đơn đầu tiên); đếm từ ngày có dữ liệu mới nhất. Chưa cộng hàng đang về.
   const stockoutDates = new Map<string, string>();
   if (stock?.salesEnd) {
     const salesEnd = stock.salesEnd;
-    const demand = await loadDemandContext(storeId, salesEnd);
+    const yearStart = shiftDate(salesEnd, -364);
+    const oldestSnap = stock.items.reduce<string>(
+      (m, i) => (i.balanceDate && i.balanceDate < m ? i.balanceDate : m),
+      salesEnd,
+    );
+    const [yearSales, afterSnap] = await Promise.all([
+      sql<{ sku: string; units: number; first: string }[]>`
+        SELECT UPPER(TRIM(sku)) AS sku, SUM(COALESCE(quantity, 1))::float AS units, MIN(date)::text AS first
+        FROM accounting_orders
+        WHERE store_id = ${storeId} AND fulfillment_channel = 'Amazon'
+          AND date BETWEEN ${yearStart}::date AND ${salesEnd}::date
+          AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+          AND COALESCE(TRIM(sku), '') <> ''
+        GROUP BY 1
+      `,
+      // Units từng ngày sau ngày chụp tồn cũ nhất → trừ phần đã bán sau ngày chụp của từng SKU
+      sql<{ sku: string; d: string; units: number }[]>`
+        SELECT UPPER(TRIM(sku)) AS sku, date::text AS d, SUM(COALESCE(quantity, 1))::float AS units
+        FROM accounting_orders
+        WHERE store_id = ${storeId} AND fulfillment_channel = 'Amazon'
+          AND date > ${oldestSnap}::date AND date <= ${salesEnd}::date
+          AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+          AND COALESCE(TRIM(sku), '') <> ''
+        GROUP BY 1, 2
+      `,
+    ]);
+    const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+    const yearBy = new Map(yearSales.map((y) => [y.sku, y]));
+    const afterBy = new Map<string, { d: string; units: number }[]>();
+    for (const a of afterSnap) {
+      const list = afterBy.get(a.sku) ?? [];
+      list.push({ d: a.d, units: Number(a.units) || 0 });
+      afterBy.set(a.sku, list);
+    }
     const awdBy = new Map(awdLatest.map((a) => [a.a, Number(a.awd) || 0]));
     const asinOf = new Map(rows.map((r) => [String(r.sku).trim().toUpperCase(), String(r.asin ?? "").trim().toUpperCase()]));
-    const zeros = new Array(HISTORY_DAYS).fill(0);
+    const today = vnToday();
     for (const item of stock.items) {
       if (!item.hasBalance || !item.balanceDate) continue;
-      const daily = demand.daily.get(item.sku) ?? zeros;
-      if (!daily.some((u) => u > 0)) continue;
-      // daily[i] = ngày salesEnd − (HISTORY_DAYS − 1 − i)
-      let soldAfter = 0;
-      daily.forEach((u, i) => {
-        if (shiftDate(salesEnd, -(HISTORY_DAYS - 1 - i)) > item.balanceDate!) soldAfter += u;
-      });
-      const fbaNow = Math.max(0, item.sellable - soldAfter);
+      const y = yearBy.get(item.sku);
+      if (!y || !(Number(y.units) > 0)) continue;
+      const perDay = Number(y.units) / (daysBetween(y.first > yearStart ? y.first : yearStart, salesEnd) + 1);
+      const soldAfter = (afterBy.get(item.sku) ?? []).reduce((sum, a) => (a.d > item.balanceDate! ? sum + a.units : sum), 0);
       const asin = asinOf.get(item.sku);
-      const onHand = fbaNow + (asin ? awdBy.get(asin) ?? 0 : 0);
-      if (onHand <= 0) {
-        stockoutDates.set(item.sku, "Đã hết");
-        continue;
-      }
+      const onHand = Math.max(0, item.sellable - soldAfter) + (asin ? awdBy.get(asin) ?? 0 : 0);
       const from = item.balanceDate > salesEnd ? item.balanceDate : salesEnd;
-      const plan = planRestock(
-        {
-          sku: item.sku,
-          status: item.status,
-          productType: demand.typeOf.get(item.sku) ?? null,
-          daily,
-          sellable: onHand,
-          inTransit: 0,
-          inboundPending: 0,
-          nextArrival: null,
-          season: demand.seasonOf(item.sku),
-        },
-        from,
-        { leadTimeDays: 0, coverDays: 365, z: 0 },
-      );
-      // Đơn hàng có thể trễ vài ngày so với hôm nay: dự kiến hết trước / đúng hôm nay thì coi như đã hết
-      if (plan.stockoutDate) stockoutDates.set(item.sku, plan.stockoutDate <= vnToday() ? "Đã hết" : plan.stockoutDate);
+      const days = Math.ceil(onHand / perDay);
+      if (days > 365) continue;
+      const date = shiftDate(from, days);
+      // Tồn ≤ 0, hoặc đơn hàng trễ làm ngày dự kiến rơi vào trước / đúng hôm nay → đã hết
+      stockoutDates.set(item.sku, onHand <= 0 || date <= today ? "Đã hết" : date);
     }
   }
 
