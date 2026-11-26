@@ -75,8 +75,9 @@ function isSettled(status: string | undefined, items: DiscrepancyRow[]): boolean
 }
 
 /** Đổi cách đọc bảng contents thì tăng số này → cache đọc bằng cách cũ bị bỏ, đọc lại Seller Central.
- *  2 (26/11/2026): Units located lấy ở kat-link trong ô "Units expected / Units located", bỏ ô của popover lồng bên trong. */
-const PARSER_VERSION = 2;
+ *  2 (26/11/2026): Units located lấy ở kat-link trong ô "Units expected / Units located", bỏ ô của popover lồng bên trong.
+ *  3 (26/11/2026): bỏ chọn "Show discrepancies only" → lấy đủ mọi SKU của lô. */
+const PARSER_VERSION = 3;
 
 interface CachedShipmentRecord {
   parser?: number;
