@@ -3801,7 +3801,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN l.units_located IS NOT NULL AND l.units_located = l.units_expected AND l.units_located = l.lot_qty THEN 'lot_full'
           -- Lô Closed bị lệch: crawler cho biết SKU nào thiếu
           WHEN l.n_sku = l.n_rows AND l.has_crawler AND l.crawler_located = l.units_located THEN 'crawler'
-          WHEN l.has_manual_split THEN 'manual'
+          -- Không giữ số chia tay trên sheet: sheet đồng bộ mỗi đêm sẽ chép đè số từng dòng → chỉ tin crawler / Check Shipment
           ELSE 'lot_total'
         END AS mode
       FROM rows_ r JOIN lot l USING (sid)
