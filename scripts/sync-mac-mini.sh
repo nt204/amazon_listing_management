@@ -26,6 +26,7 @@ ITEMS=(
   # Crawler lệch kho (thứ 2, 2h): phân loại lô + tính chi tiết theo SKU cho lô 1 SKU
   "mac-crawler/get_discrepancy_shipments.py:get_discrepancy_shipments.py"
   "mac-crawler/shipment_discrepancy_crawler.ts:shipment_discrepancy_crawler.ts"
+  "mac-crawler/save_discrepancy_items.py:save_discrepancy_items.py"
   "mac-crawler/run_shipment_discrepancy_daily.sh:run_shipment_discrepancy_daily.sh"
   # Lịch chạy (đổi lịch phải nạp lại: bash install_shipment_discrepancy_service.sh trên Mac mini)
   "mac-crawler/com.amazon.shipment.discrepancy.plist:com.amazon.shipment.discrepancy.plist"
