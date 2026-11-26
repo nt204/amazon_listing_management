@@ -280,6 +280,7 @@ async function extractShipmentDiscrepancy(
   // 2. Trích xuất danh sách SKU/ASIN và số lượng lệch từ contents
   const contentsUrl = `https://sellercentral.amazon.com/fba/inbound-shipment/summary/${shipmentId}/contents`;
   let ok = false;
+  let allSkus = false;
   try {
     await gotoSignedIn(page, contentsUrl, storeName);
     await page.waitForTimeout(5000);
@@ -303,6 +304,27 @@ async function extractShipmentDiscrepancy(
       )
       .then(Boolean)
       .catch(() => false);
+
+    // Bỏ chọn "Show discrepancies only" (Amazon bật sẵn) → bảng liệt kê ĐỦ mọi SKU của lô kèm số nhận, không chỉ SKU lệch
+    // (báo cáo Check Shipment hằng ngày chỉ có 100 lô cập nhật gần nhất nên số cả lô của lô cũ hay bị cũ)
+    if (ok) {
+      const isChecked = () =>
+        contentFrame
+          .evaluate(
+            "(() => { const cb = document.querySelector('#discrepancies-checkbox'); if (!cb) return 'none'; return cb.checked === true || (cb.hasAttribute('checked') && cb.getAttribute('checked') !== 'false') ? 'on' : 'off'; })()",
+          )
+          .catch(() => "error");
+      let cb = await isChecked();
+      if (cb === "on") {
+        // kat-checkbox chỉ đổi khi bấm chuột thật (click() bằng JS không đổi trạng thái)
+        await contentFrame.locator("#discrepancies-checkbox").click({ timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(4000);
+        await contentFrame.waitForSelector("kat-table-body kat-table-row", { timeout: 10000 }).catch(() => {});
+        cb = (await isChecked()) === "off" ? "clicked" : "still-on";
+      }
+      allSkus = cb === "clicked" || cb === "off";
+      if (!allSkus) console.warn(`  [${shipmentId}] Không bỏ chọn được "Show discrepancies only" (${cb}) — chỉ có SKU lệch`);
+    }
 
     let hasNextPage = true;
     let pageNum = 1;
