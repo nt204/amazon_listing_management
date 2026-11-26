@@ -238,6 +238,15 @@ function parseReceivingDate(eventsText: string): string {
 // ============================================================================
 // SHIPMENT SCRAPER (CHO LÔ > 1 SKU)
 // ============================================================================
+/** Mở trang Seller Central; trang lô hàng hay bắt đăng nhập lại (max_auth_age) → tự đăng nhập (config.env) rồi mở lại */
+async function gotoSignedIn(page: Page, url: string, storeName: string): Promise<void> {
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+  if (!/\/ap\/(signin|mfa)|\/signin/i.test(page.url())) return;
+  console.log(`  [${storeName}] Amazon yêu cầu đăng nhập lại khi mở ${url.split("/summary/")[1] ?? url} → tự đăng nhập`);
+  await ensureAmazonSession(page, storeName);
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+}
+
 async function extractShipmentDiscrepancy(
   page: Page,
   storeName: string,
@@ -251,7 +260,7 @@ async function extractShipmentDiscrepancy(
   const eventsUrl = `https://sellercentral.amazon.com/fba/inbound-shipment/summary/${shipmentId}/shipmentEvents`;
   let receivingDate = "";
   try {
-    await page.goto(eventsUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+    await gotoSignedIn(page, eventsUrl, storeName);
     await page.waitForTimeout(4000);
 
     const eventFrame = page
@@ -272,7 +281,7 @@ async function extractShipmentDiscrepancy(
   const contentsUrl = `https://sellercentral.amazon.com/fba/inbound-shipment/summary/${shipmentId}/contents`;
   let ok = false;
   try {
-    await page.goto(contentsUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+    await gotoSignedIn(page, contentsUrl, storeName);
     await page.waitForTimeout(5000);
 
     const contentFrame = page
