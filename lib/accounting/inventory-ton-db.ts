@@ -55,6 +55,8 @@ export interface InventoryTonResult {
   rows: InventoryTonRow[];
   /** Ngày chốt tồn Amazon dùng cho Inventory (FBA) / AWD — ngày cuối tháng Lượng bán chốt tới (YYYY-MM-DD) */
   stockDate: string;
+  /** Ngày người dùng chọn (null = mới nhất); stockDate có thể sớm hơn nếu ngày chọn chưa có ảnh chụp */
+  requestedDate: string | null;
   hasFbaStock: boolean;
   hasAwdStock: boolean;
   /** Tháng cuối đã chốt hàng ra kho từ file thô (pipeline tháng, 4h30 ngày 2) — "YYYY-MM"; Lượng bán tính đến hết tháng này */
@@ -66,7 +68,8 @@ const num = (v: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-export async function queryInventoryTon(storeId: string, year: number): Promise<InventoryTonResult> {
+/** onDate (YYYY-MM-DD): các cột tồn Amazon lấy ảnh chụp gần nhất ≤ ngày này; bỏ trống = mới nhất */
+export async function queryInventoryTon(storeId: string, year: number, onDate?: string | null): Promise<InventoryTonResult> {
   const sql = await getDatabaseClient();
   const opening = `${year}-01`;
   const [closedRow] = await sql<{ p: string | null }[]>`
@@ -77,13 +80,22 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
   const closed = closedRow?.p ?? null;
   // Inventory (FBA) / AWD = TỒN MỚI NHẤT: ảnh chụp từng ngày mới nhất (crawler 16h10, accounting_live_inventory_daily),
   // mỗi kho = Available + Inbound + Reserved như cột Total (AMAZON) của sheet. stockDate = ngày của ảnh FBA mới nhất.
-  const [latestRow] = await sql<{ fba: string | null; awd: string | null }[]>`
+  const dateCap = onDate && /^\d{4}-\d{2}-\d{2}$/.test(onDate) ? onDate : "9999-12-31";
+  const [latestRow] = await sql<{ fba: string | null; awd: string | null; awd_ledger: string | null }[]>`
     SELECT
-      (SELECT MAX(snapshot_date)::text FROM accounting_live_inventory_daily WHERE store_id = ${storeId} AND source = 'FBA') AS fba,
-      (SELECT MAX(snapshot_date)::text FROM accounting_live_inventory_daily WHERE store_id = ${storeId} AND source = 'AWD') AS awd
+      (SELECT MAX(snapshot_date)::text FROM accounting_live_inventory_daily
+        WHERE store_id = ${storeId} AND source = 'FBA' AND snapshot_date <= ${dateCap}::date) AS fba,
+      (SELECT MAX(snapshot_date)::text FROM accounting_live_inventory_daily
+        WHERE store_id = ${storeId} AND source = 'AWD' AND snapshot_date <= ${dateCap}::date) AS awd,
+      (SELECT MAX(snapshot_date)::text FROM accounting_awd_inventory_ledger
+        WHERE store_id = ${storeId} AND snapshot_date <= ${dateCap}::date) AS awd_ledger
   `;
   const stockDate = latestRow?.fba ?? vnToday();
-  const awdDate = latestRow?.awd ?? null;
+  // AWD từng ngày mới có từ 19/11/2026 → ngày trước đó lấy AWD Inventory Ledger chốt tuần gần nhất (tồn trong kho AWD)
+  const awdDaily = latestRow?.awd ?? null;
+  const awdLedger = latestRow?.awd_ledger ?? null;
+  const awdFromLedger = !!awdLedger && (!awdDaily || awdLedger > awdDaily);
+  const awdDate = awdFromLedger ? awdLedger : awdDaily;
   const thresholds = stockThresholds({ velocityDays: 30 });
   const [rows, meta, stock, awdLatest] = await Promise.all([
     sql<Record<string, unknown>[]>`
@@ -114,10 +126,17 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
         GROUP BY 1
       ),
       al AS (
-        SELECT UPPER(TRIM(asin)) AS a, SUM(available + inbound + reserved)::float AS awd
-        FROM accounting_live_inventory_daily
-        WHERE store_id = ${storeId} AND source = 'AWD' AND snapshot_date = ${awdDate} AND COALESCE(asin, '') <> ''
-        GROUP BY 1
+        ${awdFromLedger
+          ? sql`
+            SELECT UPPER(TRIM(asin)) AS a, SUM(ton_kho_units)::float AS awd
+            FROM accounting_awd_inventory_ledger
+            WHERE store_id = ${storeId} AND snapshot_date = ${awdDate} AND COALESCE(asin, '') <> ''
+            GROUP BY 1`
+          : sql`
+            SELECT UPPER(TRIM(asin)) AS a, SUM(available + inbound + reserved)::float AS awd
+            FROM accounting_live_inventory_daily
+            WHERE store_id = ${storeId} AND source = 'AWD' AND snapshot_date = ${awdDate} AND COALESCE(asin, '') <> ''
+            GROUP BY 1`}
       )
       SELECT asm.id::text AS id, asm.brand, asm.product_type, asm.mockup_url, asm.sku, asm.asin, asm.status,
         asm.ton_basecost::float AS basecost,
@@ -212,6 +231,7 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
   return {
     year,
     stockDate,
+    requestedDate: onDate && dateCap === onDate ? onDate : null,
     hasFbaStock,
     hasAwdStock,
     salesClosedThrough: closed,

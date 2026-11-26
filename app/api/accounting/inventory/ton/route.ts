@@ -3,7 +3,6 @@ import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
 import { queryInventoryTon } from "@/lib/accounting/inventory-ton-db";
-import { latestInventoryDate, queryInventoryRange } from "@/lib/accounting/inventory-range-db";
 import { getDatabaseClient } from "@/lib/db";
 
 function vnYear(): number {
@@ -18,22 +17,10 @@ export async function GET(request: Request) {
     if (!storeId) return Response.json({ error: "store_id is required" }, { status: 400 });
     await requireStoreAccess(actor, storeId, "FBA");
 
-    // Theo ngày / khoảng ngày: ?mode=range&start=YYYY-MM-DD&end=YYYY-MM-DD
-    if (searchParams.get("mode") === "range") {
-      // Không gửi ngày → ngày có tồn mới nhất
-      const latest = searchParams.get("start") ? null : await latestInventoryDate(storeId);
-      const start = searchParams.get("start") || latest || "";
-      const end = searchParams.get("end") || start;
-      try {
-        return Response.json(await queryInventoryRange(storeId, start, end));
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-    }
-
     const yearParam = Number(searchParams.get("year"));
     const year = Number.isInteger(yearParam) && yearParam >= 2024 && yearParam <= 2100 ? yearParam : vnYear();
-    const result = await queryInventoryTon(storeId, year);
+    // ?date=YYYY-MM-DD: cột tồn Amazon của ngày đó (bỏ trống = mới nhất)
+    const result = await queryInventoryTon(storeId, year, searchParams.get("date"));
 
     if (searchParams.get("format") !== "xlsx") return Response.json(result);
 
