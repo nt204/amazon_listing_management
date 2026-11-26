@@ -3714,7 +3714,8 @@ export async function syncCheckShipmentsToInbound(
   //   (chưa nhận xong ≠ thiếu) — chỉ lô Closed mới đối soát lệch.
   // - Lô 1 SKU: số nhận = Units located; Discrepancy = Units expected (Amazon) − Units located.
   // - Lô nhiều SKU: lấy số theo từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) khi crawler đã cào
-  //   chi tiết (SKU crawler không liệt kê = nhận đủ số đi). Chưa có crawler → tổng lô ở dòng đầu.
+  //   chi tiết: lấy đúng số crawler; SKU crawler không liệt kê giữ số trên sheet (không tự coi là nhận đủ).
+  //   Chưa có crawler → tổng lô ở dòng đầu.
   const updatedRows = await sql<{ id: string }[]>`
     WITH check_data AS (
       SELECT DISTINCT ON (LOWER(TRIM(shipment_id)))
@@ -3808,7 +3809,8 @@ export async function syncCheckShipmentsToInbound(
         -- → ghi số thật của Amazon; còn lại giữ số trên sheet (lô chưa Closed tạm tính = Quantity lúc đọc).
         CASE
           WHEN c_closed AND mode = 'single' THEN units_located
-          WHEN c_closed AND mode = 'crawler' THEN COALESCE(d_located, qty)
+          -- Lô có crawler: SKU crawler có số → đúng số crawler; SKU crawler không có → giữ số trên sheet (không tự coi là nhận đủ)
+          WHEN c_closed AND mode = 'crawler' THEN COALESCE(d_located, cur_amz_recv)
           WHEN c_closed AND mode = 'lot_full' THEN qty
           WHEN mode = 'awd_short' AND rn = 1 AND lot_qty = qty THEN awd_lot_recv
           ELSE cur_amz_recv
@@ -3818,7 +3820,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN 'awd_short' THEN CASE WHEN rn = 1 THEN awd_lot_recv END
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN units_located
-          WHEN 'crawler' THEN COALESCE(d_located, qty)
+          WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN d_located ELSE cur_recv END
           WHEN 'lot_full' THEN qty
           WHEN 'manual' THEN cur_recv
           ELSE CASE WHEN rn = 1 THEN units_located END
@@ -3828,7 +3830,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN 'awd_short' THEN CASE WHEN rn = 1 THEN lot_qty - awd_lot_recv END
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN COALESCE(units_expected, qty) - units_located
-          WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE 0 END
+          WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE cur_disc END
           WHEN 'lot_full' THEN 0
           WHEN 'manual' THEN cur_disc
           ELSE CASE WHEN rn = 1 THEN COALESCE(units_expected, qty) - units_located END
