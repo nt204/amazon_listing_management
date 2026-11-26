@@ -3726,7 +3726,8 @@ export async function syncCheckShipmentsToInbound(
         units_located,
         status,
         created_date,
-        first_receiving_date
+        first_receiving_date,
+        updated_at AS c_updated
       FROM accounting_amazon_check_shipments
       WHERE store_id = ${storeId}
         AND deleted_at IS NULL
@@ -3736,7 +3737,8 @@ export async function syncCheckShipmentsToInbound(
     ),
     crawler AS (
       SELECT LOWER(TRIM(shipment_id)) AS sid, UPPER(TRIM(sku)) AS sku_key,
-             MAX(amazon_received) AS d_expected, MAX(so_luong_amazon_nhan) AS d_located
+             MAX(amazon_received) AS d_expected, MAX(so_luong_amazon_nhan) AS d_located,
+             MIN(updated_at) AS d_updated
       FROM accounting_shipment_discrepancies
       WHERE UPPER(TRIM(store_name)) = UPPER(${storeName})
       GROUP BY 1, 2
@@ -3748,11 +3750,11 @@ export async function syncCheckShipmentsToInbound(
         s.so_luong_amazon_nhan AS cur_recv, s.discrepancy AS cur_disc, s.ngay_di AS cur_ngay_di,
         s.amazon_received AS cur_amz_recv,
         c.units_expected, c.units_located, c.status AS c_status, c.created_date AS c_created_date,
-        c.first_receiving_date AS c_first_receiving,
+        c.first_receiving_date AS c_first_receiving, c.c_updated,
         (LOWER(TRIM(COALESCE(c.status, ''))) = 'closed') AS c_closed,
         -- Chỉ lô đã Closed mới đối soát số nhận / Discrepancy; Receiving là Amazon còn đang nhận → chưa check
         (LOWER(TRIM(COALESCE(c.status, ''))) = 'closed') AS c_received,
-        cr.d_expected, cr.d_located,
+        cr.d_expected, cr.d_located, cr.d_updated,
         ROW_NUMBER() OVER (
           PARTITION BY LOWER(TRIM(s.shipment_id))
           ORDER BY
@@ -3772,6 +3774,9 @@ export async function syncCheckShipmentsToInbound(
         COUNT(*) AS n_rows,
         COUNT(DISTINCT sku_key) AS n_sku,
         BOOL_OR(d_located IS NOT NULL) AS has_crawler,
+        BOOL_AND(d_located IS NOT NULL) AS crawler_all_skus,
+        -- Crawler vừa đọc trang Seller Central (bản đọc đúng Units located từ 26/11/2026) và mới hơn báo cáo Check Shipment
+        (MIN(d_updated) >= TIMESTAMPTZ '2026-11-26 07:30:00+00' AND MIN(d_updated) > MAX(c_updated)) AS crawler_fresh,
         SUM(CASE WHEN d_located IS NOT NULL THEN d_located ELSE qty END) AS crawler_located,
         MAX(units_located) AS units_located,
         MAX(units_expected) AS units_expected,
@@ -3800,7 +3805,13 @@ export async function syncCheckShipmentsToInbound(
           -- Lô nhiều SKU Closed nhận đủ (Amazon nhận = Amazon dự kiến = tổng số gửi): số cả lô ở dòng đầu, không cần crawler
           WHEN l.units_located IS NOT NULL AND l.units_located = l.units_expected AND l.units_located = l.lot_qty THEN 'lot_full'
           -- Lô Closed bị lệch: crawler cho biết SKU nào thiếu
-          WHEN l.n_sku = l.n_rows AND l.has_crawler AND l.crawler_located = l.units_located THEN 'crawler'
+          -- Số crawler dùng được khi: cộng lại khớp Units located của lô; hoặc crawler đọc mới hơn báo cáo Check Shipment
+          -- (Amazon đối soát xong sau khi báo cáo được chụp) mà biết được số của mọi SKU — liệt kê đủ, hoặc lô không bị Amazon
+          -- hạ số dự kiến (SKU không liệt kê = nhận đủ đúng số gửi)
+          WHEN l.n_sku = l.n_rows AND l.has_crawler AND (
+            l.crawler_located = l.units_located
+            OR (l.crawler_fresh AND (l.crawler_all_skus OR l.units_expected = l.lot_qty))
+          ) THEN 'crawler'
           -- Không giữ số chia tay trên sheet: sheet đồng bộ mỗi đêm sẽ chép đè số từng dòng → chỉ tin crawler / Check Shipment
           ELSE 'lot_total'
         END AS mode
