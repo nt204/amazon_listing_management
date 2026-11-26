@@ -111,15 +111,13 @@ const viDate = (iso: string) => {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 };
-/** Chú thích 1 đầu kỳ: "Tồn đầu kỳ = tồn cuối ngày 07/11/2026" / chưa có số / đang dùng số ngày gần nhất trước đó */
+/** Chú thích ngắn 1 đầu kỳ: "Đầu kỳ: 07/11" · "Cuối kỳ: 07/11 (thiếu 08/11)" · "Đầu kỳ: chưa có" */
 function describeSide(label: string, day: string, fba: SnapshotPick | null, awd: SnapshotPick | null): string {
-  if (!fba) return `${label}: chưa có số tồn ngày ${viDate(day)}.`;
-  const main =
-    fba.date === day
-      ? `${label} = tồn cuối ngày ${viDate(day)}`
-      : `${label}: không có số tồn đúng ngày ${viDate(day)}, đang dùng số ngày ${viDate(fba.date)} (gần nhất trước đó)`;
-  const awdNote = awd && awd.date !== fba.date ? ` · AWD lấy số ngày ${viDate(awd.date)}` : "";
-  return `${main}${awdNote}.`;
+  const dm = (iso: string) => viDate(iso).slice(0, 5);
+  if (!fba) return `${label}: chưa có`;
+  const main = fba.date === day ? `${label}: ${dm(day)}` : `${label}: ${dm(fba.date)} (thiếu ${dm(day)})`;
+  return awd && awd.date !== fba.date ? `${main}, AWD ${dm(awd.date)}` : main;
+}${awdNote}.`;
 }
 
 function buildColumns(year: number): Col[] {
@@ -475,22 +473,18 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
           />
         )}
         {mode === "range" && rangeQuery.data && (
-          <div className="space-y-0.5 bg-slate-50 px-3 pb-1.5 text-right text-[11px] text-slate-500">
+          <p className="bg-slate-50 px-3 pb-1.5 text-right text-[11px] text-slate-500">
             {(() => {
               const r = rangeQuery.data;
-              const openDay = shiftIso(r.startDate, -1);
-              const lines = [
-                describeSide("Tồn đầu kỳ", openDay, r.open.fba, r.open.awd),
+              const parts = [
+                describeSide("Tồn đầu kỳ", shiftIso(r.startDate, -1), r.open.fba, r.open.awd),
                 describeSide("Tồn cuối kỳ", r.endDate, r.close.fba, r.close.awd),
               ];
-              const notes: string[] = [];
-              if (!r.exact) notes.push("Cột Chênh lệch để trống vì thiếu số tồn đúng ngày đầu kỳ hoặc cuối kỳ.");
-              if (!r.exact && r.dailyDates.length > 0) {
-                notes.push(`Số tồn từng ngày có từ ${viDate(r.dailyDates[0])}; trước đó chỉ có các ngày chốt tuần / cuối tháng.`);
-              }
-              return [...lines, ...notes].map((text) => <p key={text}>{text}</p>);
+              if (!r.exact) parts.push("Chênh lệch trống do thiếu tồn đúng ngày");
+              if (!r.exact && r.dailyDates.length > 0) parts.push(`Có tồn từng ngày từ ${viDate(r.dailyDates[0]).slice(0, 5)}`);
+              return parts.join(" · ");
             })()}
-          </div>
+          </p>
         )}
         {mode === "year" && query.data?.stockDate && (
           <time dateTime={query.data.stockDate} className="block bg-slate-50 px-3 pb-1.5 text-right text-[11px] text-slate-500">
