@@ -235,7 +235,10 @@ body {
    (gốc html 13px nên text-xs chỉ ~9.75px). */
 .font-accounting-system table.acc-financial-table thead tr:first-child th,
 .font-accounting-system table.acc-financial-table thead tr:first-child th .truncate,
-.font-accounting-system table.acc-financial-table thead tr:first-child th .acc-th-label {
+.font-accounting-system table.acc-financial-table thead tr:first-child th .acc-th-label,
+.font-accounting-system table.acc-financial-table thead tr.acc-col-head-row th,
+.font-accounting-system table.acc-financial-table thead tr.acc-col-head-row th .truncate,
+.font-accounting-system table.acc-financial-table thead tr.acc-col-head-row th .acc-th-label {
   font-size: 13.5px !important;
 }
 .font-accounting-system table.acc-financial-table td,

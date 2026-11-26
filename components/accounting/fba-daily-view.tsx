@@ -624,17 +624,27 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
     if (years.size === 0 && dateRange.endDate) years.add(Number(dateRange.endDate.slice(0, 4)) - 1);
     return years.size === 1 ? `SO SÁNH NĂM ${[...years][0]}` : "SO SÁNH NĂM TRƯỚC";
   }, [items, dateRange.endDate]);
-  // Các đoạn cột ly_* liền nhau → 1 ô tiêu đề gộp; cột khác để ô trống (giữ khoá cột)
+  // Hàng tiêu đề gộp như hàng 1 của sheet: các cột năm nay → "BÁO CÁO DOANH THU - FBA", các cột ly_* → "SO SÁNH NĂM …".
+  // Cột đang khoá giữ ô riêng (sticky); last = id cột cuối của đoạn (để kẻ vạch ngăn).
   const headerGroups = useMemo(() => {
-    const groups: { key: string; span: number; ly: boolean; colId: string }[] = [];
+    const groups: { key: string; span: number; kind: "frozen" | "cur" | "ly"; colId: string; last: string }[] = [];
     for (const col of visibleColumns) {
-      const ly = col.id.startsWith("ly_");
-      const last = groups[groups.length - 1];
-      if (ly && last?.ly) last.span += 1;
-      else groups.push({ key: col.id, span: 1, ly, colId: col.id });
+      const kind = frozenColumns.includes(col.id) ? "frozen" : col.id.startsWith("ly_") ? "ly" : "cur";
+      const prev = groups[groups.length - 1];
+      if (kind !== "frozen" && prev?.kind === kind) {
+        prev.span += 1;
+        prev.last = col.id;
+      } else groups.push({ key: col.id, span: 1, kind, colId: col.id, last: col.id });
     }
-    return groups.some((g) => g.ly) ? groups : null;
-  }, [visibleColumns]);
+    return groups.some((g) => g.kind === "ly") ? groups : null;
+  }, [visibleColumns, frozenColumns]);
+  // Cột năm nay đứng ngay trước khối năm trước → vạch đen đậm bên phải (ngăn năm nay | năm trước) ở mọi dòng
+  const lyBoundaryId = useMemo(() => {
+    if (fbm) return null;
+    const i = visibleColumns.findIndex((c) => c.id.startsWith("ly_"));
+    return i > 0 ? visibleColumns[i - 1].id : null;
+  }, [visibleColumns, fbm]);
+  const lySep = (colId: string) => (colId === lyBoundaryId ? " acc-month-end" : "");
   // Dòng TOTAL của khối so sánh năm trước: Σ các ngày + Service Fees năm trước của các tháng đang xem
   const lastYearTotal = useMemo(() => {
     const shown = new Set(items.map((i) => i.date.slice(0, 7)));
@@ -781,7 +791,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
               key={col.id}
               style={{ ...f.style, backgroundColor: cellBg }}
               title={row.kind === "fee" && isMoneyResult ? row.hint : isTotal && isMoneyResult ? totalHint : undefined}
-              className={`py-1.5 px-2.5 text-xs font-bold whitespace-nowrap border-b border-slate-300 ${
+              className={`py-1.5 px-2.5 text-xs font-bold whitespace-nowrap border-b border-slate-300${lySep(col.id)} ${
                 f.isBoundary ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]" : "border-r border-slate-200"
               } ${col.id === "date" ? "text-center" : col.align === "right" ? "text-right font-mono tabular-nums" : "text-center"} ${lyCls || "text-black"}`}
             >
@@ -977,13 +987,13 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
               {!fbm && headerGroups && (
                 <tr className="text-[12px] font-black tracking-wider">
                   {headerGroups.map((g) => {
-                    if (!g.ly) {
+                    if (g.kind === "frozen") {
                       const f = getCellFreezeProps(g.colId, true);
                       return (
                         <th
                           key={`grp-${g.key}`}
-                          style={{ ...f.style, backgroundColor: "#ff9900" }}
-                          className={`py-1 bg-[#ff9900] ${f.isBoundary ? "border-r-2 border-r-slate-300" : ""}`}
+                          style={{ ...f.style, backgroundColor: "#fde3c3" }}
+                          className={`py-1.5 bg-[#fde3c3] border-b border-r${lySep(g.last)}`}
                         />
                       );
                     }
@@ -991,16 +1001,16 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       <th
                         key={`grp-${g.key}`}
                         colSpan={g.span}
-                        className="py-1 px-2.5 text-center whitespace-nowrap bg-[#fde3c3] text-slate-950 border-x-2 border-amber-700/60 border-b border-b-amber-700/40"
+                        className={`py-1.5 px-2.5 text-center whitespace-nowrap bg-[#fde3c3] text-slate-950 border-b border-r${lySep(g.last)}`}
                       >
-                        {lastYearTitle}
+                        <span className="sticky left-0 right-0">{g.kind === "ly" ? lastYearTitle : "BÁO CÁO DOANH THU - FBA"}</span>
                       </th>
                     );
                   })}
                 </tr>
               )}
               {/* ROW 1: COLUMN HEADERS */}
-              <tr className="text-[15px] font-bold shadow-xs">
+              <tr className="acc-col-head-row text-[15px] font-bold shadow-xs">
                 {visibleColumns.map((col) => {
                   const f = getCellFreezeProps(col.id, true);
                   const isSorted = sortField === col.id;
@@ -1013,7 +1023,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       isFrozen={f.isFrozen}
                       isBoundary={f.isBoundary}
                       style={{ ...f.style, ...bgStyle }}
-                      className={`py-2 px-2.5 whitespace-nowrap bg-[#ff9900] text-slate-950 ${profitColClass(col.id, "head")}`}
+                      className={`py-2 px-2.5 whitespace-nowrap bg-[#ff9900] text-slate-950 ${profitColClass(col.id, "head")}${lySep(col.id)}`}
                       draggable={true}
                       isDragging={headerDragId === col.id}
                       isDragOver={headerDragOverId === col.id}
@@ -1089,7 +1099,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                       <td
                         key={`total-${col.id}`}
                         style={{ ...f.style, ...bgStyle }}
-                        className={`${totalResultColor ? "" : profitColClass(col.id, "total")} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-bold ${
+                        className={`${totalResultColor ? "" : profitColClass(col.id, "total")}${lySep(col.id)} py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-bold ${
                           f.isBoundary
                             ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                             : "border-r border-amber-200/80"
@@ -1295,7 +1305,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                           <td
                             key={col.id}
                             style={{ ...f.style, ...cellBg }}
-                            className={`${resultColor ? "" : profitColClass(col.id, "body")} py-1.5 px-2.5 text-xs border-b border-slate-200 whitespace-nowrap ${
+                            className={`${resultColor ? "" : profitColClass(col.id, "body")}${lySep(col.id)} py-1.5 px-2.5 text-xs border-b border-slate-200 whitespace-nowrap ${
                               f.isBoundary
                                 ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
                                 : "border-r border-slate-200"
