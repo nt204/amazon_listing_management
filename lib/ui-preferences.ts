@@ -10,11 +10,16 @@ export interface UiPreferences {
   sidebarDark: boolean;
   /** Trang mở sẵn ở tab Manual Bid (store có bảng mã FBM); mặc định FBA. */
   manualBidChannel: ManualBidChannel;
+  /** Bảng FBA / FBM theo ngày: nhóm cột Net Profit → Profit/item đang thu gọn; mặc định mở. */
+  fbaDailyMetricsFolded: boolean;
+  fbmDailyMetricsFolded: boolean;
 }
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   sidebarDark: false,
   manualBidChannel: "FBA",
+  fbaDailyMetricsFolded: false,
+  fbmDailyMetricsFolded: false,
 };
 
 function uiPreferencesKey(teamId: string, userId: string) {
@@ -29,6 +34,8 @@ export async function getUiPreferences(actor: { teamId: string; userId: string }
     manualBidChannel: channel === "FBA" || channel === "FBM" || channel === "OTHER"
       ? channel
       : DEFAULT_UI_PREFERENCES.manualBidChannel,
+    fbaDailyMetricsFolded: saved?.fbaDailyMetricsFolded === true,
+    fbmDailyMetricsFolded: saved?.fbmDailyMetricsFolded === true,
   };
 }
 

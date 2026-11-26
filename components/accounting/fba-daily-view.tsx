@@ -303,8 +303,10 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   } | null>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
 
-  // Nhóm Net Profit → Profit/item: mặc định mở; bấm − thu gọn (ẩn các cột), bấm + mở lại. Nhớ theo trình duyệt.
+  // Nhóm Net Profit → Profit/item: mặc định mở; bấm − thu gọn (ẩn các cột), bấm + mở lại.
+  // Lưu theo tài khoản (ui-preferences); localStorage chỉ để hiện ngay lúc tải trang, số của tài khoản về thì ghi đè.
   const foldStorageKey = fbm ? "acc_fbm_daily_fold_metrics" : "acc_fba_daily_fold_metrics";
+  const foldPrefKey = fbm ? "fbmDailyMetricsFolded" : "fbaDailyMetricsFolded";
   const [metricsFolded, setMetricsFolded] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -313,16 +315,39 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       return false;
     }
   });
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/settings/ui-preferences", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const v = data?.preferences?.[foldPrefKey];
+        if (cancelled || typeof v !== "boolean") return;
+        setMetricsFolded(v);
+        try {
+          localStorage.setItem(foldStorageKey, v ? "1" : "0");
+        } catch {
+          // bỏ qua
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [foldPrefKey, foldStorageKey]);
   const toggleMetricsFold = useCallback(() => {
-    setMetricsFolded((prev) => {
-      try {
-        localStorage.setItem(foldStorageKey, prev ? "0" : "1");
-      } catch {
-        // bỏ qua
-      }
-      return !prev;
-    });
-  }, [foldStorageKey]);
+    const next = !metricsFolded;
+    setMetricsFolded(next);
+    try {
+      localStorage.setItem(foldStorageKey, next ? "1" : "0");
+    } catch {
+      // bỏ qua
+    }
+    fetch("/api/settings/ui-preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [foldPrefKey]: next }),
+    }).catch(() => {});
+  }, [metricsFolded, foldStorageKey, foldPrefKey]);
 
   const visibleColumns = useMemo(
     () => columns.filter((col) => col.visible !== false && !(metricsFolded && FOLD_COLUMN_IDS.has(col.id))),

@@ -7,6 +7,8 @@ export const runtime = "nodejs";
 const patchSchema = z.object({
   sidebarDark: z.boolean().optional(),
   manualBidChannel: z.enum(["FBA", "FBM", "OTHER"]).optional(),
+  fbaDailyMetricsFolded: z.boolean().optional(),
+  fbmDailyMetricsFolded: z.boolean().optional(),
 });
 
 export async function GET(request: Request) {
