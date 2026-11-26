@@ -4539,7 +4539,7 @@ function InventoryViewInner() {
           setHeaderDragId(null);
           setHeaderDragOverId(null);
         }}
-        className={`py-2 px-3 text-xs ${col.id === "ngay_thanh_toan" || col.id === "ngay_den" ? "!bg-yellow-200" : "bg-[#ff9900]"} text-slate-900 font-bold border-r border-amber-600/60 leading-tight ${alignClass} ${f.className}`}
+        className={`py-2 px-3 text-xs ${col.id === "ngay_thanh_toan" ? "!bg-yellow-200" : col.id === "ngay_den" ? "!bg-[#e4f2fb]" : "bg-[#ff9900]"} text-slate-900 font-bold border-r border-amber-600/60 leading-tight ${alignClass} ${f.className}`}
         onResize={(id, width) => resizeColumn("inbound", id, width)}
         onAutoFit={(id) => handleAutoFitColumn("inbound", id)}
         onColumnClick={(id, event) => setColumnContextMenu({ table: "inbound", field: id, x: event.clientX, y: event.clientY })}
@@ -4638,7 +4638,8 @@ function InventoryViewInner() {
       case "ngay_den":
         displayNode = safeDisplay(formatDate(cellValue));
         cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
-        if (cid === "ngay_thanh_toan" || cid === "ngay_den") cellClass += " !bg-yellow-50";
+        if (cid === "ngay_thanh_toan") cellClass += " !bg-yellow-50";
+        if (cid === "ngay_den") cellClass += " !bg-[#e4f2fb]";
         break;
       case "quantity": {
         displayNode = item.quantity?.toLocaleString() || 0;
@@ -4726,9 +4727,11 @@ function InventoryViewInner() {
         ) : (
           "—"
         );
-        // Discrepancy dương (Amazon nhận thiếu) → tô nền đỏ đậm, chữ đen
+        // Màu theo Sheet: nhận thiếu tô đỏ, chênh lệch dưới -10 tô xanh lá nhạt.
         cellClass = `py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200${
-          item.discrepancy != null && item.discrepancy > 0 ? " !bg-red-500 [&_span]:!font-semibold [&_span]:!text-black" : ""
+          item.discrepancy != null && item.discrepancy > 0
+            ? " !bg-[#ff0000] [&_span]:!font-semibold [&_span]:!text-black"
+            : item.discrepancy != null && item.discrepancy < -10 ? " !bg-[#b7e1cd]" : ""
         }`;
         break;
       case "note":
@@ -5942,7 +5945,7 @@ function InventoryViewInner() {
             className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600"
           >
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
-              <table ref={skuTableRef} className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+              <table ref={skuTableRef} className="acc-inventory-data-grid min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
               <colgroup>
                 {orderedVisibleSkuColumns.map((column) => (
                   <col key={column.id} style={{ width: getColumnWidth(column) }} />
@@ -5952,7 +5955,7 @@ function InventoryViewInner() {
               <thead
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
-                <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
+                <tr className="acc-inventory-column-head text-xs font-semibold uppercase tracking-[0.04em]">
                   {orderedVisibleSkuColumns.map((col) => renderSkuHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
@@ -6205,7 +6208,7 @@ function InventoryViewInner() {
             className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600"
           >
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
-              <table ref={inboundTableRef} className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+              <table ref={inboundTableRef} className="acc-inventory-data-grid min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
               <colgroup>
                 {orderedVisibleInboundColumns.map((column) => (
                   <col key={column.id} style={{ width: getColumnWidth(column) }} />
@@ -6215,7 +6218,7 @@ function InventoryViewInner() {
               <thead
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
-                <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
+                <tr className="acc-inventory-column-head text-xs font-semibold uppercase tracking-[0.04em]">
                   {orderedVisibleInboundColumns.map((col) => renderInboundHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
@@ -6410,7 +6413,7 @@ function InventoryViewInner() {
           <AccountingTopProgressBar loading={loadingCheckShipments} variant="indigo" />
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
-              <table ref={checkShipmentTableRef} className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+              <table ref={checkShipmentTableRef} className="acc-inventory-data-grid min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
               <colgroup>
                 {orderedVisibleCheckShipmentColumns.map((col) => (
                   <col key={col.id} style={{ width: getColumnWidth(col) }} />
@@ -6422,7 +6425,7 @@ function InventoryViewInner() {
                 onClick={(event) => handleHeaderClick("check_shipment", ["stt", "shipment_id", "shipment_name", ...activeScrollableCheckShipmentColumns.map((column) => column.id)], event)}
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
-                <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
+                <tr className="acc-inventory-column-head text-xs font-semibold uppercase tracking-[0.04em]">
                   {orderedVisibleCheckShipmentColumns.map((col) => renderCheckShipmentHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
@@ -8115,7 +8118,7 @@ function InventoryViewInner() {
 
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative max-w-2xl w-full p-4 bg-white/95 rounded-2xl shadow-2xl border border-white/20 flex flex-col items-center cursor-default overflow-hidden animate-in zoom-in-95 duration-150"
+            className="relative max-w-4xl w-full p-4 bg-white/95 rounded-2xl shadow-2xl border border-white/20 flex flex-col items-center cursor-default overflow-hidden animate-in zoom-in-95 duration-150"
           >
             {/* Header toolbar */}
             <div className="w-full flex items-center justify-between pb-3 border-b border-slate-200">
@@ -8138,7 +8141,7 @@ function InventoryViewInner() {
             </div>
 
             {/* Image display */}
-            <div className="relative flex items-center justify-center w-full min-h-[220px] max-h-[70vh] my-3 overflow-hidden rounded-xl bg-slate-100">
+            <div className={`relative flex items-center justify-center w-full my-3 overflow-hidden rounded-xl bg-slate-100 ${previewModal.url ? "h-[min(65dvh,720px)]" : "min-h-[220px]"}`}>
               {isUpdatingPreviewMockup ? (
                 <div className="flex flex-col items-center justify-center gap-2 p-8 text-indigo-600">
                   <ArrowClockwiseIcon size={28} weight="bold" className="animate-spin" />
@@ -8146,9 +8149,14 @@ function InventoryViewInner() {
                 </div>
               ) : previewModal.url ? (
                 <img
-                  src={getOptimizedThumbnailUrl(previewModal.url) || previewModal.url}
+                  src={getOptimizedThumbnailUrl(previewModal.url, 160) || previewModal.url}
                   alt={previewModal.title || "Mockup Preview"}
-                  className="max-w-full max-h-[65vh] object-contain rounded-lg"
+                  className="h-full w-full object-contain"
+                  onError={(event) => {
+                    if (event.currentTarget.getAttribute("src") !== previewModal.url) {
+                      event.currentTarget.src = previewModal.url;
+                    }
+                  }}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center gap-2 p-10 text-slate-400">

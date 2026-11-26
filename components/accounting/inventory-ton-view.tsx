@@ -240,7 +240,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto [overflow-anchor:none]">
           <table
             aria-rowcount={pageRows.length + (pageRows.length ? 2 : 1)}
-            className="border-separate border-spacing-0 text-[13px] text-slate-900"
+            className="acc-inventory-data-grid border-separate border-spacing-0 text-[13px] text-slate-900"
             style={{ zoom: scale, tableLayout: "fixed", width: columns.reduce((s, c) => s + c.width, 0) }}
           >
             <colgroup>
@@ -249,7 +249,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
               ))}
             </colgroup>
             <thead className="sticky top-0 z-20">
-              <tr>
+              <tr className="acc-inventory-column-head">
                 {columns.map((c, i) => {
                   const frozen = i < FROZEN;
                   const sorted = sort?.key === c.key ? sort.dir : 0;

@@ -212,6 +212,16 @@ body {
   color: #020617;
 }
 
+.font-accounting-system table thead .acc-inventory-column-head th,
+.font-accounting-system table thead .acc-inventory-column-head th * {
+  font-size: 13px !important;
+}
+
+.font-accounting-system table.acc-inventory-data-grid td,
+.font-accounting-system table.acc-inventory-data-grid td :is(span, a, button, input, select, textarea) {
+  font-size: 12px !important;
+}
+
 /* Tiêu đề bảng Báo cáo tổng team & Bảng theo tháng KPI: in đậm rõ nét theo chuẩn Excel */
 .font-accounting-system table.acc-kpi-report-table thead th,
 .font-accounting-system table.acc-kpi-report-table thead th *,

@@ -135,9 +135,9 @@ export const FbmPwCostView = forwardRef<FbmPwCostViewRef, FbmPwCostViewProps>(fu
 
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-270px)] min-h-[480px] flex-1 scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9]">
         <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
-          <table className="min-w-max w-full border-separate border-spacing-0 text-left text-sm">
+          <table className="acc-inventory-data-grid min-w-max w-full border-separate border-spacing-0 text-left text-sm">
             <thead className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs">
-              <tr className="text-xs font-semibold uppercase tracking-[0.04em] [&>th]:py-2.5 [&>th]:px-3 [&>th]:whitespace-nowrap [&>th]:border-r [&>th]:border-amber-600/30">
+              <tr className="acc-inventory-column-head text-xs font-semibold uppercase tracking-[0.04em] [&>th]:py-2.5 [&>th]:px-3 [&>th]:whitespace-nowrap [&>th]:border-r [&>th]:border-amber-600/30">
                 <th className="w-14 text-center">STT</th>
                 <th>Order ID</th>
                 <th>PWOrderId</th>

@@ -555,7 +555,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
       {/* Main Table Matching User Screenshot */}
       <div className="flex-1 overflow-auto bg-white dark:bg-slate-900 select-text">
         <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
-          <table className="relative isolate w-full text-xs border-separate border-spacing-0 text-slate-800 dark:text-slate-200 min-w-[1380px] table-fixed">
+          <table className="acc-inventory-data-grid relative isolate w-full text-xs border-separate border-spacing-0 text-slate-800 dark:text-slate-200 min-w-[1380px] table-fixed">
             <colgroup>
               {activeColumns.map((c) => (
                 <col key={c.id} style={{ width: getColumnWidth(c) }} />
@@ -563,7 +563,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
             </colgroup>
             {/* Header Row */}
             <thead className="sticky top-0 z-20 shadow-xs text-left">
-              <tr className="h-10 text-xs select-none">
+              <tr className="acc-inventory-column-head h-10 text-xs select-none">
                 {activeColumns.map((col) => {
                   const f = getCellFreezeProps(col.id, true);
                   const isOrange = ["product_type", "mockup", "sku", "asin"].includes(col.id);
