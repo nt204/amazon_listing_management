@@ -112,6 +112,9 @@ function lastYearValue(item: DailyItem, colId: string): number | null {
 
 /** Nhóm cột thu gọn được như Group/Outline của Excel: Net Profit → Profit/item (nút −/+ ở hàng tiêu đề trên cùng) */
 const FOLD_COLUMN_IDS = new Set(["net_profit", "balance", "roi", "tacos", "acos", "margin", "margin_pre_ads", "profit_per_item"]);
+const FBM_FOLD_COLUMN_IDS = new Set([
+  ...FOLD_COLUMN_IDS, "revenue_ads", "quantity_ads", "clicks", "organic_sales", "aov", "basecost_per_item", "ads_per_item",
+]);
 const HEADER_ORANGE = "#ff9900";
 
 const dailyValue = (item: DailyItem, colId: string) =>
@@ -170,6 +173,8 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   const columnsStorageKey = fbm ? "acc_fbm_daily_columns_global" : FBA_DAILY_COLUMNS_STORAGE_KEY;
   const frozenStorageKey = fbm ? "acc_fbm_daily_frozen_global" : FBA_DAILY_FROZEN_STORAGE_KEY;
   const defaultColumns = fbm ? DEFAULT_FBM_DAILY_COLUMNS : DEFAULT_FBA_DAILY_COLUMNS;
+  const foldColumnIds = fbm ? FBM_FOLD_COLUMN_IDS : FOLD_COLUMN_IDS;
+  const foldLabel = fbm ? "Net Profit → Ads/item" : "Net Profit → Profit/item";
   const financialMaxDate = useMemo(() => getAmazonLatestAvailableDate(), []);
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
@@ -350,8 +355,8 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   }, [metricsFolded, foldStorageKey, foldPrefKey]);
 
   const visibleColumns = useMemo(
-    () => columns.filter((col) => col.visible !== false && !(metricsFolded && FOLD_COLUMN_IDS.has(col.id))),
-    [columns, metricsFolded]
+    () => columns.filter((col) => col.visible !== false && !(metricsFolded && foldColumnIds.has(col.id))),
+    [columns, metricsFolded, foldColumnIds]
   );
 
   const handleResizeColumn = useCallback((colId: string, width: number) => {
@@ -683,10 +688,10 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       const shown = columns.filter((c) => c.visible !== false);
       let lastFold = -1;
       shown.forEach((c, i) => {
-        if (FOLD_COLUMN_IDS.has(c.id)) lastFold = i;
+        if (foldColumnIds.has(c.id)) lastFold = i;
       });
       if (lastFold >= 0) {
-        plusAt = shown.slice(lastFold + 1).find((c) => !FOLD_COLUMN_IDS.has(c.id))?.id ?? visibleColumns[visibleColumns.length - 1]?.id ?? null;
+        plusAt = shown.slice(lastFold + 1).find((c) => !foldColumnIds.has(c.id))?.id ?? visibleColumns[visibleColumns.length - 1]?.id ?? null;
       }
     }
     type Group = { key: string; span: number; kind: "frozen" | "cur" | "ly" | "fold"; colId: string; last: string; plus: boolean };
@@ -694,7 +699,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
     for (const col of visibleColumns) {
       const kind: Group["kind"] = frozenColumns.includes(col.id)
         ? "frozen"
-        : FOLD_COLUMN_IDS.has(col.id)
+        : foldColumnIds.has(col.id)
         ? "fold"
         : col.id.startsWith("ly_")
         ? "ly"
@@ -706,13 +711,12 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       } else groups.push({ key: col.id, span: 1, kind, colId: col.id, last: col.id, plus: col.id === plusAt });
     }
     return groups;
-  }, [visibleColumns, frozenColumns, columns, metricsFolded]);
+  }, [visibleColumns, frozenColumns, columns, metricsFolded, foldColumnIds]);
   // Cột năm nay đứng ngay trước khối năm trước → vạch đen đậm bên phải (ngăn năm nay | năm trước) ở mọi dòng
   const lyBoundaryId = useMemo(() => {
-    if (fbm) return null;
     const i = visibleColumns.findIndex((c) => c.id.startsWith("ly_"));
     return i > 0 ? visibleColumns[i - 1].id : null;
-  }, [visibleColumns, fbm]);
+  }, [visibleColumns]);
   const lySep = (colId: string) => (colId === lyBoundaryId ? " acc-month-end" : "");
   // Dòng TOTAL của khối so sánh năm trước: Σ các ngày + Service Fees năm trước của các tháng đang xem
   const lastYearTotal = useMemo(() => {
@@ -1059,7 +1063,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                     <button
                       type="button"
                       onClick={toggleMetricsFold}
-                      title={folded ? "Mở nhóm cột Net Profit → Profit/item" : "Thu gọn nhóm cột Net Profit → Profit/item"}
+                      title={`${folded ? "Mở" : "Thu gọn"} nhóm cột ${foldLabel}`}
                       className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border border-slate-900 bg-white text-slate-900 hover:bg-amber-100"
                     >
                       {folded ? <PlusIcon size={10} weight="bold" /> : <MinusIcon size={10} weight="bold" />}

@@ -417,14 +417,15 @@ const isValidDate = (date: string) => {
 };
 
 /**
- * Số FBA cùng ngày dương lịch năm trước (1/1/2026 ↔ 1/1/2025, như sheet), khóa theo ngày của năm hiện tại.
- * Dùng chính listFbaDaily nên Revenue / Quantity / Ads / Profit cùng công thức với năm hiện tại;
+ * Số cùng ngày dương lịch năm trước (1/1/2026 ↔ 1/1/2025), khóa theo ngày của năm hiện tại.
+ * Dùng truy vấn theo ngày của cùng kênh để giữ công thức Revenue / Quantity / Ads / Profit;
  * ngày 29/2 không có cặp thì bỏ.
  */
-export async function listFbaDailyLastYear(
+export async function listDailyLastYear(
   storeId: string,
   startDate: string,
   endDate: string,
+  list: typeof listFbaDaily | typeof import("./fbm-financials-db").listFbmDaily = listFbaDaily,
 ): Promise<Map<string, FbaDailyLastYear>> {
   const out = new Map<string, FbaDailyLastYear>();
   if (!isValidDate(startDate) || !isValidDate(endDate)) return out;
@@ -433,7 +434,7 @@ export async function listFbaDailyLastYear(
   const lyEndRaw = shiftYear(endDate, -1);
   const lyStart = isValidDate(lyStartRaw) ? lyStartRaw : lyStartRaw.replace(/-02-29$/, "-02-28");
   const lyEnd = isValidDate(lyEndRaw) ? lyEndRaw : lyEndRaw.replace(/-02-29$/, "-03-01");
-  const { items } = await listFbaDaily(storeId, {
+  const { items } = await list(storeId, {
     startDate: lyStart,
     endDate: lyEnd,
     sortField: "date",
@@ -443,7 +444,7 @@ export async function listFbaDailyLastYear(
   for (const it of items) {
     const date = shiftYear(it.date, 1);
     if (date < startDate || date > endDate || !isValidDate(date)) continue;
-    const noThue = Number(it.date.slice(0, 4)) < THUE_FROM_YEAR;
+    const noThue = list === listFbaDaily && Number(it.date.slice(0, 4)) < THUE_FROM_YEAR;
     out.set(date, {
       revenue: it.revenue,
       quantity: it.quantity,

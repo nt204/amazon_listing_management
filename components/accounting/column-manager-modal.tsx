@@ -371,7 +371,7 @@ export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
   { id: "ly_growth", label: "Tăng trưởng", defaultLabel: "Tăng trưởng", visible: true, align: "right", width: 130 },
 ];
 
-/** Cột so sánh năm trước — chỉ tab FBA (file kế toán FBM không có khối này) */
+/** Cột so sánh năm trước dùng chung cho FBA và FBM. */
 const LAST_YEAR_COLUMN_IDS = new Set(["ly_revenue", "ly_quantity", "ly_ads_fee", "ly_tacos", "ly_profit", "ly_growth"]);
 
 /** Tab FBM theo ngày: đúng thứ tự cột sheet "FBM" (Net Profit = Profit − phí dịch vụ FBM ÷ 184 ngày). */
@@ -384,6 +384,7 @@ export const DEFAULT_FBM_DAILY_COLUMNS: ColumnConfig[] = [
   { id: "aov", label: "AOV (Rev/Qt)", defaultLabel: "AOV (Rev/Qt)", visible: true, align: "right", width: 115 },
   { id: "basecost_per_item", label: "Basecost/item", defaultLabel: "Basecost/item", visible: true, align: "right", width: 120 },
   { id: "ads_per_item", label: "Ads/Item", defaultLabel: "Ads/Item", visible: true, align: "right", width: 100 },
+  ...DEFAULT_FBA_DAILY_COLUMNS.filter((col) => LAST_YEAR_COLUMN_IDS.has(col.id)),
 ];
 
 /** Tab FBM cố định: đúng thứ tự cột sheet "LỌC SKU CỐ ĐỊNH" của file FBM. */

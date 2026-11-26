@@ -48,10 +48,10 @@ export interface LastYearAgg extends LastYearDay {
   fee: number;
 }
 
-/** Tăng trưởng so với năm trước — đúng công thức sheet: =IFERROR(Profit / Profit năm trước − 1) (năm trước = 0 → trống). */
+/** Dấu của tăng trưởng theo chiều thay đổi Profit, kể cả khi năm trước lỗ. */
 export function profitGrowth(cur: number | null | undefined, prev: number | null | undefined): number | null {
   if (cur == null || prev == null || !Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return null;
-  return cur / prev - 1;
+  return growthOf(cur, prev);
 }
 
 export interface MonthFee {

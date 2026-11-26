@@ -1,6 +1,6 @@
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { channelParam, requireStoreAccess } from "@/lib/accounting/access";
-import { listFbaDaily, listFbaDailyLastYear } from "@/lib/accounting/fba-daily-db";
+import { listFbaDaily, listDailyLastYear } from "@/lib/accounting/fba-daily-db";
 import { listFbmDaily } from "@/lib/accounting/fbm-financials-db";
 import { getMonthlyServiceFees } from "@/lib/accounting/service-fees-db";
 import { getStoreById } from "@/lib/accounting/accounting-db";
@@ -45,32 +45,30 @@ export async function GET(request: Request) {
 
     // FBM: Net Profit = Profit − phí dịch vụ FBM của store ÷ 184 ngày (sheet: K − 35000/(31/12 − 1/7 + 1));
     // store chưa khai phí thì để trống như sheet
+    let { items, stats } = result;
     if (isFbm) {
       const store = await getStoreById(storeId);
       const cost = store?.fbm_service_cost;
       if (cost != null) {
         const daily = cost / FBM_SERVICE_DAYS;
-        const items = result.items.map((i) => ({ ...i, net_profit: i.profit - daily }));
-        const totalNetProfit = items.reduce((sum, i) => sum + i.net_profit, 0);
-        return Response.json({ ...result, items, stats: { ...result.stats, totalNetProfit }, serviceFees });
+        items = items.map((i) => ({ ...i, net_profit: i.profit - daily }));
+        stats = { ...stats, totalNetProfit: items.reduce((sum, i) => sum + i.net_profit, 0) };
       }
     }
 
-    // FBA: khối "SO SÁNH NĂM …" của sheet — số cùng ngày năm trước gắn vào từng ngày (ly = null: năm trước không có số)
-    // + Service Fees từng tháng năm trước (khóa theo tháng năm hiện tại) để dòng tổng tháng năm trước cũng trừ phí như sheet.
-    if (isFbm) return Response.json({ ...result, serviceFees });
-    const dates = result.items.map((i) => i.date).sort();
+    // So sánh cùng ngày, cùng kênh. FBA dùng thêm phí năm trước cho dòng tổng tháng.
+    const dates = items.map((i) => i.date).sort();
     const lyStart = startDate || dates[0];
     const lyEnd = endDate || dates[dates.length - 1];
-    if (!lyStart || !lyEnd) return Response.json({ ...result, serviceFees, lastYearServiceFees: [] });
+    if (!lyStart || !lyEnd) return Response.json({ ...result, items, stats, serviceFees, lastYearServiceFees: [] });
     const lyMonths = months.map((m) => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`);
     const [lastYear, lyFees] = await Promise.all([
-      listFbaDailyLastYear(storeId, lyStart, lyEnd),
-      getMonthlyServiceFees(storeId, lyMonths),
+      listDailyLastYear(storeId, lyStart, lyEnd, list),
+      isFbm ? [] : getMonthlyServiceFees(storeId, lyMonths),
     ]);
-    const items = result.items.map((i) => ({ ...i, ly: lastYear.get(i.date) ?? null }));
+    const itemsWithComparison = items.map((i) => ({ ...i, ly: lastYear.get(i.date) ?? null }));
     const lastYearServiceFees = lyFees.map((f) => ({ ...f, month: `${Number(f.month.slice(0, 4)) + 1}${f.month.slice(4)}` }));
-    return Response.json({ ...result, items, serviceFees, lastYearServiceFees });
+    return Response.json({ ...result, items: itemsWithComparison, stats, serviceFees, lastYearServiceFees });
   } catch (error) {
     return routeErrorResponse(error, "Failed to load FBA Daily data.", 500);
   }
