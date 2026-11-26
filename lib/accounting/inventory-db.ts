@@ -3793,6 +3793,8 @@ export async function syncCheckShipmentsToInbound(
           WHEN NOT r.c_received THEN 'pending'
           WHEN l.n_rows = 1 THEN 'single'
           WHEN l.n_sku = l.n_rows AND l.has_crawler THEN 'crawler'
+          -- Lô nhiều SKU nhận đủ 100%: số nhận của từng SKU bằng đúng số lượng gửi của SKU đó
+          WHEN r.c_closed AND l.units_located IS NOT NULL AND l.units_located = l.lot_qty THEN 'lot_full'
           WHEN l.has_manual_split THEN 'manual'
           ELSE 'lot_total'
         END AS mode
@@ -3800,11 +3802,12 @@ export async function syncCheckShipmentsToInbound(
     ),
     target AS (
       SELECT id, c_status, c_created_date, c_first_receiving, cur_recv, cur_disc, cur_ngay_di,
-        -- Amazon Received (số dùng cho Base Cost): lô Closed có số nhận chắc chắn theo SKU (1 SKU / crawler khớp lô)
+        -- Amazon Received (số dùng cho Base Cost): lô Closed có số nhận chắc chắn theo SKU (1 SKU / crawler khớp lô / nhận đủ 100%)
         -- → ghi số thật của Amazon; còn lại giữ số trên sheet (lô chưa Closed tạm tính = Quantity lúc đọc).
         CASE
           WHEN c_closed AND mode = 'single' THEN units_located
           WHEN c_closed AND mode = 'crawler' THEN COALESCE(d_located, qty)
+          WHEN c_closed AND mode = 'lot_full' THEN qty
           WHEN mode = 'awd_short' AND rn = 1 AND lot_qty = qty THEN awd_lot_recv
           ELSE cur_amz_recv
         END AS new_amz_recv,
@@ -3814,6 +3817,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN units_located
           WHEN 'crawler' THEN COALESCE(d_located, qty)
+          WHEN 'lot_full' THEN qty
           WHEN 'manual' THEN cur_recv
           ELSE CASE WHEN rn = 1 THEN units_located END
         END AS new_recv,
@@ -3823,6 +3827,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN COALESCE(units_expected, qty) - units_located
           WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE 0 END
+          WHEN 'lot_full' THEN 0
           WHEN 'manual' THEN cur_disc
           ELSE CASE WHEN rn = 1 THEN COALESCE(units_expected, qty) - units_located END
         END AS new_disc

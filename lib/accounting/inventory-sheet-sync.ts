@@ -703,6 +703,7 @@ async function writeInboundRecords(
       if (record[field] != null) fields[field] = roundTo(record[field], scales.get(field));
     }
     const targetId = matches.get(record);
+    const hasShipmentId = record.shipment_id != null && String(record.shipment_id).trim() !== "" && String(record.shipment_id).trim().toLowerCase() !== "x";
     if (!targetId) {
       const quantity = Number(record.quantity ?? 0);
       const received = (record.so_luong_amazon_nhan ?? record.amazon_received ?? 0) as number;
@@ -712,10 +713,11 @@ async function writeInboundRecords(
         brand: storeName,
         product_type: meta?.product_type ?? null,
         mockup: meta?.mockup ?? null,
-        status: "Ready to ship",
-        tinh_trang_hang_den_kho: "Ready to ship",
+        // Chỉ gán trạng thái khởi tạo khi có Shipment ID; ô không có shipment_id để trống
+        status: hasShipmentId ? "Ready to ship" : null,
+        tinh_trang_hang_den_kho: hasShipmentId ? "Ready to ship" : null,
         trang_thai: "Phát triển",
-        discrepancy: quantity - Number(received),
+        discrepancy: hasShipmentId ? quantity - Number(received) : null,
         ...fields,
         last_changed_by: actor,
       };
