@@ -43,10 +43,14 @@ import {
   AccountingTopProgressBar,
 } from "./accounting-skeleton";
 import {
+  aggregateLastYear,
   buildMonthRows,
   monthAggregates,
   monthLabel,
+  profitGrowth,
   type DailyRow,
+  type LastYearAgg,
+  type LastYearDay,
   type MonthAgg,
   type MonthFee,
 } from "./daily-month-groups";
@@ -84,9 +88,74 @@ const MONTH_TOTAL_BG = "#fff4e6";
 const SHEET_NAVY = "#e9b98a";
 const resultBg = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? undefined : v < 0 ? SHEET_RED : SHEET_GREEN);
 
-const dailyValue = (item: DailyItem, colId: string) => (item as unknown as Record<string, unknown>)[colId];
+/** Giá trị số của các cột so sánh năm trước (ly_*) cho 1 ngày; null = năm trước không có số */
+function lastYearValue(item: DailyItem, colId: string): number | null {
+  const ly = item.ly;
+  if (!ly) return null;
+  switch (colId) {
+    case "ly_revenue":
+      return ly.revenue;
+    case "ly_quantity":
+      return ly.quantity;
+    case "ly_ads_fee":
+      return ly.ads_fee;
+    case "ly_tacos":
+      return ly.revenue ? ly.ads_fee / ly.revenue : 0;
+    case "ly_profit":
+      return ly.profit;
+    case "ly_growth":
+      return profitGrowth(item.profit, ly.profit);
+    default:
+      return null;
+  }
+}
 
-type DailyItem = FbaDailyItem & Partial<Pick<FbmDailyItem, "organic_sales" | "aov" | "basecost_per_item" | "ads_per_item">>;
+const dailyValue = (item: DailyItem, colId: string) =>
+  colId.startsWith("ly_") ? lastYearValue(item, colId) : (item as unknown as Record<string, unknown>)[colId];
+
+/** "▲ 12.5%" / "▼ -9.1%" như cột Tăng trưởng của sheet */
+function formatGrowth(g: number | null): string {
+  if (g == null || Number.isNaN(g)) return "";
+  return `${g >= 0 ? "▲" : "▼"} ${(g * 100).toFixed(1)}%`;
+}
+const growthClass = (g: number | null) => (g == null ? "" : g >= 0 ? "text-emerald-700" : "text-red-600");
+
+/**
+ * Ô của khối so sánh năm trước cho dòng tổng (tháng / TOTAL) hoặc TB/Quantity (avg: tiền ÷ Quantity năm trước).
+ * curProfit = Profit năm hiện tại của cùng dòng để tính Tăng trưởng.
+ */
+function lastYearAggCell(colId: string, ly: LastYearAgg | null, curProfit: number, avg: boolean): { text: string; cls: string } | null {
+  if (!colId.startsWith("ly_")) return null;
+  if (!ly) return { text: "", cls: "" };
+  const per = (v: number) => (ly.quantity > 0 ? v / ly.quantity : 0);
+  if (avg) {
+    if (colId === "ly_revenue") return { text: formatCurrency(per(ly.revenue)), cls: "" };
+    if (colId === "ly_ads_fee") return { text: formatCurrency(per(ly.ads_fee)), cls: "" };
+    if (colId === "ly_profit") return { text: formatCurrency(per(ly.profit)), cls: "" };
+    return { text: "", cls: "" };
+  }
+  switch (colId) {
+    case "ly_revenue":
+      return { text: formatCurrency(ly.revenue), cls: "" };
+    case "ly_quantity":
+      return { text: formatInteger(ly.quantity), cls: "" };
+    case "ly_ads_fee":
+      return { text: formatCurrency(ly.ads_fee), cls: "" };
+    case "ly_tacos":
+      return { text: formatPercent(ly.revenue ? ly.ads_fee / ly.revenue : 0), cls: "" };
+    case "ly_profit":
+      return { text: formatCurrency(ly.profit), cls: "" };
+    case "ly_growth": {
+      const g = profitGrowth(curProfit, ly.profit);
+      return { text: formatGrowth(g), cls: growthClass(g) };
+    }
+    default:
+      return { text: "", cls: "" };
+  }
+}
+
+type DailyItem = FbaDailyItem &
+  Partial<Pick<FbmDailyItem, "organic_sales" | "aov" | "basecost_per_item" | "ads_per_item">> & { ly?: LastYearDay | null };
 type DailyStats = FbaDailyStats & Partial<Pick<FbmDailyStats, "totalQuantityAds" | "avgMarginPreAds">>;
 
 /** channel="fbm": tab FBM theo ngày (sheet "FBM"), chỉ hiện các store có team FBM. */
@@ -127,6 +196,8 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   const [missingSkus, setMissingSkus] = useState<string[]>([]);
   // FBA: Service Fees từng tháng (dòng "Service Fees" + khối Chi phí khác Amazon)
   const [serviceFees, setServiceFees] = useState<MonthFee[]>([]);
+  // Service Fees năm trước (khóa theo tháng năm hiện tại) cho dòng tổng tháng của khối so sánh năm trước
+  const [lastYearFees, setLastYearFees] = useState<MonthFee[]>([]);
   // Khung tổng hợp bên phải (Tổng theo tuần / tháng / Chi phí khác Amazon) — như các khối bên phải sheet
   const [showSummary, setShowSummary] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -251,11 +322,11 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       let maxContentWidth = 0;
 
       for (const item of items) {
-        const val = (item as unknown as Record<string, unknown>)[colId];
+        const val = dailyValue(item, colId);
         if (val != null) {
           let str = "";
           if (typeof val === "number") {
-            str = colId.includes("pct") || colId === "margin" || colId === "roi" || colId === "tacos" || colId === "acos"
+            str = colId.includes("pct") || colId === "margin" || colId === "roi" || colId === "tacos" || colId === "acos" || colId === "ly_tacos" || colId === "ly_growth"
               ? `${(val * 100).toFixed(1)}%`
               : val.toFixed(2);
           } else {
@@ -497,7 +568,8 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
       if (dateRange.startDate) params.set("start_date", dateRange.startDate);
       if (dateRange.endDate) params.set("end_date", dateRange.endDate);
       if (debouncedSearch) params.set("search", debouncedSearch);
-      params.set("sort_field", sortField);
+      // Cột so sánh năm trước (ly_*) chỉ có sau khi API gắn số năm trước → server xếp theo ngày, client xếp lại
+      params.set("sort_field", sortField.startsWith("ly_") ? "date" : sortField);
       params.set("sort_dir", sortDirection);
       params.set("limit", "1000");
 
@@ -510,6 +582,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
         setStats(data.stats || null);
         setMissingSkus(data.missingSkus || []);
         setServiceFees(data.serviceFees || []);
+        setLastYearFees(data.lastYearServiceFees || []);
       }
     } catch {
       // error
@@ -527,16 +600,30 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
   // Lọc theo giá trị kiểu Excel (bấm tên cột) — lọc trên các ngày đã tải
   const [valueFilters, setValueFilters] = useState<ValueFilters>({});
   const hasValueFilters = Object.keys(valueFilters).length > 0;
-  const filteredItems = useMemo(
-    () => (hasValueFilters ? items.filter((it) => passesValueFilters(it, valueFilters, dailyValue)) : items),
-    [items, valueFilters, hasValueFilters],
-  );
+  const filteredItems = useMemo(() => {
+    const list = hasValueFilters ? items.filter((it) => passesValueFilters(it, valueFilters, dailyValue)) : items;
+    if (!sortField.startsWith("ly_")) return list;
+    // Ngày không có số năm trước luôn nằm cuối
+    const dir = sortDirection === "asc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const av = lastYearValue(a, sortField);
+      const bv = lastYearValue(b, sortField);
+      if (av == null || bv == null) return av == null ? (bv == null ? 0 : 1) : -1;
+      return (av - bv) * dir;
+    });
+  }, [items, valueFilters, hasValueFilters, sortField, sortDirection]);
   const grouped = sortField === "date" && !debouncedSearch && !hasValueFilters;
   const selectedStoreName = stores.find((s) => s.id === selectedStoreId)?.name ?? null;
   const monthAggs = useMemo(
-    () => monthAggregates(items, fbm ? [] : serviceFees, !fbm, selectedStoreName),
-    [items, serviceFees, fbm, selectedStoreName],
+    () => monthAggregates(items, fbm ? [] : serviceFees, !fbm, selectedStoreName, fbm ? [] : lastYearFees),
+    [items, serviceFees, fbm, selectedStoreName, lastYearFees],
   );
+  // Dòng TOTAL của khối so sánh năm trước: Σ các ngày + Service Fees năm trước của các tháng đang xem
+  const lastYearTotal = useMemo(() => {
+    const shown = new Set(items.map((i) => i.date.slice(0, 7)));
+    const fee = lastYearFees.filter((f) => shown.has(f.month)).reduce((sum, f) => sum + (f.fee || 0), 0);
+    return aggregateLastYear(items, fee);
+  }, [items, lastYearFees]);
   // Như nhóm hàng của sheet: tháng đã qua thu gọn (chỉ tiêu đề + tổng + TB/Quantity), tháng hiện tại mở; bấm tiêu đề để đổi
   const currentMonth = financialMaxDate.slice(0, 7);
   const [monthOpen, setMonthOpen] = useState<Record<string, boolean>>({});
@@ -654,9 +741,20 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           const f = getCellFreezeProps(col.id);
           const isMoneyResult = col.id === "profit" || col.id === "net_profit";
           let content: string | null = null;
+          let lyCls = "";
           if (col.id === "date") content = label;
-          else if (row.kind === "fee") content = isMoneyResult ? formatCurrency(row.amount) : null;
-          else content = aggValue(col.id, row.agg, isAvg);
+          else if (row.kind === "fee") {
+            content = isMoneyResult ? formatCurrency(row.amount) : null;
+            // Dòng Service Fees: cột Profit năm trước ghi Service Fees năm trước như sheet
+            if (col.id === "ly_profit" && row.label === "Service Fees") {
+              const lyFee = monthAggs.find((a) => a.month === row.month)?.ly?.fee;
+              content = lyFee ? formatCurrency(lyFee) : null;
+            }
+          } else if (col.id.startsWith("ly_")) {
+            const cell = lastYearAggCell(col.id, row.agg.ly, row.agg.profit, isAvg);
+            content = cell?.text || null;
+            lyCls = cell?.cls ?? "";
+          } else content = aggValue(col.id, row.agg, isAvg);
           const val =
             row.kind === "fee" ? row.amount : row.kind === "total" ? (col.id === "net_profit" ? row.agg.net_profit : row.agg.profit) : null;
           // Định dạng có điều kiện của sheet chỉ áp cho ô Profit / Net Profit của ngày, dòng phí và dòng tổng (không áp TB/Quantity)
@@ -668,7 +766,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
               title={row.kind === "fee" && isMoneyResult ? row.hint : isTotal && isMoneyResult ? totalHint : undefined}
               className={`py-1.5 px-2.5 text-xs font-bold whitespace-nowrap border-b border-slate-300 ${
                 f.isBoundary ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]" : "border-r border-slate-200"
-              } ${col.id === "date" ? "text-center" : col.align === "right" ? "text-right font-mono tabular-nums" : "text-center"} text-black`}
+              } ${col.id === "date" ? "text-center" : col.align === "right" ? "text-right font-mono tabular-nums" : "text-center"} ${lyCls || "text-black"}`}
             >
               {content ?? ""}
             </td>
@@ -1099,6 +1197,12 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                             {formatCurrency(stats.totalQuantity > 0 ? stats.totalAdsFee / stats.totalQuantity : 0)}
                           </span>
                         )}
+                        {col.id.startsWith("ly_") && (() => {
+                          const cell = lastYearAggCell(col.id, lastYearTotal, stats.totalProfit + totalMonthFees, false);
+                          return (
+                            <span className={`font-bold tabular-nums ${cell?.cls || "text-slate-950"}`}>{cell?.text}</span>
+                          );
+                        })()}
                       </td>
                     );
                   })}
@@ -1324,6 +1428,17 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
                                 {formatCurrency(item[col.id])}
                               </span>
                             )}
+
+                            {/* Khối so sánh cùng ngày năm trước (trống khi năm trước không có số) */}
+                            {col.id.startsWith("ly_") && (() => {
+                              const v = lastYearValue(item, col.id);
+                              if (v == null) return null;
+                              if (col.id === "ly_growth")
+                                return <span className={`tabular-nums ${growthClass(v)}`}>{formatGrowth(v)}</span>;
+                              const text =
+                                col.id === "ly_quantity" ? formatInteger(v) : col.id === "ly_tacos" ? formatPercent(v) : formatCurrency(v);
+                              return <span className="font-normal tabular-nums text-black">{text}</span>;
+                            })()}
                           </td>
                         );
                       })}

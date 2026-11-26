@@ -1,6 +1,6 @@
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { channelParam, requireStoreAccess } from "@/lib/accounting/access";
-import { listFbaDaily } from "@/lib/accounting/fba-daily-db";
+import { listFbaDaily, listFbaDailyLastYear } from "@/lib/accounting/fba-daily-db";
 import { listFbmDaily } from "@/lib/accounting/fbm-financials-db";
 import { getMonthlyServiceFees } from "@/lib/accounting/service-fees-db";
 import { getStoreById } from "@/lib/accounting/accounting-db";
@@ -56,7 +56,21 @@ export async function GET(request: Request) {
       }
     }
 
-    return Response.json({ ...result, serviceFees });
+    // FBA: khối "SO SÁNH NĂM …" của sheet — số cùng ngày năm trước gắn vào từng ngày (ly = null: năm trước không có số)
+    // + Service Fees từng tháng năm trước (khóa theo tháng năm hiện tại) để dòng tổng tháng năm trước cũng trừ phí như sheet.
+    if (isFbm) return Response.json({ ...result, serviceFees });
+    const dates = result.items.map((i) => i.date).sort();
+    const lyStart = startDate || dates[0];
+    const lyEnd = endDate || dates[dates.length - 1];
+    if (!lyStart || !lyEnd) return Response.json({ ...result, serviceFees, lastYearServiceFees: [] });
+    const lyMonths = months.map((m) => `${Number(m.slice(0, 4)) - 1}${m.slice(4)}`);
+    const [lastYear, lyFees] = await Promise.all([
+      listFbaDailyLastYear(storeId, lyStart, lyEnd),
+      getMonthlyServiceFees(storeId, lyMonths),
+    ]);
+    const items = result.items.map((i) => ({ ...i, ly: lastYear.get(i.date) ?? null }));
+    const lastYearServiceFees = lyFees.map((f) => ({ ...f, month: `${Number(f.month.slice(0, 4)) + 1}${f.month.slice(4)}` }));
+    return Response.json({ ...result, items, serviceFees, lastYearServiceFees });
   } catch (error) {
     return routeErrorResponse(error, "Failed to load FBA Daily data.", 500);
   }

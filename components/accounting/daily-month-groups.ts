@@ -29,6 +29,29 @@ export interface DailyLike {
   revenue_ads: number;
   quantity_ads: number;
   clicks: number;
+  /** Cùng ngày năm trước (chỉ FBA); null / thiếu = năm trước không có số */
+  ly?: LastYearDay | null;
+}
+
+/** Số cùng ngày năm trước — khối "SO SÁNH NĂM …" bên phải tab FBA của sheet */
+export interface LastYearDay {
+  revenue: number;
+  quantity: number;
+  ads_fee: number;
+  profit: number;
+}
+
+/** Tổng năm trước của tháng / cả kỳ: profit = Σ Profit ngày + Service Fees năm trước (như dòng tổng tháng sheet) */
+export interface LastYearAgg extends LastYearDay {
+  days: number;
+  dayProfit: number;
+  fee: number;
+}
+
+/** Tăng trưởng Profit so với năm trước. Sheet dùng K/AC − 1 (sai dấu khi năm trước lỗ) → chia cho |năm trước|. */
+export function profitGrowth(cur: number | null | undefined, prev: number | null | undefined): number | null {
+  if (cur == null || prev == null || !Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return null;
+  return (cur - prev) / Math.abs(prev);
 }
 
 export interface MonthFee {
@@ -90,6 +113,8 @@ export interface MonthAgg {
   revenue_ads: number;
   quantity_ads: number;
   clicks: number;
+  /** Năm trước cùng các ngày của tháng; null = không ngày nào có số năm trước */
+  ly: LastYearAgg | null;
 }
 
 export type DailyRow<T extends DailyLike> =
@@ -102,7 +127,32 @@ export type DailyRow<T extends DailyLike> =
 /** "2026-01" → "THÁNG 1/2026" */
 export const monthLabel = (month: string) => `THÁNG ${Number(month.slice(5, 7))}/${month.slice(0, 4)}`;
 
-function aggregate(month: string, days: DailyLike[], fee: number | null, storeName?: string | null): MonthAgg {
+/** Cộng số năm trước của các ngày (+ Service Fees năm trước); null nếu không ngày nào có số */
+export function aggregateLastYear(days: DailyLike[], fee = 0): LastYearAgg | null {
+  let ly: LastYearAgg | null = null;
+  for (const d of days) {
+    if (!d.ly) continue;
+    ly ??= { days: 0, revenue: 0, quantity: 0, ads_fee: 0, dayProfit: 0, fee: 0, profit: 0 };
+    ly.days += 1;
+    ly.revenue += d.ly.revenue || 0;
+    ly.quantity += d.ly.quantity || 0;
+    ly.ads_fee += d.ly.ads_fee || 0;
+    ly.dayProfit += d.ly.profit || 0;
+  }
+  if (ly) {
+    ly.fee = fee;
+    ly.profit = ly.dayProfit + fee;
+  }
+  return ly;
+}
+
+function aggregate(
+  month: string,
+  days: DailyLike[],
+  fee: number | null,
+  storeName?: string | null,
+  lyFee = 0,
+): MonthAgg {
   const a: MonthAgg = {
     month,
     days: days.length,
@@ -123,6 +173,7 @@ function aggregate(month: string, days: DailyLike[], fee: number | null, storeNa
     revenue_ads: 0,
     quantity_ads: 0,
     clicks: 0,
+    ly: aggregateLastYear(days, lyFee),
   };
   for (const d of days) {
     a.revenue += d.revenue || 0;
@@ -153,8 +204,11 @@ export function monthAggregates(
   fees: MonthFee[],
   withFee: boolean,
   storeName?: string | null,
+  /** Service Fees năm trước, khóa theo tháng năm hiện tại (vd "2026-01" = phí tháng 1/2025) */
+  lastYearFees: MonthFee[] = [],
 ): MonthAgg[] {
   const feeBy = new Map(fees.map((f) => [f.month, f.fee]));
+  const lyFeeBy = new Map(lastYearFees.map((f) => [f.month, f.fee]));
   const byMonth = new Map<string, DailyLike[]>();
   for (const it of items) {
     const m = it.date.slice(0, 7);
@@ -163,7 +217,7 @@ export function monthAggregates(
   }
   return [...byMonth.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([m, days]) => aggregate(m, days, withFee ? feeBy.get(m) ?? 0 : null, storeName));
+    .map(([m, days]) => aggregate(m, days, withFee ? feeBy.get(m) ?? 0 : null, storeName, lyFeeBy.get(m) ?? 0));
 }
 
 /**

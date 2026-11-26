@@ -398,3 +398,58 @@ export async function listFbaDaily(
     stats,
   };
 }
+
+/** Số cùng ngày năm trước của một ngày (khối "SO SÁNH NĂM …" bên phải tab FBA của file kế toán). */
+export interface FbaDailyLastYear {
+  revenue: number;
+  quantity: number;
+  ads_fee: number;
+  profit: number;
+}
+
+/** File kế toán chỉ tính cột Thuế từ năm 2026 (tab "FBA 2025" để trống Thuế) → Profit năm trước 2026 không trừ Thuế. */
+const THUE_FROM_YEAR = 2026;
+
+const shiftYear = (date: string, delta: number) => `${Number(date.slice(0, 4)) + delta}${date.slice(4)}`;
+const isValidDate = (date: string) => {
+  const d = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === date;
+};
+
+/**
+ * Số FBA cùng ngày dương lịch năm trước (1/1/2026 ↔ 1/1/2025, như sheet), khóa theo ngày của năm hiện tại.
+ * Dùng chính listFbaDaily nên Revenue / Quantity / Ads / Profit cùng công thức với năm hiện tại;
+ * ngày 29/2 không có cặp thì bỏ.
+ */
+export async function listFbaDailyLastYear(
+  storeId: string,
+  startDate: string,
+  endDate: string,
+): Promise<Map<string, FbaDailyLastYear>> {
+  const out = new Map<string, FbaDailyLastYear>();
+  if (!isValidDate(startDate) || !isValidDate(endDate)) return out;
+  // 29/2 → 28/2 (đầu) / 1/3 (cuối) để khoảng năm trước luôn hợp lệ
+  const lyStartRaw = shiftYear(startDate, -1);
+  const lyEndRaw = shiftYear(endDate, -1);
+  const lyStart = isValidDate(lyStartRaw) ? lyStartRaw : lyStartRaw.replace(/-02-29$/, "-02-28");
+  const lyEnd = isValidDate(lyEndRaw) ? lyEndRaw : lyEndRaw.replace(/-02-29$/, "-03-01");
+  const { items } = await listFbaDaily(storeId, {
+    startDate: lyStart,
+    endDate: lyEnd,
+    sortField: "date",
+    sortDirection: "asc",
+    limit: 100_000,
+  });
+  for (const it of items) {
+    const date = shiftYear(it.date, 1);
+    if (date < startDate || date > endDate || !isValidDate(date)) continue;
+    const noThue = Number(it.date.slice(0, 4)) < THUE_FROM_YEAR;
+    out.set(date, {
+      revenue: it.revenue,
+      quantity: it.quantity,
+      ads_fee: it.ads_fee,
+      profit: noThue ? it.profit + it.thue : it.profit,
+    });
+  }
+  return out;
+}
