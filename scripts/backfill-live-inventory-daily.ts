@@ -6,19 +6,72 @@
  * lưu vào ngày TRƯỚC đó (= tồn cuối ngày, cùng quy ước với lib/accounting/live-inventory.ts: chụp ~16h VN ≈ 1h sáng Mỹ hôm sau).
  * Không ghi đè ngày đã có (ảnh do crawler nạp trực tiếp luôn được giữ). Cùng store + kho + ngày có nhiều file → lấy file lớn nhất.
  *
- * Dùng: node --conditions=react-server --env-file=.env --import tsx scripts/backfill-live-inventory-daily.ts <thư mục downloads> [--dry-run]
- * (Mac mini: ~/AmazonAccounting/downloads)
+ * Dùng: node --conditions=react-server --env-file=.env --import tsx scripts/backfill-live-inventory-daily.ts <thư mục downloads | --r2> [--dry-run]
+ *   <thư mục>: Mac mini ~/AmazonAccounting/downloads
+ *   --r2: đọc thẳng kho file kế toán trên Cloudflare R2 (accounting-reports/<ngày>/<STORE>/<file>) — chạy trên server
  */
 import fs from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { parseAwdInventoryReport, parseFbaInventoryReport, type ParsedLiveInventory } from "../lib/accounting/live-inventory";
 
 const root = process.argv[2];
 const dryRun = process.argv.includes("--dry-run");
-if (!root || !fs.existsSync(root)) {
-  console.error("Thiếu / sai thư mục downloads. Dùng: ... backfill-live-inventory-daily.ts <thư mục> [--dry-run]");
+const fromR2 = root === "--r2";
+if (!root || (!fromR2 && !fs.existsSync(root))) {
+  console.error("Thiếu / sai nguồn. Dùng: ... backfill-live-inventory-daily.ts <thư mục downloads | --r2> [--dry-run]");
   process.exit(1);
+}
+
+interface SourceFile {
+  name: string;
+  store: string;
+  size: number;
+  read: () => Promise<string>;
+}
+
+/** File 06 / 09 trong thư mục downloads (…/<STORE>/<file>) */
+function localFiles(dir: string): SourceFile[] {
+  return walk(dir).map((file) => ({
+    name: path.basename(file),
+    store: path.basename(path.dirname(file)),
+    size: fs.statSync(file).size,
+    read: async () => fs.readFileSync(file, "utf8"),
+  }));
+}
+
+/** File 06 / 09 trên R2: <prefix>/<ngày>/<STORE>/<file> */
+async function r2Files(): Promise<SourceFile[]> {
+  const client = new S3Client({
+    region: "auto",
+    endpoint: process.env.R2_ENDPOINT || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID!, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY! },
+  });
+  const bucket = process.env.R2_BUCKET_NAME || "amazon-listing-production";
+  const prefix = (process.env.ACCOUNTING_R2_PREFIX || "accounting-reports").replace(/^\/+|\/+$/g, "");
+  const out: SourceFile[] = [];
+  let token: string | undefined;
+  do {
+    const res = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: `${prefix}/`, ContinuationToken: token }));
+    for (const o of res.Contents ?? []) {
+      const parts = (o.Key ?? "").split("/");
+      const name = parts.at(-1) ?? "";
+      if (parts.length < 4 || !/^(06_FbaInventory_|09_AwdInventory_)/.test(name)) continue;
+      const key = o.Key!;
+      out.push({
+        name,
+        store: parts.at(-2)!,
+        size: o.Size ?? 0,
+        read: async () => {
+          const obj = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+          return (await obj.Body?.transformToString("utf-8")) ?? "";
+        },
+      });
+    }
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
+  return out;
 }
 
 /** "2026-11-20" | "11/20/26 16:25:01" | "11/20/2026" → YYYY-MM-DD */
@@ -57,11 +110,13 @@ async function main() {
     // (store, kho, ngày) → file lớn nhất
     const picks = new Map<string, { file: string; size: number; storeId: string; store: string; source: "FBA" | "AWD"; date: string; parsed: ParsedLiveInventory }>();
     let skipped = 0;
-    for (const file of walk(root)) {
-      const base = path.basename(file);
+    const files = fromR2 ? await r2Files() : localFiles(root);
+    for (const f of files) {
+      const base = f.name;
+      const file = `${f.store}/${f.name}`;
       const source = base.startsWith("06_FbaInventory_") ? "FBA" : base.startsWith("09_AwdInventory_") ? "AWD" : null;
       if (!source) continue;
-      const store = path.basename(path.dirname(file)).trim().toUpperCase();
+      const store = f.store.trim().toUpperCase();
       const id = storeId.get(store);
       if (!id) {
         skipped++;
@@ -69,7 +124,7 @@ async function main() {
       }
       let parsed: ParsedLiveInventory;
       try {
-        const content = fs.readFileSync(file, "utf8");
+        const content = await f.read();
         parsed = source === "FBA" ? parseFbaInventoryReport(content) : parseAwdInventoryReport(content);
       } catch (error) {
         console.warn(`  bỏ qua ${file}: ${(error as Error).message}`);
@@ -83,7 +138,7 @@ async function main() {
         continue;
       }
       const key = `${id}|${source}|${date}`;
-      const size = fs.statSync(file).size;
+      const size = f.size;
       const prev = picks.get(key);
       if (!prev || size > prev.size) picks.set(key, { file, size, storeId: id, store, source, date, parsed });
     }
