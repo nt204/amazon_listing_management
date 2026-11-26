@@ -361,13 +361,14 @@ export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
   { id: "revenue_ads", label: "Revenue ads", defaultLabel: "Revenue ads", visible: false, align: "right", width: 125 },
   { id: "quantity_ads", label: "Quantity (Ads)", defaultLabel: "Quantity (Ads)", visible: false, align: "right", width: 115 },
   { id: "clicks", label: "Click", defaultLabel: "Click", visible: false, align: "right", width: 90 },
-  // Khối "SO SÁNH NĂM …" của tab FBA trong file kế toán: cùng ngày năm trước + tăng trưởng Profit
-  { id: "ly_revenue", label: "Revenue năm trước", defaultLabel: "Revenue năm trước", visible: true, align: "right", width: 140 },
-  { id: "ly_quantity", label: "Quantity năm trước", defaultLabel: "Quantity năm trước", visible: true, align: "right", width: 140 },
-  { id: "ly_ads_fee", label: "Ads Fee năm trước", defaultLabel: "Ads Fee năm trước", visible: true, align: "right", width: 140 },
-  { id: "ly_tacos", label: "TACOS năm trước", defaultLabel: "TACOS năm trước", visible: true, align: "right", width: 130 },
-  { id: "ly_profit", label: "Profit năm trước", defaultLabel: "Profit năm trước", visible: true, align: "right", width: 135 },
-  { id: "ly_growth", label: "Tăng trưởng", defaultLabel: "Tăng trưởng", visible: true, align: "right", width: 115 },
+  // Khối "SO SÁNH NĂM …" của tab FBA trong file kế toán (cùng ngày năm trước + tăng trưởng Profit):
+  // tên cột như sheet, gom dưới 1 tiêu đề chung "SO SÁNH NĂM <năm trước>" trên hàng tiêu đề
+  { id: "ly_revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 115 },
+  { id: "ly_quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 90 },
+  { id: "ly_ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 110 },
+  { id: "ly_tacos", label: "TAcos", defaultLabel: "TAcos", visible: true, align: "right", width: 90 },
+  { id: "ly_profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 110 },
+  { id: "ly_growth", label: "Tăng trưởng", defaultLabel: "Tăng trưởng", visible: true, align: "right", width: 130 },
 ];
 
 /** Cột so sánh năm trước — chỉ tab FBA (file kế toán FBM không có khối này) */

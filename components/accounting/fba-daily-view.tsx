@@ -618,6 +618,23 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
     () => monthAggregates(items, fbm ? [] : serviceFees, !fbm, selectedStoreName, fbm ? [] : lastYearFees),
     [items, serviceFees, fbm, selectedStoreName, lastYearFees],
   );
+  // Tiêu đề chung của khối so sánh như sheet: "SO SÁNH NĂM 2025" (khoảng ngày trải 2 năm → "SO SÁNH NĂM TRƯỚC")
+  const lastYearTitle = useMemo(() => {
+    const years = new Set(items.map((i) => Number(i.date.slice(0, 4)) - 1));
+    if (years.size === 0 && dateRange.endDate) years.add(Number(dateRange.endDate.slice(0, 4)) - 1);
+    return years.size === 1 ? `SO SÁNH NĂM ${[...years][0]}` : "SO SÁNH NĂM TRƯỚC";
+  }, [items, dateRange.endDate]);
+  // Các đoạn cột ly_* liền nhau → 1 ô tiêu đề gộp; cột khác để ô trống (giữ khoá cột)
+  const headerGroups = useMemo(() => {
+    const groups: { key: string; span: number; ly: boolean; colId: string }[] = [];
+    for (const col of visibleColumns) {
+      const ly = col.id.startsWith("ly_");
+      const last = groups[groups.length - 1];
+      if (ly && last?.ly) last.span += 1;
+      else groups.push({ key: col.id, span: 1, ly, colId: col.id });
+    }
+    return groups.some((g) => g.ly) ? groups : null;
+  }, [visibleColumns]);
   // Dòng TOTAL của khối so sánh năm trước: Σ các ngày + Service Fees năm trước của các tháng đang xem
   const lastYearTotal = useMemo(() => {
     const shown = new Set(items.map((i) => i.date.slice(0, 7)));
@@ -956,6 +973,32 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
           <table className="acc-financial-table w-full border-separate border-spacing-0 text-left border-b border-slate-200">
             {/* THEAD with Header Row + Sticky TOTAL Row */}
             <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
+              {/* ROW 0: tiêu đề gộp "SO SÁNH NĂM …" trên các cột năm trước, như hàng 1 của sheet */}
+              {!fbm && headerGroups && (
+                <tr className="text-[12px] font-black tracking-wider">
+                  {headerGroups.map((g) => {
+                    if (!g.ly) {
+                      const f = getCellFreezeProps(g.colId, true);
+                      return (
+                        <th
+                          key={`grp-${g.key}`}
+                          style={{ ...f.style, backgroundColor: "#ff9900" }}
+                          className={`py-1 bg-[#ff9900] ${f.isBoundary ? "border-r-2 border-r-slate-300" : ""}`}
+                        />
+                      );
+                    }
+                    return (
+                      <th
+                        key={`grp-${g.key}`}
+                        colSpan={g.span}
+                        className="py-1 px-2.5 text-center whitespace-nowrap bg-[#fde3c3] text-slate-950 border-x-2 border-amber-700/60 border-b border-b-amber-700/40"
+                      >
+                        {lastYearTitle}
+                      </th>
+                    );
+                  })}
+                </tr>
+              )}
               {/* ROW 1: COLUMN HEADERS */}
               <tr className="text-[15px] font-bold shadow-xs">
                 {visibleColumns.map((col) => {
