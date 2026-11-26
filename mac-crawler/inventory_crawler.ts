@@ -507,7 +507,11 @@ export async function downloadInventoryLedgerReport(
     }
   }
 
-  const targetIdx = downloadRowIndex >= 0 ? downloadRowIndex : 0;
+  if (downloadRowIndex < 0) {
+    // Không tải dòng đầu bảng thay thế: dòng đó có thể là báo cáo ngày khác → nạp nhầm ngày
+    throw new Error(`Sau 5 phút chưa thấy báo cáo ngày ${targetUsDate} sẵn sàng trong bảng Download.`);
+  }
+  const targetIdx = downloadRowIndex;
   fs.mkdirSync(downloadDir, { recursive: true });
   const targetFileName = `09_InventoryLedger_${targetIsoDate}.csv`;
   const finalFilePath = path.join(downloadDir, targetFileName);
@@ -530,12 +534,33 @@ export async function downloadInventoryLedgerReport(
   await download.saveAs(finalFilePath);
   console.log(`  [Inventory Ledger] ✅ Tải thành công: ${targetFileName} (${fs.statSync(finalFilePath).size} bytes)`);
 
-  const fileHead = fs.readFileSync(finalFilePath, "utf8").slice(0, 800);
-  if (!fileHead.includes(targetUsDate) && !fileHead.includes(targetIsoDate)) {
-    console.warn(`  ⚠️ [CẢNH BÁO] Ngày trong nội dung file tải về (${targetFileName}) không khớp ngày yêu cầu (${targetUsDate})!`);
+  const problem = checkLedgerFileDate(fs.readFileSync(finalFilePath, "utf8"), targetUsDate);
+  if (problem) {
+    // File rỗng (chỉ có tiêu đề) hoặc sai ngày: không nạp, để vòng thử lại / báo lỗi — nạp vào sẽ mất ảnh chụp ngày chốt
+    throw new Error(`File ${targetFileName} không dùng được: ${problem}`);
   }
 
   return finalFilePath;
+}
+
+/**
+ * Kiểm tra file Inventory Ledger có dữ liệu đúng ngày chốt không. Trả về lý do nếu không dùng được, null nếu ổn.
+ * Ví dụ 01/11/2026 (giờ VN) bên Mỹ vẫn là 31/10 → Amazon trả file chỉ có dòng tiêu đề.
+ */
+export function checkLedgerFileDate(content: string, targetUsDate: string): string | null {
+  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
+  const dataLines = lines.slice(1);
+  if (dataLines.length === 0) return "chỉ có dòng tiêu đề, chưa có dữ liệu (Amazon chưa chốt ngày này)";
+  const [m, d, y] = targetUsDate.split("/").map((x) => parseInt(x, 10));
+  const dates = new Set(
+    dataLines.map((l) => {
+      const raw = (l.split(",")[0] || "").replace(/"/g, "").trim();
+      const p = raw.split("/").map((x) => parseInt(x, 10));
+      return p.length === 3 && p[0] === m && p[1] === d && (p[2] === y || p[2] === y % 100) ? "ok" : raw;
+    })
+  );
+  dates.delete("ok");
+  return dates.size ? `ngày trong file (${[...dates].slice(0, 3).join(", ")}) khác ngày yêu cầu ${targetUsDate}` : null;
 }
 
 /**
@@ -623,13 +648,25 @@ export async function runInventoryLedgerCrawler(): Promise<void> {
         const page = browserContext.pages()[0] || (await browserContext.newPage());
 
         const storeDownloadDir = path.join(ACCOUNTING_DOWNLOAD_DIR, targetSaturday.isoDate, store.store_name);
-        const downloadedFilePath = await downloadInventoryLedgerReport(
-          page,
-          storeDownloadDir,
-          targetSaturday.isoDate,
-          targetSaturday.usDate,
-          store.store_name
-        );
+        // File rỗng / sai ngày thì yêu cầu lại báo cáo (tối đa 3 lần, cách nhau 2 phút); vẫn hỏng thì báo lỗi, không nạp
+        const MAX_ATTEMPTS = 3;
+        let downloadedFilePath = "";
+        for (let attempt = 1; ; attempt++) {
+          try {
+            downloadedFilePath = await downloadInventoryLedgerReport(
+              page,
+              storeDownloadDir,
+              targetSaturday.isoDate,
+              targetSaturday.usDate,
+              store.store_name
+            );
+            break;
+          } catch (err: any) {
+            if (attempt >= MAX_ATTEMPTS) throw err;
+            console.warn(`  ⚠️ [Inventory Ledger] Lần ${attempt}/${MAX_ATTEMPTS} hỏng: ${err?.message || err} → thử lại sau 2 phút`);
+            await page.waitForTimeout(120000);
+          }
+        }
 
         // 1. Upload lên Cloudflare R2
         await uploadFileToR2(downloadedFilePath, store.store_name, targetSaturday.isoDate);
