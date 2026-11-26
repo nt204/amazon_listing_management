@@ -1563,7 +1563,6 @@ function InventoryViewInner() {
   // Search & Filter state (Debounced 300ms)
   const [skuSearch, setSkuSearch] = useState("");
   const [skuStatusFilter, setSkuStatusFilter] = useState("");
-  const [skuTypeFilter, setSkuTypeFilter] = useState("");
   const debouncedSkuSearch = useDebounce(skuSearch, 300);
 
   const [shipmentSearch, setShipmentSearch] = useState("");
@@ -2173,7 +2172,7 @@ function InventoryViewInner() {
   const [checkShipmentLimit, setCheckShipmentLimit] = useState(50);
 
   const effectiveSkuStatus = columnFilters.sku?.status || skuStatusFilter;
-  const effectiveSkuProductType = columnFilters.sku?.product_type || skuTypeFilter;
+  const effectiveSkuProductType = columnFilters.sku?.product_type || "";
 
   // Reset page to 1 when filters or selected store change
   useEffect(() => {
@@ -2795,7 +2794,7 @@ function InventoryViewInner() {
 
   useEffect(() => {
     skuScrollRef.current?.scrollTo({ top: 0 });
-  }, [selectedStoreId, skuPage, debouncedSkuSearch, skuTypeFilter, columnFilters.sku]);
+  }, [selectedStoreId, skuPage, debouncedSkuSearch, columnFilters.sku]);
 
   useEffect(() => {
     shipmentScrollRef.current?.scrollTo({ top: 0 });
@@ -3491,7 +3490,7 @@ function InventoryViewInner() {
 
       // Cập nhật tức thời vào cache query
       queryClient.setQueryData(
-        ["sku-master", selectedStoreId, skuChannel, skuPage, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
+        ["sku-master", selectedStoreId, skuChannel, skuPage, skuLimit, debouncedSkuSearch, effectiveSkuStatus, effectiveSkuProductType],
         (oldData: any) => {
           if (!oldData) return oldData;
           return {
@@ -5618,17 +5617,6 @@ function InventoryViewInner() {
                 </button>
               )}
             </div>
-            <select
-              value={skuTypeFilter}
-              onChange={(e) => setSkuTypeFilter(e.target.value)}
-              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 focus:border-indigo-500 focus:outline-hidden cursor-pointer shadow-2xs"
-            >
-              <option value="">Tất cả Loại Phôi</option>
-              {skuProductTypes.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-
             {/* Zoom Controls (+ / -) */}
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs">
               <button
