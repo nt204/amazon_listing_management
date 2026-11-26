@@ -507,7 +507,7 @@ export async function listInventoryFieldOptions(storeId: string): Promise<Invent
           return [field, merged] as const;
         }
         if (field === "status") {
-          const defaults = ["Working", "In Transit", "Receiving", "Closed", "Cancelled", "Delivered"];
+          const defaults = ["Ready to ship", "In transit", "Receiving", "Closed", "Cancelled", "Delivered"];
           const merged = [...new Set([...vals, ...defaults])];
           return [field, merged] as const;
         }
@@ -3247,7 +3247,7 @@ export async function upsertCheckShipmentItem(
       ${unitsExpected},
       ${unitsLocated},
       ${discrepancy},
-      ${data.status ?? "Working"},
+      ${data.status ?? "Ready to ship"},
       ${data.custom_fields ? JSON.stringify(data.custom_fields) : "{}"}::jsonb,
       ${changedBy},
       NOW()
@@ -3396,7 +3396,7 @@ export function createDefaultCheckShipmentSheet(
       item.skus_count ?? 1,
       item.units_expected ?? 0,
       item.units_located ?? 0,
-      item.status ?? "Working",
+      item.status ?? "Ready to ship",
     ];
     const row = ws.addRow(values);
     row.height = 21;
@@ -3840,12 +3840,12 @@ export async function syncCheckShipmentsToInbound(
       END,
       status = CASE
         WHEN t.c_status IS NOT NULL AND t.c_status != '' AND t.c_status NOT LIKE '%object Object%' THEN t.c_status
-        ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
+        ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Ready to ship')
       END,
       tinh_trang_hang_den_kho = CASE
         WHEN t.c_status IS NOT NULL AND t.c_status != '' AND t.c_status NOT LIKE '%object Object%' THEN t.c_status
-        WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
-        ELSE COALESCE(s.tinh_trang_hang_den_kho, s.status, 'Working')
+        WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(NULLIF(s.status, '[object Object]'), 'Ready to ship')
+        ELSE COALESCE(s.tinh_trang_hang_den_kho, s.status, 'Ready to ship')
       END,
       ngay_di = CASE
         WHEN t.c_created_date IS NOT NULL AND TRIM(t.c_created_date) != '' THEN t.c_created_date
@@ -3956,7 +3956,7 @@ export async function importCheckShipmentsFromCsv(
 
     let shipmentId = "";
     let shipmentName = "";
-    let status = "Working";
+    let status = "Ready to ship";
     let createdDate: string | null = null;
     let lastUpdatedDate: string | null = null;
     let shipTo: string | null = null;
@@ -3970,7 +3970,7 @@ export async function importCheckShipmentsFromCsv(
       const parsed = parseAmazonShipmentNameAndId(rawName);
       shipmentId = parsed.shipment_id;
       shipmentName = parsed.shipment_name;
-      status = rowObj["status"]?.trim() || "Working";
+      status = rowObj["status"]?.trim() || "Ready to ship";
       createdDate = parseAmazonDate(rowObj["created"]);
       lastUpdatedDate = parseAmazonDate(rowObj["last updated"]);
       shipTo = rowObj["destination"]?.trim() || null;
@@ -3995,7 +3995,7 @@ export async function importCheckShipmentsFromCsv(
 
       shipmentId = mappedRow["shipment_id"]?.trim() || "";
       shipmentName = mappedRow["shipment_name"]?.trim() || shipmentId;
-      status = mappedRow["status"]?.trim() || "Working";
+      status = mappedRow["status"]?.trim() || "Ready to ship";
       createdDate = parseAmazonDate(mappedRow["created_date"]) || cleanDateOnly(mappedRow["created_date"]);
       lastUpdatedDate = parseAmazonDate(mappedRow["last_updated_date"]) || cleanDateOnly(mappedRow["last_updated_date"]);
       shipTo = mappedRow["ship_to"]?.trim() || null;

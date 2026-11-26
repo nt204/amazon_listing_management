@@ -85,7 +85,7 @@ const DEFAULT_PRODUCT_TYPES = [
 ];
 
 const DEFAULT_INBOUND_STATUS = [
-  "Working",
+  "Ready to ship",
   "In Transit",
   "Receiving",
   "Closed",
@@ -105,7 +105,7 @@ const DEFAULT_INBOUND_TRANG_THAI = [
 
 const DEFAULT_CHECK_SHIPMENT_STATUS = [
   "Closed",
-  "Working",
+  "Ready to ship",
   "In Transit",
   "Delivered",
   "Receiving",
@@ -1337,6 +1337,10 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; border: string }
   "closed": { bg: "bg-emerald-100", text: "text-emerald-950", border: "border-emerald-300" },
   "receiving": { bg: "bg-teal-100", text: "text-teal-950", border: "border-teal-300" },
   "in transit": { bg: "bg-amber-100", text: "text-amber-950", border: "border-amber-300" },
+  "ready to ship": { bg: "bg-blue-100", text: "text-blue-950", border: "border-blue-300" },
+  "created": { bg: "bg-blue-100", text: "text-blue-950", border: "border-blue-300" },
+  "checked in": { bg: "bg-cyan-100", text: "text-cyan-950", border: "border-cyan-300" },
+  "shipped": { bg: "bg-amber-100", text: "text-amber-950", border: "border-amber-300" },
   "working": { bg: "bg-indigo-100", text: "text-indigo-950", border: "border-indigo-300" },
   "active": { bg: "bg-emerald-100", text: "text-emerald-950", border: "border-emerald-300" },
   "inactive": { bg: "bg-slate-200", text: "text-slate-800", border: "border-slate-400" },
@@ -2722,6 +2726,22 @@ function InventoryViewInner() {
       return cb - ca;
     });
   }, [allShipments, dateSort.inbound, columnFilters.inbound]);
+
+  const inboundBatchColors = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of sortedShipments) {
+      const shipmentId = item.shipment_id?.trim().toLowerCase();
+      if (!shipmentId) continue;
+      counts.set(shipmentId, (counts.get(shipmentId) ?? 0) + 1);
+    }
+
+    const palette = ["bg-sky-100/70", "bg-emerald-100/70"];
+    const colors = new Map<string, string>();
+    for (const [shipmentId, count] of counts) {
+      if (count > 1) colors.set(shipmentId, palette[colors.size % palette.length]);
+    }
+    return colors;
+  }, [sortedShipments]);
 
   // Mặc định sắp xếp CHECK SHIPMENT theo ngày update từ mới nhất
   const sortedCheckShipments = useMemo(() => {
@@ -4657,10 +4677,14 @@ function InventoryViewInner() {
         displayNode = safeDisplay(item.ten_lo_hang);
         cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
-      case "shipment_id":
-        displayNode = safeDisplay(item.shipment_id);
+      case "shipment_id": {
+        const batchColor = inboundBatchColors.get(item.shipment_id?.trim().toLowerCase() ?? "");
+        displayNode = batchColor ? (
+          <span className={`rounded px-1.5 py-0.5 ${batchColor}`}>{safeDisplay(item.shipment_id)}</span>
+        ) : safeDisplay(item.shipment_id);
         cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
+      }
       case "amazon_received":
         // Lô chưa Closed mà chưa có Amazon Received → hiện tạm Quantity (xám nghiêng), chỉ để Base Cost đỡ sai,
         // không tính vào Discrepancy. Lô Closed / check shipment điền số thật thì hiện số thật.
@@ -4731,7 +4755,7 @@ function InventoryViewInner() {
         options={getColumnOptions("inbound", cid)}
       />
     );
-  }, [inboundFreezeMap, getCellFreezeProps, inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, getColumnOptions]);
+  }, [inboundBatchColors, inboundFreezeMap, getCellFreezeProps, inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, getColumnOptions]);
 
   const renderCheckShipmentHeader = useCallback(
     (col: ColumnConfig) => {
@@ -5655,7 +5679,7 @@ function InventoryViewInner() {
               <option value="In Transit">In Transit</option>
               <option value="Receiving">Receiving</option>
               <option value="Closed">Closed</option>
-              <option value="Working">Working</option>
+              <option value="Ready to ship">Ready to ship</option>
             </select>
 
             {/* Zoom Controls (+ / -) */}
