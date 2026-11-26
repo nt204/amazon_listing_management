@@ -97,7 +97,7 @@ export async function queryInventoryTon(storeId: string, year: number, onDate?: 
   const awdFromLedger = !!awdLedger && (!awdDaily || awdLedger > awdDaily);
   const awdDate = awdFromLedger ? awdLedger : awdDaily;
   const thresholds = stockThresholds({ velocityDays: 30 });
-  const [rows, meta, stock, awdLatest] = await Promise.all([
+  const [rows, meta, stock, nowStock] = await Promise.all([
     sql<Record<string, unknown>[]>`
       WITH op AS (
         SELECT UPPER(TRIM(sku)) AS k, SUM(sl_ton_dau_ky)::float AS f, MAX(basecost_dau_ky)::float AS g
@@ -156,29 +156,43 @@ export async function queryInventoryTon(storeId: string, year: number, onDate?: 
         ${awdDate != null} AS awd
     `,
     year === Number(vnToday().slice(0, 4)) ? loadStockRows(storeId, thresholds) : null,
-    // AWD mới nhất (không phải chốt cuối tháng) để dự đoán ngày hết hàng
-    sql<{ a: string; awd: number }[]>`
-      SELECT UPPER(TRIM(asin)) AS a, SUM(ton_kho_units)::float AS awd
+    // Tồn MỚI NHẤT để dự đoán ngày hết hàng (không theo ngày đang chọn): cùng nguồn với cột Inventory (FBA) / AWD —
+    // ảnh chụp từng ngày mới nhất; AWD lấy bản mới hơn giữa ảnh từng ngày và AWD Inventory Ledger
+    sql<{ src: string; a: string; qty: number; d: string }[]>`
+      WITH fd AS (SELECT MAX(snapshot_date) AS d FROM accounting_live_inventory_daily WHERE store_id = ${storeId} AND source = 'FBA'),
+        ad AS (SELECT MAX(snapshot_date) AS d FROM accounting_live_inventory_daily WHERE store_id = ${storeId} AND source = 'AWD'),
+        ld AS (SELECT MAX(snapshot_date) AS d FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId})
+      SELECT 'FBA' AS src, UPPER(TRIM(asin)) AS a, SUM(available + inbound + reserved)::float AS qty, MAX(snapshot_date)::text AS d
+      FROM accounting_live_inventory_daily
+      WHERE store_id = ${storeId} AND source = 'FBA' AND snapshot_date = (SELECT d FROM fd) AND COALESCE(asin, '') <> ''
+      GROUP BY 2
+      UNION ALL
+      SELECT 'AWD', UPPER(TRIM(asin)), SUM(available + inbound + reserved)::float, MAX(snapshot_date)::text
+      FROM accounting_live_inventory_daily
+      WHERE store_id = ${storeId} AND source = 'AWD' AND snapshot_date = (SELECT d FROM ad) AND COALESCE(asin, '') <> ''
+        AND ((SELECT d FROM ld) IS NULL OR (SELECT d FROM ad) >= (SELECT d FROM ld))
+      GROUP BY 2
+      UNION ALL
+      SELECT 'AWD', UPPER(TRIM(asin)), SUM(ton_kho_units)::float, MAX(snapshot_date)::text
       FROM accounting_awd_inventory_ledger
-      WHERE store_id = ${storeId} AND COALESCE(asin, '') <> ''
-        AND snapshot_date = (SELECT MAX(snapshot_date) FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId})
-      GROUP BY 1
+      WHERE store_id = ${storeId} AND snapshot_date = (SELECT d FROM ld) AND COALESCE(asin, '') <> ''
+        AND ((SELECT d FROM ad) IS NULL OR (SELECT d FROM ld) > (SELECT d FROM ad))
+      GROUP BY 2
     `,
   ]);
   const hasFbaStock = !!meta[0]?.fba;
   const hasAwdStock = !!meta[0]?.awd;
   // Ngày dự kiến hết hàng:
-  //   tồn hiện tại = FBA bán được (Inventory Ledger mới nhất) − số đã bán sau ngày chụp + AWD mới nhất;
+  //   tồn hiện tại = Inventory (FBA) mới nhất (ảnh chụp từng ngày, như cột trong bảng) − số đã bán sau ngày chụp + AWD mới nhất;
   //   tốc độ bán = trung bình 1 năm gần nhất: units FBA 365 ngày tới ngày có đơn mới nhất ÷ số ngày
   //   (SKU bán chưa đủ năm thì ÷ số ngày từ đơn đầu tiên); đếm từ ngày có dữ liệu mới nhất. Chưa cộng hàng đang về.
   const stockoutDates = new Map<string, string>();
-  if (stock?.salesEnd) {
+  const fbaNow = new Map(nowStock.filter((r) => r.src === "FBA").map((r) => [r.a, Number(r.qty) || 0]));
+  const awdNow = new Map(nowStock.filter((r) => r.src === "AWD").map((r) => [r.a, Number(r.qty) || 0]));
+  const fbaNowDate = nowStock.find((r) => r.src === "FBA")?.d ?? null;
+  if (stock?.salesEnd && fbaNowDate) {
     const salesEnd = stock.salesEnd;
     const yearStart = shiftDate(salesEnd, -364);
-    const oldestSnap = stock.items.reduce<string>(
-      (m, i) => (i.balanceDate && i.balanceDate < m ? i.balanceDate : m),
-      salesEnd,
-    );
     const [yearSales, afterSnap] = await Promise.all([
       sql<{ sku: string; units: number; first: string }[]>`
         SELECT UPPER(TRIM(sku)) AS sku, SUM(COALESCE(quantity, 1))::float AS units, MIN(date)::text AS first
@@ -189,42 +203,41 @@ export async function queryInventoryTon(storeId: string, year: number, onDate?: 
           AND COALESCE(TRIM(sku), '') <> ''
         GROUP BY 1
       `,
-      // Units từng ngày sau ngày chụp tồn cũ nhất → trừ phần đã bán sau ngày chụp của từng SKU
-      sql<{ sku: string; d: string; units: number }[]>`
-        SELECT UPPER(TRIM(sku)) AS sku, date::text AS d, SUM(COALESCE(quantity, 1))::float AS units
-        FROM accounting_orders
-        WHERE store_id = ${storeId} AND fulfillment_channel = 'Amazon'
-          AND date > ${oldestSnap}::date AND date <= ${salesEnd}::date
-          AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
-          AND COALESCE(TRIM(sku), '') <> ''
-        GROUP BY 1, 2
+      // Units đã bán sau ngày chụp tồn (theo ASIN, cùng khoá với tồn)
+      sql<{ a: string; units: number }[]>`
+        SELECT UPPER(TRIM(m.asin)) AS a, SUM(COALESCE(o.quantity, 1))::float AS units
+        FROM accounting_orders o
+        JOIN accounting_sku_master m ON m.store_id = o.store_id AND m.deleted_at IS NULL
+          AND UPPER(TRIM(m.sku)) = UPPER(TRIM(o.sku))
+        WHERE o.store_id = ${storeId} AND o.fulfillment_channel = 'Amazon'
+          AND o.date > ${fbaNowDate}::date AND o.date <= ${salesEnd}::date
+          AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
+          AND COALESCE(TRIM(m.asin), '') <> ''
+        GROUP BY 1
       `,
     ]);
     const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
     const yearBy = new Map(yearSales.map((y) => [y.sku, y]));
-    const afterBy = new Map<string, { d: string; units: number }[]>();
-    for (const a of afterSnap) {
-      const list = afterBy.get(a.sku) ?? [];
-      list.push({ d: a.d, units: Number(a.units) || 0 });
-      afterBy.set(a.sku, list);
-    }
-    const awdBy = new Map(awdLatest.map((a) => [a.a, Number(a.awd) || 0]));
-    const asinOf = new Map(rows.map((r) => [String(r.sku).trim().toUpperCase(), String(r.asin ?? "").trim().toUpperCase()]));
+    const soldAfterBy = new Map(afterSnap.map((a) => [a.a, Number(a.units) || 0]));
     const today = vnToday();
-    for (const item of stock.items) {
-      if (!item.hasBalance || !item.balanceDate) continue;
-      const y = yearBy.get(item.sku);
+    const from = fbaNowDate > salesEnd ? fbaNowDate : salesEnd;
+    for (const r of rows) {
+      const sku = String(r.sku).trim().toUpperCase();
+      const asin = String(r.asin ?? "").trim().toUpperCase();
+      if (!asin) continue;
+      const y = yearBy.get(sku);
       if (!y || !(Number(y.units) > 0)) continue;
       const perDay = Number(y.units) / (daysBetween(y.first > yearStart ? y.first : yearStart, salesEnd) + 1);
-      const soldAfter = (afterBy.get(item.sku) ?? []).reduce((sum, a) => (a.d > item.balanceDate! ? sum + a.units : sum), 0);
-      const asin = asinOf.get(item.sku);
-      const onHand = Math.max(0, item.sellable - soldAfter) + (asin ? awdBy.get(asin) ?? 0 : 0);
-      const from = item.balanceDate > salesEnd ? item.balanceDate : salesEnd;
+      const onHand = Math.max(0, (fbaNow.get(asin) ?? 0) - (soldAfterBy.get(asin) ?? 0)) + (awdNow.get(asin) ?? 0);
+      if (onHand <= 0) {
+        stockoutDates.set(sku, "Đã hết");
+        continue;
+      }
       const days = Math.ceil(onHand / perDay);
       if (days > 365) continue;
       const date = shiftDate(from, days);
-      // Tồn ≤ 0, hoặc đơn hàng trễ làm ngày dự kiến rơi vào trước / đúng hôm nay → đã hết
-      stockoutDates.set(item.sku, onHand <= 0 || date <= today ? "Đã hết" : date);
+      // Đơn hàng trễ làm ngày dự kiến rơi vào trước / đúng hôm nay → đã hết
+      stockoutDates.set(sku, date <= today ? "Đã hết" : date);
     }
   }
 
