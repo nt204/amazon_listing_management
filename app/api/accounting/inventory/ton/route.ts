@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
 import { queryInventoryTon } from "@/lib/accounting/inventory-ton-db";
-import { queryInventoryRange } from "@/lib/accounting/inventory-range-db";
+import { latestInventoryDate, queryInventoryRange } from "@/lib/accounting/inventory-range-db";
 import { getDatabaseClient } from "@/lib/db";
 
 function vnYear(): number {
@@ -20,7 +20,9 @@ export async function GET(request: Request) {
 
     // Theo ngày / khoảng ngày: ?mode=range&start=YYYY-MM-DD&end=YYYY-MM-DD
     if (searchParams.get("mode") === "range") {
-      const start = searchParams.get("start") || "";
+      // Không gửi ngày → ngày có tồn mới nhất
+      const latest = searchParams.get("start") ? null : await latestInventoryDate(storeId);
+      const start = searchParams.get("start") || latest || "";
       const end = searchParams.get("end") || start;
       try {
         return Response.json(await queryInventoryRange(storeId, start, end));

@@ -109,6 +109,18 @@ async function stockAt(sql: Sql, storeId: string, source: "FBA" | "AWD", date: s
   return { pick: { date: ledger!, source: "ledger" }, stock: new Map(rows.map((r) => [r.sku, Number(r.stock) || 0])), inbound: null };
 }
 
+/** Ngày có tồn mới nhất của store (tồn từng ngày, chưa có thì Inventory Ledger); null = chưa có số tồn nào */
+export async function latestInventoryDate(storeId: string): Promise<string | null> {
+  const sql = await getDatabaseClient();
+  const [row] = await sql<{ d: string | null }[]>`
+    SELECT GREATEST(
+      (SELECT MAX(snapshot_date) FROM accounting_live_inventory_daily WHERE store_id = ${storeId} AND source = 'FBA'),
+      (SELECT MAX(snapshot_date) FROM accounting_inventory_ledger WHERE store_id = ${storeId})
+    )::text AS d
+  `;
+  return row?.d ?? null;
+}
+
 export async function queryInventoryRange(storeId: string, startDate: string, endDate: string): Promise<InventoryRangeResult> {
   if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate) || startDate > endDate) {
     throw new Error("Khoảng ngày không hợp lệ (YYYY-MM-DD, ngày bắt đầu ≤ ngày kết thúc).");

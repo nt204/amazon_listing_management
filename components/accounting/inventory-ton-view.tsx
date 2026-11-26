@@ -7,7 +7,6 @@ import { CaretDownIcon, CaretUpIcon, MagnifyingGlassIcon, XIcon } from "@phospho
 import type { InventoryTonResult } from "@/lib/accounting/inventory-ton-db";
 import type { InventoryRangeResult, SnapshotPick } from "@/lib/accounting/inventory-range-db";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
-import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 import { PaginationBar } from "./pagination-bar";
 
 // Tab TỒN KHO dựa trên tab "TỒN" trong file <STORE> INVENTORY 2026.
@@ -64,13 +63,11 @@ const TOTAL_COLUMNS: Key[] = [
 const RANGE_TOTAL_COLUMNS: Key[] = [
   "open_fba", "open_awd", "open_total", "received", "sold", "close_fba", "close_awd", "close_total", "close_inbound", "diff",
 ];
-const BLUE = "#cfe2f3";
 // Nền header là class Tailwind (không chỉ style) — luật .acc-black-grid trong globals.css tô trắng mọi th không có class bg-*.
 const HEAD_BG: Record<string, string> = {
   [ORANGE]: "bg-[#ff9900]",
   [YELLOW]: "bg-[#ffff00]",
   [PEACH]: "bg-[#fce5cd]",
-  [BLUE]: "bg-[#cfe2f3]",
 };
 
 /** Cột chế độ "Theo ngày": tồn đầu kỳ → hàng về → bán → tồn cuối kỳ → chênh lệch (lib/accounting/inventory-range-db.ts) */
@@ -80,13 +77,13 @@ function buildRangeColumns(): Col[] {
     { key: "mockup_url", label: "Mockup", width: 72, fmt: "text", head: ORANGE, align: "center" },
     { key: "sku", label: "SKU", width: 160, fmt: "text", head: ORANGE, bold: true, align: "left" },
     { key: "asin", label: "ASIN", width: 112, fmt: "text", head: ORANGE, align: "left" },
-    { key: "open_fba", label: "Đầu kỳ FBA", width: 90, fmt: "int", head: PEACH, align: "right",
+    { key: "open_fba", label: "Đầu kỳ FBA", width: 90, fmt: "int", head: ORANGE, align: "right",
       hint: "Tồn FBA cuối ngày trước ngày bắt đầu (Available + Reserved; ảnh Inventory Ledger: hàng SELLABLE)" },
-    { key: "open_awd", label: "Đầu kỳ AWD", width: 90, fmt: "int", head: PEACH, align: "right", hint: "Tồn AWD cuối ngày trước ngày bắt đầu" },
-    { key: "open_total", label: "Tồn đầu kỳ", width: 92, fmt: "int", head: PEACH, cellBg: CREAM, bold: true, align: "right", hint: "= Đầu kỳ FBA + AWD" },
-    { key: "received", label: "Hàng về", width: 84, fmt: "int", head: BLUE, bgWhenPositive: GREEN, align: "right",
+    { key: "open_awd", label: "Đầu kỳ AWD", width: 90, fmt: "int", head: ORANGE, align: "right", hint: "Tồn AWD cuối ngày trước ngày bắt đầu" },
+    { key: "open_total", label: "Tồn đầu kỳ", width: 92, fmt: "int", head: ORANGE, cellBg: CREAM, bold: true, align: "right", hint: "= Đầu kỳ FBA + AWD" },
+    { key: "received", label: "Hàng về", width: 84, fmt: "int", head: ORANGE, bgWhenPositive: GREEN, align: "right",
       hint: "Amazon Received (chưa có thì Quantity) các dòng Chi tiết đi hàng có Ngày đến trong kỳ" },
-    { key: "sold", label: "Bán", width: 80, fmt: "int", head: BLUE, align: "right", hint: "Units đơn FBA trong kỳ (không tính đơn huỷ)" },
+    { key: "sold", label: "Bán", width: 80, fmt: "int", head: ORANGE, align: "right", hint: "Units đơn FBA trong kỳ (không tính đơn huỷ)" },
     { key: "close_fba", label: "Cuối kỳ FBA", width: 90, fmt: "int", head: YELLOW, align: "right", hint: "Tồn FBA cuối ngày kết thúc" },
     { key: "close_awd", label: "Cuối kỳ AWD", width: 90, fmt: "int", head: YELLOW, align: "right", hint: "Tồn AWD cuối ngày kết thúc" },
     { key: "close_total", label: "Tồn cuối kỳ", width: 92, fmt: "int", head: YELLOW, cellBg: YELLOW, bold: true, align: "right", hint: "= Cuối kỳ FBA + AWD" },
@@ -166,8 +163,8 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
   const [limit, setLimit] = useState(50);
   const [pagination, setPagination] = useState<{ rows: Row[]; page: number } | null>(null);
   const [mode, setMode] = useState<Mode>("year");
-  // Mặc định 7 ngày gần nhất tới hôm qua (số hôm nay chưa đủ ngày)
-  const [range, setRange] = useState<DateRange>(() => ({ startDate: vnDay(-7), endDate: vnDay(-1) }));
+  // Mặc định (chưa chọn) = ngày có tồn mới nhất — server tự chọn khi không gửi ngày
+  const [range, setRange] = useState<{ startDate: string; endDate: string } | null>(null);
   const deferredSearch = useDeferredValue(search);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statusFilter, setStatusFilter] = useState("");
@@ -184,10 +181,14 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
     },
   });
   const rangeQuery = useQuery({
-    queryKey: ["accounting-inventory-ton-range", storeId, range.startDate, range.endDate],
-    enabled: !!storeId && mode === "range" && !!range.startDate,
+    queryKey: ["accounting-inventory-ton-range", storeId, range?.startDate ?? "", range?.endDate ?? ""],
+    enabled: !!storeId && mode === "range",
     queryFn: async (): Promise<InventoryRangeResult> => {
-      const params = new URLSearchParams({ store_id: storeId, mode: "range", start: range.startDate, end: range.endDate || range.startDate });
+      const params = new URLSearchParams({ store_id: storeId, mode: "range" });
+      if (range) {
+        params.set("start", range.startDate);
+        params.set("end", range.endDate || range.startDate);
+      }
       const res = await fetch(`/api/accounting/inventory/ton?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Không tải được tồn theo ngày");
@@ -300,17 +301,6 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
             </button>
           ))}
         </div>
-        {mode === "range" && (
-          <PpcAmazonDatePicker
-            value={range}
-            onChange={(next) => {
-              setRange(next);
-              setPagination(null);
-            }}
-            maxDate={vnDay(0)}
-            align="left"
-          />
-        )}
         <div className="relative w-52 focus-within:w-64 transition-all duration-200">
           <MagnifyingGlassIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -341,6 +331,51 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
+        {mode === "range" && (
+          <div className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+            <span>Từ</span>
+            <input
+              type="date"
+              value={range?.startDate ?? rangeQuery.data?.startDate ?? ""}
+              max={vnDay(0)}
+              onChange={(e) => {
+                const start = e.target.value;
+                if (!start) return;
+                const end = range?.endDate ?? rangeQuery.data?.endDate ?? start;
+                setRange({ startDate: start, endDate: end < start ? start : end });
+                setPagination(null);
+              }}
+              className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-bold text-slate-800 shadow-2xs focus:border-indigo-500 focus:outline-hidden"
+            />
+            <span>đến</span>
+            <input
+              type="date"
+              value={range?.endDate ?? rangeQuery.data?.endDate ?? ""}
+              max={vnDay(0)}
+              onChange={(e) => {
+                const end = e.target.value;
+                if (!end) return;
+                const start = range?.startDate ?? rangeQuery.data?.startDate ?? end;
+                setRange({ startDate: start > end ? end : start, endDate: end });
+                setPagination(null);
+              }}
+              className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-bold text-slate-800 shadow-2xs focus:border-indigo-500 focus:outline-hidden"
+            />
+            {range && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRange(null);
+                  setPagination(null);
+                }}
+                className="cursor-pointer rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-600 shadow-2xs hover:bg-slate-100"
+                title="Về ngày có tồn mới nhất"
+              >
+                Mới nhất
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {active.isError ? (
