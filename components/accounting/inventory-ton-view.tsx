@@ -117,7 +117,6 @@ function describeSide(label: string, day: string, fba: SnapshotPick | null, awd:
   if (!fba) return `${label}: chưa có`;
   const main = fba.date === day ? `${label}: ${dm(day)}` : `${label}: ${dm(fba.date)} (thiếu ${dm(day)})`;
   return awd && awd.date !== fba.date ? `${main}, AWD ${dm(awd.date)}` : main;
-}${awdNote}.`;
 }
 
 function buildColumns(year: number): Col[] {
