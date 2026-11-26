@@ -3710,12 +3710,12 @@ export async function syncCheckShipmentsToInbound(
   const storeName = storeRow?.name ?? "";
 
   // Quy ước cột Discrepancy của Đi Hàng: dương = Amazon nhận THIẾU, âm = thừa.
-  // - Lô chưa Closed (In transit / Shipped / Delivered / Checked in / Receiving): để trống số nhận + Discrepancy
-  //   (chưa nhận xong ≠ thiếu) — chỉ lô Closed mới đối soát lệch.
-  // - Lô 1 SKU: số nhận = Units located; Discrepancy = Units expected (Amazon) − Units located.
-  // - Lô nhiều SKU: lấy số theo từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) khi crawler đã cào
-  //   chi tiết: lấy đúng số crawler; SKU crawler không liệt kê giữ số trên sheet (không tự coi là nhận đủ).
-  //   Chưa có crawler → tổng lô ở dòng đầu.
+  // "Số lượng Amazon nhận" = Units located của CẢ LÔ trong báo cáo Check Shipment, ghi ở dòng đầu của lô.
+  // - Lô chưa Closed (Receiving…): dòng đầu = số cả lô hiện tại; Discrepancy để trống (chưa nhận xong ≠ thiếu).
+  // - Lô Closed nhận đủ (Units located = Units expected): dòng đầu = số cả lô, Discrepancy 0; các dòng sau để trống.
+  // - Lô Closed bị lệch: lấy số từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) để biết SKU nào thiếu;
+  //   SKU crawler không liệt kê giữ số trên sheet. Chưa có crawler → số cả lô + Discrepancy cả lô ở dòng đầu.
+  // - Lô 1 SKU Closed: số nhận = Units located; Discrepancy = Units expected − Units located.
   const updatedRows = await sql<{ id: string }[]>`
     WITH check_data AS (
       SELECT DISTINCT ON (LOWER(TRIM(shipment_id)))
@@ -3795,9 +3795,10 @@ export async function syncCheckShipmentsToInbound(
           WHEN r.sid LIKE 'star%' THEN 'star'
           WHEN NOT r.c_received THEN 'pending'
           WHEN l.n_rows = 1 THEN 'single'
+          -- Lô nhiều SKU Closed nhận đủ (Amazon nhận = Amazon dự kiến = tổng số gửi): số cả lô ở dòng đầu, không cần crawler
+          WHEN l.units_located IS NOT NULL AND l.units_located = l.units_expected AND l.units_located = l.lot_qty THEN 'lot_full'
+          -- Lô Closed bị lệch: crawler cho biết SKU nào thiếu
           WHEN l.n_sku = l.n_rows AND l.has_crawler THEN 'crawler'
-          -- Lô nhiều SKU nhận đủ 100%: số nhận của từng SKU bằng đúng số lượng gửi của SKU đó
-          WHEN r.c_closed AND l.units_located IS NOT NULL AND l.units_located = l.lot_qty THEN 'lot_full'
           WHEN l.has_manual_split THEN 'manual'
           ELSE 'lot_total'
         END AS mode
@@ -3818,10 +3819,10 @@ export async function syncCheckShipmentsToInbound(
         CASE mode
           WHEN 'star' THEN qty
           WHEN 'awd_short' THEN CASE WHEN rn = 1 THEN awd_lot_recv END
-          WHEN 'pending' THEN NULL
+          WHEN 'pending' THEN CASE WHEN rn = 1 THEN units_located END
           WHEN 'single' THEN units_located
           WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN d_located ELSE cur_recv END
-          WHEN 'lot_full' THEN qty
+          WHEN 'lot_full' THEN CASE WHEN rn = 1 THEN units_located END
           WHEN 'manual' THEN cur_recv
           ELSE CASE WHEN rn = 1 THEN units_located END
         END AS new_recv,
@@ -3831,7 +3832,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN 'pending' THEN NULL
           WHEN 'single' THEN COALESCE(units_expected, qty) - units_located
           WHEN 'crawler' THEN CASE WHEN d_located IS NOT NULL THEN COALESCE(d_expected, qty) - d_located ELSE cur_disc END
-          WHEN 'lot_full' THEN 0
+          WHEN 'lot_full' THEN CASE WHEN rn = 1 THEN 0 END
           WHEN 'manual' THEN cur_disc
           ELSE CASE WHEN rn = 1 THEN COALESCE(units_expected, qty) - units_located END
         END AS new_disc
