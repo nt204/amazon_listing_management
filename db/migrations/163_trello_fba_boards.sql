@@ -16,3 +16,4 @@ CREATE TABLE IF NOT EXISTS trello_fba_boards (
 );
 
 CREATE INDEX IF NOT EXISTS idx_trello_fba_boards_active ON trello_fba_boards(is_active);
+

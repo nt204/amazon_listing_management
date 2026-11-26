@@ -27,18 +27,27 @@ export async function POST(req: Request) {
     const action = payload.action;
     const actionType = action.type;
     const model = payload.model; // Board info
-    const boardId = model?.id;
+    const boardId = model?.id || action?.data?.board?.id;
+    const boardShortLink = model?.shortLink || action?.data?.board?.shortLink;
 
-    // Chỉ quan tâm sự kiện di chuyển thẻ sang cột khác (updateCard:idList) hoặc tạo thẻ mới trong cột (createCard)
+    // Các sự kiện cần xử lý:
+    // 1. Kéo thẻ sang cột khác (updateCard:idList)
+    // 2. Tạo thẻ mới trong cột (createCard)
+    // 3. Cập nhật thẻ (sửa mô tả, thêm nhãn, thêm ảnh mockup) khi thẻ đang nằm trong cột
     const isMove = actionType === "updateCard" && action.data?.listAfter?.id;
     const isCreate = actionType === "createCard" && action.data?.list?.id;
+    const isUpdateInList =
+      (actionType === "updateCard" || actionType === "addAttachmentToCard") &&
+      Boolean(action.data?.list?.id || action.data?.card?.idList);
 
-    if (!isMove && !isCreate) {
-      return NextResponse.json({ ok: true, ignored: true, reason: "Not a card move or create action" });
+    if (!isMove && !isCreate && !isUpdateInList) {
+      return NextResponse.json({ ok: true, ignored: true, reason: `Action ${actionType} not tracked` });
     }
 
-    const targetListId = isMove ? action.data.listAfter.id : action.data.list.id;
-    const targetListName = (isMove ? action.data.listAfter.name : action.data.list.name) || "";
+    const targetListId = isMove
+      ? action.data.listAfter.id
+      : (action.data?.list?.id || action.data?.card?.idList);
+    const targetListName = (isMove ? action.data.listAfter.name : (action.data?.list?.name || "")) || "";
     const cardId = action.data?.card?.id;
 
     if (!cardId) {
@@ -56,7 +65,10 @@ export async function POST(req: Request) {
     }>>`
       SELECT id, board_id, target_list_name, target_list_id, default_store_id
       FROM trello_fba_boards
-      WHERE is_active = true AND (board_id = ${boardId} OR board_id = ${model?.shortLink || ""})
+      WHERE is_active = true AND (
+        board_id = ${boardId || ""} OR 
+        board_id = ${boardShortLink || ""}
+      )
       LIMIT 1;
     `;
 
@@ -156,3 +168,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
   }
 }
+

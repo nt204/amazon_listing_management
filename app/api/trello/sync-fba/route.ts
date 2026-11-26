@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { getActorFromRequest } from "@/lib/api-guard";
+import { authorize } from "@/lib/api-guard";
 import { syncTrelloFbaToSkuMaster, findFbaInboundListId } from "@/lib/trello-fba-sync";
 
 // POST /api/trello/sync-fba
 // Đồng bộ thẻ từ cột 'ĐI HÀNG FBA' trên Trello vào BẢNG MÃ (accounting_sku_master)
 export async function POST(req: Request) {
   try {
-    const actor = await getActorFromRequest(req);
+    await authorize(req, "read");
     const body = await req.json().catch(() => ({}));
     const boardId = body.boardId || process.env.TRELLO_BOARD_ID || "hcmdsBOh";
     const defaultStoreId = body.defaultStoreId || undefined;
@@ -30,3 +30,4 @@ export async function POST(req: Request) {
     );
   }
 }
+

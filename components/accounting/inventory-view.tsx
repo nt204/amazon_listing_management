@@ -29,6 +29,7 @@ import {
   LockIcon,
   LockOpenIcon,
   ImageSquareIcon,
+  KanbanIcon,
   MagnifyingGlassIcon,
   CircleNotchIcon,
   MinusIcon,
@@ -51,6 +52,7 @@ import {
   AccountingTableSkeletonRows,
   AccountingTopProgressBar,
 } from "./accounting-skeleton";
+import { TrelloFbaBoardsModal } from "./trello-fba-boards-modal";
 
 const DEFAULT_PRODUCT_TYPES = [
   "11 Oz Glass",
@@ -1661,6 +1663,7 @@ function InventoryViewInner() {
   const [checkShipmentColumns, setCheckShipmentColumns] = useState<ColumnConfig[]>(DEFAULT_CHECK_SHIPMENT_COLUMNS);
   const [monthlyBaseCostColumns, setMonthlyBaseCostColumns] = useState<ColumnConfig[]>(DEFAULT_MONTHLY_BASE_COST_COLUMNS);
   const [showColumnModal, setShowColumnModal] = useState(false);
+  const [showTrelloModal, setShowTrelloModal] = useState(false);
 
   // BẢNG MÃ FBM có bộ cột riêng (theo mẫu sheet FBM) và lưu thiết lập cột riêng.
   const SKU_COLUMNS_STORAGE_KEY = skuChannel === "fbm" ? "accounting_sku_fbm_columns_global" : "accounting_sku_columns_global";
@@ -5409,6 +5412,16 @@ function InventoryViewInner() {
                   <span>{activeTab === "sku" ? `Nhập ${skuSheetLabel}` : activeTab === "inbound" ? "Nhập Đi Hàng" : "Nhập Check Shipment"}</span>
                 </button>
 
+                <button
+                  type="button"
+                  onClick={() => setShowTrelloModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 transition shadow-2xs cursor-pointer"
+                  title="Quản lý kết nối các Bảng Trello FBA (Đa Team)"
+                >
+                  <KanbanIcon size={15} weight="bold" />
+                  <span>Trello FBA</span>
+                </button>
+
                 {activeTab === "check_shipment" && (
                   <button
                     type="button"
@@ -7946,6 +7959,16 @@ function InventoryViewInner() {
           </div>
         </div>
       )}
+
+      {/* MODAL QUẢN LÝ BẢNG TRELLO FBA (ĐA TEAM & WEBHOOK REALTIME) */}
+      <TrelloFbaBoardsModal
+        isOpen={showTrelloModal}
+        onClose={() => setShowTrelloModal(false)}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ["accounting-skus"] });
+          queryClient.invalidateQueries({ queryKey: ["accounting-sku-count"] });
+        }}
+      />
 
       {/* MODAL QUẢN LÝ & TÙY CHỈNH CỘT (THÊM / SỬA / XÓA / ẨN CỘT) */}
       <ColumnManagerModal

@@ -115,7 +115,7 @@ export async function syncTrelloFbaToSkuMaster(options: SyncTrelloFbaOptions): P
     }
 
     // 4. Upsert vào accounting_sku_master
-    const upsertRes = await sql<{ id: string; xmax: string }[]>`
+    const upsertRes = await sql<{ id: string; is_inserted: string }[]>`
       INSERT INTO accounting_sku_master (
         store_id,
         sku,

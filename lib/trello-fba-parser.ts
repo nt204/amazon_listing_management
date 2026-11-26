@@ -167,6 +167,27 @@ export async function parseTrelloFbaCard(
     nicheCandidates.push(lbl);
   }
 
+  // 3b. Nếu nhãn không có Product Type, thử tìm trong tiêu đề (ví dụ "SPC086945_Slate Plate Circle")
+  if (!matchedProductType && titleParts.length > 1) {
+    const titleSuffix = titleParts.slice(1).join(" ").trim();
+    const titleKey = normalizeKey(titleSuffix);
+    if (ptMap.has(titleKey)) {
+      matchedProductType = ptMap.get(titleKey)!;
+    } else {
+      // Tìm xem có knownProductType nào nằm trọn trong tiêu đề không
+      for (const [k, pt] of ptMap.entries()) {
+        if (titleKey.includes(k)) {
+          matchedProductType = pt;
+          break;
+        }
+      }
+      // Nếu vẫn chưa có nhưng có text sau gạch dưới, lấy luôn text đó làm product type
+      if (!matchedProductType && titleSuffix) {
+        matchedProductType = titleSuffix;
+      }
+    }
+  }
+
   // 4. Đọc các trường từ Description
   const descFields = parseDescriptionFields(card.desc || "");
 
