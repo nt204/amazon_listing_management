@@ -166,10 +166,30 @@ export async function replaceLiveInventory(
     report_label: parsed.reportLabel,
     file_name: fileName,
   }));
+  // Lịch sử từng ngày (migration 172): 1 ảnh chụp / store / kho / ngày giờ VN, nạp lại trong ngày thì ghi đè
+  const snapshotDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+  const daily = parsed.rows.map((r) => ({
+    store_id: storeId,
+    source,
+    snapshot_date: snapshotDate,
+    sku: r.sku,
+    fnsku: r.fnsku,
+    asin: r.asin,
+    available: r.available,
+    inbound: r.inbound,
+    reserved: r.reserved,
+  }));
   await sql.begin(async (tx) => {
     await tx`DELETE FROM accounting_live_inventory WHERE store_id = ${storeId} AND source = ${source}`;
     for (let i = 0; i < records.length; i += 1000) {
       await tx`INSERT INTO accounting_live_inventory ${tx(records.slice(i, i + 1000))}`;
+    }
+    await tx`
+      DELETE FROM accounting_live_inventory_daily
+      WHERE store_id = ${storeId} AND source = ${source} AND snapshot_date = ${snapshotDate}
+    `;
+    for (let i = 0; i < daily.length; i += 1000) {
+      await tx`INSERT INTO accounting_live_inventory_daily ${tx(daily.slice(i, i + 1000))}`;
     }
   });
   return {

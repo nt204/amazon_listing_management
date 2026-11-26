@@ -4,8 +4,10 @@ import { forwardRef, useDeferredValue, useEffect, useImperativeHandle, useMemo, 
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CaretDownIcon, CaretUpIcon, MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react";
-import type { InventoryTonResult, InventoryTonRow } from "@/lib/accounting/inventory-ton-db";
+import type { InventoryTonResult } from "@/lib/accounting/inventory-ton-db";
+import type { InventoryRangeResult, SnapshotPick } from "@/lib/accounting/inventory-range-db";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
+import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 import { PaginationBar } from "./pagination-bar";
 
 // Tab TỒN KHO dựa trên tab "TỒN" trong file <STORE> INVENTORY 2026.
@@ -21,7 +23,18 @@ interface Props {
 }
 
 type Fmt = "text" | "int" | "dec" | "money";
-type Key = keyof InventoryTonRow;
+type Key = string;
+/** Dòng chung của 2 chế độ (Theo năm: InventoryTonRow, Theo ngày: InventoryRangeRow) */
+type Row = {
+  id: string;
+  brand: string | null;
+  product_type: string | null;
+  mockup_url: string | null;
+  sku: string;
+  asin: string | null;
+  status: string | null;
+} & Record<string, unknown>;
+type Mode = "year" | "range";
 
 interface Col {
   key: Key;
@@ -48,12 +61,58 @@ const TOTAL_COLUMNS: Key[] = [
   "ton_dau_nam", "gtri_dau_nam", "sl_di_hang", "tien_hang", "luong_ban", "ton",
   "fba_total", "awd_total", "total_amazon", "gtri_ton",
 ];
+const RANGE_TOTAL_COLUMNS: Key[] = [
+  "open_fba", "open_awd", "open_total", "received", "sold", "close_fba", "close_awd", "close_total", "close_inbound", "diff",
+];
+const BLUE = "#cfe2f3";
 // Nền header là class Tailwind (không chỉ style) — luật .acc-black-grid trong globals.css tô trắng mọi th không có class bg-*.
 const HEAD_BG: Record<string, string> = {
   [ORANGE]: "bg-[#ff9900]",
   [YELLOW]: "bg-[#ffff00]",
   [PEACH]: "bg-[#fce5cd]",
+  [BLUE]: "bg-[#cfe2f3]",
 };
+
+/** Cột chế độ "Theo ngày": tồn đầu kỳ → hàng về → bán → tồn cuối kỳ → chênh lệch (lib/accounting/inventory-range-db.ts) */
+function buildRangeColumns(): Col[] {
+  return [
+    { key: "product_type", label: "Product Type", width: 130, fmt: "text", head: ORANGE, align: "center" },
+    { key: "mockup_url", label: "Mockup", width: 72, fmt: "text", head: ORANGE, align: "center" },
+    { key: "sku", label: "SKU", width: 160, fmt: "text", head: ORANGE, bold: true, align: "left" },
+    { key: "asin", label: "ASIN", width: 112, fmt: "text", head: ORANGE, align: "left" },
+    { key: "open_fba", label: "Đầu kỳ FBA", width: 90, fmt: "int", head: PEACH, align: "right",
+      hint: "Tồn FBA cuối ngày trước ngày bắt đầu (Available + Reserved; ảnh Inventory Ledger: hàng SELLABLE)" },
+    { key: "open_awd", label: "Đầu kỳ AWD", width: 90, fmt: "int", head: PEACH, align: "right", hint: "Tồn AWD cuối ngày trước ngày bắt đầu" },
+    { key: "open_total", label: "Tồn đầu kỳ", width: 92, fmt: "int", head: PEACH, cellBg: CREAM, bold: true, align: "right", hint: "= Đầu kỳ FBA + AWD" },
+    { key: "received", label: "Hàng về", width: 84, fmt: "int", head: BLUE, bgWhenPositive: GREEN, align: "right",
+      hint: "Amazon Received (chưa có thì Quantity) các dòng Chi tiết đi hàng có Ngày đến trong kỳ" },
+    { key: "sold", label: "Bán", width: 80, fmt: "int", head: BLUE, align: "right", hint: "Units đơn FBA trong kỳ (không tính đơn huỷ)" },
+    { key: "close_fba", label: "Cuối kỳ FBA", width: 90, fmt: "int", head: YELLOW, align: "right", hint: "Tồn FBA cuối ngày kết thúc" },
+    { key: "close_awd", label: "Cuối kỳ AWD", width: 90, fmt: "int", head: YELLOW, align: "right", hint: "Tồn AWD cuối ngày kết thúc" },
+    { key: "close_total", label: "Tồn cuối kỳ", width: 92, fmt: "int", head: YELLOW, cellBg: YELLOW, bold: true, align: "right", hint: "= Cuối kỳ FBA + AWD" },
+    { key: "close_inbound", label: "Đang về", width: 80, fmt: "int", head: YELLOW, align: "right",
+      hint: "Inbound FBA + AWD tại ảnh chụp cuối kỳ (chỉ có khi ảnh cuối kỳ là ảnh tồn từng ngày)" },
+    { key: "diff", label: "Chênh lệch", width: 90, fmt: "int", head: YELLOW, align: "right",
+      hint: "= Tồn đầu kỳ + Hàng về − Bán − Tồn cuối kỳ. Khác 0: hàng mất / hỏng / trả về / điều chỉnh của Amazon, hoặc hàng về chưa ghi Ngày đến" },
+  ];
+}
+
+const vnDay = (offset = 0) => {
+  const d = new Date(Date.now() + 7 * 3600 * 1000);
+  d.setUTCDate(d.getUTCDate() + offset);
+  return d.toISOString().slice(0, 10);
+};
+const shiftIso = (iso: string, days: number) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+const viDate = (iso: string) => {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+};
+const pickLabel = (p: SnapshotPick | null) =>
+  p ? `${viDate(p.date)} (${p.source === "daily" ? "tồn từng ngày" : "Inventory Ledger"})` : "chưa có";
 
 function buildColumns(year: number): Col[] {
   return [
@@ -100,7 +159,10 @@ function formatValue(value: unknown, fmt: Fmt): string {
 export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function InventoryTonView({ storeId, tableZoom = 100 }, ref) {
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(50);
-  const [pagination, setPagination] = useState<{ rows: InventoryTonRow[]; page: number } | null>(null);
+  const [pagination, setPagination] = useState<{ rows: Row[]; page: number } | null>(null);
+  const [mode, setMode] = useState<Mode>("year");
+  // Mặc định 7 ngày gần nhất tới hôm qua (số hôm nay chưa đủ ngày)
+  const [range, setRange] = useState<DateRange>(() => ({ startDate: vnDay(-7), endDate: vnDay(-1) }));
   const deferredSearch = useDeferredValue(search);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statusFilter, setStatusFilter] = useState("");
@@ -108,7 +170,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
 
   const query = useQuery({
     queryKey: ["accounting-inventory-ton", storeId],
-    enabled: !!storeId,
+    enabled: !!storeId && mode === "year",
     queryFn: async (): Promise<InventoryTonResult> => {
       const res = await fetch(`/api/accounting/inventory/ton?store_id=${storeId}`, { cache: "no-store" });
       const data = await res.json();
@@ -116,20 +178,37 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
       return data;
     },
   });
+  const rangeQuery = useQuery({
+    queryKey: ["accounting-inventory-ton-range", storeId, range.startDate, range.endDate],
+    enabled: !!storeId && mode === "range" && !!range.startDate,
+    queryFn: async (): Promise<InventoryRangeResult> => {
+      const params = new URLSearchParams({ store_id: storeId, mode: "range", start: range.startDate, end: range.endDate || range.startDate });
+      const res = await fetch(`/api/accounting/inventory/ton?${params}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Không tải được tồn theo ngày");
+      return data;
+    },
+  });
+  const active = mode === "year" ? query : rangeQuery;
+  const sourceRows = useMemo<Row[]>(
+    () => ((mode === "year" ? query.data?.rows : rangeQuery.data?.rows) ?? []) as unknown as Row[],
+    [mode, query.data, rangeQuery.data],
+  );
 
-  useImperativeHandle(ref, () => ({ reload: () => void query.refetch() }), [query]);
+  useImperativeHandle(ref, () => ({ reload: () => void active.refetch() }), [active]);
 
   const year = query.data?.year ?? new Date().getFullYear();
-  const columns = useMemo(() => buildColumns(year), [year]);
+  const columns = useMemo(() => (mode === "year" ? buildColumns(year) : buildRangeColumns()), [mode, year]);
+  const totalColumns = mode === "year" ? TOTAL_COLUMNS : RANGE_TOTAL_COLUMNS;
 
   const statuses = useMemo(
-    () => [...new Set((query.data?.rows ?? []).map((r) => r.status?.trim()).filter(Boolean) as string[])].sort(),
-    [query.data],
+    () => [...new Set(sourceRows.map((r) => r.status?.trim()).filter(Boolean) as string[])].sort(),
+    [sourceRows],
   );
 
   const rows = useMemo(() => {
     const term = deferredSearch.trim().toLowerCase();
-    let list = (query.data?.rows ?? []).filter((r) => {
+    let list = sourceRows.filter((r) => {
       if (statusFilter && (r.status?.trim() || "") !== statusFilter) return false;
       if (!term) return true;
       return [r.sku, r.asin, r.product_type, r.brand].some((v) => v?.toLowerCase().includes(term));
@@ -144,18 +223,18 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
       });
     }
     return list;
-  }, [query.data, deferredSearch, statusFilter, sort]);
+  }, [sourceRows, deferredSearch, statusFilter, sort]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / limit));
   const page = pagination?.rows === rows ? Math.min(pagination.page, totalPages) : 1;
   const pageRows = rows.slice((page - 1) * limit, page * limit);
   const totals = useMemo(() => {
     const sums: Partial<Record<Key, number>> = {};
-    for (const key of TOTAL_COLUMNS) {
+    for (const key of totalColumns) {
       sums[key] = rows.reduce((sum, row) => sum + (Number(row[key]) || 0), 0);
     }
     return sums;
-  }, [rows]);
+  }, [rows, totalColumns]);
 
   const leftOffsets = useMemo(() => {
     const out: number[] = [];
@@ -180,7 +259,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
   }, [scale, virtualizer]);
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [storeId, deferredSearch, statusFilter, sort, page, limit]);
+  }, [storeId, deferredSearch, statusFilter, sort, page, limit, mode, range]);
 
   const visibleRows = virtualizer.getVirtualItems();
   const firstRow = visibleRows[0];
@@ -200,6 +279,33 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
     <div className="flex flex-col flex-1 min-h-0">
       {/* Thanh công cụ của tab */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="flex h-8 overflow-hidden rounded-lg border border-slate-300 bg-white text-xs font-bold shadow-2xs">
+          {([["year", "Theo năm"], ["range", "Theo ngày"]] as const).map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setMode(m);
+                setSort(null);
+                setPagination(null);
+              }}
+              className={`cursor-pointer px-3 transition-colors ${mode === m ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {mode === "range" && (
+          <PpcAmazonDatePicker
+            value={range}
+            onChange={(next) => {
+              setRange(next);
+              setPagination(null);
+            }}
+            maxDate={vnDay(0)}
+            align="left"
+          />
+        )}
         <div className="relative w-52 focus-within:w-64 transition-all duration-200">
           <MagnifyingGlassIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -232,10 +338,10 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
         </select>
       </div>
 
-      {query.isError ? (
-        <div className="p-6 text-sm font-semibold text-rose-600">{(query.error as Error).message}</div>
-      ) : query.isLoading ? (
-        <div className="p-6 text-sm text-slate-500">Đang tải tab TỒN...</div>
+      {active.isError ? (
+        <div className="p-6 text-sm font-semibold text-rose-600">{(active.error as Error).message}</div>
+      ) : active.isLoading ? (
+        <div className="p-6 text-sm text-slate-500">{mode === "year" ? "Đang tải tab TỒN..." : "Đang tải tồn theo ngày..."}</div>
       ) : (
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto [overflow-anchor:none]">
           <table
@@ -346,7 +452,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
         </div>
       )}
       <div className="shrink-0">
-        {query.isSuccess && (
+        {active.isSuccess && (
           <PaginationBar
             page={page}
             totalPages={totalPages}
@@ -360,7 +466,16 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
             label="SKU"
           />
         )}
-        {query.data?.stockDate && (
+        {mode === "range" && rangeQuery.data && (
+          <p className="bg-slate-50 px-3 pb-1.5 text-right text-[11px] text-slate-500">
+            {`Tồn đầu kỳ (cuối ngày ${viDate(shiftIso(rangeQuery.data.startDate, -1))}): FBA ${pickLabel(rangeQuery.data.open.fba)}, AWD ${pickLabel(rangeQuery.data.open.awd)}`}
+            {" · "}
+            {`Tồn cuối kỳ (${viDate(rangeQuery.data.endDate)}): FBA ${pickLabel(rangeQuery.data.close.fba)}, AWD ${pickLabel(rangeQuery.data.close.awd)}`}
+            {!rangeQuery.data.exact && " · Chênh lệch để trống vì không có ảnh tồn đúng ngày đầu kỳ / cuối kỳ"}
+            {rangeQuery.data.dailyDates.length > 0 && ` · Tồn từng ngày có từ ${viDate(rangeQuery.data.dailyDates[0])}`}
+          </p>
+        )}
+        {mode === "year" && query.data?.stockDate && (
           <time dateTime={query.data.stockDate} className="block bg-slate-50 px-3 pb-1.5 text-right text-[11px] text-slate-500">
             {(() => {
               const [y, m, d] = query.data.stockDate.split("-");

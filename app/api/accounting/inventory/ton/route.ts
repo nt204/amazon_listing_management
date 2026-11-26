@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
 import { queryInventoryTon } from "@/lib/accounting/inventory-ton-db";
+import { queryInventoryRange } from "@/lib/accounting/inventory-range-db";
 import { getDatabaseClient } from "@/lib/db";
 
 function vnYear(): number {
@@ -16,6 +17,17 @@ export async function GET(request: Request) {
     const storeId = searchParams.get("store_id");
     if (!storeId) return Response.json({ error: "store_id is required" }, { status: 400 });
     await requireStoreAccess(actor, storeId, "FBA");
+
+    // Theo ngày / khoảng ngày: ?mode=range&start=YYYY-MM-DD&end=YYYY-MM-DD
+    if (searchParams.get("mode") === "range") {
+      const start = searchParams.get("start") || "";
+      const end = searchParams.get("end") || start;
+      try {
+        return Response.json(await queryInventoryRange(storeId, start, end));
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+    }
 
     const yearParam = Number(searchParams.get("year"));
     const year = Number.isInteger(yearParam) && yearParam >= 2024 && yearParam <= 2100 ? yearParam : vnYear();
