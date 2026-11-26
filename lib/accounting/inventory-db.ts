@@ -3247,7 +3247,7 @@ export async function upsertCheckShipmentItem(
       ${unitsExpected},
       ${unitsLocated},
       ${discrepancy},
-      ${data.status ?? "Ready to ship"},
+      ${data.status ?? null},
       ${data.custom_fields ? JSON.stringify(data.custom_fields) : "{}"}::jsonb,
       ${changedBy},
       NOW()
@@ -3396,7 +3396,7 @@ export function createDefaultCheckShipmentSheet(
       item.skus_count ?? 1,
       item.units_expected ?? 0,
       item.units_located ?? 0,
-      item.status ?? "Ready to ship",
+      item.status ?? null,
     ];
     const row = ws.addRow(values);
     row.height = 21;
@@ -3843,14 +3843,16 @@ export async function syncCheckShipmentsToInbound(
         WHEN (s.ngay_den IS NULL OR TRIM(s.ngay_den) = '') AND t.c_first_receiving IS NOT NULL THEN t.c_first_receiving
         ELSE s.ngay_den
       END,
+      -- Trạng thái = đúng trạng thái trong báo cáo Check Shipment của Amazon; lô không có trong báo cáo giữ nguyên
+      -- (không tự gán "Ready to ship", không chép cột này sang cột kia)
       status = CASE
         WHEN t.c_status IS NOT NULL AND t.c_status != '' AND t.c_status NOT LIKE '%object Object%' THEN t.c_status
-        ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Ready to ship')
+        ELSE NULLIF(s.status, '[object Object]')
       END,
       tinh_trang_hang_den_kho = CASE
         WHEN t.c_status IS NOT NULL AND t.c_status != '' AND t.c_status NOT LIKE '%object Object%' THEN t.c_status
-        WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(NULLIF(s.status, '[object Object]'), 'Ready to ship')
-        ELSE COALESCE(s.tinh_trang_hang_den_kho, s.status, 'Ready to ship')
+        WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN NULL
+        ELSE s.tinh_trang_hang_den_kho
       END,
       ngay_di = CASE
         WHEN t.c_created_date IS NOT NULL AND TRIM(t.c_created_date) != '' THEN t.c_created_date
@@ -3961,7 +3963,8 @@ export async function importCheckShipmentsFromCsv(
 
     let shipmentId = "";
     let shipmentName = "";
-    let status = "Ready to ship";
+    // Trạng thái lấy đúng cột Status của báo cáo; ô trống thì để trống (không tự gán)
+    let status: string | null = null;
     let createdDate: string | null = null;
     let lastUpdatedDate: string | null = null;
     let shipTo: string | null = null;
@@ -3975,7 +3978,7 @@ export async function importCheckShipmentsFromCsv(
       const parsed = parseAmazonShipmentNameAndId(rawName);
       shipmentId = parsed.shipment_id;
       shipmentName = parsed.shipment_name;
-      status = rowObj["status"]?.trim() || "Ready to ship";
+      status = rowObj["status"]?.trim() || null;
       createdDate = parseAmazonDate(rowObj["created"]);
       lastUpdatedDate = parseAmazonDate(rowObj["last updated"]);
       shipTo = rowObj["destination"]?.trim() || null;
@@ -4000,7 +4003,7 @@ export async function importCheckShipmentsFromCsv(
 
       shipmentId = mappedRow["shipment_id"]?.trim() || "";
       shipmentName = mappedRow["shipment_name"]?.trim() || shipmentId;
-      status = mappedRow["status"]?.trim() || "Ready to ship";
+      status = mappedRow["status"]?.trim() || null;
       createdDate = parseAmazonDate(mappedRow["created_date"]) || cleanDateOnly(mappedRow["created_date"]);
       lastUpdatedDate = parseAmazonDate(mappedRow["last_updated_date"]) || cleanDateOnly(mappedRow["last_updated_date"]);
       shipTo = mappedRow["ship_to"]?.trim() || null;

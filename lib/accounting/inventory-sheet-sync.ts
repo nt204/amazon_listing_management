@@ -306,9 +306,7 @@ function parseInboundRows(rows: SheetRows): Row[] {
     if (item.total_basecost == null && item.final_basecost != null) {
       item.total_basecost = Number(item.final_basecost) * quantity;
     }
-    const status = item.status ?? item.tinh_trang_hang_den_kho ?? null;
-    item.tinh_trang_hang_den_kho = item.tinh_trang_hang_den_kho ?? status;
-    item.status = status;
+    // "Tình trạng hàng đến kho" và "Status" giữ đúng ô của sheet — không chép cột này sang cột kia
     if (String(item.shipment_id ?? "").toLowerCase().startsWith("star")) {
       item.so_luong_amazon_nhan = quantity;
       item.discrepancy = 0;
@@ -713,9 +711,9 @@ async function writeInboundRecords(
         brand: storeName,
         product_type: meta?.product_type ?? null,
         mockup: meta?.mockup ?? null,
-        // Chỉ gán trạng thái khởi tạo khi có Shipment ID; ô không có shipment_id để trống
-        status: hasShipmentId ? "Ready to ship" : null,
-        tinh_trang_hang_den_kho: hasShipmentId ? "Ready to ship" : null,
+        // Trạng thái không tự gán: lấy đúng sheet / báo cáo Check Shipment của Amazon
+        status: null,
+        tinh_trang_hang_den_kho: null,
         trang_thai: "Phát triển",
         discrepancy: hasShipmentId ? quantity - Number(received) : null,
         ...fields,

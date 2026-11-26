@@ -982,12 +982,12 @@ export async function importUnifiedAccountingExcel(
                   ngay_den = COALESCE(${item.ngay_den}, accounting_inbound_shipments.ngay_den),
                   amazon_received = COALESCE(${item.amazon_received}, accounting_inbound_shipments.amazon_received),
                   tinh_trang_hang_den_kho = CASE
-                    WHEN accounting_inbound_shipments.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(${item.tinh_trang_hang_den_kho}, ${item.status}, 'Ready to ship')
-                    ELSE COALESCE(${item.tinh_trang_hang_den_kho}, accounting_inbound_shipments.tinh_trang_hang_den_kho, ${item.status})
+                    WHEN accounting_inbound_shipments.tinh_trang_hang_den_kho LIKE '%object Object%' THEN ${item.tinh_trang_hang_den_kho}
+                    ELSE COALESCE(${item.tinh_trang_hang_den_kho}, accounting_inbound_shipments.tinh_trang_hang_den_kho)
                   END,
                   status = CASE
-                    WHEN accounting_inbound_shipments.status LIKE '%object Object%' THEN COALESCE(${item.status}, 'Ready to ship')
-                    ELSE COALESCE(${item.status}, accounting_inbound_shipments.status, 'Ready to ship')
+                    WHEN accounting_inbound_shipments.status LIKE '%object Object%' THEN ${item.status}
+                    ELSE COALESCE(${item.status}, accounting_inbound_shipments.status)
                   END,
                   so_luong_amazon_nhan = COALESCE(${item.so_luong_amazon_nhan}, accounting_inbound_shipments.so_luong_amazon_nhan),
                   discrepancy = COALESCE(${item.discrepancy}, accounting_inbound_shipments.discrepancy),
@@ -1074,8 +1074,9 @@ export async function importUnifiedAccountingExcel(
             const amazon_received = parseInteger(getColVal(["amazon_received", "amazon received"]) ?? extractCellVal(vals[21]));
             const rawTinhTrang = cleanTextVal(getColVal(["tinh_trang_hang_den_kho", "tình trạng hàng đến kho"]) ?? extractCellVal(vals[22]));
             const rawStatus = cleanTextVal(getColVal(["status", "trạng thái shipment"]) ?? extractCellVal(vals[23]));
-            const status = rawStatus || rawTinhTrang || "Ready to ship";
-            const tinh_trang_hang_den_kho = rawTinhTrang || rawStatus || status;
+            // Giữ đúng 2 ô của file: không chép cột này sang cột kia, không tự gán "Ready to ship"
+            const status = rawStatus || null;
+            const tinh_trang_hang_den_kho = rawTinhTrang || null;
             const isStar = Boolean(shipment_id?.toLowerCase().startsWith("star"));
             const rawSoLuongNhan = parseInteger(getColVal(["so_luong_amazon_nhan", "số lượng amazon nhận"]) ?? extractCellVal(vals[24]));
             const so_luong_amazon_nhan = isStar ? quantity : rawSoLuongNhan;
@@ -1273,7 +1274,7 @@ export async function importUnifiedAccountingExcel(
             const units_located = parseInteger(getColVal(["units_located", "units located", "thực nhận"]) ?? extractCellVal(vals[10])) || 0;
             const rawDiscrepancy = parseInteger(getColVal(["discrepancy", "chênh lệch"]) ?? extractCellVal(vals[12]));
             const discrepancy = rawDiscrepancy ?? (units_located - units_expected);
-            const status = cleanTextVal(getColVal(["status", "trạng thái"]) ?? extractCellVal(vals[11])) || "Ready to ship";
+            const status = cleanTextVal(getColVal(["status", "trạng thái"]) ?? extractCellVal(vals[11])) || null;
 
             const key = `${rowStoreId}::${shipment_id.toLowerCase()}`;
             const targetId = checkShipmentMap.get(key);
