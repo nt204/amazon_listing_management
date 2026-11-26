@@ -4539,7 +4539,7 @@ function InventoryViewInner() {
           setHeaderDragId(null);
           setHeaderDragOverId(null);
         }}
-        className={`py-2 px-3 text-xs bg-[#ff9900] text-slate-900 font-bold border-r border-amber-600/60 leading-tight ${alignClass} ${f.className}`}
+        className={`py-2 px-3 text-xs ${col.id === "ngay_thanh_toan" ? "!bg-yellow-200" : "bg-[#ff9900]"} text-slate-900 font-bold border-r border-amber-600/60 leading-tight ${alignClass} ${f.className}`}
         onResize={(id, width) => resizeColumn("inbound", id, width)}
         onAutoFit={(id) => handleAutoFitColumn("inbound", id)}
         onColumnClick={(id, event) => setColumnContextMenu({ table: "inbound", field: id, x: event.clientX, y: event.clientY })}
@@ -4638,6 +4638,7 @@ function InventoryViewInner() {
       case "ngay_den":
         displayNode = safeDisplay(formatDate(cellValue));
         cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
+        if (cid === "ngay_thanh_toan") cellClass += " !bg-yellow-50";
         break;
       case "quantity": {
         displayNode = item.quantity?.toLocaleString() || 0;
