@@ -3712,8 +3712,8 @@ export async function syncCheckShipmentsToInbound(
   // Quy ước cột Discrepancy của Đi Hàng: dương = Amazon nhận THIẾU, âm = thừa.
   // - Lô chưa nhận (In transit / Shipped / Delivered / Checked in): để trống số nhận + Discrepancy (chưa nhận ≠ thiếu).
   // - Lô 1 SKU: số nhận = Units located; Discrepancy = Units expected (Amazon) − Units located.
-  // - Lô nhiều SKU: lấy số theo từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) khi số đó khớp
-  //   tổng Units located của lô (SKU crawler không liệt kê = nhận đủ số đi). Không khớp / chưa có → tổng lô ở dòng đầu.
+  // - Lô nhiều SKU: lấy số theo từng SKU từ crawler lệch kho (accounting_shipment_discrepancies) khi crawler đã cào
+  //   chi tiết (SKU crawler không liệt kê = nhận đủ số đi). Chưa có crawler → tổng lô ở dòng đầu.
   const updatedRows = await sql<{ id: string }[]>`
     WITH check_data AS (
       SELECT DISTINCT ON (LOWER(TRIM(shipment_id)))
@@ -3792,7 +3792,7 @@ export async function syncCheckShipmentsToInbound(
           WHEN r.sid LIKE 'star%' THEN 'star'
           WHEN NOT r.c_received THEN 'pending'
           WHEN l.n_rows = 1 THEN 'single'
-          WHEN l.n_sku = l.n_rows AND l.has_crawler AND l.crawler_located = l.units_located THEN 'crawler'
+          WHEN l.n_sku = l.n_rows AND l.has_crawler THEN 'crawler'
           WHEN l.has_manual_split THEN 'manual'
           ELSE 'lot_total'
         END AS mode
