@@ -563,7 +563,7 @@ export function kpiHeadline(report: ReturnType<typeof summarizeKpi>["report"]) {
 
 // ───────────── Gợi ý nhập hàng theo mùa ─────────────
 
-const HISTORY_DAYS = 56;
+export const HISTORY_DAYS = 56;
 
 /** Thời gian đặt → hàng tới kho (trung vị lô 12 tháng gần nhất), thiếu dữ liệu thì dùng mặc định. */
 async function storeLeadTime(storeId: string) {
@@ -626,7 +626,7 @@ async function monthlyUnits(storeId: string, salesEnd: string) {
  * Dữ liệu bán dùng chung cho tồn kho / gợi ý nhập: units từng ngày 56 ngày gần nhất, units theo tháng (mùa vụ)
  * theo SKU → nhóm sản phẩm → cả store, và units cùng kỳ năm ngoái của kỳ so sánh (nếu năm ngoái đã có đơn từng ngày).
  */
-async function loadDemandContext(storeId: string, today: string) {
+export async function loadDemandContext(storeId: string, today: string) {
   const sql = await getDatabaseClient();
   const winStart = paceWindowStart(today);
   const lyStart = sameDayLastYear(winStart);

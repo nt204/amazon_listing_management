@@ -1,8 +1,8 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
-import { loadStockRows, stockThresholds } from "./lark-insight-tools";
-import { shiftDate, vnToday } from "./lark-insights-calc";
+import { HISTORY_DAYS, loadDemandContext, loadStockRows, stockThresholds } from "./lark-insight-tools";
+import { planRestock, shiftDate, vnToday } from "./lark-insights-calc";
 
 // Tab TỒN của Inventory — tính giống tab "TỒN" file <STORE> INVENTORY 2026, mỗi cột lấy từ dữ liệu server:
 //   F Hàng tồn 1/1        = sl_ton_dau_ky kỳ <năm>-01 của Base Cost tháng (nạp từ chính tab TỒN của sheet)
@@ -46,6 +46,7 @@ export interface InventoryTonRow {
   /** = fba_total + awd_total; null khi thiếu tồn FBA */
   total_amazon: number | null;
   gtri_ton: number | null;
+  /** Ngày dự kiến hết hàng (YYYY-MM-DD), "Đã hết" khi tồn hiện tại ≤ 0 mà vẫn đang bán; null = không bán / > 365 ngày */
   stockout_date: string | null;
 }
 
@@ -79,7 +80,7 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
     ? new Date(Date.UTC(Number(closed.slice(0, 4)), Number(closed.slice(5, 7)), 0)).toISOString().slice(0, 10)
     : new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 0)).toISOString().slice(0, 10);
   const thresholds = stockThresholds({ velocityDays: 30 });
-  const [rows, meta, stock] = await Promise.all([
+  const [rows, meta, stock, awdLatest] = await Promise.all([
     sql<Record<string, unknown>[]>`
       WITH op AS (
         SELECT UPPER(TRIM(sku)) AS k, SUM(sl_ton_dau_ky)::float AS f, MAX(basecost_dau_ky)::float AS g
@@ -131,15 +132,62 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
         EXISTS (SELECT 1 FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${stockDate}) AS awd
     `,
     year === Number(vnToday().slice(0, 4)) ? loadStockRows(storeId, thresholds) : null,
+    // AWD mới nhất (không phải chốt cuối tháng) để dự đoán ngày hết hàng
+    sql<{ a: string; awd: number }[]>`
+      SELECT UPPER(TRIM(asin)) AS a, SUM(ton_kho_units)::float AS awd
+      FROM accounting_awd_inventory_ledger
+      WHERE store_id = ${storeId} AND COALESCE(asin, '') <> ''
+        AND snapshot_date = (SELECT MAX(snapshot_date) FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId})
+      GROUP BY 1
+    `,
   ]);
   const hasFbaStock = !!meta[0]?.fba;
   const hasAwdStock = !!meta[0]?.awd;
+  // Ngày dự kiến hết hàng — dùng chung thuật toán gợi ý nhập hàng của bot (planRestock):
+  //   tồn hiện tại = FBA bán được (Inventory Ledger mới nhất) − số đã bán sau ngày chụp + AWD mới nhất;
+  //   tốc độ bán = 40% TB 14 ngày + 40% TB 28 ngày + 20% TB 56 ngày, nhân hệ số mùa vụ từng tháng tới;
+  //   đếm từ ngày có dữ liệu mới nhất (không từ ngày chụp tồn cũ). Chưa cộng hàng đang về.
   const stockoutDates = new Map<string, string>();
   if (stock?.salesEnd) {
+    const salesEnd = stock.salesEnd;
+    const demand = await loadDemandContext(storeId, salesEnd);
+    const awdBy = new Map(awdLatest.map((a) => [a.a, Number(a.awd) || 0]));
+    const asinOf = new Map(rows.map((r) => [String(r.sku).trim().toUpperCase(), String(r.asin ?? "").trim().toUpperCase()]));
+    const zeros = new Array(HISTORY_DAYS).fill(0);
     for (const item of stock.items) {
-      if (!item.hasBalance || !item.balanceDate || item.unitsSold <= 0) continue;
-      const days = Math.ceil(Math.max(0, item.sellable) * thresholds.velocityDays / item.unitsSold);
-      if (days <= 365) stockoutDates.set(item.sku, shiftDate(item.balanceDate, days));
+      if (!item.hasBalance || !item.balanceDate) continue;
+      const daily = demand.daily.get(item.sku) ?? zeros;
+      if (!daily.some((u) => u > 0)) continue;
+      // daily[i] = ngày salesEnd − (HISTORY_DAYS − 1 − i)
+      let soldAfter = 0;
+      daily.forEach((u, i) => {
+        if (shiftDate(salesEnd, -(HISTORY_DAYS - 1 - i)) > item.balanceDate!) soldAfter += u;
+      });
+      const fbaNow = Math.max(0, item.sellable - soldAfter);
+      const asin = asinOf.get(item.sku);
+      const onHand = fbaNow + (asin ? awdBy.get(asin) ?? 0 : 0);
+      if (onHand <= 0) {
+        stockoutDates.set(item.sku, "Đã hết");
+        continue;
+      }
+      const from = item.balanceDate > salesEnd ? item.balanceDate : salesEnd;
+      const plan = planRestock(
+        {
+          sku: item.sku,
+          status: item.status,
+          productType: demand.typeOf.get(item.sku) ?? null,
+          daily,
+          sellable: onHand,
+          inTransit: 0,
+          inboundPending: 0,
+          nextArrival: null,
+          season: demand.seasonOf(item.sku),
+        },
+        from,
+        { leadTimeDays: 0, coverDays: 365, z: 0 },
+      );
+      // Đơn hàng có thể trễ vài ngày so với hôm nay: dự kiến hết trước / đúng hôm nay thì coi như đã hết
+      if (plan.stockoutDate) stockoutDates.set(item.sku, plan.stockoutDate <= vnToday() ? "Đã hết" : plan.stockoutDate);
     }
   }
 
