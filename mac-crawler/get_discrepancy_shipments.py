@@ -106,8 +106,24 @@ def main():
                     'cancelled', 'canceled', 'deleted', '[object object]'
                   )
             ),
+            -- Lô lệch: theo bảng (Discrepancy ≠ 0) HOẶC theo báo cáo Check Shipment của Amazon — lô Closed mà
+            -- Units located ≠ Units expected / ≠ tổng số gửi (bảng có thể ghi 0 do lần đọc trước sai → vẫn phải đọc lại)
             disc_shipments AS (
                 SELECT DISTINCT shipment_id FROM base WHERE COALESCE(discrepancy, 0) != 0
+                UNION
+                SELECT b.shipment_id
+                FROM base b
+                JOIN LATERAL (
+                    SELECT c.status, c.units_expected, c.units_located FROM accounting_amazon_check_shipments c
+                    WHERE c.store_id = b.store_id AND c.deleted_at IS NULL
+                      AND LOWER(TRIM(c.shipment_id)) = LOWER(TRIM(b.shipment_id))
+                    ORDER BY c.updated_at DESC
+                    LIMIT 1
+                ) c ON TRUE
+                WHERE LOWER(TRIM(COALESCE(c.status, ''))) = 'closed' AND c.units_located IS NOT NULL
+                GROUP BY b.shipment_id, c.units_expected, c.units_located
+                HAVING c.units_located IS DISTINCT FROM c.units_expected
+                    OR c.units_located <> SUM(COALESCE(b.quantity, 0))
             ),
             lot AS (
                 SELECT shipment_id,
@@ -203,7 +219,9 @@ def main():
                     lot["sheet_received"] = (lot["sheet_received"] or 0) + int(sku_received)
                 if not lot["asin"] and asin:
                     lot["asin"] = asin
-            elif resolvable:
+            elif False and resolvable:
+                # Không lấy số từng SKU trên sheet làm số "crawler" (sheet đồng bộ đêm → vòng lặp sheet ↔ crawler);
+                # lô nhiều SKU bị lệch luôn đọc Seller Central (có cache khi lô đã chốt)
                 received = int(sku_received or 0)
                 db_resolved_items.append({
                     "store": store_name,

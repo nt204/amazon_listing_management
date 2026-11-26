@@ -129,11 +129,11 @@ function saveStateCache(cache: Record<string, Record<string, CachedShipmentRecor
   }
 }
 
-function persistDiscrepanciesToDb(items: DiscrepancyRow[]) {
-  if (!items || items.length === 0) return;
+function persistDiscrepanciesToDb(items: DiscrepancyRow[], replace?: { store: string; shipments: string[] }) {
+  if ((!items || items.length === 0) && !replace?.shipments.length) return;
   try {
     const scriptPath = path.join(__dirname, "save_discrepancy_items.py");
-    const jsonStr = JSON.stringify(items);
+    const jsonStr = JSON.stringify({ items, replace });
     execSync(`python3 "${scriptPath}"`, {
       input: jsonStr,
       encoding: "utf8",
@@ -242,7 +242,7 @@ async function extractShipmentDiscrepancy(
   page: Page,
   storeName: string,
   shipmentId: string
-): Promise<{ items: DiscrepancyRow[]; receivingDate: string }> {
+): Promise<{ items: DiscrepancyRow[]; receivingDate: string; ok: boolean }> {
   const results: DiscrepancyRow[] = [];
 
   await page.evaluate(() => window.scrollBy(0, 150)).catch(() => {});
@@ -270,6 +270,7 @@ async function extractShipmentDiscrepancy(
 
   // 2. Trích xuất danh sách SKU/ASIN và số lượng lệch từ contents
   const contentsUrl = `https://sellercentral.amazon.com/fba/inbound-shipment/summary/${shipmentId}/contents`;
+  let ok = false;
   try {
     await page.goto(contentsUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForTimeout(5000);
@@ -280,12 +281,19 @@ async function extractShipmentDiscrepancy(
 
     if (!contentFrame) {
       console.warn(`  [${shipmentId}] Không tìm thấy iframe-shipment-content`);
-      return { items: results, receivingDate };
+      return { items: results, receivingDate, ok: false };
     }
 
     await contentFrame
       .waitForSelector("kat-table-body kat-table-row, text=No discrepancies have been found", { timeout: 10000 })
       .catch(() => {});
+    // Đọc được trang = có bảng hoặc Amazon ghi rõ không có lệch (khác với trang lỗi / chưa tải được)
+    ok = await contentFrame
+      .evaluate(
+        "!!document.querySelector('kat-table-body kat-table-row') || /No discrepancies have been found/i.test(document.body ? document.body.innerText : '')",
+      )
+      .then(Boolean)
+      .catch(() => false);
 
     let hasNextPage = true;
     let pageNum = 1;
@@ -418,9 +426,10 @@ async function extractShipmentDiscrepancy(
     }
   } catch (err: any) {
     console.error(`  [${shipmentId}] Lỗi trích xuất contents: ${err.message}`);
+    ok = false;
   }
 
-  return { items: results, receivingDate };
+  return { items: results, receivingDate, ok };
 }
 
 // ============================================================================
@@ -681,6 +690,8 @@ async function processStore(
   console.log(`  - Lô > 1 SKU CẦN MỞ SELLER CENTRAL: ${needBrowserCheck.length} lô (${needBrowserCheck.join(", ") || "không có"}).`);
 
   const browserCheckedRows: DiscrepancyRow[] = [];
+  /** Lô đọc được trang contents → thay toàn bộ số cũ của lô (SKU không còn trong bảng lệch = nhận đủ, xoá dòng cũ) */
+  const verifiedShipments: string[] = [];
 
   if (needBrowserCheck.length > 0) {
     console.log(`\n  🌐 Đang mở profile AdsPower ${storeConfig.profile_id}...`);
@@ -702,7 +713,9 @@ async function processStore(
       for (let i = 0; i < needBrowserCheck.length; i++) {
         const sId = needBrowserCheck[i];
         console.log(`  [${i + 1}/${needBrowserCheck.length}] Đang kiểm tra Seller Central shipment: ${sId}...`);
-        const { items, receivingDate } = await extractShipmentDiscrepancy(page, storeName, sId);
+        const { items, receivingDate, ok } = await extractShipmentDiscrepancy(page, storeName, sId);
+        if (ok) verifiedShipments.push(sId);
+        else console.warn(`    ⚠️ Không đọc được trang contents của ${sId} — giữ số cũ, lần sau đọc lại.`);
         console.log(`    -> Trích xuất được ${items.length} mặt hàng.`);
         for (const it of items) {
           console.log(
@@ -736,8 +749,8 @@ async function processStore(
   const allStoreRows = [...singleSkuItems, ...dbResolvedItems, ...cachedRows, ...browserCheckedRows];
   
   // Đồng bộ lưu vĩnh viễn vào Database PostgreSQL
-  if (allStoreRows.length > 0) {
-    persistDiscrepanciesToDb(allStoreRows);
+  if (allStoreRows.length > 0 || verifiedShipments.length > 0) {
+    persistDiscrepanciesToDb(allStoreRows, { store: storeName, shipments: verifiedShipments });
   }
 
   return allStoreRows;

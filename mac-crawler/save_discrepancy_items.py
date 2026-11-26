@@ -42,8 +42,13 @@ def main():
             print(json.dumps({"saved": 0}))
             return
 
-        items = json.loads(raw_input)
-        if not items:
+        payload = json.loads(raw_input)
+        # {items, replace: {store, shipments}}: lô vừa đọc lại trang contents → xoá số cũ của lô rồi ghi số mới
+        # (SKU không còn trong bảng lệch của Amazon là nhận đủ). Dạng cũ: danh sách items.
+        replace = payload.get("replace") if isinstance(payload, dict) else None
+        items = payload.get("items", []) if isinstance(payload, dict) else payload
+        replace_ids = [str(x).strip().lower() for x in ((replace or {}).get("shipments") or []) if str(x).strip()]
+        if not items and not replace_ids:
             print(json.dumps({"saved": 0}))
             return
 
@@ -86,6 +91,11 @@ def main():
             if it.get("store") and it.get("sku") and it.get("shipment_id")
         ]
 
+        if replace_ids:
+            cur.execute(
+                "DELETE FROM accounting_shipment_discrepancies WHERE UPPER(TRIM(store_name)) = UPPER(TRIM(%s)) AND LOWER(TRIM(shipment_id)) = ANY(%s)",
+                (replace.get("store", ""), replace_ids),
+            )
         execute_batch(cur, query, records, page_size=100)
         conn.commit()
         conn.close()
