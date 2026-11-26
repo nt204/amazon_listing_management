@@ -16,8 +16,8 @@ import { shiftDate, vnToday } from "./lark-insights-calc";
 //   N Tồn                 = F + I − M
 //   O/P/Q Available / Inbound / Reserved = FBA (báo cáo FBA Inventory) + AWD (AWD inventory report) mới nhất
 //         (crawler 16h10), cộng theo ASIN như sheet
-//   Inventory (FBA) / AWD = tồn CHỐT CUỐI THÁNG (Inventory Ledger FBA total_warehouse_balance / AWD ton_kho_units)
-//         đúng ngày cuối của tháng Lượng bán đang chốt tới, cộng theo ASIN; Total (Amazon) = FBA + AWD
+//   Inventory (FBA) / AWD = TỒN MỚI NHẤT (ảnh chụp từng ngày mới nhất, mỗi kho = Available + Inbound + Reserved),
+//         cộng theo ASIN; Total (Amazon) = FBA + AWD
 //   S Tổng giá trị tồn    = R × K
 //   T Giá trị đang đi đường = P × K
 //   U Phí lưu kho tháng sau = estimated-storage-cost-next-month, theo ASIN
@@ -39,9 +39,9 @@ export interface InventoryTonRow {
   basecost: number | null;
   luong_ban: number;
   ton: number;
-  /** Tồn FBA chốt ngày stockDate (Inventory Ledger, mọi disposition); null = chưa có ảnh chụp ngày đó */
+  /** Tồn FBA mới nhất (Available + Inbound + Reserved, ảnh chụp ngày stockDate); null = chưa có số tồn */
   fba_total: number | null;
-  /** Tồn AWD chốt ngày stockDate (AWD Inventory Ledger); null = chưa có ảnh chụp ngày đó / store không có AWD */
+  /** Tồn AWD mới nhất (Available + Inbound + Reserved); null = store chưa có / không dùng AWD */
   awd_total: number | null;
   /** = fba_total + awd_total; null khi thiếu tồn FBA */
   total_amazon: number | null;
@@ -75,10 +75,15 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
       AND deleted_at IS NULL AND sl_ra_kho_source = 'ingest'
   `;
   const closed = closedRow?.p ?? null;
-  // Ngày cuối của tháng đã chốt Lượng bán; chưa chốt tháng nào thì lấy ngày cuối tháng trước
-  const stockDate = closed
-    ? new Date(Date.UTC(Number(closed.slice(0, 4)), Number(closed.slice(5, 7)), 0)).toISOString().slice(0, 10)
-    : new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 0)).toISOString().slice(0, 10);
+  // Inventory (FBA) / AWD = TỒN MỚI NHẤT: ảnh chụp từng ngày mới nhất (crawler 16h10, accounting_live_inventory_daily),
+  // mỗi kho = Available + Inbound + Reserved như cột Total (AMAZON) của sheet. stockDate = ngày của ảnh FBA mới nhất.
+  const [latestRow] = await sql<{ fba: string | null; awd: string | null }[]>`
+    SELECT
+      (SELECT MAX(snapshot_date)::text FROM accounting_live_inventory_daily WHERE store_id = ${storeId} AND source = 'FBA') AS fba,
+      (SELECT MAX(snapshot_date)::text FROM accounting_live_inventory_daily WHERE store_id = ${storeId} AND source = 'AWD') AS awd
+  `;
+  const stockDate = latestRow?.fba ?? vnToday();
+  const awdDate = latestRow?.awd ?? null;
   const thresholds = stockThresholds({ velocityDays: 30 });
   const [rows, meta, stock, awdLatest] = await Promise.all([
     sql<Record<string, unknown>[]>`
@@ -103,15 +108,15 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
         GROUP BY 1
       ),
       fl AS (
-        SELECT UPPER(TRIM(asin)) AS a, SUM(total_warehouse_balance)::float AS fba
-        FROM accounting_inventory_ledger
-        WHERE store_id = ${storeId} AND snapshot_date = ${stockDate} AND COALESCE(asin, '') <> ''
+        SELECT UPPER(TRIM(asin)) AS a, SUM(available + inbound + reserved)::float AS fba
+        FROM accounting_live_inventory_daily
+        WHERE store_id = ${storeId} AND source = 'FBA' AND snapshot_date = ${stockDate} AND COALESCE(asin, '') <> ''
         GROUP BY 1
       ),
       al AS (
-        SELECT UPPER(TRIM(asin)) AS a, SUM(ton_kho_units)::float AS awd
-        FROM accounting_awd_inventory_ledger
-        WHERE store_id = ${storeId} AND snapshot_date = ${stockDate} AND COALESCE(asin, '') <> ''
+        SELECT UPPER(TRIM(asin)) AS a, SUM(available + inbound + reserved)::float AS awd
+        FROM accounting_live_inventory_daily
+        WHERE store_id = ${storeId} AND source = 'AWD' AND snapshot_date = ${awdDate} AND COALESCE(asin, '') <> ''
         GROUP BY 1
       )
       SELECT asm.id::text AS id, asm.brand, asm.product_type, asm.mockup_url, asm.sku, asm.asin, asm.status,
@@ -128,8 +133,8 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
     `,
     sql<{ fba: boolean; awd: boolean }[]>`
       SELECT
-        EXISTS (SELECT 1 FROM accounting_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${stockDate}) AS fba,
-        EXISTS (SELECT 1 FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${stockDate}) AS awd
+        ${latestRow?.fba != null} AS fba,
+        ${awdDate != null} AS awd
     `,
     year === Number(vnToday().slice(0, 4)) ? loadStockRows(storeId, thresholds) : null,
     // AWD mới nhất (không phải chốt cuối tháng) để dự đoán ngày hết hàng

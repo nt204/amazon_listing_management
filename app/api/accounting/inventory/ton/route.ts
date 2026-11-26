@@ -86,6 +86,6 @@ async function buildWorkbook(rows: Row[], year: number, stockDate: string | null
     cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
     if (c.fmt) ws.getColumn(i + 1).numFmt = c.fmt;
   });
-  if (stockDate) ws.getCell(1, cols.length + 1).value = `Tồn Amazon chốt ngày ${stockDate.split("-").reverse().join("/")}`;
+  if (stockDate) ws.getCell(1, cols.length + 1).value = `Tồn Amazon mới nhất: cuối ngày ${stockDate.split("-").reverse().join("/")}`;
   return (await wb.xlsx.writeBuffer()) as ArrayBuffer;
 }
