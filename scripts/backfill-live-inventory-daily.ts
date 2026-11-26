@@ -9,18 +9,22 @@
  * Dùng: node --conditions=react-server --env-file=.env --import tsx scripts/backfill-live-inventory-daily.ts <thư mục downloads | --r2> [--dry-run]
  *   <thư mục>: Mac mini ~/AmazonAccounting/downloads
  *   --r2: đọc thẳng kho file kế toán trên Cloudflare R2 (accounting-reports/<ngày>/<STORE>/<file>) — chạy trên server
+ *   --sheet: đọc tab "NGUỒN INVENTORY AMAZON" của file "<STORE> INVENTORY 2026" (link Inventory của store) — các bản dán
+ *            báo cáo FBA Inventory (cùng cột File 06) từ 01/01/2026; mỗi snapshot-date thành 1 ảnh chụp FBA
  */
 import fs from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { parseAwdInventoryReport, parseFbaInventoryReport, type ParsedLiveInventory } from "../lib/accounting/live-inventory";
+import { readSpreadsheetRange } from "../lib/google/sheets";
 
 const root = process.argv[2];
 const dryRun = process.argv.includes("--dry-run");
 const fromR2 = root === "--r2";
-if (!root || (!fromR2 && !fs.existsSync(root))) {
-  console.error("Thiếu / sai nguồn. Dùng: ... backfill-live-inventory-daily.ts <thư mục downloads | --r2> [--dry-run]");
+const fromSheet = root === "--sheet";
+if (!root || (!fromR2 && !fromSheet && !fs.existsSync(root))) {
+  console.error("Thiếu / sai nguồn. Dùng: ... backfill-live-inventory-daily.ts <thư mục downloads | --r2 | --sheet> [--dry-run]");
   process.exit(1);
 }
 
@@ -93,6 +97,47 @@ function prevDay(date: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+const SHEET_TAB = "NGUỒN INVENTORY AMAZON";
+
+/** Tab NGUỒN INVENTORY AMAZON → mỗi (store, snapshot-date) thành 1 "File 06" dạng TSV cho parseFbaInventoryReport */
+async function sheetFiles(sql: postgres.Sql): Promise<SourceFile[]> {
+  const links = await sql<{ name: string; spreadsheet_id: string }[]>`
+    SELECT s.name, l.spreadsheet_id FROM inventory_sheet_links l JOIN stores s ON s.id = l.store_id
+    WHERE l.link_type = 'inventory' AND COALESCE(l.spreadsheet_id, '') <> ''
+  `;
+  const out: SourceFile[] = [];
+  for (const link of links) {
+    let rows: (string | number | null)[][];
+    try {
+      rows = await readSpreadsheetRange(link.spreadsheet_id, `'${SHEET_TAB}'!A1:Z30000`, "FORMATTED_VALUE");
+    } catch (error) {
+      console.warn(`  ${link.name}: không đọc được tab ${SHEET_TAB} — ${(error as Error).message}`);
+      continue;
+    }
+    const clean = (v: string | number | null) => String(v ?? "").replace(/[\t\r\n]+/g, " ").trim();
+    const headerIdx = rows.findIndex((r) => r.map((c) => clean(c).toLowerCase()).includes("snapshot-date"));
+    if (headerIdx < 0) {
+      console.warn(`  ${link.name}: tab ${SHEET_TAB} không có cột snapshot-date (bỏ qua)`);
+      continue;
+    }
+    const header = rows[headerIdx].map(clean);
+    const dateCol = header.findIndex((h) => h.toLowerCase() === "snapshot-date");
+    const byDate = new Map<string, string[]>();
+    for (const r of rows.slice(headerIdx + 1)) {
+      const date = clean(r[dateCol] ?? "");
+      if (!/^\d{4}-\d{2}-\d{2}/.test(date)) continue;
+      const list = byDate.get(date) ?? [];
+      list.push(header.map((_, i) => clean(r[i] ?? "")).join("\t"));
+      byDate.set(date, list);
+    }
+    for (const [date, lines] of byDate) {
+      const tsv = [header.join("\t"), ...lines].join("\n");
+      out.push({ name: `06_FbaInventory_${date}.sheet`, store: link.name, size: tsv.length, read: async () => tsv });
+    }
+  }
+  return out;
+}
+
 function walk(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
@@ -110,7 +155,7 @@ async function main() {
     // (store, kho, ngày) → file lớn nhất
     const picks = new Map<string, { file: string; size: number; storeId: string; store: string; source: "FBA" | "AWD"; date: string; parsed: ParsedLiveInventory }>();
     let skipped = 0;
-    const files = fromR2 ? await r2Files() : localFiles(root);
+    const files = fromSheet ? await sheetFiles(sql) : fromR2 ? await r2Files() : localFiles(root);
     for (const f of files) {
       const base = f.name;
       const file = `${f.store}/${f.name}`;
