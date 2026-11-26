@@ -79,6 +79,8 @@ function buildColumns(year: number): Col[] {
     { key: "total_amazon", label: "Total (AMAZON)", width: 96, fmt: "int", head: YELLOW, cellBg: YELLOW, align: "right",
       hint: "= Inventory (FBA) + AWD" },
     { key: "gtri_ton", label: "Tổng giá trị tồn", width: 104, fmt: "money", head: YELLOW, align: "right", hint: "= Total (AMAZON) × Basecost TB/năm (Tiền hàng ÷ SL đi hàng; chưa đi hàng thì lấy giá 1/1)" },
+    { key: "stockout_date", label: "Ngày dự kiến hết hàng", width: 126, fmt: "text", head: YELLOW, align: "center",
+      hint: "Ngày chốt tồn FBA bán được + số ngày đủ bán theo trung bình 30 ngày gần nhất có dữ liệu đơn FBA. Chỉ tính trong 365 ngày, chưa cộng hàng đang về." },
   ];
 }
 
@@ -256,7 +258,7 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
                       key={c.key}
                       onClick={() => toggleSort(c.key)}
                       title={c.hint}
-                      className={`${HEAD_BG[c.head]} h-[72px] cursor-pointer select-none border-b border-r border-slate-400 px-1.5 text-[12px] font-bold leading-tight text-black ${frozen ? "sticky z-30" : ""} ${
+                      className={`${HEAD_BG[c.head]} h-[72px] cursor-pointer select-none border-b border-r border-slate-400 px-1.5 text-[13px] font-bold leading-tight text-black ${frozen ? "sticky z-30" : ""} ${
                         i === FROZEN - 1 ? "border-r-2 border-r-slate-600" : ""
                       }`}
                       style={{ left: frozen ? leftOffsets[i] : undefined, textAlign: c.key === "sku" ? "left" : "center" }}

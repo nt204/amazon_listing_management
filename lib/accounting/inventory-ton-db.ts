@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
+import { loadStockRows, stockThresholds } from "./lark-insight-tools";
+import { shiftDate, vnToday } from "./lark-insights-calc";
 
 // Tab TỒN của Inventory — tính giống tab "TỒN" file <STORE> INVENTORY 2026, mỗi cột lấy từ dữ liệu server:
 //   F Hàng tồn 1/1        = sl_ton_dau_ky kỳ <năm>-01 của Base Cost tháng (nạp từ chính tab TỒN của sheet)
@@ -44,6 +46,7 @@ export interface InventoryTonRow {
   /** = fba_total + awd_total; null khi thiếu tồn FBA */
   total_amazon: number | null;
   gtri_ton: number | null;
+  stockout_date: string | null;
 }
 
 export interface InventoryTonResult {
@@ -75,7 +78,8 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
   const stockDate = closed
     ? new Date(Date.UTC(Number(closed.slice(0, 4)), Number(closed.slice(5, 7)), 0)).toISOString().slice(0, 10)
     : new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 0)).toISOString().slice(0, 10);
-  const [rows, meta] = await Promise.all([
+  const thresholds = stockThresholds({ velocityDays: 30 });
+  const [rows, meta, stock] = await Promise.all([
     sql<Record<string, unknown>[]>`
       WITH op AS (
         SELECT UPPER(TRIM(sku)) AS k, SUM(sl_ton_dau_ky)::float AS f, MAX(basecost_dau_ky)::float AS g
@@ -126,9 +130,18 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
         EXISTS (SELECT 1 FROM accounting_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${stockDate}) AS fba,
         EXISTS (SELECT 1 FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${stockDate}) AS awd
     `,
+    year === Number(vnToday().slice(0, 4)) ? loadStockRows(storeId, thresholds) : null,
   ]);
   const hasFbaStock = !!meta[0]?.fba;
   const hasAwdStock = !!meta[0]?.awd;
+  const stockoutDates = new Map<string, string>();
+  if (stock?.salesEnd) {
+    for (const item of stock.items) {
+      if (!item.hasBalance || !item.balanceDate || item.unitsSold <= 0) continue;
+      const days = Math.ceil(Math.max(0, item.sellable) * thresholds.velocityDays / item.unitsSold);
+      if (days <= 365) stockoutDates.set(item.sku, shiftDate(item.balanceDate, days));
+    }
+  }
 
   return {
     year,
@@ -168,6 +181,7 @@ export async function queryInventoryTon(storeId: string, year: number): Promise<
         awd_total: awd,
         total_amazon: total,
         gtri_ton: total == null ? null : total * k,
+        stockout_date: stockoutDates.get(String(r.sku).trim().toUpperCase()) ?? null,
       };
     }),
   };

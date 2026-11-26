@@ -1330,29 +1330,29 @@ function MockupPasteField({
 }
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; border: string }> = {
-  "phát triển": { bg: "bg-emerald-100", text: "text-emerald-950", border: "border-emerald-300" },
-  "test": { bg: "bg-sky-100", text: "text-sky-950", border: "border-sky-300" },
-  "tối ưu": { bg: "bg-purple-100", text: "text-purple-950", border: "border-purple-300" },
-  "hủy": { bg: "bg-rose-100", text: "text-rose-950", border: "border-rose-300" },
-  "closed": { bg: "bg-emerald-100", text: "text-emerald-950", border: "border-emerald-300" },
-  "receiving": { bg: "bg-teal-100", text: "text-teal-950", border: "border-teal-300" },
-  "in transit": { bg: "bg-amber-100", text: "text-amber-950", border: "border-amber-300" },
-  "ready to ship": { bg: "bg-blue-100", text: "text-blue-950", border: "border-blue-300" },
-  "created": { bg: "bg-blue-100", text: "text-blue-950", border: "border-blue-300" },
-  "checked in": { bg: "bg-cyan-100", text: "text-cyan-950", border: "border-cyan-300" },
-  "shipped": { bg: "bg-amber-100", text: "text-amber-950", border: "border-amber-300" },
-  "working": { bg: "bg-indigo-100", text: "text-indigo-950", border: "border-indigo-300" },
-  "active": { bg: "bg-emerald-100", text: "text-emerald-950", border: "border-emerald-300" },
+  "phát triển": { bg: "bg-emerald-200", text: "text-emerald-950", border: "border-emerald-300" },
+  "test": { bg: "bg-sky-200", text: "text-sky-950", border: "border-sky-300" },
+  "tối ưu": { bg: "bg-purple-200", text: "text-purple-950", border: "border-purple-300" },
+  "hủy": { bg: "bg-rose-200", text: "text-rose-950", border: "border-rose-300" },
+  "closed": { bg: "bg-green-200", text: "text-green-900", border: "border-green-300" },
+  "receiving": { bg: "bg-teal-200", text: "text-teal-900", border: "border-teal-300" },
+  "in transit": { bg: "bg-yellow-200", text: "text-yellow-900", border: "border-yellow-300" },
+  "ready to ship": { bg: "bg-sky-200", text: "text-sky-900", border: "border-sky-300" },
+  "created": { bg: "bg-fuchsia-200", text: "text-fuchsia-900", border: "border-fuchsia-300" },
+  "checked in": { bg: "bg-cyan-200", text: "text-cyan-900", border: "border-cyan-300" },
+  "shipped": { bg: "bg-orange-200", text: "text-orange-900", border: "border-orange-300" },
+  "working": { bg: "bg-violet-200", text: "text-violet-900", border: "border-violet-300" },
+  "active": { bg: "bg-emerald-200", text: "text-emerald-950", border: "border-emerald-300" },
   "inactive": { bg: "bg-slate-200", text: "text-slate-800", border: "border-slate-400" },
-  "đã updated": { bg: "bg-emerald-100", text: "text-emerald-950", border: "border-emerald-300" },
-  "pending": { bg: "bg-yellow-100", text: "text-yellow-950", border: "border-yellow-300" },
-  "cần đánh giá": { bg: "bg-amber-100", text: "text-amber-950", border: "border-amber-300" },
-  "delivered": { bg: "bg-blue-100", text: "text-blue-950", border: "border-blue-300" },
-  "cancelled": { bg: "bg-rose-100", text: "text-rose-950", border: "border-rose-300" },
+  "đã updated": { bg: "bg-emerald-200", text: "text-emerald-950", border: "border-emerald-300" },
+  "pending": { bg: "bg-amber-200", text: "text-amber-900", border: "border-amber-300" },
+  "cần đánh giá": { bg: "bg-amber-200", text: "text-amber-950", border: "border-amber-300" },
+  "delivered": { bg: "bg-lime-200", text: "text-lime-900", border: "border-lime-300" },
+  "cancelled": { bg: "bg-pink-200", text: "text-pink-900", border: "border-pink-300" },
   "deleted": { bg: "bg-slate-200", text: "text-slate-800", border: "border-slate-400" },
 };
 
-function StatusBadge({ status }: { status: string | null | undefined }) {
+function StatusBadge({ status, colored = false }: { status: string | null | undefined; colored?: boolean }) {
   if (!status) return <span className="text-slate-400 font-normal">—</span>;
   const s = typeof status === "string" ? status.trim() : "";
   if (
@@ -1368,8 +1368,14 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
   ) {
     return <span className="text-slate-400 font-normal">—</span>;
   }
+  const key = s.toLowerCase().replace(/[_\s]+/g, " ").replace(/^canceled$/, "cancelled");
+  const style = colored
+    ? (Object.prototype.hasOwnProperty.call(STATUS_STYLES, key) ? STATUS_STYLES[key] : getEntityStyle(key))
+    : null;
   return (
-    <span className="text-slate-900 font-normal text-[13px] whitespace-nowrap">
+    <span className={`text-[13px] whitespace-nowrap ${style
+      ? `inline-flex rounded-md border px-1.5 py-0.5 font-semibold ${style.bg} ${style.text} ${style.border}`
+      : "text-slate-900 font-normal"}`}>
       {s}
     </span>
   );
@@ -2552,8 +2558,7 @@ function InventoryViewInner() {
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMasterItem | null>(null);
   const [selectedShipmentDetail, setSelectedShipmentDetail] = useState<InboundShipmentItem | null>(null);
 
-  // Dynamic table zoom (+/- scale controls) - Default 90% as requested by user
-  const [tableZoom, setTableZoom] = useState<number>(90);
+  const [tableZoom, setTableZoom] = useState<number>(100);
 
   // Inline cell editing
   const [inlineEditing, setInlineEditing] = useState<{
@@ -2735,7 +2740,7 @@ function InventoryViewInner() {
       counts.set(shipmentId, (counts.get(shipmentId) ?? 0) + 1);
     }
 
-    const palette = ["bg-sky-100/70", "bg-emerald-100/70"];
+    const palette = ["!bg-sky-100/70", "!bg-emerald-100/70"];
     const colors = new Map<string, string>();
     for (const [shipmentId, count] of counts) {
       if (count > 1) colors.set(shipmentId, palette[colors.size % palette.length]);
@@ -4637,7 +4642,7 @@ function InventoryViewInner() {
       case "quantity": {
         displayNode = item.quantity?.toLocaleString() || 0;
         cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-950 border-r border-slate-200";
-        // Tổng số đi của lô trên sheet khác Units expected của Amazon → tô cam, rê chuột xem 2 số để team kiểm tra
+        // Rê chuột để đối chiếu tổng số đi của lô với Units Expected của Amazon.
         const lotQty = item.lot_quantity;
         const amzExpected = item.amz_units_expected;
         if (amzExpected != null && lotQty != null && lotQty !== amzExpected) {
@@ -4646,7 +4651,6 @@ function InventoryViewInner() {
               {item.quantity?.toLocaleString() || 0}
             </span>
           );
-          cellClass += " !bg-orange-200";
         }
         break;
       }
@@ -4662,7 +4666,9 @@ function InventoryViewInner() {
       case "tag":
       case "shipping_fee":
       case "hop_tui":
-        displayNode = cellValue != null ? `$${cellValue.toFixed(2)}` : "—";
+        displayNode = cellValue != null
+          ? `$${(cid === "hop_tui" ? Math.abs(cellValue) : cellValue).toFixed(2)}`
+          : "—";
         cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "final_basecost":
@@ -4679,10 +4685,9 @@ function InventoryViewInner() {
         break;
       case "shipment_id": {
         const batchColor = inboundBatchColors.get(item.shipment_id?.trim().toLowerCase() ?? "");
-        displayNode = batchColor ? (
-          <span className={`rounded px-1.5 py-0.5 ${batchColor}`}>{safeDisplay(item.shipment_id)}</span>
-        ) : safeDisplay(item.shipment_id);
+        displayNode = safeDisplay(item.shipment_id);
         cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
+        if (batchColor) cellClass += ` ${batchColor}`;
         break;
       }
       case "amazon_received":
@@ -4704,7 +4709,7 @@ function InventoryViewInner() {
         displayNode = <EntityBadge value={item.tinh_trang_hang_den_kho} />;
         break;
       case "status":
-        displayNode = <StatusBadge status={item.status} />;
+        displayNode = item.shipment_id?.trim() ? <StatusBadge status={item.status} colored /> : null;
         break;
       case "so_luong_amazon_nhan":
         displayNode = item.so_luong_amazon_nhan != null ? item.so_luong_amazon_nhan.toLocaleString() : "—";

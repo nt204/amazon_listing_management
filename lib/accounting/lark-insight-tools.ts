@@ -228,7 +228,7 @@ export async function loadStockRows(storeId: string, th: StockThresholds) {
     `,
   ]);
 
-  const rows = new Map<string, StockInput>();
+  const rows = new Map<string, StockInput & { balanceDate?: string | null }>();
   const get = (sku: string) => {
     let r = rows.get(sku);
     if (!r) rows.set(sku, (r = { sku, status: null, sellable: 0, unsellable: 0, inTransit: 0, inboundPending: 0, nextArrival: null, unitsSold: 0 }));
@@ -238,6 +238,7 @@ export async function loadStockRows(storeId: string, th: StockThresholds) {
   for (const b of balance) {
     const r = get(b.sku);
     r.sellable = Number(b.sellable) || 0;
+    r.balanceDate = b.snapshot;
     r.unsellable = Number(b.unsellable) || 0;
     r.inTransit = Number(b.in_transit) || 0;
     if (b.snapshot && (!snapshot || b.snapshot > snapshot)) snapshot = b.snapshot;
