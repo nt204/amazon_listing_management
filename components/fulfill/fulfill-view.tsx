@@ -426,7 +426,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
                         }}
                         className="max-w-full cursor-pointer rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ff-accent)"
                       >
-                        <span className={`font-semibold group-hover:underline ${lot.lot_name_generated ? "text-(--ff-text-2)" : "text-(--ff-accent-hover)"}`}>{lot.lot_name}</span>
+                        <span className="font-semibold text-(--ff-accent-hover) group-hover:underline">{lot.lot_name}</span>
                       </button>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-(--ff-muted)">
                         <span>
