@@ -7,6 +7,7 @@ import { getServiceAccountEmail, parseSpreadsheetId, readSpreadsheetTab } from "
 import { getStoreById } from "@/lib/accounting/accounting-db";
 import { syncBaseCostOpeningFromSheet } from "@/lib/accounting/base-cost-opening-sheet";
 import { storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
+import { FULFILL_LOT_DELETED, hasShipmentEvidence, inboundSheetLockKey, lotNameOf } from "@/lib/fulfill/lot-state";
 import {
   INBOUND_HEADER_MAP,
   SKU_HEADER_MAP,
@@ -54,6 +55,8 @@ export interface SheetSyncResult {
   missingOnSheet: number;
   /** Bảng Mã: các SKU vừa bị xóa mềm vì không còn trên sheet */
   deletedSkus?: string[];
+  /** Chi Tiết Đi Hàng: dòng tạo từ web Đi hàng chưa có trên sheet, được giữ lại (không xóa) */
+  keptFulfillRows?: number;
   /** Số dòng thay đổi theo từng cột (để biết lần đồng bộ sửa những gì). */
   changedFields: Record<string, number>;
   duplicatesInSheet: string[];
@@ -460,8 +463,9 @@ function mergeInboundLines(first: Row, next: Row): Row {
 }
 
 async function lockOrFail(tx: Tx, storeId: string, type: SheetType) {
+  const lockKey = type === "inbound" ? inboundSheetLockKey(storeId) : `inventory-sheet-sync:${storeId}:${type}`;
   const [{ locked }] = await tx<{ locked: boolean }[]>`
-    SELECT pg_try_advisory_xact_lock(hashtext(${`inventory-sheet-sync:${storeId}:${type}`})) AS locked
+    SELECT pg_try_advisory_xact_lock(hashtext(${lockKey})) AS locked
   `;
   if (!locked) throw new ApiError(`${SHEET_TYPE_LABELS[type]} của store này đang được đồng bộ, vui lòng thử lại sau ít phút.`, 409);
 }
@@ -620,6 +624,21 @@ async function writeInboundRecords(
     ORDER BY created_at ASC, id ASC
   `;
   const key = (...parts: unknown[]) => parts.map((p) => norm(p)).join("|");
+  const deletedLots = await tx<{ sku: string; ten_lo_hang: string | null; sup: string | null; ngay_request: string | null }[]>`
+    SELECT sku, ten_lo_hang, sup, ngay_request
+    FROM accounting_inbound_shipments
+    WHERE store_id = ${storeId} AND deleted_at IS NOT NULL
+      AND custom_fields @> jsonb_build_object(${FULFILL_LOT_DELETED}::text, true)
+  `;
+  const deletedSkuLots = new Set(deletedLots.map((row) => key(skuMatchKey(row.sku), lotNameOf(row).name)));
+  if (deletedSkuLots.size) {
+    const activeSkuLots = new Set(existing.map((row) => key(skuMatchKey(row.sku), lotNameOf(row).name)));
+    // Keep explicitly removed drafts out of sync unless recreated on the web or shipped.
+    records = records.filter((row) => {
+      const identity = key(skuMatchKey(row.sku), lotNameOf(row).name);
+      return !deletedSkuLots.has(identity) || activeSkuLots.has(identity) || hasShipmentEvidence(row);
+    });
+  }
   const index = { ship: new Map<string, string[]>(), lo: new Map<string, string[]>(), loose: new Map<string, string[]>() };
   const push = (map: Map<string, string[]>, k: string, id: string) => map.set(k, [...(map.get(k) ?? []), id]);
   const byId = new Map<string, Record<string, unknown>>();
@@ -676,7 +695,10 @@ async function writeInboundRecords(
     matches.set(r, id ?? take(index.loose, key(skuMatchKey(r.sku), r.ngay_request, r.quantity)));
   }
 
-  const toDelete = existing.filter((row) => !used.has(row.id as string));
+  // Dòng tạo từ web Đi hàng (source = 'fulfill') không bị xóa khi sheet chưa có: xưởng / yêu cầu đi hàng nhập trên web
+  // trước, sheet cập nhật sau. Khi sheet có dòng khớp (SKU + Shipment ID / Tên lô) thì vẫn ghi đè như thường.
+  const toDelete = existing.filter((row) => !used.has(row.id as string) && row.source !== "fulfill");
+  result.keptFulfillRows = existing.filter((row) => !used.has(row.id as string) && row.source === "fulfill").length;
   const limit = Math.max(20, Math.ceil(existing.length * 0.2));
   if (toDelete.length > limit) {
     if (!force) throw new DeleteGuardError(
@@ -887,6 +909,9 @@ export async function syncSheetToDatabase(
         ? `${result.missingOnSheet} SKU trên web không có trong sheet (Bảng mã FBM không tự xóa).`
         : `${result.missingOnSheet} SKU trên web không có trong sheet — quá nửa Bảng mã nên KHÔNG tự xóa, kiểm tra lại link/tab sheet.`,
     );
+  }
+  if (type === "inbound" && result.keptFulfillRows) {
+    result.warnings.push(`${result.keptFulfillRows} dòng tạo từ web Đi hàng chưa có trên sheet — giữ lại, không xóa.`);
   }
   if (type === "inbound" && !options.dryRun) {
     // Cập nhật số lượng nhận / trạng thái từ Check Shipment như khi import file

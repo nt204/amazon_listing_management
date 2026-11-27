@@ -644,14 +644,12 @@ table tbody tr.weekly-team-gap > td {
   font-size: 13.5px !important;
 }
 
-/* NCE Fulfill: token riêng cho cổng xưởng.
-   html đang 13px nên đặt lại spacing/text/radius bằng px để fulfill chạy đúng lưới 4px.
-   Hướng thiết kế theo unslop by Damir Sokolovsky (@heydamir), CC BY 4.0. */
+/* Fulfill dùng lưới 4px riêng vì cỡ chữ gốc của ứng dụng là 13px. */
 .fulfill-root {
   --spacing: 4px;
   --text-xs: 12px;
   --text-xs--line-height: 16px;
-  --text-sm: 13px;
+  --text-sm: 14px;
   --text-sm--line-height: 20px;
   --text-base: 14px;
   --text-base--line-height: 20px;
@@ -665,31 +663,32 @@ table tbody tr.weekly-team-gap > td {
   --text-3xl--line-height: 32px;
   --radius-sm: 4px;
   --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
-  --radius-2xl: 20px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
   /* Cùng font với Kế toán (.font-accounting-system): font hệ thống cho mọi chữ, kể cả mã */
   --font-mono: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
 
-  /* Swiss / minimal (skill ui-ux-pro-max): nền slate nhạt, kẻ mảnh, một màu nhấn xanh, màu trạng thái có nghĩa */
   color-scheme: light;
-  --ff-bg: #f8fafc;
+  --ff-bg: #ffffff;
   --ff-side: #ffffff;
   --ff-card: #ffffff;
-  --ff-raised: #f1f5f9;
-  --ff-head: #f8fafc;
-  --ff-head-text: #475569;
-  --ff-line: #e2e8f0;
-  --ff-line-strong: #cbd5e1;
-  --ff-text: #0f172a;
-  --ff-text-2: #475569;
-  --ff-muted: #64748b;
-  --ff-accent: #1d4ed8;
-  --ff-accent-hover: #1e40af;
-  --ff-accent-soft: #eff6ff;
-  --ff-pos: #15803d;
-  --ff-neg: #dc2626;
+  --ff-raised: #edf3ff;
+  --ff-head: #e9f0fd;
+  --ff-head-text: #223860;
+  --ff-table-head: #193b91;
+  --ff-line: #d4e0f5;
+  --ff-line-strong: #acbfe4;
+  --ff-text: #0b1731;
+  --ff-text-2: #263958;
+  --ff-muted: #455a7a;
+  --ff-accent: #244fe8;
+  --ff-accent-hover: #1b3dc2;
+  --ff-accent-soft: #e0eaff;
+  --ff-shadow: 0 2px 4px rgb(25 54 120 / 5%), 0 8px 24px rgb(25 54 120 / 8%);
+  --ff-pos: #116637;
+  --ff-neg: #b91c1c;
 
   background: var(--ff-bg);
   color: var(--ff-text);
@@ -701,6 +700,10 @@ table tbody tr.weekly-team-gap > td {
   font-size: 14px;
   line-height: 20px;
   font-variant-numeric: tabular-nums;
+}
+
+.fulfill-heading {
+  background: var(--ff-card);
 }
 
 /* Rule input/select { font-family: inherit } ở trên không nằm trong layer nên thắng utility font-mono */

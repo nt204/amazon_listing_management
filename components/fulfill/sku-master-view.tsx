@@ -56,11 +56,11 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
         body: JSON.stringify({ action: "sync", store_id: selectedStoreId || null }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Lỗi đồng bộ");
-      setMessage({ type: "success", text: data.message || "Đã đồng bộ" });
+      if (!res.ok) throw new Error(data.error || "Could not sync SKUs");
+      setMessage({ type: "success", text: data.message || "SKUs synced" });
       void fetchItems();
     } catch (err: any) {
-      setMessage({ type: "error", text: err.message || "Đồng bộ thất bại" });
+      setMessage({ type: "error", text: err.message || "Could not sync SKUs" });
     } finally {
       setSyncing(false);
     }
@@ -79,7 +79,7 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
         body: JSON.stringify(editingItem),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Lỗi lưu");
+      if (!res.ok) throw new Error(data.error || "Could not save the SKU");
       setEditingItem(null);
       void fetchItems();
     } catch (err: any) {
@@ -129,10 +129,9 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className={ui.heading}>
         <div>
-          <h1 className={ui.title}>SKU master</h1>
-          <p className="mt-1 text-sm text-(--ff-muted)">Thông tin cố định của từng SKU, tự điền vào đợt hàng mới</p>
+          <h1 className={ui.title}>SKU Master</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -140,10 +139,10 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
             onClick={handleSyncFromAccounting}
             disabled={syncing}
             className={ui.btnSecondary}
-            title="Lấy SKU và giá vốn từ Bảng Mã kế toán"
+            title="Import SKUs and base costs from Accounting"
           >
             <ArrowClockwiseIcon size={16} className={syncing ? "animate-spin" : ""} />
-            {syncing ? "Đang đồng bộ" : "Đồng bộ từ Bảng Mã"}
+            {syncing ? "Syncing…" : "Sync from Accounting"}
           </button>
           <button
             type="button"
@@ -162,14 +161,14 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
             className={ui.btnPrimary}
           >
             <PlusIcon size={16} />
-            Thêm SKU
+            Add SKU
           </button>
         </div>
       </div>
 
       <div className={`${ui.card} flex flex-wrap items-center gap-2 p-3 sm:p-4`}>
-        <select aria-label="Lọc theo store" value={selectedStoreId} onChange={(e) => onSelectStore(e.target.value)} className={ui.select}>
-          <option value="">Tất cả store</option>
+        <select aria-label="Filter by store" value={selectedStoreId} onChange={(e) => onSelectStore(e.target.value)} className={ui.select}>
+          <option value="">All stores</option>
           {stores.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -178,7 +177,7 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
         </select>
         <div className="relative w-full sm:w-72">
           <MagnifyingGlassIcon size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-(--ff-muted)" />
-          <input type="text" aria-label="Tìm SKU" placeholder="SKU, ASIN, FNSKU" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className={`${ui.input} pl-9`} />
+          <input type="text" aria-label="Search SKUs" placeholder="SKU, ASIN, FNSKU" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className={`${ui.input} pl-9`} />
         </div>
         {!loading && <span className="ml-auto text-sm text-(--ff-muted)">{fmtInt(items.length)} SKU</span>}
       </div>
@@ -198,16 +197,16 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
                 <th className={ui.th}>Store</th>
                 <th className={ui.th}>ASIN</th>
                 <th className={ui.th}>FNSKU</th>
-                <th className={ui.th}>Phôi</th>
-                <th className={ui.th}>Kích thước</th>
-                <th className={`${ui.th} text-right`}>Cái / thùng</th>
-                <th className={`${ui.th} text-right`}>Basecost</th>
-                <th className={`${ui.th} text-right`}>Phí đóng gói</th>
-                <th className={ui.th}>Thiết kế</th>
+                <th className={ui.th}>Product type</th>
+                <th className={ui.th}>Dimensions</th>
+                <th className={`${ui.th} text-right`}>Units per box</th>
+                <th className={`${ui.th} text-right`}>Base cost</th>
+                <th className={`${ui.th} text-right`}>Packaging fees</th>
+                <th className={ui.th}>Design</th>
                 <th className={ui.th}>Card</th>
                 <th className={ui.th}>Box</th>
                 <th className={`${ui.th} pr-6`}>
-                  <span className="sr-only">Sửa</span>
+                  <span className="sr-only">Edit</span>
                 </th>
               </tr>
             </thead>
@@ -215,13 +214,13 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
               {loading ? (
                 <tr>
                   <td colSpan={13} className="py-16 text-center text-(--ff-muted)">
-                    Đang tải SKU master
+                    Loading SKU Master…
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
                   <td colSpan={13} className="py-16 text-center text-(--ff-muted)">
-                    Chưa có SKU nào. Đồng bộ từ Bảng Mã để lấy dữ liệu có sẵn
+                    No SKUs yet. Sync from Accounting to import existing records.
                   </td>
                 </tr>
               ) : (
@@ -240,11 +239,11 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
                       <td className="px-3 text-right">{fmtInt(item.pcs_per_box)}</td>
                       <td className="px-3 text-right">{fmtMoney(item.basecost)}</td>
                       <td className="px-3 text-right text-(--ff-text-2)">{fmtMoney(extraFees)}</td>
-                      <td className="px-3">{linkCell(item.design_url, "Mở")}</td>
-                      <td className="px-3">{linkCell(item.card_url, "Mở")}</td>
-                      <td className="px-3">{linkCell(item.box_url, "Mở")}</td>
+                      <td className="px-3">{linkCell(item.design_url, "Open")}</td>
+                      <td className="px-3">{linkCell(item.card_url, "Open")}</td>
+                      <td className="px-3">{linkCell(item.box_url, "Open")}</td>
                       <td className="py-2 pr-6 pl-3 text-right">
-                        <button type="button" onClick={() => setEditingItem(item)} className={ui.iconBtn} title="Sửa SKU">
+                        <button type="button" onClick={() => setEditingItem(item)} className={ui.iconBtn} title="Edit SKU">
                           <PencilSimpleIcon size={16} />
                         </button>
                       </td>
@@ -258,7 +257,7 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
       </div>
 
       {editingItem && (
-        <Modal title={editingItem.id ? `Sửa SKU ${editingItem.sku}` : "Thêm SKU"} onClose={() => setEditingItem(null)} width="max-w-2xl">
+        <Modal title={editingItem.id ? `Edit SKU ${editingItem.sku}` : "Add SKU"} onClose={() => setEditingItem(null)} width="max-w-2xl">
           <form onSubmit={handleSaveItem} className="flex min-h-0 flex-1 flex-col">
             <div className="flex-1 space-y-6 overflow-y-auto p-6">
               <div className="grid grid-cols-2 gap-4">
@@ -270,7 +269,7 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
                     className={`${ui.select} w-full`}
                     required
                   >
-                    <option value="">Chọn store</option>
+                    <option value="">Select a store</option>
                     {stores.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
@@ -284,35 +283,35 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
               <div className="grid grid-cols-3 gap-4">
                 {field("asin", "ASIN", { parse: (v) => v.trim(), className: "font-mono text-xs" })}
                 {field("fnsku", "FNSKU", { parse: (v) => v.trim(), className: "font-mono text-xs" })}
-                {field("pcs_per_box", "Cái / thùng", { type: "number", parse: (v) => Number(v) || 1 })}
+                {field("pcs_per_box", "Units per box", { type: "number", parse: (v) => Number(v) || 1 })}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                {field("product_name", "Phôi", { placeholder: "14oz Tumbler" })}
-                {field("dimensions", "Kích thước", { placeholder: "20x15x10cm" })}
+                {field("product_name", "Product type", { placeholder: "14oz Tumbler" })}
+                {field("dimensions", "Dimensions", { placeholder: "20x15x10cm" })}
               </div>
 
               <fieldset className="grid grid-cols-3 gap-4 border-t border-(--ff-line) pt-6">
-                <legend className="sr-only">Giá</legend>
-                {field("basecost", "Basecost ($)", { type: "money", parse: (v) => Number(v) || 0 })}
-                {field("fee_card", "Phí card ($)", { type: "money", parse: (v) => Number(v) || 0 })}
-                {field("fee_box", "Phí box ($)", { type: "money", parse: (v) => Number(v) || 0 })}
+                <legend className="sr-only">Costs</legend>
+                {field("basecost", "Base cost ($)", { type: "money", parse: (v) => Number(v) || 0 })}
+                {field("fee_card", "Card fee ($)", { type: "money", parse: (v) => Number(v) || 0 })}
+                {field("fee_box", "Box fee ($)", { type: "money", parse: (v) => Number(v) || 0 })}
               </fieldset>
 
               <fieldset className="space-y-4 border-t border-(--ff-line) pt-6">
                 <legend className="sr-only">Link</legend>
-                {field("design_url", "Link thiết kế (Dropbox, Drive)", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
-                {field("card_url", "Link card", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
-                {field("box_url", "Link box", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
+                {field("design_url", "Design link (Dropbox, Drive)", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
+                {field("card_url", "Card link", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
+                {field("box_url", "Box link", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
               </fieldset>
             </div>
 
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--ff-line) px-6 py-4">
               <button type="button" onClick={() => setEditingItem(null)} className={ui.btnGhost}>
-                Hủy
+                Cancel
               </button>
               <button type="submit" disabled={saving} className={ui.btnPrimary}>
-                {saving ? "Đang lưu" : "Lưu SKU"}
+                {saving ? "Saving…" : "Save SKU"}
               </button>
             </div>
           </form>

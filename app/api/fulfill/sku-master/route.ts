@@ -13,7 +13,7 @@ export async function GET(req: Request) {
     const items = await listFulfillSkuMaster({ storeId, search });
     return NextResponse.json({ items });
   } catch (error) {
-    return routeErrorResponse(error, "Không thể tải SKU Master Fulfill.");
+    return routeErrorResponse(error, "Could not load SKU Master.");
   }
 }
 
@@ -25,16 +25,16 @@ export async function POST(req: Request) {
     if (body?.action === "sync") {
       const storeId = body?.store_id || undefined;
       const res = await syncFromAccountingSkuMaster(storeId);
-      return NextResponse.json({ success: true, message: `Đã đồng bộ ${res.synced} SKU từ Bảng Mã Kế Toán sang Fulfill!` });
+      return NextResponse.json({ success: true, message: `Synced ${res.synced} ${res.synced === 1 ? "SKU" : "SKUs"} from Accounting.` });
     }
 
     if (!body?.store_id || !body?.sku) {
-      return NextResponse.json({ error: "Store và SKU là bắt buộc." }, { status: 400 });
+      return NextResponse.json({ error: "Store and SKU are required." }, { status: 400 });
     }
 
     const item = await upsertFulfillSkuMasterItem(body);
     return NextResponse.json({ item, success: true });
   } catch (error) {
-    return routeErrorResponse(error, "Lỗi khi lưu SKU Master Fulfill.");
+    return routeErrorResponse(error, "Could not save the SKU.");
   }
 }

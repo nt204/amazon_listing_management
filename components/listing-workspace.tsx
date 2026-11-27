@@ -794,7 +794,7 @@ function WorkspaceSidebar({
                         onClose?.();
                       }}
                       icon={TruckIcon}
-                      label="Đi hàng"
+                      label="Fulfill"
                     />
                   )}
 
@@ -1692,7 +1692,7 @@ export function ListingWorkspace({
               />
             </div>
           ) : viewMode === "fulfill" ? (
-            <div className="fulfill-root h-full min-h-0 w-full overflow-y-auto px-4 py-6 lg:px-8">
+            <div lang="en" className="fulfill-root h-full min-h-0 w-full overflow-y-auto px-4 py-6 lg:px-8">
               <FulfillView />
             </div>
           ) : (

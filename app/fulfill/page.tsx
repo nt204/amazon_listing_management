@@ -6,8 +6,8 @@ import { FulfillPortal } from "@/components/fulfill/fulfill-portal";
 import { canAccessFulfill } from "@/lib/fulfill/access";
 
 export const metadata: Metadata = {
-  title: "Đi Hàng - Quản Lý Sản Xuất & Đóng Gói FBA",
-  description: "Đặt sản xuất hàng FBA với xưởng: tạo đợt, gửi phiếu, theo dõi in, đóng gói và ship.",
+  title: "Fulfill | FBA Production and Shipments",
+  description: "Track FBA production, supplier payments, and shipments.",
 };
 
 export default async function FulfillPage() {
@@ -24,7 +24,7 @@ export default async function FulfillPage() {
   }
 
   return (
-    <div className="fulfill-root min-h-dvh">
+    <div lang="en" className="fulfill-root min-h-dvh">
       <FulfillPortal actor={actor} />
     </div>
   );

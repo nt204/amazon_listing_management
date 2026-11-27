@@ -42,7 +42,7 @@ export function SuppliersView() {
         body: JSON.stringify(editingSup),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Lỗi lưu");
+      if (!res.ok) throw new Error(data.error || "Could not save the supplier");
       setEditingSup(null);
       void fetchSuppliers();
     } catch (err: any) {
@@ -71,18 +71,18 @@ export function SuppliersView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <h1 className={ui.title}>Nhà xưởng</h1>
+      <div className={ui.heading}>
+        <h1 className={ui.title}>Suppliers</h1>
         <button type="button" onClick={() => setEditingSup({ code: "", name: "", is_active: true })} className={ui.btnPrimary}>
           <PlusIcon size={16} />
-          Thêm xưởng
+          Add Supplier
         </button>
       </div>
 
       {loading ? (
-        <div className="py-16 text-center text-sm text-(--ff-muted)">Đang tải danh sách xưởng</div>
+        <div className="py-16 text-center text-sm text-(--ff-muted)">Loading suppliers…</div>
       ) : suppliers.length === 0 ? (
-        <div className={`${ui.card} py-16 text-center text-sm text-(--ff-muted)`}>Chưa có xưởng nào. Thêm xưởng đầu tiên để bắt đầu đặt hàng</div>
+        <div className={`${ui.card} py-16 text-center text-sm text-(--ff-muted)`}>No suppliers yet.</div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {suppliers.map((sup) => (
@@ -95,7 +95,7 @@ export function SuppliersView() {
                   </div>
                   <span className="inline-flex shrink-0 items-center gap-2 text-sm text-(--ff-text-2)">
                     <span className={`h-2 w-2 rounded-full ${sup.is_active ? "bg-(--ff-pos)" : "bg-slate-300"}`} />
-                    {sup.is_active ? "Đang hợp tác" : "Tạm ngưng"}
+                    {sup.is_active ? "Active" : "Inactive"}
                   </span>
                 </div>
 
@@ -103,13 +103,13 @@ export function SuppliersView() {
                   <dl className="mt-4 grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-2 border-t border-(--ff-line) pt-4 text-sm">
                     {sup.contact_name && (
                       <>
-                        <dt className="text-(--ff-muted)">Liên hệ</dt>
+                        <dt className="text-(--ff-muted)">Contact</dt>
                         <dd>{sup.contact_name}</dd>
                       </>
                     )}
                     {sup.phone && (
                       <>
-                        <dt className="text-(--ff-muted)">Điện thoại</dt>
+                        <dt className="text-(--ff-muted)">Phone</dt>
                         <dd className="font-mono text-xs leading-5">{sup.phone}</dd>
                       </>
                     )}
@@ -121,7 +121,7 @@ export function SuppliersView() {
                     )}
                     {sup.address && (
                       <>
-                        <dt className="text-(--ff-muted)">Địa chỉ</dt>
+                        <dt className="text-(--ff-muted)">Address</dt>
                         <dd>{sup.address}</dd>
                       </>
                     )}
@@ -133,11 +133,11 @@ export function SuppliersView() {
 
               <div className="flex items-center justify-between border-t border-(--ff-line) px-6 py-3">
                 <span className="text-sm text-(--ff-muted)">
-                  <span className="text-(--ff-text)">{sup.po_count || 0}</span> đợt hàng
+                  <span className="text-(--ff-text)">{sup.po_count || 0}</span> {Number(sup.po_count) === 1 ? "purchase order" : "purchase orders"}
                 </span>
                 <button type="button" onClick={() => setEditingSup(sup)} className={ui.btnGhost}>
                   <PencilSimpleIcon size={16} />
-                  Sửa
+                  Edit
                 </button>
               </div>
             </article>
@@ -146,27 +146,27 @@ export function SuppliersView() {
       )}
 
       {editingSup && (
-        <Modal title={editingSup.id ? `Sửa xưởng ${editingSup.name}` : "Thêm xưởng"} onClose={() => setEditingSup(null)}>
+        <Modal title={editingSup.id ? `Edit supplier ${editingSup.name}` : "Add Supplier"} onClose={() => setEditingSup(null)}>
           <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
             <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
               <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 sm:grid-cols-[120px_minmax(0,1fr)]">
-                {field("code", "Mã xưởng", { placeholder: "BFF", required: true, transform: (v) => v.trim().toUpperCase(), className: "font-mono text-xs" })}
-                {field("name", "Tên xưởng", { placeholder: "Xưởng BFF Bắc Ninh", required: true })}
+                {field("code", "Supplier code", { placeholder: "BFF", required: true, transform: (v) => v.trim().toUpperCase(), className: "font-mono text-xs" })}
+                {field("name", "Supplier name", { placeholder: "BFF Manufacturing", required: true })}
               </div>
               <div className="grid grid-cols-2 gap-4">
-                {field("contact_name", "Người liên hệ")}
-                {field("phone", "Điện thoại, Zalo")}
+                {field("contact_name", "Contact name")}
+                {field("phone", "Phone or Zalo")}
               </div>
               {field("email", "Email", { type: "email", transform: (v) => v.trim() })}
-              {field("address", "Địa chỉ xưởng")}
+              {field("address", "Supplier address")}
               <div>
-                <label className={ui.label}>Ghi chú</label>
+                <label className={ui.label}>Notes</label>
                 <textarea
                   rows={3}
                   value={editingSup.notes || ""}
                   onChange={(e) => setEditingSup((prev) => ({ ...prev, notes: e.target.value }))}
                   className={`${ui.input} h-auto py-2`}
-                  placeholder="Thế mạnh sản phẩm, giờ làm việc"
+                  placeholder="Product specialties or business hours"
                 />
               </div>
               <label className="flex cursor-pointer items-center gap-2 text-sm">
@@ -176,16 +176,16 @@ export function SuppliersView() {
                   onChange={(e) => setEditingSup((prev) => ({ ...prev, is_active: e.target.checked }))}
                   className="h-4 w-4 accent-(--ff-accent)"
                 />
-                Đang hợp tác sản xuất
+                Active
               </label>
             </div>
 
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--ff-line) px-6 py-4">
               <button type="button" onClick={() => setEditingSup(null)} className={ui.btnGhost}>
-                Hủy
+                Cancel
               </button>
               <button type="submit" disabled={saving} className={ui.btnPrimary}>
-                {saving ? "Đang lưu" : "Lưu xưởng"}
+                {saving ? "Saving…" : "Save Supplier"}
               </button>
             </div>
           </form>
