@@ -1,40 +1,44 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  ArrowLeftIcon,
-  DownloadSimpleIcon,
-  FileXlsIcon,
-  PlusIcon,
-  PrinterIcon,
-  TrashIcon,
-  WarningCircleIcon,
-  XIcon,
-} from "@phosphor-icons/react";
+import { ArrowLeftIcon, FileXlsIcon, PlusIcon, PrinterIcon, TrashIcon } from "@phosphor-icons/react";
 import type { FulfillPo, FulfillPoLine, FulfillPoStatus } from "@/lib/fulfill/types";
+import { CodeTag, Notice, PO_STATUS, fmtInt, fmtMoney, ui } from "./fulfill-ui";
 
 interface PoDetailViewProps {
   poId: string;
   onBack: () => void;
 }
 
-const PO_STATUS_LABELS: Record<FulfillPoStatus, { label: string; bg: string; text: string; border: string }> = {
-  draft: { label: "Nháp", bg: "bg-slate-100", text: "text-slate-700", border: "border-slate-300" },
-  pending_sup: { label: "Chờ sup nhận", bg: "bg-amber-50", text: "text-amber-800", border: "border-amber-300" },
-  producing: { label: "Đang sản xuất", bg: "bg-blue-50", text: "text-blue-800", border: "border-blue-300" },
-  shipped: { label: "Đã ship", bg: "bg-purple-50", text: "text-purple-800", border: "border-purple-300" },
-  received: { label: "Đã nhận hàng", bg: "bg-emerald-50", text: "text-emerald-800", border: "border-emerald-300" },
-  cancelled: { label: "Đã hủy", bg: "bg-rose-50", text: "text-rose-800", border: "border-rose-300" },
-};
+type CellKind = "text" | "upper" | "int" | "money" | "nullableInt" | "date";
+
+const COST_FIELDS = ["quantity", "basecost", "fee_card", "fee_tag", "fee_stand", "fee_box"];
+
+function parseCell(kind: CellKind, raw: string): unknown {
+  switch (kind) {
+    case "upper":
+      return raw.trim().toUpperCase();
+    case "text":
+      return raw.trim();
+    case "int":
+    case "money":
+      return Number(raw) || 0;
+    case "nullableInt":
+      return raw ? Number(raw) : null;
+    case "date":
+      return raw || null;
+  }
+}
+
+// Ranh giới giữa các nhóm cột (bên mình điền / đóng gói FBA / xưởng cập nhật)
+const GROUP_EDGE = "border-l border-(--ff-line-strong)";
 
 export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
   const [po, setPo] = useState<FulfillPo | null>(null);
   const [lines, setLines] = useState<FulfillPoLine[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingCellId, setSavingCellId] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
-  // Load PO details
   const fetchPo = useCallback(async () => {
     try {
       setLoading(true);
@@ -55,7 +59,6 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
     void fetchPo();
   }, [fetchPo]);
 
-  // Update PO Status
   const handleStatusChange = async (newStatus: FulfillPoStatus) => {
     if (!po) return;
     try {
@@ -70,12 +73,9 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
     }
   };
 
-  // Inline Cell Edit Save
   const handleCellBlur = async (lineId: string, field: string, value: any, oldValue: any) => {
     if (value === oldValue) return;
-    const cellKey = `${lineId}-${field}`;
     try {
-      setSavingCellId(cellKey);
       const res = await fetch(`/api/fulfill/pos/${poId}/lines/${lineId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -83,12 +83,11 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
       });
       if (!res.ok) throw new Error("Lỗi lưu ô dữ liệu");
 
-      // Update local line state
       setLines((prev) =>
         prev.map((l) => {
           if (l.id !== lineId) return l;
           const updated = { ...l, [field]: value };
-          if (["quantity", "basecost", "fee_card", "fee_tag", "fee_stand", "fee_box"].includes(field)) {
+          if (COST_FIELDS.includes(field)) {
             const unit =
               Number(updated.basecost || 0) +
               Number(updated.fee_card || 0) +
@@ -98,19 +97,16 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
             updated.total_line_cost = Math.round(Number(updated.quantity || 0) * unit * 100) / 100;
           }
           return updated;
-        })
+        }),
       );
 
       void fetchPo();
     } catch (err: any) {
       console.error(err);
-      setErrorNotice("Không thể lưu thay đổi vào hệ thống.");
-    } finally {
-      setSavingCellId(null);
+      setErrorNotice("Không thể lưu thay đổi vào hệ thống");
     }
   };
 
-  // Add new line
   const handleAddNewLine = async () => {
     try {
       const res = await fetch(`/api/fulfill/pos/${poId}/lines`, {
@@ -127,510 +123,248 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
     }
   };
 
-  // Delete line
   const handleDeleteLine = async (lineId: string) => {
-    if (!confirm("Bạn có chắc muốn xóa dòng sản phẩm này?")) return;
+    if (!confirm("Xóa dòng sản phẩm này?")) return;
     try {
       await fetch(`/api/fulfill/pos/${poId}/lines/${lineId}`, { method: "DELETE" });
       setLines((prev) => prev.filter((l) => l.id !== lineId));
       void fetchPo();
-    } catch (err: any) {
-      setErrorNotice("Lỗi xóa dòng.");
+    } catch {
+      setErrorNotice("Lỗi xóa dòng");
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-96 flex-col items-center justify-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-600 border-t-transparent" />
-        <p className="text-sm font-semibold text-slate-500">Đang tải bảng chi tiết đợt hàng...</p>
-      </div>
-    );
+  if (loading && !po) {
+    return <div className="py-24 text-center text-sm text-(--ff-muted)">Đang tải phiếu đợt hàng</div>;
   }
 
   if (!po) {
     return (
-      <div className="p-12 text-center">
-        <p className="text-base font-semibold text-red-600">Không tìm thấy đợt hàng.</p>
-        <button
-          onClick={onBack}
-          className="mt-4 inline-flex items-center gap-2 rounded-full bg-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm"
-        >
-          <ArrowLeftIcon size={16} weight="bold" />
-          <span>Quay lại danh sách</span>
+      <div className="py-24 text-center">
+        <p className="text-sm text-red-600">{errorNotice || "Không tìm thấy đợt hàng"}</p>
+        <button type="button" onClick={onBack} className={`${ui.btnSecondary} mt-4`}>
+          <ArrowLeftIcon size={16} />
+          Về danh sách đợt
         </button>
       </div>
     );
   }
 
-  const statusConfig = PO_STATUS_LABELS[po.status] || PO_STATUS_LABELS.draft;
+  /** Ô sửa trực tiếp: lưu khi rời ô, giống cách nhập trên sheet. */
+  const cell = (line: FulfillPoLine, field: keyof FulfillPoLine, kind: CellKind, opts: { className?: string; placeholder?: string } = {}) => {
+    const current = line[field] as any;
+    const numeric = kind === "int" || kind === "money" || kind === "nullableInt";
+    return (
+      <input
+        type={kind === "date" ? "date" : numeric ? "number" : "text"}
+        step={kind === "money" ? "0.01" : undefined}
+        min={kind === "int" ? "0" : undefined}
+        defaultValue={current ?? ""}
+        placeholder={opts.placeholder}
+        onBlur={(e) => handleCellBlur(line.id, field, parseCell(kind, e.target.value), current)}
+        className={`h-10 w-full bg-transparent px-3 ${opts.className?.includes("text-xs") ? "" : "text-sm"} text-(--ff-text) placeholder:text-(--ff-muted)/60 focus:bg-(--ff-card) focus:outline-none focus:ring-2 focus:ring-(--ff-accent)/40 focus:ring-inset ${
+          numeric ? "text-right" : ""
+        } ${opts.className || ""}`}
+      />
+    );
+  };
 
   return (
     <div className="space-y-6">
-      {/* Top Header Card - Clean, bold, large fonts */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          {/* Left: Back + PO Info */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={onBack}
-              className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition cursor-pointer shrink-0"
-              title="Quay lại danh sách đợt hàng"
-            >
-              <ArrowLeftIcon size={18} weight="bold" />
-            </button>
-            <div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-                  {po.po_number}
-                </h1>
-                <span className="rounded-lg bg-blue-100 px-3 py-1 text-xs font-black uppercase text-blue-900">
-                  {po.store_name}
-                </span>
-                <span className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
-                  Xưởng: {po.supplier_code || po.supplier_name}
-                </span>
-                <span className="text-xs text-slate-400 font-medium">
-                  Ngày đặt: {po.order_date}
-                </span>
+      <div className="print:hidden">
+        <button type="button" onClick={onBack} className="inline-flex cursor-pointer items-center gap-2 text-sm text-(--ff-text-2) transition-colors duration-150 hover:text-(--ff-text)">
+          <ArrowLeftIcon size={16} />
+          Đợt hàng
+        </button>
+      </div>
+
+      {/* Đầu phiếu sản xuất */}
+      <section className={`${ui.card} print:border-0`}>
+        <div className="flex flex-wrap items-start justify-between gap-6 p-6">
+          <div className="space-y-3">
+            <div className="text-xs text-(--ff-muted)">Phiếu đặt sản xuất</div>
+            <CodeTag size="lg">{po.po_number}</CodeTag>
+            <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+              <div>
+                <dt className="text-xs text-(--ff-muted)">Store</dt>
+                <dd className="mt-0.5">{po.store_name || "—"}</dd>
               </div>
-              <div className="mt-2 flex items-center gap-6 text-sm text-slate-600 font-medium">
-                <span>
-                  Số SKU: <strong className="text-slate-900 font-bold">{lines.length}</strong>
-                </span>
-                <span>
-                  Tổng SL:{" "}
-                  <strong className="text-slate-900 font-bold">
-                    {po.total_quantity.toLocaleString()} pcs
-                  </strong>
-                </span>
-                <span>
-                  Tổng tiền:{" "}
-                  <strong className="text-emerald-700 font-extrabold">
-                    ${po.total_amount.toFixed(2)}
-                  </strong>
-                </span>
+              <div>
+                <dt className="text-xs text-(--ff-muted)">Xưởng</dt>
+                <dd className="mt-0.5">{po.supplier_name || po.supplier_code}</dd>
               </div>
-            </div>
+              <div>
+                <dt className="text-xs text-(--ff-muted)">Ngày đặt</dt>
+                <dd className="mt-0.5 font-mono text-xs leading-5">{po.order_date}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-(--ff-muted)">Hẹn giao</dt>
+                <dd className="mt-0.5 font-mono text-xs leading-5">{po.target_date || "—"}</dd>
+              </div>
+            </dl>
           </div>
 
-          {/* Right: Status selector & Action buttons */}
-          <div className="flex items-center gap-3 flex-wrap self-start lg:self-center">
-            {/* Status dropdown */}
-            <select
-              value={po.status}
-              onChange={(e) => handleStatusChange(e.target.value as FulfillPoStatus)}
-              className={`h-11 rounded-xl border px-4 text-sm font-bold uppercase tracking-wide cursor-pointer focus:outline-none transition ${statusConfig.bg} ${statusConfig.text} ${statusConfig.border}`}
-            >
-              <option value="draft">Nháp</option>
-              <option value="pending_sup">Chờ sup nhận</option>
-              <option value="producing">Đang sản xuất</option>
-              <option value="shipped">Đã ship</option>
-              <option value="received">Đã nhận hàng</option>
-              <option value="cancelled">Đã hủy</option>
-            </select>
-
-            {/* Export Excel */}
-            <a
-              href={`/api/fulfill/pos/${po.id}/export`}
-              download
-              className="inline-flex h-11 items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-5 text-sm font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs"
-            >
-              <FileXlsIcon size={18} weight="bold" />
-              <span>Xuất Excel</span>
+          <div className="flex flex-wrap items-center gap-2 print:hidden">
+            <label className="relative">
+              <span className="sr-only">Trạng thái</span>
+              <span className={`pointer-events-none absolute top-1/2 left-3 h-2 w-2 -translate-y-1/2 rounded-full ${PO_STATUS[po.status]?.dot}`} />
+              <select value={po.status} onChange={(e) => handleStatusChange(e.target.value as FulfillPoStatus)} className={`${ui.select} pl-7`}>
+                {(Object.keys(PO_STATUS) as FulfillPoStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {PO_STATUS[s].label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <a href={`/api/fulfill/pos/${po.id}/export`} download className={ui.btnSecondary}>
+              <FileXlsIcon size={16} />
+              Xuất Excel
             </a>
-
-            {/* Print */}
-            <button
-              onClick={() => window.print()}
-              className="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs"
-            >
-              <PrinterIcon size={18} weight="bold" />
-              <span>In phiếu</span>
+            <button type="button" onClick={() => window.print()} className={ui.btnSecondary}>
+              <PrinterIcon size={16} />
+              In phiếu
             </button>
-
-            {/* Add row */}
-            <button
-              onClick={handleAddNewLine}
-              className="inline-flex h-11 items-center gap-2 rounded-full bg-blue-600 px-6 text-sm font-bold text-white shadow-md shadow-blue-500/25 hover:bg-blue-700 transition"
-            >
-              <PlusIcon size={16} weight="bold" />
-              <span>Thêm dòng SKU</span>
+            <button type="button" onClick={handleAddNewLine} className={ui.btnPrimary}>
+              <PlusIcon size={16} />
+              Thêm dòng
             </button>
           </div>
         </div>
 
-        {errorNotice && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">
-            <WarningCircleIcon size={18} weight="fill" className="shrink-0" />
-            <span>{errorNotice}</span>
-            <button onClick={() => setErrorNotice(null)} className="ml-auto text-red-500 hover:text-red-700">
-              <XIcon size={16} />
-            </button>
+        <div className="border-t border-(--ff-line)">
+        <dl className="grid grid-cols-3 sm:max-w-xl">
+          <div className="px-6 py-4">
+            <dt className="text-xs text-(--ff-muted)">Số SKU</dt>
+            <dd className="mt-1 text-2xl font-medium">{lines.length}</dd>
           </div>
-        )}
-      </div>
+          <div className="border-l border-(--ff-line) px-6 py-4">
+            <dt className="text-xs text-(--ff-muted)">Số lượng</dt>
+            <dd className="mt-1 text-2xl font-medium">{fmtInt(po.total_quantity)}</dd>
+          </div>
+          <div className="border-l border-(--ff-line) px-6 py-4">
+            <dt className="text-xs text-(--ff-muted)">Thành tiền</dt>
+            <dd className="mt-1 text-2xl font-medium text-(--ff-accent)">{fmtMoney(po.total_amount)}</dd>
+          </div>
+        </dl>
+        </div>
+      </section>
 
-      {/* Spreadsheet Table with 3 distinct colored sections */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
-        <div className="overflow-x-auto max-h-[calc(100vh-280px)]">
-          <table className="w-full text-left text-sm border-collapse">
-            <thead className="sticky top-0 z-20 shadow-xs">
-              {/* Group Header Level 1 */}
-              <tr className="text-center font-black text-xs uppercase tracking-wider text-white">
-                <th colSpan={14} className="border-r border-blue-700 bg-blue-600 py-2.5 px-4">
-                  1. THÔNG TIN ĐẶT HÀNG (BÊN MÌNH ĐIỀN)
+      {errorNotice && (
+        <Notice tone="error" onClose={() => setErrorNotice(null)}>
+          {errorNotice}
+        </Notice>
+      )}
+
+      <div className={`${ui.card} overflow-hidden`}>
+        <div className="max-h-[calc(100vh-240px)] overflow-auto print:max-h-none">
+          <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
+            <thead className="sticky top-0 z-20 bg-(--ff-bg)">
+              <tr className="border-b border-(--ff-line)">
+                <th colSpan={14} className="px-3 pt-3 pb-1 text-xs font-medium text-(--ff-text)">
+                  Bên mình điền
                 </th>
-                <th colSpan={7} className="border-r border-amber-700 bg-amber-600 py-2.5 px-4">
-                  2. PHẦN ĐÓNG GÓI FBA
+                <th colSpan={7} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-text)`}>
+                  Đóng gói FBA
                 </th>
-                <th colSpan={8} className="bg-emerald-600 py-2.5 px-4">
-                  3. THEO DÕI ĐƠN &amp; XƯỞNG SẢN XUẤT
+                <th colSpan={8} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-text)`}>
+                  Xưởng cập nhật
                 </th>
               </tr>
+              <tr className="border-b border-(--ff-line-strong)">
+                <th className={`${ui.th} w-10 text-right`}>#</th>
+                <th className={`${ui.th} min-w-44`}>SKU</th>
+                <th className={`${ui.th} min-w-36`}>Phôi</th>
+                <th className={`${ui.th} min-w-24 text-right`}>Số lượng</th>
+                <th className={`${ui.th} min-w-28 text-right`}>Basecost</th>
+                <th className={`${ui.th} min-w-20 text-right`}>Card</th>
+                <th className={`${ui.th} min-w-20 text-right`}>Tag</th>
+                <th className={`${ui.th} min-w-20 text-right`}>Stand</th>
+                <th className={`${ui.th} min-w-20 text-right`}>Box</th>
+                <th className={`${ui.th} min-w-28 text-right`}>Thành tiền</th>
+                <th className={`${ui.th} min-w-32`}>Line ship</th>
+                <th className={`${ui.th} min-w-28`}>Kích thước</th>
+                <th className={`${ui.th} min-w-40`}>Link thiết kế</th>
+                <th className={`${ui.th} min-w-36`}>Link card</th>
 
-              {/* Column Header Level 2 */}
-              <tr className="bg-slate-100 text-xs font-bold uppercase text-slate-700 tracking-wider whitespace-nowrap border-b border-slate-300">
-                <th className="px-3 py-3 w-12 text-center border-r border-slate-200">STT</th>
-                <th className="px-3 py-3 w-44 border-r border-slate-200">SKU</th>
-                <th className="px-3 py-3 w-36 border-r border-slate-200">Phôi (Type)</th>
-                <th className="px-3 py-3 w-24 text-right border-r border-slate-200 bg-blue-50/50">SL (Qty)</th>
-                <th className="px-3 py-3 w-28 text-right border-r border-slate-200 bg-blue-50/50">Basecost ($)</th>
-                <th className="px-3 py-3 w-20 text-right border-r border-slate-200">Card ($)</th>
-                <th className="px-3 py-3 w-20 text-right border-r border-slate-200">Tag ($)</th>
-                <th className="px-3 py-3 w-20 text-right border-r border-slate-200">Stand ($)</th>
-                <th className="px-3 py-3 w-20 text-right border-r border-slate-200">Box ($)</th>
-                <th className="px-3 py-3 w-28 text-right border-r border-slate-200 font-extrabold text-emerald-800 bg-emerald-50/60">
-                  Thành tiền ($)
+                <th className={`${ui.th} ${GROUP_EDGE} min-w-36`}>Transparency</th>
+                <th className={`${ui.th} min-w-36`}>FNSKU</th>
+                <th className={`${ui.th} min-w-36`}>Label FNSKU</th>
+                <th className={`${ui.th} min-w-40`}>Shipment ID</th>
+                <th className={`${ui.th} min-w-24 text-right`}>Số thùng</th>
+                <th className={`${ui.th} min-w-36`}>Shipping label</th>
+                <th className={`${ui.th} min-w-40`}>Địa chỉ ship</th>
+
+                <th className={`${ui.th} ${GROUP_EDGE} min-w-36`}>Ngày xuất xưởng</th>
+                <th className={`${ui.th} min-w-36`}>Ngày tới kho</th>
+                <th className={`${ui.th} min-w-24 text-right`}>Phí bù</th>
+                <th className={`${ui.th} min-w-36`}>Link sample</th>
+                <th className={`${ui.th} min-w-36`}>Link package</th>
+                <th className={`${ui.th} min-w-28`}>Check</th>
+                <th className={`${ui.th} min-w-40`}>Ghi chú</th>
+                <th className={`${ui.th} w-12`}>
+                  <span className="sr-only">Xóa</span>
                 </th>
-                <th className="px-3 py-3 w-32 border-r border-slate-200">Line ship</th>
-                <th className="px-3 py-3 w-32 border-r border-slate-200">Kích thước</th>
-                <th className="px-3 py-3 w-40 border-r border-slate-200">Design Link</th>
-                <th className="px-3 py-3 w-36 border-r border-blue-400">Card Link</th>
-
-                {/* FBA Packaging */}
-                <th className="px-3 py-3 w-36 border-r border-slate-200">Transparency</th>
-                <th className="px-3 py-3 w-36 border-r border-slate-200">FNSKU</th>
-                <th className="px-3 py-3 w-36 border-r border-slate-200">Label FNSKU</th>
-                <th className="px-3 py-3 w-40 border-r border-slate-200">Shipment ID</th>
-                <th className="px-3 py-3 w-24 text-right border-r border-slate-200">Box Qty</th>
-                <th className="px-3 py-3 w-36 border-r border-slate-200">Shipping Label</th>
-                <th className="px-3 py-3 w-40 border-r border-amber-400">Shipping Address</th>
-
-                {/* Factory Tracking */}
-                <th className="px-3 py-3 w-32 border-r border-slate-200">Ship out date</th>
-                <th className="px-3 py-3 w-32 border-r border-slate-200">Arrival date</th>
-                <th className="px-3 py-3 w-28 text-right border-r border-slate-200">Phí bù ($)</th>
-                <th className="px-3 py-3 w-36 border-r border-slate-200">Sample Link</th>
-                <th className="px-3 py-3 w-36 border-r border-slate-200">Package Link</th>
-                <th className="px-3 py-3 w-28 border-r border-slate-200">Check</th>
-                <th className="px-3 py-3 w-40 border-r border-slate-200">Notes</th>
-                <th className="px-3 py-3 w-16 text-center">Xóa</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {lines.map((line, idx) => {
-                return (
-                  <tr key={line.id} className="hover:bg-blue-50/30 transition whitespace-nowrap group">
-                    <td className="px-3 py-2 text-center text-slate-400 font-semibold border-r border-slate-200">
-                      {idx + 1}
-                    </td>
+            <tbody className="divide-y divide-(--ff-line)">
+              {lines.length === 0 && (
+                <tr>
+                  <td colSpan={29} className="py-12 text-center text-(--ff-muted)">
+                    Đợt này chưa có dòng nào
+                  </td>
+                </tr>
+              )}
+              {lines.map((line, idx) => (
+                <tr key={line.id} className="transition-colors duration-150 hover:bg-(--ff-bg)">
+                  <td className="px-3 text-right font-mono text-xs text-(--ff-muted)">{idx + 1}</td>
+                  <td className="p-0">{cell(line, "sku", "upper", { className: "font-mono text-xs font-medium" })}</td>
+                  <td className="p-0">{cell(line, "product_type", "text")}</td>
+                  <td className="p-0">{cell(line, "quantity", "int")}</td>
+                  <td className="p-0">{cell(line, "basecost", "money")}</td>
+                  <td className="p-0">{cell(line, "fee_card", "money", { className: "text-(--ff-text-2)" })}</td>
+                  <td className="p-0">{cell(line, "fee_tag", "money", { className: "text-(--ff-text-2)" })}</td>
+                  <td className="p-0">{cell(line, "fee_stand", "money", { className: "text-(--ff-text-2)" })}</td>
+                  <td className="p-0">{cell(line, "fee_box", "money", { className: "text-(--ff-text-2)" })}</td>
+                  <td className="px-3 text-right font-medium">{fmtMoney(line.total_line_cost)}</td>
+                  <td className="p-0">{cell(line, "line_ship", "text")}</td>
+                  <td className="p-0">{cell(line, "dimensions", "text")}</td>
+                  <td className="p-0">{cell(line, "design_url", "text", { placeholder: "Dán link", className: "text-(--ff-text-2)" })}</td>
+                  <td className="p-0">{cell(line, "card_url", "text", { placeholder: "Dán link", className: "text-(--ff-text-2)" })}</td>
 
-                    {/* SKU */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.sku}
-                        onBlur={(e) => handleCellBlur(line.id, "sku", e.target.value.trim().toUpperCase(), line.sku)}
-                        className="w-full h-10 px-3 font-bold text-slate-900 bg-transparent focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                      />
-                    </td>
+                  <td className={`p-0 ${GROUP_EDGE}`}>{cell(line, "transparency_code", "text", { className: "font-mono text-xs" })}</td>
+                  <td className="p-0">{cell(line, "fnsku", "text", { className: "font-mono text-xs" })}</td>
+                  <td className="p-0">{cell(line, "label_fnsku", "text")}</td>
+                  <td className="p-0">{cell(line, "shipment_id", "text", { className: "font-mono text-xs" })}</td>
+                  <td className="p-0">{cell(line, "box_quantity", "nullableInt")}</td>
+                  <td className="p-0">{cell(line, "shipping_label", "text")}</td>
+                  <td className="p-0">{cell(line, "shipping_address", "text")}</td>
 
-                    {/* Phôi */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.product_type || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "product_type", e.target.value.trim(), line.product_type)}
-                        className="w-full h-10 px-3 text-slate-800 bg-transparent focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                      />
-                    </td>
-
-                    {/* Quantity */}
-                    <td className="p-0 border-r border-slate-200 bg-blue-50/20">
-                      <input
-                        type="number"
-                        min="0"
-                        defaultValue={line.quantity}
-                        onBlur={(e) => handleCellBlur(line.id, "quantity", Number(e.target.value) || 0, line.quantity)}
-                        className="w-full h-10 px-3 text-right font-black text-slate-900 bg-transparent focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                      />
-                    </td>
-
-                    {/* Basecost */}
-                    <td className="p-0 border-r border-slate-200 bg-blue-50/20">
-                      <input
-                        type="number"
-                        step="0.01"
-                        defaultValue={line.basecost}
-                        onBlur={(e) => handleCellBlur(line.id, "basecost", Number(e.target.value) || 0, line.basecost)}
-                        className="w-full h-10 px-3 text-right font-semibold text-slate-900 bg-transparent focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                      />
-                    </td>
-
-                    {/* Fee Card */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="number"
-                        step="0.01"
-                        defaultValue={line.fee_card}
-                        onBlur={(e) => handleCellBlur(line.id, "fee_card", Number(e.target.value) || 0, line.fee_card)}
-                        className="w-full h-10 px-2 text-right text-slate-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Fee Tag */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="number"
-                        step="0.01"
-                        defaultValue={line.fee_tag}
-                        onBlur={(e) => handleCellBlur(line.id, "fee_tag", Number(e.target.value) || 0, line.fee_tag)}
-                        className="w-full h-10 px-2 text-right text-slate-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Fee Stand */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="number"
-                        step="0.01"
-                        defaultValue={line.fee_stand}
-                        onBlur={(e) => handleCellBlur(line.id, "fee_stand", Number(e.target.value) || 0, line.fee_stand)}
-                        className="w-full h-10 px-2 text-right text-slate-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Fee Box */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="number"
-                        step="0.01"
-                        defaultValue={line.fee_box}
-                        onBlur={(e) => handleCellBlur(line.id, "fee_box", Number(e.target.value) || 0, line.fee_box)}
-                        className="w-full h-10 px-2 text-right text-slate-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Total Line Cost */}
-                    <td className="px-3 py-2 text-right font-black text-emerald-700 bg-emerald-50/30 border-r border-slate-200">
-                      ${line.total_line_cost.toFixed(2)}
-                    </td>
-
-                    {/* Line Ship */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.line_ship || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "line_ship", e.target.value.trim(), line.line_ship)}
-                        className="w-full h-10 px-3 text-slate-700 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Dimensions */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.dimensions || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "dimensions", e.target.value.trim(), line.dimensions)}
-                        className="w-full h-10 px-3 text-slate-700 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Design URL */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.design_url || ""}
-                        placeholder="Link..."
-                        onBlur={(e) => handleCellBlur(line.id, "design_url", e.target.value.trim(), line.design_url)}
-                        className="w-full h-10 px-3 text-blue-600 hover:underline bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Card URL */}
-                    <td className="p-0 border-r border-blue-400">
-                      <input
-                        type="text"
-                        defaultValue={line.card_url || ""}
-                        placeholder="Link..."
-                        onBlur={(e) => handleCellBlur(line.id, "card_url", e.target.value.trim(), line.card_url)}
-                        className="w-full h-10 px-3 text-blue-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* FBA: Transparency */}
-                    <td className="p-0 border-r border-slate-200 bg-amber-50/10">
-                      <input
-                        type="text"
-                        defaultValue={line.transparency_code || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "transparency_code", e.target.value.trim(), line.transparency_code)}
-                        className="w-full h-10 px-3 text-slate-800 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* FNSKU */}
-                    <td className="p-0 border-r border-slate-200 bg-amber-50/10">
-                      <input
-                        type="text"
-                        defaultValue={line.fnsku || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "fnsku", e.target.value.trim(), line.fnsku)}
-                        className="w-full h-10 px-3 text-slate-800 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Label FNSKU */}
-                    <td className="p-0 border-r border-slate-200 bg-amber-50/10">
-                      <input
-                        type="text"
-                        defaultValue={line.label_fnsku || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "label_fnsku", e.target.value.trim(), line.label_fnsku)}
-                        className="w-full h-10 px-3 text-slate-800 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Shipment ID */}
-                    <td className="p-0 border-r border-slate-200 bg-amber-50/10">
-                      <input
-                        type="text"
-                        defaultValue={line.shipment_id || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "shipment_id", e.target.value.trim(), line.shipment_id)}
-                        className="w-full h-10 px-3 font-bold text-amber-900 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Box Qty */}
-                    <td className="p-0 border-r border-slate-200 bg-amber-50/10">
-                      <input
-                        type="number"
-                        defaultValue={line.box_quantity || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "box_quantity", e.target.value ? Number(e.target.value) : null, line.box_quantity)}
-                        className="w-full h-10 px-2 text-right font-semibold text-slate-800 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Shipping Label */}
-                    <td className="p-0 border-r border-slate-200 bg-amber-50/10">
-                      <input
-                        type="text"
-                        defaultValue={line.shipping_label || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "shipping_label", e.target.value.trim(), line.shipping_label)}
-                        className="w-full h-10 px-3 text-slate-700 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Shipping Address */}
-                    <td className="p-0 border-r border-amber-400 bg-amber-50/10">
-                      <input
-                        type="text"
-                        defaultValue={line.shipping_address || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "shipping_address", e.target.value.trim(), line.shipping_address)}
-                        className="w-full h-10 px-3 text-slate-700 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Ship out date */}
-                    <td className="p-0 border-r border-slate-200 bg-emerald-50/10">
-                      <input
-                        type="date"
-                        defaultValue={line.shipping_out_date || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "shipping_out_date", e.target.value || null, line.shipping_out_date)}
-                        className="w-full h-10 px-2 text-slate-700 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Arrival date */}
-                    <td className="p-0 border-r border-slate-200 bg-emerald-50/10">
-                      <input
-                        type="date"
-                        defaultValue={line.arrival_date || ""}
-                        onBlur={(e) => handleCellBlur(line.id, "arrival_date", e.target.value || null, line.arrival_date)}
-                        className="w-full h-10 px-2 text-slate-700 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Replacement fee */}
-                    <td className="p-0 border-r border-slate-200 bg-emerald-50/10">
-                      <input
-                        type="number"
-                        step="0.01"
-                        defaultValue={line.replacement_fee}
-                        onBlur={(e) => handleCellBlur(line.id, "replacement_fee", Number(e.target.value) || 0, line.replacement_fee)}
-                        className="w-full h-10 px-2 text-right text-rose-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Sample URL */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.sample_url || ""}
-                        placeholder="Link ảnh..."
-                        onBlur={(e) => handleCellBlur(line.id, "sample_url", e.target.value.trim(), line.sample_url)}
-                        className="w-full h-10 px-3 text-slate-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Package URL */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.package_url || ""}
-                        placeholder="Link..."
-                        onBlur={(e) => handleCellBlur(line.id, "package_url", e.target.value.trim(), line.package_url)}
-                        className="w-full h-10 px-3 text-slate-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Check Status */}
-                    <td className="p-0 border-r border-slate-200">
-                      <select
-                        defaultValue={line.check_status || ""}
-                        onChange={(e) => handleCellBlur(line.id, "check_status", e.target.value, line.check_status)}
-                        className="w-full h-10 px-3 font-bold text-slate-800 bg-transparent focus:bg-white focus:outline-none rounded cursor-pointer"
-                      >
-                        <option value="">—</option>
-                        <option value="ok">OK</option>
-                        <option value="pending">Chờ check</option>
-                        <option value="defect">Lỗi</option>
-                        <option value="replaced">Đã bù</option>
-                      </select>
-                    </td>
-
-                    {/* Notes */}
-                    <td className="p-0 border-r border-slate-200">
-                      <input
-                        type="text"
-                        defaultValue={line.notes || ""}
-                        placeholder="Ghi chú..."
-                        onBlur={(e) => handleCellBlur(line.id, "notes", e.target.value.trim(), line.notes)}
-                        className="w-full h-10 px-3 text-slate-600 bg-transparent focus:bg-white focus:outline-none rounded"
-                      />
-                    </td>
-
-                    {/* Action */}
-                    <td className="px-3 py-2 text-center">
-                      <button
-                        onClick={() => handleDeleteLine(line.id)}
-                        className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                        title="Xóa dòng"
-                      >
-                        <TrashIcon size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+                  <td className={`p-0 ${GROUP_EDGE}`}>{cell(line, "shipping_out_date", "date")}</td>
+                  <td className="p-0">{cell(line, "arrival_date", "date")}</td>
+                  <td className="p-0">{cell(line, "replacement_fee", "money", { className: Number(line.replacement_fee) > 0 ? "text-red-600" : "" })}</td>
+                  <td className="p-0">{cell(line, "sample_url", "text", { placeholder: "Dán link", className: "text-(--ff-text-2)" })}</td>
+                  <td className="p-0">{cell(line, "package_url", "text", { placeholder: "Dán link", className: "text-(--ff-text-2)" })}</td>
+                  <td className="p-0">
+                    <select
+                      defaultValue={line.check_status || ""}
+                      onChange={(e) => handleCellBlur(line.id, "check_status", e.target.value, line.check_status)}
+                      className="h-10 w-full cursor-pointer bg-transparent px-3 text-sm text-(--ff-text) focus:bg-(--ff-card) focus:ring-2 focus:ring-(--ff-accent)/40 focus:outline-none focus:ring-inset"
+                    >
+                      <option value="">—</option>
+                      <option value="ok">OK</option>
+                      <option value="pending">Chờ check</option>
+                      <option value="defect">Lỗi</option>
+                      <option value="replaced">Đã bù</option>
+                    </select>
+                  </td>
+                  <td className="p-0">{cell(line, "notes", "text", { placeholder: "Ghi chú", className: "text-(--ff-text-2)" })}</td>
+                  <td className="px-2 text-center print:hidden">
+                    <button type="button" onClick={() => handleDeleteLine(line.id)} className={ui.iconBtnDanger} title="Xóa dòng">
+                      <TrashIcon size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

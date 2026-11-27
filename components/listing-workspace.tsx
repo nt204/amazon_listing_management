@@ -26,6 +26,7 @@ import {
   CalendarBlankIcon,
   CalendarDotsIcon,
   CalendarIcon,
+  TruckIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
@@ -821,6 +822,19 @@ function WorkspaceSidebar({
                     label="Inventory"
                   />
 
+                  {/* 4. Đi hàng (chỉ Admin và Kế toán) */}
+                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                    <SidebarSubItem
+                      active={false}
+                      onClick={() => {
+                        window.location.href = "/fulfill";
+                        onClose?.();
+                      }}
+                      icon={TruckIcon}
+                      label="Đi hàng"
+                    />
+                  )}
+
                   {/* 5. Financials */}
                   <motion.button
                     type="button"
@@ -986,37 +1000,6 @@ function WorkspaceSidebar({
               )}
             </div>
           )}
-
-          {/* Fulfill (Đặt sản xuất FBA gửi xưởng) */}
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.97 }}
-            transition={{ type: "spring", stiffness: 500, damping: 25 }}
-            onClick={() => {
-              window.location.href = "/fulfill";
-              onClose?.();
-            }}
-            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
-              activeView === "fulfill"
-                ? "bg-blue-50 text-blue-700 font-extrabold shadow-2xs ring-1 ring-blue-200/60"
-                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            }`}
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <PackageIcon
-                size={17}
-                weight={activeView === "fulfill" ? "fill" : "duotone"}
-                className={activeView === "fulfill" ? "text-blue-600" : "text-slate-500"}
-              />
-              <span className="truncate">Đặt xưởng (Fulfill)</span>
-            </div>
-            <span className="rounded-full bg-blue-100 text-blue-800 px-2 py-0.5 text-[10px] font-extrabold uppercase">
-              FBA
-            </span>
-          </motion.button>
-
-          {/* Divider */}
-          <div className="my-2 border-t border-slate-100" />
 
           {/* Kanban Feedback Tab */}
           <motion.button

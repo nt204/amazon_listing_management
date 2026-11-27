@@ -1,12 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  PlusIcon,
-  TrashIcon,
-  XIcon,
-} from "@phosphor-icons/react";
+import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import type { FulfillSupplier } from "@/lib/fulfill/types";
+import { Modal, Notice, fmtInt, fmtMoney, ui } from "./fulfill-ui";
 
 interface StoreOption {
   id: string;
@@ -238,13 +235,13 @@ export function CreatePoModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!poNumber.trim() || !storeId || !supplierId) {
-      setErrorNotice("Vui lòng điền đủ Mã đợt (PO#), Store và Nhà xưởng.");
+      setErrorNotice("Cần điền mã đợt, store và xưởng");
       return;
     }
 
     const validLines = lines.filter((l) => l.sku.trim().length > 0);
     if (validLines.length === 0) {
-      setErrorNotice("Vui lòng nhập ít nhất 1 dòng SKU hợp lệ.");
+      setErrorNotice("Cần ít nhất một dòng có SKU");
       return;
     }
 
@@ -296,42 +293,22 @@ export function CreatePoModal({
     }
   };
 
+  const lineInput = "h-9 w-full rounded-lg border border-(--ff-line) bg-(--ff-card) px-2 text-sm focus:border-(--ff-accent) focus:outline-none focus:ring-2 focus:ring-(--ff-accent)/20";
+
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative flex max-h-[92vh] w-full max-w-5xl flex-col rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 bg-white px-8 py-5">
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">
-            Tạo Đợt Đặt Hàng Mới
-          </h2>
-          <button
-            onClick={onClose}
-            className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
-          >
-            <XIcon size={20} weight="bold" />
-          </button>
-        </div>
+    <Modal title="Tạo đợt hàng" onClose={onClose} width="max-w-5xl">
+      <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+          {errorNotice && (
+            <Notice tone="error" onClose={() => setErrorNotice(null)}>
+              {errorNotice}
+            </Notice>
+          )}
 
-        {errorNotice && (
-          <div className="mx-8 mt-4 rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm font-semibold text-red-700">
-            {errorNotice}
-          </div>
-        )}
-
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-8 py-6 space-y-6">
-          {/* General Info Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 rounded-2xl border border-slate-200/90 bg-[#f8fafc] p-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
-                Store <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={storeId}
-                onChange={(e) => handleStoreChange(e.target.value)}
-                required
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
-              >
+              <label className={ui.label}>Store</label>
+              <select value={storeId} onChange={(e) => handleStoreChange(e.target.value)} required className={`${ui.select} w-full`}>
                 {stores.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -341,162 +318,95 @@ export function CreatePoModal({
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
-                Nhà xưởng (Sup) <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={supplierId}
-                onChange={(e) => handleSupplierChange(e.target.value)}
-                required
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
-              >
+              <label className={ui.label}>Xưởng</label>
+              <select value={supplierId} onChange={(e) => handleSupplierChange(e.target.value)} required className={`${ui.select} w-full`}>
                 {suppliers.map((sp) => (
                   <option key={sp.id} value={sp.id}>
-                    {sp.name} ({sp.code})
+                    {sp.code} · {sp.name}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
-                Mã đợt (PO#) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={poNumber}
-                onChange={(e) => setPoNumber(e.target.value.toUpperCase())}
-                required
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
-              />
+              <label className={ui.label}>Mã đợt</label>
+              <input type="text" value={poNumber} onChange={(e) => setPoNumber(e.target.value.toUpperCase())} required className={`${ui.input} font-mono text-xs`} />
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
-                Ngày đặt hàng <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={orderDate}
-                onChange={(e) => setOrderDate(e.target.value)}
-                required
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
-              />
+              <label className={ui.label}>Ngày đặt</label>
+              <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} required className={ui.input} />
             </div>
           </div>
 
-          {/* Lines Table */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-black uppercase tracking-wider text-slate-800">
-                Danh sách SKU sản xuất ({lines.length} dòng)
-              </span>
-              <button
-                type="button"
-                onClick={handleAddLine}
-                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-4 text-xs font-bold text-blue-700 hover:bg-blue-100 transition shadow-2xs cursor-pointer"
-              >
-                <PlusIcon size={14} weight="bold" />
-                <span>Thêm dòng SKU</span>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-medium">
+                SKU sản xuất <span className="font-normal text-(--ff-muted)">· {lines.length} dòng</span>
+              </h3>
+              <button type="button" onClick={handleAddLine} className={ui.btnGhost}>
+                <PlusIcon size={16} />
+                Thêm dòng
               </button>
             </div>
 
-            <div className="overflow-x-auto rounded-2xl border border-slate-200/90 bg-white shadow-2xs">
-              <table className="w-full text-left text-sm border-collapse">
+            <div className="overflow-x-auto rounded-xl border border-(--ff-line)">
+              <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 uppercase tracking-wider whitespace-nowrap">
-                    <th className="px-3 py-3 w-12 text-center">STT</th>
-                    <th className="px-3 py-3 w-48">SKU *</th>
-                    <th className="px-3 py-3 w-36">Phôi (Type)</th>
-                    <th className="px-3 py-3 w-28 text-right">SL (Qty) *</th>
-                    <th className="px-3 py-3 w-28 text-right">Basecost ($)</th>
-                    <th className="px-3 py-3 w-28 text-right">Card/Tag/Box</th>
-                    <th className="px-3 py-3 w-32 text-right">Thành tiền ($)</th>
-                    <th className="px-3 py-3 w-36">Line Ship</th>
-                    <th className="px-3 py-3 w-44">Link Thiết kế</th>
-                    <th className="px-3 py-3 w-16 text-center">Xóa</th>
+                  <tr className="border-b border-(--ff-line) bg-(--ff-bg)">
+                    <th className={`${ui.th} w-10 text-right`}>#</th>
+                    <th className={`${ui.th} min-w-44`}>SKU</th>
+                    <th className={`${ui.th} min-w-36`}>Phôi</th>
+                    <th className={`${ui.th} w-28 text-right`}>Số lượng</th>
+                    <th className={`${ui.th} w-28 text-right`}>Basecost</th>
+                    <th className={`${ui.th} text-right`}>Card, tag, box</th>
+                    <th className={`${ui.th} text-right`}>Thành tiền</th>
+                    <th className={`${ui.th} min-w-32`}>Line ship</th>
+                    <th className={`${ui.th} min-w-44`}>Link thiết kế</th>
+                    <th className={`${ui.th} w-12`}>
+                      <span className="sr-only">Xóa</span>
+                    </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-(--ff-line)">
                   {lines.map((line, idx) => {
                     const extraFees =
-                      Number(line.fee_card || 0) +
-                      Number(line.fee_tag || 0) +
-                      Number(line.fee_stand || 0) +
-                      Number(line.fee_box || 0);
+                      Number(line.fee_card || 0) + Number(line.fee_tag || 0) + Number(line.fee_stand || 0) + Number(line.fee_box || 0);
                     const unitTotal = (Number(line.basecost) || 0) + extraFees;
                     const lineTotal = (Number(line.quantity) || 0) * unitTotal;
 
                     return (
-                      <tr key={line.id} className="hover:bg-slate-50/70 transition">
-                        <td className="px-3 py-2.5 text-center text-slate-400 font-semibold">{idx + 1}</td>
-                        <td className="px-3 py-2.5">
+                      <tr key={line.id}>
+                        <td className="px-3 text-right font-mono text-xs text-(--ff-muted)">{idx + 1}</td>
+                        <td className="px-1 py-2">
                           <input
                             type="text"
-                            placeholder="Nhập mã SKU..."
+                            placeholder="SKU"
                             value={line.sku}
                             onChange={(e) => handleLineChange(idx, "sku", e.target.value.toUpperCase())}
                             required
-                            className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
+                            className={`${lineInput} font-mono text-xs`}
                           />
                         </td>
-                        <td className="px-3 py-2.5">
-                          <input
-                            type="text"
-                            placeholder="Phôi sản phẩm"
-                            value={line.product_type}
-                            onChange={(e) => handleLineChange(idx, "product_type", e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
-                          />
+                        <td className="px-1 py-2">
+                          <input type="text" placeholder="Phôi" value={line.product_type} onChange={(e) => handleLineChange(idx, "product_type", e.target.value)} className={lineInput} />
                         </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <input
-                            type="number"
-                            min="1"
-                            value={line.quantity}
-                            onChange={(e) => handleLineChange(idx, "quantity", e.target.value)}
-                            className="w-24 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
-                          />
+                        <td className="px-1 py-2">
+                          <input type="number" min="1" value={line.quantity} onChange={(e) => handleLineChange(idx, "quantity", e.target.value)} className={`${lineInput} text-right`} />
                         </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={line.basecost}
-                            onChange={(e) => handleLineChange(idx, "basecost", e.target.value)}
-                            className="w-24 rounded-xl border border-slate-200 px-3 py-1.5 text-right text-sm font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
-                          />
+                        <td className="px-1 py-2">
+                          <input type="number" step="0.01" value={line.basecost} onChange={(e) => handleLineChange(idx, "basecost", e.target.value)} className={`${lineInput} text-right`} />
                         </td>
-                        <td className="px-3 py-2.5 text-right text-sm text-slate-600 font-medium">
-                          ${extraFees.toFixed(2)}
+                        <td className="px-3 text-right text-(--ff-text-2)">{fmtMoney(extraFees)}</td>
+                        <td className="px-3 text-right font-medium">{fmtMoney(lineTotal)}</td>
+                        <td className="px-1 py-2">
+                          <input type="text" value={line.line_ship} onChange={(e) => handleLineChange(idx, "line_ship", e.target.value)} className={lineInput} />
                         </td>
-                        <td className="px-3 py-2.5 text-right text-sm font-black text-emerald-700">
-                          ${lineTotal.toFixed(2)}
+                        <td className="px-1 py-2">
+                          <input type="text" placeholder="Dán link" value={line.design_url} onChange={(e) => handleLineChange(idx, "design_url", e.target.value)} className={lineInput} />
                         </td>
-                        <td className="px-3 py-2.5">
-                          <input
-                            type="text"
-                            value={line.line_ship}
-                            onChange={(e) => handleLineChange(idx, "line_ship", e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <input
-                            type="text"
-                            placeholder="https://..."
-                            value={line.design_url}
-                            onChange={(e) => handleLineChange(idx, "design_url", e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-600 focus:border-blue-500 focus:outline-none"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveLine(idx)}
-                            disabled={lines.length <= 1}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition disabled:opacity-30 cursor-pointer"
-                          >
+                        <td className="px-2 text-center">
+                          <button type="button" onClick={() => handleRemoveLine(idx)} disabled={lines.length <= 1} className={ui.iconBtnDanger} title="Xóa dòng">
                             <TrashIcon size={16} />
                           </button>
                         </td>
@@ -506,41 +416,32 @@ export function CreatePoModal({
                 </tbody>
               </table>
             </div>
+            <p className="mt-2 text-xs text-(--ff-muted)">Nhập SKU có trong SKU master của store thì phôi, giá và link tự điền</p>
           </div>
+        </div>
 
-          {/* Summary Footer bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-200/90 bg-[#f8fafc] p-5">
-            <div className="flex items-center gap-8 text-sm">
-              <div>
-                <span className="text-slate-500 block text-xs font-bold uppercase">Tổng số lượng</span>
-                <strong className="text-slate-900 text-lg font-black">{totalQuantity.toLocaleString()} pcs</strong>
-              </div>
-              <div className="h-8 w-px bg-slate-200" />
-              <div>
-                <span className="text-slate-500 block text-xs font-bold uppercase">Tổng tiền sản xuất</span>
-                <strong className="text-emerald-700 text-lg font-black">${totalAmount.toFixed(2)}</strong>
-              </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-t border-(--ff-line) px-6 py-4">
+          <dl className="flex items-center gap-8">
+            <div>
+              <dt className="text-xs text-(--ff-muted)">Số lượng</dt>
+              <dd className="text-lg font-medium">{fmtInt(totalQuantity)}</dd>
             </div>
+            <div>
+              <dt className="text-xs text-(--ff-muted)">Thành tiền</dt>
+              <dd className="text-lg font-medium">{fmtMoney(totalAmount)}</dd>
+            </div>
+          </dl>
 
-            <div className="flex items-center gap-3 justify-end">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-full px-6 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200/60 transition cursor-pointer"
-              >
-                Hủy
-              </button>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="rounded-full bg-blue-600 px-8 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-500/25 hover:bg-blue-700 transition disabled:opacity-50 cursor-pointer"
-              >
-                {submitting ? "Đang tạo đợt..." : "Tạo đợt hàng ngay"}
-              </button>
-            </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} className={ui.btnGhost}>
+              Hủy
+            </button>
+            <button type="submit" disabled={submitting} className={ui.btnPrimary}>
+              {submitting ? "Đang tạo đợt" : "Tạo đợt hàng"}
+            </button>
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -643,3 +643,69 @@ table tbody tr.weekly-team-gap > td {
 .weekly-report table th * {
   font-size: 13.5px !important;
 }
+
+/* NCE Fulfill: token riêng cho cổng xưởng.
+   html đang 13px nên đặt lại spacing/text/radius bằng px để fulfill chạy đúng lưới 4px.
+   Hướng thiết kế theo unslop by Damir Sokolovsky (@heydamir), CC BY 4.0. */
+.fulfill-root {
+  --spacing: 4px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 20px;
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 18px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 32px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --font-mono: var(--font-fulfill-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Graphite ramp + kraft accent */
+  --ff-bg: #fafafa;
+  --ff-card: #ffffff;
+  --ff-raised: #f4f4f5;
+  --ff-line: rgba(23, 23, 23, 0.08);
+  --ff-line-strong: rgba(23, 23, 23, 0.16);
+  --ff-text: #171717;
+  --ff-text-2: #525252;
+  --ff-muted: #737373;
+  --ff-accent: #b45309;
+  --ff-accent-hover: #92400e;
+  --ff-accent-soft: #fbf3e8;
+
+  min-height: 100vh;
+  background: var(--ff-bg);
+  color: var(--ff-text);
+  font-family: var(--font-app-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.005em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rule input/select { font-family: inherit } ở trên không nằm trong layer nên thắng utility font-mono */
+.fulfill-root input.font-mono,
+.fulfill-root select.font-mono {
+  font-family: var(--font-mono);
+}
+
+.fulfill-root ::selection {
+  background: var(--ff-accent-soft);
+  color: var(--ff-text);
+}
+
+@media print {
+  .fulfill-root {
+    background: #fff;
+  }
+}

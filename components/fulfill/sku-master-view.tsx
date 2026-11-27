@@ -1,14 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  ArrowClockwiseIcon,
-  MagnifyingGlassIcon,
-  PencilSimpleIcon,
-  PlusIcon,
-  XIcon,
-} from "@phosphor-icons/react";
+import { ArrowClockwiseIcon, ArrowUpRightIcon, MagnifyingGlassIcon, PencilSimpleIcon, PlusIcon } from "@phosphor-icons/react";
 import type { FulfillSkuMasterItem } from "@/lib/fulfill/types";
+import { CodeTag, Modal, Notice, fmtInt, fmtMoney, ui } from "./fulfill-ui";
 
 interface SkuMasterViewProps {
   stores: Array<{ id: string; name: string }>;
@@ -62,7 +57,7 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Lỗi đồng bộ");
-      setMessage({ type: "success", text: data.message || "Đồng bộ thành công!" });
+      setMessage({ type: "success", text: data.message || "Đã đồng bộ" });
       void fetchItems();
     } catch (err: any) {
       setMessage({ type: "error", text: err.message || "Đồng bộ thất bại" });
@@ -94,52 +89,64 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
     }
   };
 
+  const linkCell = (url: string | null, label: string) =>
+    url ? (
+      <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-(--ff-text-2) transition-colors duration-150 hover:text-(--ff-text)">
+        {label}
+        <ArrowUpRightIcon size={12} />
+      </a>
+    ) : (
+      <span className="text-(--ff-muted)">—</span>
+    );
+
+  const field = (
+    key: keyof FulfillSkuMasterItem,
+    label: string,
+    opts: { type?: "text" | "url" | "number" | "money"; placeholder?: string; parse?: (v: string) => unknown; required?: boolean; className?: string } = {},
+  ) => {
+    const kind = opts.type || "text";
+    const numeric = kind === "number" || kind === "money";
+    const current = editingItem?.[key] as string | number | null | undefined;
+    return (
+      <div>
+        <label className={ui.label}>{label}</label>
+        <input
+          type={numeric ? "number" : kind}
+          step={kind === "money" ? "0.01" : undefined}
+          min={kind === "number" ? "1" : undefined}
+          value={numeric ? Number(current) || (kind === "number" ? 1 : 0) : current || ""}
+          onChange={(e) => {
+            const value = opts.parse ? opts.parse(e.target.value) : e.target.value;
+            setEditingItem((prev) => ({ ...prev, [key]: value }));
+          }}
+          placeholder={opts.placeholder}
+          required={opts.required}
+          className={`${ui.input} ${numeric ? "text-right" : ""} ${opts.className || ""}`}
+        />
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
-      {/* Action Header - Clean, spacious */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs">
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Store select */}
-          <select
-            value={selectedStoreId}
-            onChange={(e) => onSelectStore(e.target.value)}
-            className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer"
-          >
-            <option value="">Tất cả Store</option>
-            {stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-
-          {/* Search box */}
-          <div className="relative">
-            <MagnifyingGlassIcon size={16} className="absolute left-3.5 top-3.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Tìm SKU, ASIN, FNSKU..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-11 w-64 rounded-xl border border-slate-200 bg-white pl-10 pr-4 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-medium">SKU master</h1>
+          <p className="mt-1 text-sm text-(--ff-muted)">Thông tin cố định của từng SKU, tự điền vào đợt hàng mới</p>
         </div>
-
-        <div className="flex items-center gap-3">
-          {/* Sync Button */}
+        <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={handleSyncFromAccounting}
             disabled={syncing}
-            className="inline-flex h-11 items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-5 text-sm font-bold text-blue-700 hover:bg-blue-100 transition shadow-2xs disabled:opacity-50 cursor-pointer"
-            title="Tự động đồng bộ các SKU và giá vốn từ Bảng Mã Kế toán"
+            className={ui.btnSecondary}
+            title="Lấy SKU và giá vốn từ Bảng Mã kế toán"
           >
-            <ArrowClockwiseIcon size={16} weight="bold" className={syncing ? "animate-spin" : ""} />
-            <span>{syncing ? "Đang đồng bộ..." : "Đồng bộ từ Bảng Mã"}</span>
+            <ArrowClockwiseIcon size={16} className={syncing ? "animate-spin" : ""} />
+            {syncing ? "Đang đồng bộ" : "Đồng bộ từ Bảng Mã"}
           </button>
-
-          {/* Add SKU */}
           <button
+            type="button"
             onClick={() =>
               setEditingItem({
                 store_id: selectedStoreId || stores[0]?.id || "",
@@ -152,137 +159,93 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
                 fee_box: 0,
               })
             }
-            className="inline-flex h-11 items-center gap-2 rounded-full bg-blue-600 px-6 text-sm font-bold text-white shadow-md shadow-blue-500/25 hover:bg-blue-700 transition cursor-pointer"
+            className={ui.btnPrimary}
           >
-            <PlusIcon size={16} weight="bold" />
-            <span>Thêm SKU</span>
+            <PlusIcon size={16} />
+            Thêm SKU
           </button>
         </div>
       </div>
 
-      {message && (
-        <div
-          className={`flex items-center justify-between rounded-xl p-3.5 text-sm font-semibold ${
-            message.type === "success"
-              ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
-              : "border border-red-200 bg-red-50 text-red-700"
-          }`}
-        >
-          <span>{message.text}</span>
-          <button onClick={() => setMessage(null)} className="cursor-pointer">
-            <XIcon size={16} />
-          </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={selectedStoreId} onChange={(e) => onSelectStore(e.target.value)} className={ui.select}>
+          <option value="">Tất cả store</option>
+          {stores.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <div className="relative w-72">
+          <MagnifyingGlassIcon size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-(--ff-muted)" />
+          <input type="text" placeholder="SKU, ASIN, FNSKU" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className={`${ui.input} pl-9`} />
         </div>
+        {!loading && <span className="ml-auto text-sm text-(--ff-muted)">{fmtInt(items.length)} SKU</span>}
+      </div>
+
+      {message && (
+        <Notice tone={message.type} onClose={() => setMessage(null)}>
+          {message.text}
+        </Notice>
       )}
 
-      {/* Table */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
+      <div className={`${ui.card} overflow-hidden`}>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm border-collapse">
+          <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-600 tracking-wider whitespace-nowrap">
-                <th className="px-4 py-4 w-12 text-center">STT</th>
-                <th className="px-4 py-4 w-32">Store</th>
-                <th className="px-4 py-4 w-44">SKU</th>
-                <th className="px-4 py-4 w-32">ASIN</th>
-                <th className="px-4 py-4 w-32">FNSKU</th>
-                <th className="px-4 py-4 w-36">Phôi (Type)</th>
-                <th className="px-4 py-4 w-28">Kích thước</th>
-                <th className="px-4 py-4 w-24 text-right">SL/Thùng</th>
-                <th className="px-4 py-4 w-28 text-right">Basecost ($)</th>
-                <th className="px-4 py-4 w-32 text-right">Phí đóng gói</th>
-                <th className="px-4 py-4 w-36">Link Thiết kế</th>
-                <th className="px-4 py-4 w-32">Link Card</th>
-                <th className="px-4 py-4 w-32">Link Box</th>
-                <th className="px-4 py-4 w-16 text-center">Sửa</th>
+              <tr className="border-b border-(--ff-line) bg-(--ff-bg)">
+                <th className={`${ui.th} pl-6`}>SKU</th>
+                <th className={ui.th}>Store</th>
+                <th className={ui.th}>ASIN</th>
+                <th className={ui.th}>FNSKU</th>
+                <th className={ui.th}>Phôi</th>
+                <th className={ui.th}>Kích thước</th>
+                <th className={`${ui.th} text-right`}>Cái / thùng</th>
+                <th className={`${ui.th} text-right`}>Basecost</th>
+                <th className={`${ui.th} text-right`}>Phí đóng gói</th>
+                <th className={ui.th}>Thiết kế</th>
+                <th className={ui.th}>Card</th>
+                <th className={ui.th}>Box</th>
+                <th className={`${ui.th} pr-6`}>
+                  <span className="sr-only">Sửa</span>
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 whitespace-nowrap">
+            <tbody className="divide-y divide-(--ff-line)">
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="py-16 text-center text-slate-400 font-medium">
-                    Đang tải danh sách SKU Master...
+                  <td colSpan={13} className="py-16 text-center text-(--ff-muted)">
+                    Đang tải SKU master
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="py-16 text-center text-slate-400 font-medium">
-                    Chưa có SKU nào trong danh mục. Nhấn <strong>Đồng bộ từ Bảng Mã</strong> để lấy dữ liệu có sẵn.
+                  <td colSpan={13} className="py-16 text-center text-(--ff-muted)">
+                    Chưa có SKU nào. Đồng bộ từ Bảng Mã để lấy dữ liệu có sẵn
                   </td>
                 </tr>
               ) : (
-                items.map((item, idx) => {
-                  const extraFees =
-                    Number(item.fee_card || 0) +
-                    Number(item.fee_tag || 0) +
-                    Number(item.fee_stand || 0) +
-                    Number(item.fee_box || 0);
-
+                items.map((item) => {
+                  const extraFees = Number(item.fee_card || 0) + Number(item.fee_tag || 0) + Number(item.fee_stand || 0) + Number(item.fee_box || 0);
                   return (
-                    <tr key={item.id} className="hover:bg-slate-50 transition">
-                      <td className="px-4 py-3.5 text-center text-slate-400 font-semibold">{idx + 1}</td>
-                      <td className="px-4 py-3.5 font-bold text-slate-800">{item.store_name}</td>
-                      <td className="px-4 py-3.5 font-black text-blue-600">{item.sku}</td>
-                      <td className="px-4 py-3.5 text-slate-600 font-medium">{item.asin || "—"}</td>
-                      <td className="px-4 py-3.5 text-slate-600 font-medium">{item.fnsku || "—"}</td>
-                      <td className="px-4 py-3.5 text-slate-700">{item.product_name || "—"}</td>
-                      <td className="px-4 py-3.5 text-slate-700">{item.dimensions || "—"}</td>
-                      <td className="px-4 py-3.5 text-right font-bold text-slate-800">{item.pcs_per_box}</td>
-                      <td className="px-4 py-3.5 text-right font-bold text-slate-900">
-                        ${item.basecost.toFixed(2)}
+                    <tr key={item.id} className="h-12 transition-colors duration-150 hover:bg-(--ff-bg)">
+                      <td className="py-2 pr-3 pl-6">
+                        <CodeTag>{item.sku}</CodeTag>
                       </td>
-                      <td className="px-4 py-3.5 text-right text-slate-600 font-medium">
-                        ${extraFees.toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        {item.design_url ? (
-                          <a
-                            href={item.design_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-block rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 hover:bg-blue-100 transition"
-                          >
-                            Thiết kế ↗
-                          </a>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        {item.card_url ? (
-                          <a
-                            href={item.card_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-block rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition"
-                          >
-                            Card ↗
-                          </a>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        {item.box_url ? (
-                          <a
-                            href={item.box_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-block rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-200 transition"
-                          >
-                            Box ↗
-                          </a>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5 text-center">
-                        <button
-                          onClick={() => setEditingItem(item)}
-                          className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer"
-                          title="Sửa thông số SKU"
-                        >
-                          <PencilSimpleIcon size={16} weight="bold" />
+                      <td className="px-3">{item.store_name}</td>
+                      <td className="px-3 font-mono text-xs text-(--ff-text-2)">{item.asin || "—"}</td>
+                      <td className="px-3 font-mono text-xs text-(--ff-text-2)">{item.fnsku || "—"}</td>
+                      <td className="px-3 text-(--ff-text-2)">{item.product_name || "—"}</td>
+                      <td className="px-3 text-(--ff-text-2)">{item.dimensions || "—"}</td>
+                      <td className="px-3 text-right">{fmtInt(item.pcs_per_box)}</td>
+                      <td className="px-3 text-right">{fmtMoney(item.basecost)}</td>
+                      <td className="px-3 text-right text-(--ff-text-2)">{fmtMoney(extraFees)}</td>
+                      <td className="px-3">{linkCell(item.design_url, "Mở")}</td>
+                      <td className="px-3">{linkCell(item.card_url, "Mở")}</td>
+                      <td className="px-3">{linkCell(item.box_url, "Mở")}</td>
+                      <td className="py-2 pr-6 pl-3 text-right">
+                        <button type="button" onClick={() => setEditingItem(item)} className={ui.iconBtn} title="Sửa SKU">
+                          <PencilSimpleIcon size={16} />
                         </button>
                       </td>
                     </tr>
@@ -294,35 +257,20 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
         </div>
       </div>
 
-      {/* Edit/Create Modal */}
       {editingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="w-full max-w-2xl rounded-3xl bg-white p-8 shadow-2xl space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <h3 className="text-xl font-black text-slate-900">
-                {editingItem.id ? `Chỉnh sửa SKU: ${editingItem.sku}` : "Thêm SKU Master Mới"}
-              </h3>
-              <button
-                onClick={() => setEditingItem(null)}
-                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
-              >
-                <XIcon size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveItem} className="space-y-4">
+        <Modal title={editingItem.id ? `Sửa SKU ${editingItem.sku}` : "Thêm SKU"} onClose={() => setEditingItem(null)} width="max-w-2xl">
+          <form onSubmit={handleSaveItem} className="flex min-h-0 flex-1 flex-col">
+            <div className="flex-1 space-y-6 overflow-y-auto p-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Store
-                  </label>
+                  <label className={ui.label}>Store</label>
                   <select
                     value={editingItem.store_id || ""}
                     onChange={(e) => setEditingItem((prev) => ({ ...prev, store_id: e.target.value }))}
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-800"
+                    className={`${ui.select} w-full`}
                     required
                   >
-                    <option value="">Chọn Store</option>
+                    <option value="">Chọn store</option>
                     {stores.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
@@ -330,203 +278,45 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
                     ))}
                   </select>
                 </div>
-
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Mã SKU
-                  </label>
-                  <input
-                    type="text"
-                    value={editingItem.sku || ""}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, sku: e.target.value.trim().toUpperCase() }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-900 uppercase"
-                    placeholder="VD: MTL24052503PQ"
-                    required
-                  />
-                </div>
+                {field("sku", "SKU", { placeholder: "MTL24052503PQ", required: true, parse: (v) => v.trim().toUpperCase(), className: "font-mono text-xs" })}
               </div>
 
               <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    ASIN
-                  </label>
-                  <input
-                    type="text"
-                    value={editingItem.asin || ""}
-                    onChange={(e) => setEditingItem((prev) => ({ ...prev, asin: e.target.value.trim() }))}
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    FNSKU
-                  </label>
-                  <input
-                    type="text"
-                    value={editingItem.fnsku || ""}
-                    onChange={(e) => setEditingItem((prev) => ({ ...prev, fnsku: e.target.value.trim() }))}
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    SL cái / thùng
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={editingItem.pcs_per_box || 1}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, pcs_per_box: Number(e.target.value) || 1 }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-800"
-                  />
-                </div>
+                {field("asin", "ASIN", { parse: (v) => v.trim(), className: "font-mono text-xs" })}
+                {field("fnsku", "FNSKU", { parse: (v) => v.trim(), className: "font-mono text-xs" })}
+                {field("pcs_per_box", "Cái / thùng", { type: "number", parse: (v) => Number(v) || 1 })}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Phôi (Product Type)
-                  </label>
-                  <input
-                    type="text"
-                    value={editingItem.product_name || ""}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, product_name: e.target.value }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-800"
-                    placeholder="VD: 14oz Tumbler"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Kích thước
-                  </label>
-                  <input
-                    type="text"
-                    value={editingItem.dimensions || ""}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, dimensions: e.target.value }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-800"
-                    placeholder="VD: 20x15x10cm"
-                  />
-                </div>
+                {field("product_name", "Phôi", { placeholder: "14oz Tumbler" })}
+                {field("dimensions", "Kích thước", { placeholder: "20x15x10cm" })}
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Basecost ($)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editingItem.basecost || 0}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, basecost: Number(e.target.value) || 0 }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-extrabold text-slate-900"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Phí Card ($)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editingItem.fee_card || 0}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, fee_card: Number(e.target.value) || 0 }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-slate-700"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Phí Box ($)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editingItem.fee_box || 0}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, fee_box: Number(e.target.value) || 0 }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-slate-700"
-                  />
-                </div>
-              </div>
+              <fieldset className="grid grid-cols-3 gap-4 border-t border-(--ff-line) pt-6">
+                <legend className="sr-only">Giá</legend>
+                {field("basecost", "Basecost ($)", { type: "money", parse: (v) => Number(v) || 0 })}
+                {field("fee_card", "Phí card ($)", { type: "money", parse: (v) => Number(v) || 0 })}
+                {field("fee_box", "Phí box ($)", { type: "money", parse: (v) => Number(v) || 0 })}
+              </fieldset>
 
-              <div className="space-y-3 pt-2">
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Link Thiết Kế (Dropbox / Drive)
-                  </label>
-                  <input
-                    type="url"
-                    value={editingItem.design_url || ""}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, design_url: e.target.value.trim() }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-blue-600"
-                    placeholder="https://dropbox.com/..."
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Link Card
-                  </label>
-                  <input
-                    type="url"
-                    value={editingItem.card_url || ""}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, card_url: e.target.value.trim() }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-blue-600"
-                    placeholder="https://..."
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
-                    Link Box
-                  </label>
-                  <input
-                    type="url"
-                    value={editingItem.box_url || ""}
-                    onChange={(e) =>
-                      setEditingItem((prev) => ({ ...prev, box_url: e.target.value.trim() }))
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-blue-600"
-                    placeholder="https://..."
-                  />
-                </div>
-              </div>
+              <fieldset className="space-y-4 border-t border-(--ff-line) pt-6">
+                <legend className="sr-only">Link</legend>
+                {field("design_url", "Link thiết kế (Dropbox, Drive)", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
+                {field("card_url", "Link card", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
+                {field("box_url", "Link box", { type: "url", placeholder: "https://", parse: (v) => v.trim() })}
+              </fieldset>
+            </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setEditingItem(null)}
-                  className="rounded-full px-6 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-full bg-blue-600 px-8 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-500/25 hover:bg-blue-700 transition disabled:opacity-50 cursor-pointer"
-                >
-                  {saving ? "Đang lưu..." : "Lưu SKU"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--ff-line) px-6 py-4">
+              <button type="button" onClick={() => setEditingItem(null)} className={ui.btnGhost}>
+                Hủy
+              </button>
+              <button type="submit" disabled={saving} className={ui.btnPrimary}>
+                {saving ? "Đang lưu" : "Lưu SKU"}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );
