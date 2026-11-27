@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { readJsonBody, routeErrorResponse } from "@/lib/api-guard";
-import { authorizeFulfill } from "@/lib/fulfill/authorize";
+import { authorizeFulfillManager } from "@/lib/fulfill/authorize";
 import { deleteFulfillPo, getFulfillPoById, patchFulfillPo } from "@/lib/fulfill/db";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await authorizeFulfill(req, "read");
+    await authorizeFulfillManager(req, "read");
     const { id } = await params;
 
     const data = await getFulfillPoById(id);
@@ -21,7 +21,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await authorizeFulfill(req, "write");
+    await authorizeFulfillManager(req, "write");
     const { id } = await params;
     const body = (await readJsonBody(req)) as any;
 
@@ -34,7 +34,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await authorizeFulfill(req, "write");
+    await authorizeFulfillManager(req, "write");
     const { id } = await params;
 
     await deleteFulfillPo(id);

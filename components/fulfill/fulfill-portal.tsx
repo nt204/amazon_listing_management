@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeftIcon, BarcodeIcon, FactoryIcon, PackageIcon, StackIcon } from "@phosphor-icons/react";
 import type { RequestActor } from "@/lib/auth";
+import { canManageFulfill } from "@/lib/fulfill/access";
 import { FulfillView } from "./fulfill-view";
 import { SkuMasterView } from "./sku-master-view";
 import { SupAccountsView } from "./sup-accounts-view";
@@ -60,7 +61,7 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
           </div>
 
           <nav aria-label="Fulfill" className="col-span-2 col-start-1 row-start-2 grid grid-cols-3 gap-1 rounded-full border border-(--ff-line) bg-(--ff-raised) p-1 md:col-span-1 md:col-start-2 md:row-start-1 md:flex">
-            {TABS.map(({ id, label, icon: Icon }) => (
+            {TABS.filter((t) => t.id !== "sku_master" || canManageFulfill(actor)).map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
@@ -102,7 +103,7 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
             onSearchChange={setSearch}
           />
         )}
-        {activeTab === "sku_master" && <SkuMasterView stores={stores} selectedStoreId={storeId} onSelectStore={setStoreId} />}
+        {activeTab === "sku_master" && canManageFulfill(actor) && <SkuMasterView stores={stores} selectedStoreId={storeId} onSelectStore={setStoreId} />}
         {activeTab === "suppliers" && <SupAccountsView />}
       </main>
     </div>

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { readJsonBody, routeErrorResponse } from "@/lib/api-guard";
-import { authorizeFulfill } from "@/lib/fulfill/authorize";
+import { authorizeFulfillManager } from "@/lib/fulfill/authorize";
 import { listFulfillSkuMaster, syncFromAccountingSkuMaster, upsertFulfillSkuMasterItem } from "@/lib/fulfill/db";
 
 export async function GET(req: Request) {
   try {
-    await authorizeFulfill(req, "read");
+    await authorizeFulfillManager(req, "read");
     const { searchParams } = new URL(req.url);
     const storeId = searchParams.get("storeId") || undefined;
     const search = searchParams.get("search") || undefined;
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    await authorizeFulfill(req, "write");
+    await authorizeFulfillManager(req, "write");
     const body = (await readJsonBody(req)) as any;
 
     if (body?.action === "sync") {

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { readJsonBody, routeErrorResponse } from "@/lib/api-guard";
-import { authorizeFulfill } from "@/lib/fulfill/authorize";
+import { authorizeFulfillManager } from "@/lib/fulfill/authorize";
 import { listFulfillSuppliers, upsertFulfillSupplier } from "@/lib/fulfill/db";
 
 export async function GET(req: Request) {
   try {
-    await authorizeFulfill(req, "read");
+    await authorizeFulfillManager(req, "read");
     const suppliers = await listFulfillSuppliers();
     return NextResponse.json({ suppliers });
   } catch (error) {
@@ -15,7 +15,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    await authorizeFulfill(req, "write");
+    await authorizeFulfillManager(req, "write");
     const body = (await readJsonBody(req)) as any;
     if (!body?.code || !body?.name) {
       return NextResponse.json({ error: "Supplier code and name are required." }, { status: 400 });

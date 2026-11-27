@@ -4,6 +4,7 @@ import { ApiError } from "@/lib/api-guard";
 import { extractCloudflareEmail } from "@/lib/auth-server";
 import { getDatabaseClient } from "@/lib/db";
 import { authorizeFulfill } from "./authorize";
+import { fulfillStoreScope } from "./lot-access";
 import { lotNameOf } from "./lot-state";
 import { lotKey, summarizeLot, toLotLine, type RawRow } from "./lots-db";
 import type { FulfillLot, FulfillLotLine } from "./types";
@@ -24,6 +25,8 @@ export interface SupAccount {
   last_seen_at: string | null;
   /** Người trong team xem trước trang xưởng (không ghi nhật ký của xưởng) */
   preview?: boolean;
+  /** Xem trước của team: chỉ các store team được phân (null = Admin / Kế toán, mọi store) */
+  previewStoreIds?: string[] | null;
 }
 
 const ACCOUNT_COLUMNS = `id, email, display_name, sup_names, is_active, notes, created_by,
@@ -40,7 +43,7 @@ export async function listSupAccounts(): Promise<SupAccount[]> {
 }
 
 /** Danh sách Sup trong CHI TIẾT ĐI HÀNG kèm số lô / tiền, để gán cho tài khoản. */
-export async function listSupSummaries(): Promise<Array<{ sup: string; rows: number; lots: number; amount: number; last_request: string | null }>> {
+export async function listSupSummaries(storeIds: string[] | null = null): Promise<Array<{ sup: string; rows: number; lots: number; amount: number; last_request: string | null }>> {
   const sql = await getDatabaseClient();
   const rows = await sql<{ sup: string; rows: number; lots: number; amount: number; last_request: string | null }[]>`
     SELECT btrim(sup) AS sup, count(*)::int AS rows,
@@ -49,6 +52,7 @@ export async function listSupSummaries(): Promise<Array<{ sup: string; rows: num
       max(ngay_request) AS last_request
     FROM accounting_inbound_shipments
     WHERE deleted_at IS NULL AND NULLIF(btrim(sup), '') IS NOT NULL
+      AND (${storeIds === null} OR store_id = ANY(${storeIds ?? []}::uuid[]))
     GROUP BY btrim(sup)
     ORDER BY max(ngay_request) DESC NULLS LAST
   `;
@@ -179,10 +183,10 @@ export async function requireSupAccount(request: Request): Promise<SupAccount> {
   // Team xem trước: cookie sup_preview + quyền Đi hàng nội bộ (kiểm tra lại ở mỗi request)
   const previewId = supPreviewId(request.headers);
   if (previewId) {
-    await authorizeFulfill(request, "read");
+    const actor = await authorizeFulfill(request, "read");
     const preview = await getSupAccountById(previewId);
     if (!preview) throw new ApiError("Supplier account not found.", 404);
-    return { ...preview, preview: true };
+    return { ...preview, preview: true, previewStoreIds: await fulfillStoreScope(actor) };
   }
   const account = await resolveSupAccount(request.headers);
   if (!account) throw new ApiError("No supplier access for this account.", 403);
@@ -199,11 +203,13 @@ export async function logSupAccess(accountId: string, action: string, detail?: s
 async function loadSupRows(account: SupAccount, storeId?: string): Promise<RawRow[]> {
   const sql = await getDatabaseClient();
   const names = account.sup_names.map(normSup);
+  const scope = account.previewStoreIds ?? null;
   return sql.begin("read only", async (tx) => {
     await tx`SET LOCAL ROLE fulfill_sup_reader`;
     return tx<RawRow[]>`
       SELECT * FROM fulfill_sup_lines
       WHERE lower(btrim(sup)) = ANY(${names}::text[])
+        AND (${scope === null} OR store_id = ANY(${scope ?? []}::uuid[]))
         AND (${storeId ?? null}::uuid IS NULL OR store_id = ${storeId ?? null}::uuid)
       ORDER BY store_id, ngay_request, row_order, created_at
     `;
@@ -252,11 +258,13 @@ export async function supLineMockup(account: SupAccount, lineId: string): Promis
   if (!/^[0-9a-f-]{36}$/i.test(lineId)) return null;
   const sql = await getDatabaseClient();
   const names = account.sup_names.map(normSup);
+  const scope = account.previewStoreIds ?? null;
   const rows = (await sql.begin("read only", async (tx) => {
     await tx`SET LOCAL ROLE fulfill_sup_reader`;
     return tx<{ mockup: string | null; sku_mockup: string | null }[]>`
       SELECT mockup, sku_mockup FROM fulfill_sup_lines
       WHERE id = ${lineId} AND lower(btrim(sup)) = ANY(${names}::text[])
+        AND (${scope === null} OR store_id = ANY(${scope ?? []}::uuid[]))
     `;
   })) as { mockup: string | null; sku_mockup: string | null }[];
   const url = rows[0]?.mockup?.trim() || rows[0]?.sku_mockup?.trim() || "";

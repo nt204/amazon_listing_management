@@ -35,7 +35,7 @@ const fmtTime = (value: string | null) => {
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 export function SupAccountsView() {
-  const [data, setData] = useState<{ accounts: SupAccount[]; sups: SupSummary[] } | null>(null);
+  const [data, setData] = useState<{ accounts: SupAccount[]; sups: SupSummary[]; canManage?: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -57,6 +57,8 @@ export function SupAccountsView() {
 
   const reload = () => setVersion((v) => v + 1);
   const accounts = data?.accounts ?? [];
+  // Admin / Kế toán quản lý tài khoản; team chỉ xem trang xưởng (View)
+  const canManage = data?.canManage === true;
   const accountsOf = (sup: string) => accounts.filter((a) => a.sup_names.some((n) => same(n, sup)));
 
   const toggleActive = async (account: SupAccount) => {
@@ -92,7 +94,7 @@ export function SupAccountsView() {
             Supplier page: <span className="font-mono text-(--ff-text)">{SUP_PORTAL_URL}</span>
           </p>
         </div>
-        <button type="button" className={ui.btnPrimary} onClick={() => setDraft(emptyDraft())}>Add account</button>
+        {canManage && <button type="button" className={ui.btnPrimary} onClick={() => setDraft(emptyDraft())}>Add account</button>}
       </div>
 
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
@@ -103,11 +105,11 @@ export function SupAccountsView() {
           <table className="w-full border-collapse text-left text-sm">
             <thead className={ui.tableHead}>
               <tr className="border-b border-(--ff-line)">
-                <th className={`${ui.th} pl-5`}>Email</th>
-                <th className={ui.th}>Name</th>
+                {canManage && <th className={`${ui.th} pl-5`}>Email</th>}
+                <th className={`${ui.th} ${canManage ? "" : "pl-5"}`}>Name</th>
                 <th className={ui.th}>Sup</th>
                 <th className={ui.th}>Status</th>
-                <th className={ui.th}>Last seen</th>
+                {canManage && <th className={ui.th}>Last seen</th>}
                 <th className={`${ui.th} pr-5`}><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
@@ -115,22 +117,26 @@ export function SupAccountsView() {
               {!data ? (
                 <tr><td colSpan={6} className="py-10 text-center text-(--ff-muted)">{error ? "—" : "Loading…"}</td></tr>
               ) : accounts.length === 0 ? (
-                <tr><td colSpan={6} className="py-10 text-center text-(--ff-muted)">No supplier accounts yet.</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-(--ff-muted)">{canManage ? "No supplier accounts yet." : "No supplier accounts for your stores."}</td></tr>
               ) : (
                 accounts.map((a) => (
                   <tr key={a.id} className={a.is_active ? "" : "text-(--ff-muted)"}>
-                    <td className="py-3 pr-3 pl-5 font-medium">{a.email}</td>
-                    <td className="px-3">{a.display_name || "—"}</td>
+                    {canManage && <td className="py-3 pr-3 pl-5 font-medium">{a.email}</td>}
+                    <td className={canManage ? "px-3" : "py-3 pr-3 pl-5 font-medium"}>{a.display_name || "—"}</td>
                     <td className="px-3">{a.sup_names.join(", ")}</td>
                     <td className="px-3">{a.is_active ? "Active" : "Disabled"}</td>
-                    <td className="px-3 whitespace-nowrap tabular-nums">{fmtTime(a.last_seen_at)}</td>
+                    {canManage && <td className="px-3 whitespace-nowrap tabular-nums">{fmtTime(a.last_seen_at)}</td>}
                     <td className="py-2 pr-5 pl-3">
                       <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
                         <a href={`/api/sup/preview?as=${a.id}`} target="_blank" rel="noreferrer" className={ui.link}>View</a>
-                        <button type="button" className={ui.link} onClick={() => setDraft({ ...a, display_name: a.display_name ?? "", notes: a.notes ?? "" })}>Edit</button>
-                        <button type="button" className={ui.link} onClick={() => toggleActive(a)}>{a.is_active ? "Disable" : "Enable"}</button>
-                        <button type="button" className={ui.link} onClick={() => openLog(a)}>History</button>
-                        <button type="button" className={`${ui.link} text-(--ff-neg)`} onClick={() => remove(a)}>Delete</button>
+                        {canManage && (
+                          <>
+                          <button type="button" className={ui.link} onClick={() => setDraft({ ...a, display_name: a.display_name ?? "", notes: a.notes ?? "" })}>Edit</button>
+                          <button type="button" className={ui.link} onClick={() => toggleActive(a)}>{a.is_active ? "Disable" : "Enable"}</button>
+                          <button type="button" className={ui.link} onClick={() => openLog(a)}>History</button>
+                          <button type="button" className={`${ui.link} text-(--ff-neg)`} onClick={() => remove(a)}>Delete</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -166,7 +172,7 @@ export function SupAccountsView() {
                     <td className="px-3 tabular-nums">{s.last_request ?? "—"}</td>
                     <td className="px-3 text-(--ff-text-2)">{linked.length ? linked.map((a) => a.email).join(", ") : "—"}</td>
                     <td className="py-2 pr-5 pl-3 text-right">
-                      <button type="button" className={ui.link} onClick={() => setDraft(emptyDraft(s.sup))}>Add account</button>
+                      {canManage && <button type="button" className={ui.link} onClick={() => setDraft(emptyDraft(s.sup))}>Add account</button>}
                     </td>
                   </tr>
                 );

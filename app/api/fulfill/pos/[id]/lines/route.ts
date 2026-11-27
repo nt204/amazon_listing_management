@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { readJsonBody, routeErrorResponse } from "@/lib/api-guard";
-import { authorizeFulfill } from "@/lib/fulfill/authorize";
+import { authorizeFulfillManager } from "@/lib/fulfill/authorize";
 import { addFulfillPoLine } from "@/lib/fulfill/db";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await authorizeFulfill(req, "write");
+    await authorizeFulfillManager(req, "write");
     const { id: poId } = await params;
     const body = (await readJsonBody(req)) as any;
 

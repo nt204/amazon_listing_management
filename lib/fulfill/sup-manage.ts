@@ -1,9 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
-import { ApiError } from "@/lib/api-guard";
-import { hasFullAccountingAccess } from "@/lib/accounting/access";
-import { authorizeFulfill } from "./authorize";
+import { authorizeFulfillManager } from "./authorize";
 
 export const supAccountSchema = z.object({
   email: z.string().trim().min(3).max(200),
@@ -15,7 +13,5 @@ export const supAccountSchema = z.object({
 
 /** Quản lý tài khoản xưởng: chỉ Admin / Kế toán. */
 export async function requireSupManager(req: Request, permission: "read" | "write") {
-  const actor = await authorizeFulfill(req, permission);
-  if (!hasFullAccountingAccess(actor)) throw new ApiError("Only Admin or Accountant can manage supplier accounts.", 403);
-  return actor;
+  return authorizeFulfillManager(req, permission);
 }

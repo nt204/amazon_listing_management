@@ -1,8 +1,16 @@
-// Đi hàng đang khoá để phát triển: chỉ các email trong danh sách này được vào trang /fulfill và API /api/fulfill.
-// Mở cho người khác thì thêm email vào đây (hoặc bỏ khoá) rồi deploy.
-export const FULFILL_ALLOWED_EMAILS = ["ndtrince@gmail.com"];
+// Phân quyền Đi hàng (dùng được cả phía client):
+//   - Vào Đi hàng: người có mục Kế toán (Admin / Kế toán / thành viên được bật "accounting").
+//     Dữ liệu lô hàng lọc theo store FBA mà team được phân (lib/fulfill/lot-access.ts) — team nào chỉ thấy store của team đó.
+//   - Quản lý tài khoản xưởng, SKU master / PO cũ (chưa lọc theo store): chỉ Admin / Kế toán.
+//   - Xưởng (trang /sup) không dùng tài khoản nội bộ: chỉ xem lô của Sup được gán (lib/fulfill/sup-db.ts).
 
-export function canAccessFulfill(actor?: { email?: string | null } | null): boolean {
-  const email = actor?.email?.trim().toLowerCase();
-  return !!email && FULFILL_ALLOWED_EMAILS.includes(email);
+type FulfillActor = { role?: string | null; allowedFeatures?: string[] | null } | null | undefined;
+
+export function canManageFulfill(actor: FulfillActor): boolean {
+  return actor?.role === "admin" || actor?.role === "accountant";
+}
+
+export function canAccessFulfill(actor: FulfillActor): boolean {
+  if (!actor) return false;
+  return canManageFulfill(actor) || (actor.allowedFeatures ?? []).includes("accounting");
 }

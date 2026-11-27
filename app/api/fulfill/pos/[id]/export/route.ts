@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { routeErrorResponse } from "@/lib/api-guard";
-import { authorizeFulfill } from "@/lib/fulfill/authorize";
+import { authorizeFulfillManager } from "@/lib/fulfill/authorize";
 import { getFulfillPoById } from "@/lib/fulfill/db";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await authorizeFulfill(req, "read");
+    await authorizeFulfillManager(req, "read");
     const { id } = await params;
 
     const data = await getFulfillPoById(id);

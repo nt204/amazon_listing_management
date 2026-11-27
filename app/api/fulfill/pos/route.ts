@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { readJsonBody, routeErrorResponse } from "@/lib/api-guard";
-import { authorizeFulfill } from "@/lib/fulfill/authorize";
+import { authorizeFulfillManager } from "@/lib/fulfill/authorize";
 import { createFulfillPo, listFulfillPos } from "@/lib/fulfill/db";
 
 export async function GET(req: Request) {
   try {
-    await authorizeFulfill(req, "read");
+    await authorizeFulfillManager(req, "read");
     const { searchParams } = new URL(req.url);
 
     const storeId = searchParams.get("storeId") || undefined;
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const actor = await authorizeFulfill(req, "write");
+    const actor = await authorizeFulfillManager(req, "write");
     const body = (await readJsonBody(req)) as any;
 
     if (!body?.po_number || !body?.store_id || !body?.supplier_id || !body?.order_date) {
