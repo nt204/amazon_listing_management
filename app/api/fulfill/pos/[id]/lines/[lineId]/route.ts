@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { authorizeFulfill } from "@/lib/fulfill/authorize";
 import { deleteFulfillPoLine, patchFulfillPoLine } from "@/lib/fulfill/db";
 
 export async function PATCH(
@@ -7,7 +8,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string; lineId: string }> }
 ) {
   try {
-    await authorize(req, "write", "accounting");
+    await authorizeFulfill(req, "write");
     const { lineId } = await params;
     const body = (await readJsonBody(req)) as any;
 
@@ -27,7 +28,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; lineId: string }> }
 ) {
   try {
-    await authorize(req, "write", "accounting");
+    await authorizeFulfill(req, "write");
     const { lineId } = await params;
 
     await deleteFulfillPoLine(lineId);

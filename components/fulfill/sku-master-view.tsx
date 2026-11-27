@@ -131,10 +131,10 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-medium">SKU master</h1>
+          <h1 className={ui.title}>SKU master</h1>
           <p className="mt-1 text-sm text-(--ff-muted)">Thông tin cố định của từng SKU, tự điền vào đợt hàng mới</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={handleSyncFromAccounting}
@@ -167,8 +167,8 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <select value={selectedStoreId} onChange={(e) => onSelectStore(e.target.value)} className={ui.select}>
+      <div className={`${ui.card} flex flex-wrap items-center gap-2 p-3 sm:p-4`}>
+        <select aria-label="Lọc theo store" value={selectedStoreId} onChange={(e) => onSelectStore(e.target.value)} className={ui.select}>
           <option value="">Tất cả store</option>
           {stores.map((s) => (
             <option key={s.id} value={s.id}>
@@ -176,9 +176,9 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
             </option>
           ))}
         </select>
-        <div className="relative w-72">
+        <div className="relative w-full sm:w-72">
           <MagnifyingGlassIcon size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-(--ff-muted)" />
-          <input type="text" placeholder="SKU, ASIN, FNSKU" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className={`${ui.input} pl-9`} />
+          <input type="text" aria-label="Tìm SKU" placeholder="SKU, ASIN, FNSKU" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className={`${ui.input} pl-9`} />
         </div>
         {!loading && <span className="ml-auto text-sm text-(--ff-muted)">{fmtInt(items.length)} SKU</span>}
       </div>
@@ -190,10 +190,10 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
       )}
 
       <div className={`${ui.card} overflow-hidden`}>
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
             <thead>
-              <tr className="border-b border-(--ff-line) bg-(--ff-bg)">
+              <tr className="border-b border-(--ff-line) bg-(--ff-head)">
                 <th className={`${ui.th} pl-6`}>SKU</th>
                 <th className={ui.th}>Store</th>
                 <th className={ui.th}>ASIN</th>
@@ -228,7 +228,7 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
                 items.map((item) => {
                   const extraFees = Number(item.fee_card || 0) + Number(item.fee_tag || 0) + Number(item.fee_stand || 0) + Number(item.fee_box || 0);
                   return (
-                    <tr key={item.id} className="h-12 transition-colors duration-150 hover:bg-(--ff-bg)">
+                    <tr key={item.id} className="h-12">
                       <td className="py-2 pr-3 pl-6">
                         <CodeTag>{item.sku}</CodeTag>
                       </td>

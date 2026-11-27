@@ -665,31 +665,41 @@ table tbody tr.weekly-team-gap > td {
   --text-3xl--line-height: 32px;
   --radius-sm: 4px;
   --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --font-mono: var(--font-fulfill-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 20px;
+  /* Cùng font với Kế toán (.font-accounting-system): font hệ thống cho mọi chữ, kể cả mã */
+  --font-mono: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
 
-  /* Graphite ramp + kraft accent */
-  --ff-bg: #fafafa;
+  /* Swiss / minimal (skill ui-ux-pro-max): nền slate nhạt, kẻ mảnh, một màu nhấn xanh, màu trạng thái có nghĩa */
+  color-scheme: light;
+  --ff-bg: #f8fafc;
+  --ff-side: #ffffff;
   --ff-card: #ffffff;
-  --ff-raised: #f4f4f5;
-  --ff-line: rgba(23, 23, 23, 0.08);
-  --ff-line-strong: rgba(23, 23, 23, 0.16);
-  --ff-text: #171717;
-  --ff-text-2: #525252;
-  --ff-muted: #737373;
-  --ff-accent: #b45309;
-  --ff-accent-hover: #92400e;
-  --ff-accent-soft: #fbf3e8;
+  --ff-raised: #f1f5f9;
+  --ff-head: #f8fafc;
+  --ff-head-text: #475569;
+  --ff-line: #e2e8f0;
+  --ff-line-strong: #cbd5e1;
+  --ff-text: #0f172a;
+  --ff-text-2: #475569;
+  --ff-muted: #64748b;
+  --ff-accent: #1d4ed8;
+  --ff-accent-hover: #1e40af;
+  --ff-accent-soft: #eff6ff;
+  --ff-pos: #15803d;
+  --ff-neg: #dc2626;
 
-  min-height: 100vh;
   background: var(--ff-bg);
   color: var(--ff-text);
-  font-family: var(--font-app-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
+  font-feature-settings: "tnum" 1, "cv02" 1, "cv03" 1, "cv04" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   font-size: 14px;
   line-height: 20px;
-  letter-spacing: 0.005em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -700,12 +710,20 @@ table tbody tr.weekly-team-gap > td {
 }
 
 .fulfill-root ::selection {
-  background: var(--ff-accent-soft);
-  color: var(--ff-text);
+  background: var(--ff-accent);
+  color: var(--ff-card);
 }
 
 @media print {
   .fulfill-root {
+    color-scheme: light;
+    --ff-bg: #ffffff;
+    --ff-card: #ffffff;
+    --ff-head: #ffffff;
+    --ff-head-text: #000000;
+    --ff-text: #111111;
+    --ff-text-2: #444444;
+    --ff-muted: #666666;
     background: #fff;
   }
 }

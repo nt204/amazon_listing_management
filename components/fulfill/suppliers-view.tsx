@@ -72,10 +72,7 @@ export function SuppliersView() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-medium">Nhà xưởng</h1>
-          <p className="mt-1 text-sm text-(--ff-muted)">Xưởng gia công nhận phiếu sản xuất cho các store</p>
-        </div>
+        <h1 className={ui.title}>Nhà xưởng</h1>
         <button type="button" onClick={() => setEditingSup({ code: "", name: "", is_active: true })} className={ui.btnPrimary}>
           <PlusIcon size={16} />
           Thêm xưởng
@@ -89,21 +86,21 @@ export function SuppliersView() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {suppliers.map((sup) => (
-            <article key={sup.id} className={`${ui.card} flex flex-col`}>
-              <div className="flex-1 p-6">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 space-y-2">
+            <article key={sup.id} className={`${ui.card} flex min-w-0 flex-col`}>
+              <div className="flex-1 p-4 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1.5">
                     <CodeTag>{sup.code}</CodeTag>
-                    <h3 className="truncate text-lg font-medium">{sup.name}</h3>
+                    <h3 className="break-words text-lg font-semibold">{sup.name}</h3>
                   </div>
                   <span className="inline-flex shrink-0 items-center gap-2 text-sm text-(--ff-text-2)">
-                    <span className={`h-2 w-2 rounded-full ${sup.is_active ? "bg-green-600" : "bg-neutral-300"}`} />
+                    <span className={`h-2 w-2 rounded-full ${sup.is_active ? "bg-(--ff-pos)" : "bg-slate-300"}`} />
                     {sup.is_active ? "Đang hợp tác" : "Tạm ngưng"}
                   </span>
                 </div>
 
                 {(sup.contact_name || sup.phone || sup.email || sup.address) && (
-                  <dl className="mt-4 grid grid-cols-[88px_1fr] gap-x-3 gap-y-2 border-t border-(--ff-line) pt-4 text-sm">
+                  <dl className="mt-4 grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-2 border-t border-(--ff-line) pt-4 text-sm">
                     {sup.contact_name && (
                       <>
                         <dt className="text-(--ff-muted)">Liên hệ</dt>
@@ -151,8 +148,8 @@ export function SuppliersView() {
       {editingSup && (
         <Modal title={editingSup.id ? `Sửa xưởng ${editingSup.name}` : "Thêm xưởng"} onClose={() => setEditingSup(null)}>
           <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
-            <div className="flex-1 space-y-4 overflow-y-auto p-6">
-              <div className="grid grid-cols-[120px_1fr] gap-4">
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 sm:grid-cols-[120px_minmax(0,1fr)]">
                 {field("code", "Mã xưởng", { placeholder: "BFF", required: true, transform: (v) => v.trim().toUpperCase(), className: "font-mono text-xs" })}
                 {field("name", "Tên xưởng", { placeholder: "Xưởng BFF Bắc Ninh", required: true })}
               </div>

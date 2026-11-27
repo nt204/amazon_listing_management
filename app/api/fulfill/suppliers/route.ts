@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { authorizeFulfill } from "@/lib/fulfill/authorize";
 import { listFulfillSuppliers, upsertFulfillSupplier } from "@/lib/fulfill/db";
 
 export async function GET(req: Request) {
   try {
-    await authorize(req, "read", "accounting");
+    await authorizeFulfill(req, "read");
     const suppliers = await listFulfillSuppliers();
     return NextResponse.json({ suppliers });
   } catch (error) {
@@ -14,7 +15,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    await authorize(req, "write", "accounting");
+    await authorizeFulfill(req, "write");
     const body = (await readJsonBody(req)) as any;
     if (!body?.code || !body?.name) {
       return NextResponse.json({ error: "Mã xưởng và tên xưởng là bắt buộc." }, { status: 400 });

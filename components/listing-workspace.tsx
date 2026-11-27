@@ -36,6 +36,7 @@ import { financialsGroupOf, type FinancialsGroup } from "@/components/accounting
 import { AccountMenu } from "@/components/account-menu";
 import { GlobalListingBatchBar } from "@/components/global-listing-batch-bar";
 import type { RequestActor } from "@/lib/auth";
+import { canAccessFulfill } from "@/lib/fulfill/access";
 import type { BrandProfile } from "@/lib/types";
 
 function ViewLoading() {
@@ -190,13 +191,11 @@ function SidebarSubItem({
       whileTap={{ scale: 0.96 }}
       transition={{ type: "spring", stiffness: 500, damping: 25 }}
       onClick={onClick}
-      className={`relative flex w-full items-center gap-2.5 rounded-xl text-left transition-colors cursor-pointer acc-sidebar-item ${
-        indent ? "py-1.5 pl-7 pr-2.5" : "px-2.5 py-2"
-      } ${
-        active
+      className={`relative flex w-full items-center gap-2.5 rounded-xl text-left transition-colors cursor-pointer acc-sidebar-item ${indent ? "py-1.5 pl-7 pr-2.5" : "px-2.5 py-2"
+        } ${active
           ? "text-indigo-950 font-bold"
           : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-      }`}
+        }`}
     >
       {active && (
         <motion.div
@@ -290,9 +289,8 @@ function WorkspaceSidebar({
             className="flex cursor-pointer items-center gap-2.5 rounded-xl text-left !outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-indigo-300"
           >
             <div
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl p-1 shadow-xs ${
-                dark ? "bg-white" : "bg-slate-50 border border-slate-200/80"
-              }`}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl p-1 shadow-xs ${dark ? "bg-white" : "bg-slate-50 border border-slate-200/80"
+                }`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="NCE HUB Logo" className="h-full w-full object-contain" />
@@ -327,11 +325,10 @@ function WorkspaceSidebar({
                 markBatchAsRead();
                 onClose?.();
               }}
-              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
-                sidebarTab === "trello" && viewMode === "trello"
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${sidebarTab === "trello" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <KanbanIcon
@@ -361,11 +358,10 @@ function WorkspaceSidebar({
                 selectView("mockups");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
-                sidebarTab === "mockups" && viewMode === "trello"
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${sidebarTab === "mockups" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
+                }`}
             >
               <ImageSquareIcon
                 size={17}
@@ -386,11 +382,10 @@ function WorkspaceSidebar({
                 selectView("sellersprite");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
-                viewMode === "sellersprite"
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${viewMode === "sellersprite"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
+                }`}
             >
               <LightningIcon
                 size={17}
@@ -412,11 +407,10 @@ function WorkspaceSidebar({
                   selectPpcSection("dashboard");
                   onClose?.();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
-                  viewMode === "ppc"
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${viewMode === "ppc"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <div className="flex items-center gap-2.5">
                   <ChartLineUpIcon
@@ -428,20 +422,18 @@ function WorkspaceSidebar({
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span
-                    className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
-                      viewMode === "ppc"
+                    className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${viewMode === "ppc"
                         ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
                         : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                    }`}
+                      }`}
                   >
                     MỚI
                   </span>
                   <CaretDownIcon
                     size={12}
                     weight="bold"
-                    className={`transition-transform duration-200 ${
-                      viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                    }`}
+                    className={`transition-transform duration-200 ${viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
+                      }`}
                   />
                 </div>
               </motion.button>
@@ -457,19 +449,17 @@ function WorkspaceSidebar({
                       selectPpcDashboardTab("overview");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "dashboard" && ppcDashboardTab === "overview"
+                    className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "overview"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                         : ppcSection === "dashboard"
                           ? "text-indigo-900 font-semibold hover:bg-slate-100"
                           : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span
-                        className={`h-2 w-2 rounded-full shrink-0 transition-colors ${
-                          ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-2 w-2 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span className="truncate">PPC Dashboard</span>
                     </div>
@@ -489,16 +479,14 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("portfolios");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
-                        ppcSection === "dashboard" && ppcDashboardTab === "portfolios"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "portfolios"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "portfolios" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "portfolios" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span className="truncate">Portfolio</span>
                     </button>
@@ -510,16 +498,14 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("campaigns");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
-                        ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span className="truncate">Campaign</span>
                     </button>
@@ -531,16 +517,14 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("targets");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
-                        ppcSection === "dashboard" && ppcDashboardTab === "targets"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "targets"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span className="truncate">Target</span>
                     </button>
@@ -552,16 +536,14 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("search_terms");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
-                        ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span className="truncate">Search Term</span>
                     </button>
@@ -573,16 +555,14 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("skus");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
-                        ppcSection === "dashboard" && ppcDashboardTab === "skus"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "skus"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span className="truncate">SKU</span>
                     </button>
@@ -594,16 +574,14 @@ function WorkspaceSidebar({
                         selectPpcDashboardTab("st_campaigns");
                         onClose?.();
                       }}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${
-                        ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span className="truncate">Đối Soát ST</span>
                     </button>
@@ -616,16 +594,14 @@ function WorkspaceSidebar({
                       selectPpcSection("negative_keyword");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "negative_keyword"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "negative_keyword"
                         ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                        ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
+                        }`}
                     />
                     <span>Negative Keyword</span>
                   </button>
@@ -637,16 +613,14 @@ function WorkspaceSidebar({
                       selectPpcSection("sale_kw");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "sale_kw"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "sale_kw"
                         ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                        ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                        }`}
                     />
                     <span>Lên Camp Sale KW</span>
                   </button>
@@ -658,16 +632,14 @@ function WorkspaceSidebar({
                       selectPpcSection("new_camp");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "new_camp"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "new_camp"
                         ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
                         : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                        ppcSection === "new_camp" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "new_camp" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                        }`}
                     />
                     <span>Lên Camp SKU Mới</span>
                   </button>
@@ -679,16 +651,14 @@ function WorkspaceSidebar({
                       selectPpcSection("auto_bid");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "auto_bid"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "auto_bid"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                         : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                        ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
                     />
                     <span>Đề Xuất &amp; Auto Bid</span>
                   </button>
@@ -700,16 +670,14 @@ function WorkspaceSidebar({
                       selectPpcSection("manual_bid");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "manual_bid"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "manual_bid"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                         : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                        ppcSection === "manual_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "manual_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
                     />
                     <span>Manual Bid</span>
                   </button>
@@ -724,16 +692,14 @@ function WorkspaceSidebar({
                       selectPpcSection("phoi");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "phoi"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "phoi"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                         : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                        ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
                     />
                     <span>Quản lý Phôi</span>
                   </button>
@@ -745,16 +711,14 @@ function WorkspaceSidebar({
                       selectPpcSection("rules");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${
-                      ppcSection === "rules"
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-all cursor-pointer ${ppcSection === "rules"
                         ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                         : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                        ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
                     />
                     <span>Quản lý Rule</span>
                   </button>
@@ -774,11 +738,10 @@ function WorkspaceSidebar({
                   selectAccountingSection("overview");
                   onClose?.();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
-                  viewMode === "accounting"
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${viewMode === "accounting"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <div className="flex items-center gap-2.5">
                   <ReceiptIcon
@@ -791,9 +754,8 @@ function WorkspaceSidebar({
                 <CaretDownIcon
                   size={12}
                   weight="bold"
-                  className={`transition-transform duration-200 ${
-                    viewMode === "accounting" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                  }`}
+                  className={`transition-transform duration-200 ${viewMode === "accounting" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
+                    }`}
                 />
               </motion.button>
 
@@ -822,8 +784,8 @@ function WorkspaceSidebar({
                     label="Inventory"
                   />
 
-                  {/* 4. Đi hàng (chỉ Admin và Kế toán) */}
-                  {(actor?.role === "admin" || actor?.role === "accountant") && (
+                  {/* 4. Đi hàng (tạm khoá để phát triển, xem lib/fulfill/access.ts) */}
+                  {canAccessFulfill(actor) && (
                     <SidebarSubItem
                       active={false}
                       onClick={() => {
@@ -844,36 +806,34 @@ function WorkspaceSidebar({
                       selectAccountingSection("financials", "day");
                       onClose?.();
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer acc-sidebar-item ${
-                      accountingSection === "financials" ||
-                      accountingSection === "revenue" ||
-                      accountingSection === "costs" ||
-                      accountingSection === "amazon_fees" ||
-                      accountingSection === "ads"
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer acc-sidebar-item ${accountingSection === "financials" ||
+                        accountingSection === "revenue" ||
+                        accountingSection === "costs" ||
+                        accountingSection === "amazon_fees" ||
+                        accountingSection === "ads"
                         ? "text-indigo-950 font-bold hover:bg-slate-50"
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <WalletIcon
                       size={17}
                       weight={
                         accountingSection === "financials" ||
-                        accountingSection === "revenue" ||
-                        accountingSection === "costs" ||
-                        accountingSection === "amazon_fees" ||
-                        accountingSection === "ads"
+                          accountingSection === "revenue" ||
+                          accountingSection === "costs" ||
+                          accountingSection === "amazon_fees" ||
+                          accountingSection === "ads"
                           ? "fill"
                           : "duotone"
                       }
-                      className={`shrink-0 ${
-                        accountingSection === "financials" ||
-                        accountingSection === "revenue" ||
-                        accountingSection === "costs" ||
-                        accountingSection === "amazon_fees" ||
-                        accountingSection === "ads"
+                      className={`shrink-0 ${accountingSection === "financials" ||
+                          accountingSection === "revenue" ||
+                          accountingSection === "costs" ||
+                          accountingSection === "amazon_fees" ||
+                          accountingSection === "ads"
                           ? "text-indigo-600"
                           : "text-slate-400"
-                      }`}
+                        }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-[13px]">Financials</span>
@@ -928,73 +888,73 @@ function WorkspaceSidebar({
 
                   {/* System Admin (Stores, Import, Payout, Phân quyền) — chỉ Admin / Kế toán */}
                   {(actor?.role === "admin" || actor?.role === "accountant") && (
-                  <>
-                  {/* Subtle Divider before System Admin */}
-                  <div className="my-1.5 border-t border-slate-100" />
+                    <>
+                      {/* Subtle Divider before System Admin */}
+                      <div className="my-1.5 border-t border-slate-100" />
 
-                  {/* 7. System Admin */}
-                  <SidebarSubItem
-                    active={accountingSection === "admin" || accountingSection === "files"}
-                    onClick={() => {
-                      selectAccountingSection("admin");
-                      onClose?.();
-                    }}
-                    icon={GearIcon}
-                    label="System Admin"
-                  />
+                      {/* 7. System Admin */}
+                      <SidebarSubItem
+                        active={accountingSection === "admin" || accountingSection === "files"}
+                        onClick={() => {
+                          selectAccountingSection("admin");
+                          onClose?.();
+                        }}
+                        icon={GearIcon}
+                        label="System Admin"
+                      />
 
-                  {/* 7.1 Stores (trong System Admin) */}
-                  <SidebarSubItem
-                    active={accountingSection === "stores"}
-                    onClick={() => {
-                      selectAccountingSection("stores");
-                      onClose?.();
-                    }}
-                    icon={StorefrontIcon}
-                    label="Stores"
-                    indent
-                  />
+                      {/* 7.1 Stores (trong System Admin) */}
+                      <SidebarSubItem
+                        active={accountingSection === "stores"}
+                        onClick={() => {
+                          selectAccountingSection("stores");
+                          onClose?.();
+                        }}
+                        icon={StorefrontIcon}
+                        label="Stores"
+                        indent
+                      />
 
-                  {/* 7.2 Import (trong System Admin) */}
-                  <SidebarSubItem
-                    active={accountingSection === "orders" || accountingSection === "import"}
-                    onClick={() => {
-                      selectAccountingSection("orders");
-                      onClose?.();
-                    }}
-                    icon={UploadSimpleIcon}
-                    label="Import"
-                    indent
-                  />
+                      {/* 7.2 Import (trong System Admin) */}
+                      <SidebarSubItem
+                        active={accountingSection === "orders" || accountingSection === "import"}
+                        onClick={() => {
+                          selectAccountingSection("orders");
+                          onClose?.();
+                        }}
+                        icon={UploadSimpleIcon}
+                        label="Import"
+                        indent
+                      />
 
-                  {/* 7.3 Payout Amount (trong System Admin) */}
-                    <SidebarSubItem
-                      active={
-                        accountingSection === "reports" ||
-                        accountingSection === "pnl" ||
-                        accountingSection === "settlements"
-                      }
-                      onClick={() => {
-                        selectAccountingSection("reports");
-                        onClose?.();
-                      }}
-                      icon={WalletIcon}
-                      label="Payout Amount"
-                      indent
-                    />
+                      {/* 7.3 Payout Amount (trong System Admin) */}
+                      <SidebarSubItem
+                        active={
+                          accountingSection === "reports" ||
+                          accountingSection === "pnl" ||
+                          accountingSection === "settlements"
+                        }
+                        onClick={() => {
+                          selectAccountingSection("reports");
+                          onClose?.();
+                        }}
+                        icon={WalletIcon}
+                        label="Payout Amount"
+                        indent
+                      />
 
-                  {/* 7.4 Phân quyền kế toán */}
-                    <SidebarSubItem
-                      active={accountingSection === "access"}
-                      onClick={() => {
-                        selectAccountingSection("access");
-                        onClose?.();
-                      }}
-                      icon={ShieldCheckIcon}
-                      label="Phân quyền"
-                      indent
-                    />
-                  </>
+                      {/* 7.4 Phân quyền kế toán */}
+                      <SidebarSubItem
+                        active={accountingSection === "access"}
+                        onClick={() => {
+                          selectAccountingSection("access");
+                          onClose?.();
+                        }}
+                        icon={ShieldCheckIcon}
+                        label="Phân quyền"
+                        indent
+                      />
+                    </>
                   )}
                 </div>
               )}
@@ -1010,11 +970,10 @@ function WorkspaceSidebar({
               selectView("kanban");
               onClose?.();
             }}
-            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${
-              activeView === "kanban"
+            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${activeView === "kanban"
                 ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                 : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            }`}
+              }`}
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <ChatCircleDotsIcon
@@ -1040,11 +999,10 @@ function WorkspaceSidebar({
       <div className="space-y-3 pt-3 border-t border-slate-100">
         {/* Need Help Box */}
         <div
-          className={`rounded-2xl p-3 shadow-2xs ${
-            dark
+          className={`rounded-2xl p-3 shadow-2xs ${dark
               ? "border border-white/15 bg-white/10 backdrop-blur-md"
               : "border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/60"
-          }`}
+            }`}
         >
           <div className="flex items-center gap-2 mb-1.5">
             <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500 text-white text-[10px] font-bold shadow-xs">
@@ -1062,11 +1020,10 @@ function WorkspaceSidebar({
               void handleOpenGuides();
               onClose?.();
             }}
-            className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-extrabold shadow-2xs transition cursor-pointer disabled:opacity-60 ${
-              dark
+            className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-extrabold shadow-2xs transition cursor-pointer disabled:opacity-60 ${dark
                 ? "border border-white/20 bg-white/10 text-white hover:bg-white/20"
                 : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50/80 hover:border-indigo-300"
-            }`}
+              }`}
           >
             <span>{loadingGuides ? "Đang mở..." : "📖 Xem hướng dẫn"}</span>
           </button>
@@ -1445,9 +1402,8 @@ export function ListingWorkspace({
     <div className="flex h-[100dvh] w-full max-w-full overflow-hidden bg-slate-50 text-slate-800 font-sans">
       {/* LEFT SIDEBAR NAVIGATION (Desktop: lg+) */}
       <aside
-        className={`${
-          sidebarDark ? "nce-sidebar" : "border-slate-200/80 bg-white"
-        } hidden lg:flex w-64 shrink-0 flex-col justify-between border-r p-3.5 shadow-xs select-none overflow-y-auto transition-colors duration-300`}
+        className={`${sidebarDark ? "nce-sidebar" : "border-slate-200/80 bg-white"
+          } hidden lg:flex w-64 shrink-0 flex-col justify-between border-r p-3.5 shadow-xs select-none overflow-y-auto transition-colors duration-300`}
       >
         <WorkspaceSidebar
           actor={actor}
@@ -1481,9 +1437,8 @@ export function ListingWorkspace({
             aria-hidden="true"
           />
           <aside
-            className={`${
-              sidebarDark ? "nce-sidebar" : "bg-white"
-            } relative flex w-72 max-w-[85vw] flex-col justify-between p-4 shadow-2xl z-10 overflow-y-auto animate-in slide-in-from-left duration-200 select-none`}
+            className={`${sidebarDark ? "nce-sidebar" : "bg-white"
+              } relative flex w-72 max-w-[85vw] flex-col justify-between p-4 shadow-2xl z-10 overflow-y-auto animate-in slide-in-from-left duration-200 select-none`}
           >
             <WorkspaceSidebar
               actor={actor}
@@ -1541,25 +1496,25 @@ export function ListingWorkspace({
                           ? "Amazon PPC - Negative Keyword (ST Optimization)"
                           : ppcSection === "sale_kw"
                             ? "Amazon PPC - Lên Campaign Sale KW"
-                          : ppcSection === "new_camp"
-                            ? "Amazon PPC - Lên Camp SKU Mới"
-                            : ppcSection === "auto_bid"
-                              ? "Amazon PPC - Đề Xuất & Auto Bid"
-                              : ppcSection === "manual_bid"
-                                ? "Amazon PPC - Manual Bid"
-                              : ppcDashboardTab === "portfolios"
-                                ? "Amazon PPC - Portfolio"
-                              : ppcDashboardTab === "campaigns"
-                                ? "Amazon PPC - Quản Lý Campaign"
-                                : ppcDashboardTab === "targets"
-                                  ? "Amazon PPC - Quản Lý Target & Keyword"
-                                  : ppcDashboardTab === "search_terms"
-                                    ? "Amazon PPC - Báo Cáo Search Terms"
-                                    : ppcDashboardTab === "skus"
-                                      ? "Amazon PPC - Hiệu Suất Theo SKU"
-                                      : ppcDashboardTab === "st_campaigns"
-                                        ? "Amazon PPC - Đối Soát Search Term"
-                                        : "Amazon PPC Dashboard & Analytics"
+                            : ppcSection === "new_camp"
+                              ? "Amazon PPC - Lên Camp SKU Mới"
+                              : ppcSection === "auto_bid"
+                                ? "Amazon PPC - Đề Xuất & Auto Bid"
+                                : ppcSection === "manual_bid"
+                                  ? "Amazon PPC - Manual Bid"
+                                  : ppcDashboardTab === "portfolios"
+                                    ? "Amazon PPC - Portfolio"
+                                    : ppcDashboardTab === "campaigns"
+                                      ? "Amazon PPC - Quản Lý Campaign"
+                                      : ppcDashboardTab === "targets"
+                                        ? "Amazon PPC - Quản Lý Target & Keyword"
+                                        : ppcDashboardTab === "search_terms"
+                                          ? "Amazon PPC - Báo Cáo Search Terms"
+                                          : ppcDashboardTab === "skus"
+                                            ? "Amazon PPC - Hiệu Suất Theo SKU"
+                                            : ppcDashboardTab === "st_campaigns"
+                                              ? "Amazon PPC - Đối Soát Search Term"
+                                              : "Amazon PPC Dashboard & Analytics"
                     : viewMode === "accounting"
                       ? accountingSection === "stores"
                         ? "Accounting - Quản Lý Store"
@@ -1577,13 +1532,13 @@ export function ListingWorkspace({
                                 ? "Accounting - Financials (Tài Chính)"
                                 : accountingSection === "kqkd"
                                   ? "Accounting - SKU Testing"
-                                : accountingSection === "kpi"
-                                  ? "Accounting - KPI kinh doanh"
-                                : accountingSection === "reports" ||
-                                  accountingSection === "pnl" ||
-                                  accountingSection === "settlements"
-                                  ? "Accounting - Payout Amount"
-                                  : "Accounting - System Admin"
+                                  : accountingSection === "kpi"
+                                    ? "Accounting - KPI kinh doanh"
+                                    : accountingSection === "reports" ||
+                                      accountingSection === "pnl" ||
+                                      accountingSection === "settlements"
+                                      ? "Accounting - Payout Amount"
+                                      : "Accounting - System Admin"
                       : sidebarTab === "mockups"
                         ? "Auto Mockup Generator"
                         : "Bảng Trello Kanban & Listing"}
@@ -1730,7 +1685,7 @@ export function ListingWorkspace({
               />
             </div>
           ) : viewMode === "fulfill" ? (
-            <div className="h-full w-full overflow-y-auto bg-[#f8fafc]">
+            <div className="fulfill-root h-full min-h-0 w-full overflow-y-auto px-4 py-6 lg:px-8">
               <FulfillView />
             </div>
           ) : (

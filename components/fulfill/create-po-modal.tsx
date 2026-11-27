@@ -293,12 +293,12 @@ export function CreatePoModal({
     }
   };
 
-  const lineInput = "h-9 w-full rounded-lg border border-(--ff-line) bg-(--ff-card) px-2 text-sm focus:border-(--ff-accent) focus:outline-none focus:ring-2 focus:ring-(--ff-accent)/20";
+  const lineInput = "h-9 w-full rounded-md border border-(--ff-line) bg-(--ff-card) px-2 text-sm focus-visible:outline-2 focus-visible:outline-(--ff-accent)";
 
   return (
     <Modal title="Tạo đợt hàng" onClose={onClose} width="max-w-5xl">
       <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+        <div className="flex-1 space-y-6 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
           {errorNotice && (
             <Notice tone="error" onClose={() => setErrorNotice(null)}>
               {errorNotice}
@@ -340,7 +340,7 @@ export function CreatePoModal({
           </div>
 
           <div>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-medium">
                 SKU sản xuất <span className="font-normal text-(--ff-muted)">· {lines.length} dòng</span>
               </h3>
@@ -350,10 +350,10 @@ export function CreatePoModal({
               </button>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-(--ff-line)">
+            <div className="relative overflow-x-auto rounded-lg border border-(--ff-line)">
               <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
                 <thead>
-                  <tr className="border-b border-(--ff-line) bg-(--ff-bg)">
+                  <tr className="border-b border-(--ff-line) bg-(--ff-head)">
                     <th className={`${ui.th} w-10 text-right`}>#</th>
                     <th className={`${ui.th} min-w-44`}>SKU</th>
                     <th className={`${ui.th} min-w-36`}>Phôi</th>
@@ -420,8 +420,8 @@ export function CreatePoModal({
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-t border-(--ff-line) px-6 py-4">
-          <dl className="flex items-center gap-8">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-(--ff-line) px-4 py-3 sm:px-6 sm:py-4">
+          <dl className="flex flex-wrap items-center gap-x-5 gap-y-2 sm:gap-x-8">
             <div>
               <dt className="text-xs text-(--ff-muted)">Số lượng</dt>
               <dd className="text-lg font-medium">{fmtInt(totalQuantity)}</dd>

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { ArrowLeftIcon, FileXlsIcon, PlusIcon, PrinterIcon, TrashIcon } from "@phosphor-icons/react";
 import type { FulfillPo, FulfillPoLine, FulfillPoStatus } from "@/lib/fulfill/types";
-import { CodeTag, Notice, PO_STATUS, fmtInt, fmtMoney, ui } from "./fulfill-ui";
+import { Notice, PO_STATUS, fmtInt, fmtMoney, ui } from "./fulfill-ui";
 
 interface PoDetailViewProps {
   poId: string;
@@ -141,7 +141,7 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
   if (!po) {
     return (
       <div className="py-24 text-center">
-        <p className="text-sm text-red-600">{errorNotice || "Không tìm thấy đợt hàng"}</p>
+        <p className="text-sm text-(--ff-neg)">{errorNotice || "Không tìm thấy đợt hàng"}</p>
         <button type="button" onClick={onBack} className={`${ui.btnSecondary} mt-4`}>
           <ArrowLeftIcon size={16} />
           Về danh sách đợt
@@ -162,7 +162,7 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
         defaultValue={current ?? ""}
         placeholder={opts.placeholder}
         onBlur={(e) => handleCellBlur(line.id, field, parseCell(kind, e.target.value), current)}
-        className={`h-10 w-full bg-transparent px-3 ${opts.className?.includes("text-xs") ? "" : "text-sm"} text-(--ff-text) placeholder:text-(--ff-muted)/60 focus:bg-(--ff-card) focus:outline-none focus:ring-2 focus:ring-(--ff-accent)/40 focus:ring-inset ${
+        className={`h-10 w-full bg-transparent px-3 ${opts.className?.includes("text-xs") ? "" : "text-sm"} text-(--ff-text) placeholder:text-(--ff-muted) focus:outline-none focus:ring-2 focus:ring-(--ff-accent) focus:ring-inset ${
           numeric ? "text-right" : ""
         } ${opts.className || ""}`}
       />
@@ -180,10 +180,10 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
 
       {/* Đầu phiếu sản xuất */}
       <section className={`${ui.card} print:border-0`}>
-        <div className="flex flex-wrap items-start justify-between gap-6 p-6">
+        <div className="flex flex-wrap items-start justify-between gap-5 p-4 sm:p-6">
           <div className="space-y-3">
             <div className="text-xs text-(--ff-muted)">Phiếu đặt sản xuất</div>
-            <CodeTag size="lg">{po.po_number}</CodeTag>
+            <h1 className={ui.title}>{po.po_number}</h1>
             <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
               <div>
                 <dt className="text-xs text-(--ff-muted)">Store</dt>
@@ -232,20 +232,20 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
         </div>
 
         <div className="border-t border-(--ff-line)">
-        <dl className="grid grid-cols-3 sm:max-w-xl">
-          <div className="px-6 py-4">
-            <dt className="text-xs text-(--ff-muted)">Số SKU</dt>
-            <dd className="mt-1 text-2xl font-medium">{lines.length}</dd>
-          </div>
-          <div className="border-l border-(--ff-line) px-6 py-4">
-            <dt className="text-xs text-(--ff-muted)">Số lượng</dt>
-            <dd className="mt-1 text-2xl font-medium">{fmtInt(po.total_quantity)}</dd>
-          </div>
-          <div className="border-l border-(--ff-line) px-6 py-4">
-            <dt className="text-xs text-(--ff-muted)">Thành tiền</dt>
-            <dd className="mt-1 text-2xl font-medium text-(--ff-accent)">{fmtMoney(po.total_amount)}</dd>
-          </div>
-        </dl>
+          <dl className="grid grid-cols-3 sm:max-w-xl">
+            <div className="px-3 py-3 sm:px-6 sm:py-4">
+              <dt className="text-xs text-(--ff-muted)">Số SKU</dt>
+              <dd className="mt-1 text-lg font-semibold sm:text-2xl">{lines.length}</dd>
+            </div>
+            <div className="border-l border-(--ff-line) px-3 py-3 sm:px-6 sm:py-4">
+              <dt className="text-xs text-(--ff-muted)">Số lượng</dt>
+              <dd className="mt-1 text-lg font-semibold sm:text-2xl">{fmtInt(po.total_quantity)}</dd>
+            </div>
+            <div className="border-l border-(--ff-line) px-3 py-3 sm:px-6 sm:py-4">
+              <dt className="text-xs text-(--ff-muted)">Thành tiền</dt>
+              <dd className="mt-1 break-words text-lg font-semibold text-(--ff-accent) sm:text-2xl">{fmtMoney(po.total_amount)}</dd>
+            </div>
+          </dl>
         </div>
       </section>
 
@@ -256,23 +256,23 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
       )}
 
       <div className={`${ui.card} overflow-hidden`}>
-        <div className="max-h-[calc(100vh-240px)] overflow-auto print:max-h-none">
+        <div className="relative max-h-[max(18rem,calc(100dvh-240px))] overflow-auto print:max-h-none">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
-            <thead className="sticky top-0 z-20 bg-(--ff-bg)">
+            <thead className="sticky top-0 z-20 bg-(--ff-head)">
               <tr className="border-b border-(--ff-line)">
-                <th colSpan={14} className="px-3 pt-3 pb-1 text-xs font-medium text-(--ff-text)">
-                  Bên mình điền
+                <th colSpan={14} className="px-3 pt-3 pb-1 text-xs font-medium text-(--ff-head-text)">
+                  <span className="sticky left-3 inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-(--ff-accent)" />Bên mình điền</span>
                 </th>
-                <th colSpan={7} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-text)`}>
-                  Đóng gói FBA
+                <th colSpan={7} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-head-text)`}>
+                  <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-amber-500" />Đóng gói FBA</span>
                 </th>
-                <th colSpan={8} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-text)`}>
-                  Xưởng cập nhật
+                <th colSpan={8} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-head-text)`}>
+                  <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-(--ff-pos)" />Xưởng cập nhật</span>
                 </th>
               </tr>
               <tr className="border-b border-(--ff-line-strong)">
-                <th className={`${ui.th} w-10 text-right`}>#</th>
-                <th className={`${ui.th} min-w-44`}>SKU</th>
+                <th className={`${ui.th} sticky left-0 z-10 w-10 min-w-10 bg-(--ff-head) text-right`}>#</th>
+                <th className={`${ui.th} sticky left-10 z-10 min-w-44 border-r border-(--ff-line) bg-(--ff-head)`}>SKU</th>
                 <th className={`${ui.th} min-w-36`}>Phôi</th>
                 <th className={`${ui.th} min-w-24 text-right`}>Số lượng</th>
                 <th className={`${ui.th} min-w-28 text-right`}>Basecost</th>
@@ -315,9 +315,9 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
                 </tr>
               )}
               {lines.map((line, idx) => (
-                <tr key={line.id} className="transition-colors duration-150 hover:bg-(--ff-bg)">
-                  <td className="px-3 text-right font-mono text-xs text-(--ff-muted)">{idx + 1}</td>
-                  <td className="p-0">{cell(line, "sku", "upper", { className: "font-mono text-xs font-medium" })}</td>
+                <tr key={line.id} className="group transition-colors duration-150 hover:bg-(--ff-raised)">
+                  <td className="sticky left-0 z-[1] w-10 min-w-10 bg-(--ff-card) px-3 text-right font-mono text-xs text-(--ff-muted) group-hover:bg-(--ff-raised)">{idx + 1}</td>
+                  <td className="sticky left-10 z-[1] min-w-44 border-r border-(--ff-line) bg-(--ff-card) p-0 group-hover:bg-(--ff-raised)">{cell(line, "sku", "upper", { className: "font-mono text-xs font-medium" })}</td>
                   <td className="p-0">{cell(line, "product_type", "text")}</td>
                   <td className="p-0">{cell(line, "quantity", "int")}</td>
                   <td className="p-0">{cell(line, "basecost", "money")}</td>
@@ -341,14 +341,14 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
 
                   <td className={`p-0 ${GROUP_EDGE}`}>{cell(line, "shipping_out_date", "date")}</td>
                   <td className="p-0">{cell(line, "arrival_date", "date")}</td>
-                  <td className="p-0">{cell(line, "replacement_fee", "money", { className: Number(line.replacement_fee) > 0 ? "text-red-600" : "" })}</td>
+                  <td className="p-0">{cell(line, "replacement_fee", "money", { className: Number(line.replacement_fee) > 0 ? "text-(--ff-neg)" : "" })}</td>
                   <td className="p-0">{cell(line, "sample_url", "text", { placeholder: "Dán link", className: "text-(--ff-text-2)" })}</td>
                   <td className="p-0">{cell(line, "package_url", "text", { placeholder: "Dán link", className: "text-(--ff-text-2)" })}</td>
                   <td className="p-0">
                     <select
                       defaultValue={line.check_status || ""}
                       onChange={(e) => handleCellBlur(line.id, "check_status", e.target.value, line.check_status)}
-                      className="h-10 w-full cursor-pointer bg-transparent px-3 text-sm text-(--ff-text) focus:bg-(--ff-card) focus:ring-2 focus:ring-(--ff-accent)/40 focus:outline-none focus:ring-inset"
+                      className="h-10 w-full cursor-pointer bg-transparent px-3 text-sm text-(--ff-text) focus:ring-2 focus:ring-(--ff-accent) focus:outline-none focus:ring-inset"
                     >
                       <option value="">—</option>
                       <option value="ok">OK</option>
