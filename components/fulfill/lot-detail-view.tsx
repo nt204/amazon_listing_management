@@ -391,7 +391,7 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
       <section className={`${ui.card} overflow-hidden`} aria-label="Lot details">
         <div ref={scroller} className={data?.canEdit ? "max-h-[65dvh] overflow-auto print:max-h-none" : "overflow-x-auto"}>
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap print:text-[9px]">
-            <thead className="bg-(--ff-table-head) [&_th]:text-sm [&_th]:text-white print:bg-white print:[&_th]:text-black">
+            <thead className={ui.tableHead}>
               <tr>
                 <th scope="col" className={`${ui.th} pl-4 text-right`}>#</th>
                 {LOT_COLUMNS.map((c) => (
@@ -438,7 +438,7 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
             </tbody>
             {data && lines.length > 0 && (
               <tfoot>
-                <tr className="h-12 border-t border-(--ff-line-strong) bg-[#f5f5f5] font-bold print:bg-white">
+                <tr className={`h-12 border-t border-(--ff-line-strong) ${ui.tableTotal}`}>
                   <th colSpan={2} scope="row" className="px-4 text-left">Total</th>
                   {LOT_COLUMNS.slice(1).map((c) => (
                     <td key={c.key} className={`px-3 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""}`}>

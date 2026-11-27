@@ -56,7 +56,7 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
         ) : (
           <section className={`${ui.card} overflow-hidden`}>
             <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 pb-3">
-              <h1 className="text-lg font-semibold">Requests</h1>
+              <h1 className="text-xl font-bold">Requests</h1>
               <input
                 type="search"
                 value={search}
@@ -68,7 +68,7 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-sm">
-                <thead className="bg-(--ff-head)">
+                <thead className={ui.tableHead}>
                   <tr className="border-b border-(--ff-line)">
                     <th className={`${ui.th} pl-5`}>Lot</th>
                     <th className={ui.th}>Name</th>
@@ -93,13 +93,13 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
                       return (
                         <Fragment key={lot.key}>
                           {showMonth && (
-                            <tr>
-                              <td colSpan={7} className="px-5 pt-4 pb-1.5 text-xs font-semibold text-(--ff-text-2)">{monthLabel(month)}</td>
+                            <tr className="border-t border-(--ff-line-strong) bg-white">
+                              <td colSpan={7} className="px-5 py-2.5 text-sm font-bold text-(--ff-head-text)">{monthLabel(month)}</td>
                             </tr>
                           )}
-                          <tr onClick={() => setOpen(lot)} className="cursor-pointer border-t border-(--ff-line) hover:bg-(--ff-raised)">
+                          <tr onClick={() => setOpen(lot)} className="cursor-pointer border-t border-(--ff-line) hover:bg-neutral-50 focus-within:bg-neutral-50">
                             <td className="py-3 pr-3 pl-5">
-                              <button type="button" onClick={() => setOpen(lot)} className="cursor-pointer text-left font-medium hover:text-(--ff-accent) focus-visible:outline-2 focus-visible:outline-(--ff-accent)">
+                              <button type="button" onClick={() => setOpen(lot)} className="cursor-pointer text-left font-semibold text-(--ff-accent-hover) hover:underline focus-visible:outline-2 focus-visible:outline-(--ff-accent)">
                                 {lot.lot_name}
                               </button>
                             </td>
@@ -107,7 +107,7 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
                             <td className="px-3 tabular-nums">{lot.first_request ?? "—"}</td>
                             <td className="px-3 text-right tabular-nums">{fmtInt(lot.sku_count)}</td>
                             <td className="px-3 text-right tabular-nums">{fmtInt(lot.quantity)}</td>
-                            <td className="px-3 text-right font-medium tabular-nums">{fmtMoney(lot.amount)}</td>
+                            <td className="px-3 text-right font-semibold tabular-nums">{fmtMoney(lot.amount)}</td>
                             <td className="py-3 pr-5 pl-3"><LotStageLabel stage={lot.stage} /></td>
                           </tr>
                         </Fragment>
@@ -198,13 +198,13 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
       <section className={`${ui.card} overflow-hidden`}>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap print:text-[9px]">
-            <thead>
+            <thead className={ui.tableHead}>
               <tr className="border-b border-(--ff-line)">
-                <th className={`${ui.th} bg-(--ff-head) pl-4 text-right`}>#</th>
+                <th className={`${ui.th} pl-4 text-right`}>#</th>
                 {LOT_COLUMNS.map((c) => (
                   <th
                     key={c.key}
-                    className={`${ui.th} ${c.group === "ship" ? "bg-[#ff9900]/20" : c.group === "amazon" ? "bg-[#ffe599]/45" : "bg-(--ff-head)"} ${c.kind === "money" || c.kind === "int" ? "text-right" : ""}`}
+                    className={`${ui.th} ${c.kind === "money" || c.kind === "int" ? "text-right" : ""}`}
                   >
                     {c.header}
                   </th>
@@ -218,7 +218,7 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
                 <tr><td colSpan={LOT_COLUMNS.length + 1} className="py-12 text-center text-(--ff-muted)">Loading…</td></tr>
               ) : (
                 lines.map((line, index) => (
-                  <tr key={line.id} className={line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}>
+                  <tr key={line.id} className={`hover:bg-neutral-50 ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}>
                     <td className="py-2 pr-2 pl-4 text-right text-xs text-(--ff-muted)">{index + 1}</td>
                     {LOT_COLUMNS.map((c) => (
                       <td
@@ -235,11 +235,11 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
             </tbody>
             {data && lines.length > 0 && (
               <tfoot>
-                <tr className="border-t border-(--ff-line-strong) bg-(--ff-head) font-semibold">
-                  <td />
-                  {LOT_COLUMNS.map((c) => (
+                <tr className={`border-t border-(--ff-line-strong) ${ui.tableTotal}`}>
+                  <th colSpan={2} scope="row" className="px-4 text-left">Total</th>
+                  {LOT_COLUMNS.slice(1).map((c) => (
                     <td key={c.key} className={`px-3 py-3 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""}`}>
-                      {c.key === "quantity" ? fmtInt(totalQty) : c.key === "final_basecost" ? "Total" : c.key === "real_total" ? fmtMoney(totalAmount) : ""}
+                      {c.key === "quantity" ? fmtInt(totalQty) : c.key === "real_total" ? fmtMoney(totalAmount) : ""}
                     </td>
                   ))}
                 </tr>

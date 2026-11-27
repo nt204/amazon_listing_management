@@ -100,7 +100,9 @@ export const ui = {
   card: "rounded-2xl border border-(--ff-line) bg-(--ff-card) shadow-(--ff-shadow)",
   heading: "fulfill-heading flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-(--ff-line) px-5 py-6 shadow-(--ff-shadow) sm:px-8 sm:py-8",
   title: "font-(family-name:--font-app-sans) text-[29px] leading-tight font-bold tracking-tight sm:text-[38px]",
-  th: "px-3 py-3 text-xs font-bold text-(--ff-head-text)",
+  th: "px-3 py-3 text-sm font-bold",
+  tableHead: "bg-(--ff-table-head) text-white [&_th]:bg-(--ff-table-head) print:bg-white print:text-black print:[&_th]:bg-white",
+  tableTotal: "bg-neutral-100 font-bold text-(--ff-head-text) print:bg-white print:text-black",
   link: `cursor-pointer rounded-sm text-sm font-medium text-(--ff-accent) hover:text-(--ff-accent-hover) hover:underline underline-offset-4 ${focus}`,
 };
 

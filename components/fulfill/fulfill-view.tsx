@@ -26,8 +26,6 @@ interface FulfillViewProps {
 const EMPTY_LOTS: FulfillLot[] = [];
 const LOTS_PER_PAGE = 10;
 const LOT_CELL = "min-w-0 md:table-cell md:px-3 md:py-1.5 md:align-middle [overflow-wrap:anywhere]";
-const TABLE_HEAD = "bg-(--ff-table-head) [&_th]:text-sm [&_th]:text-white print:bg-white print:[&_th]:text-black";
-const TABLE_TOTAL = "bg-(--ff-accent-soft) text-[#18336e]";
 const monthKey = (d: string | null) => (d ?? "").slice(0, 7); // YYYY-MM
 const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 const monthLabel = (key: string) => monthFormatter.format(new Date(`${key}-01T00:00:00Z`));
@@ -358,7 +356,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
         </div>
 
         <table aria-labelledby={listHeadingId} role="table" className="block w-full border-collapse text-left text-sm md:table md:table-fixed">
-          <thead role="rowgroup" className={`sr-only md:not-sr-only md:table-header-group ${TABLE_HEAD}`}>
+          <thead role="rowgroup" className={`sr-only md:not-sr-only md:table-header-group ${ui.tableHead}`}>
             <tr role="row">
               <th role="columnheader" scope="col" className={`${ui.th} w-[27%] pl-6`}>Lot / request date</th>
               <th role="columnheader" scope="col" className={`${ui.th} w-[16%]`}>Store / supplier</th>
@@ -369,7 +367,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
             </tr>
           </thead>
           {!dash && visibleLots.length > 0 && (
-            <tbody role="rowgroup" className={`block border-b border-(--ff-line-strong) md:table-row-group ${TABLE_TOTAL}`}>
+            <tbody role="rowgroup" className={`block border-b border-(--ff-line-strong) md:table-row-group ${ui.tableTotal}`}>
               <tr role="row" className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.85fr)_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-4 py-2.5 md:table-row">
                 <th role="rowheader" scope="row" className={`${LOT_CELL} text-left font-bold md:pl-6`}>
                   Total
@@ -530,7 +528,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
         </summary>
         <div className="overflow-x-auto border-t border-(--ff-line)">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
-            <thead className={TABLE_HEAD}>
+            <thead className={ui.tableHead}>
               <tr className="border-b border-(--ff-line)">
                 <th className={`${ui.th} pl-6`}>Store</th>
                 <th className={`${ui.th} text-right`}>Lots</th>
@@ -579,7 +577,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
             </tbody>
             {storeStats.length > 1 && (
               <tfoot>
-                <tr className={`h-12 border-t border-(--ff-line-strong) font-semibold ${TABLE_TOTAL}`}>
+                <tr className={`h-12 border-t border-(--ff-line-strong) ${ui.tableTotal}`}>
                   <td className="py-2 pr-3 pl-6">Total</td>
                   <td className="px-3 text-right">{monthActive.length}</td>
                   {LOT_STAGE_ORDER.map((st) => (

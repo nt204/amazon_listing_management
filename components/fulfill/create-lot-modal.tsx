@@ -509,9 +509,9 @@ export function CreateLotModal({
         {lines.length > 0 ? (
           <div className="overflow-x-auto rounded-xl border border-(--ff-line)">
             <table className="w-max min-w-full border-collapse text-left text-sm">
-              <thead className="bg-(--ff-table-head) [&_th]:text-sm [&_th]:text-white">
+              <thead className={ui.tableHead}>
                 <tr className="border-b border-(--ff-line)">
-                  <th className={`${ui.th} sticky left-0 z-10 bg-(--ff-table-head)`}>SKU</th>
+                  <th className={`${ui.th} sticky left-0 z-10`}>SKU</th>
                   {COLUMNS.map((c) => (
                     <th key={c.header} className={`${ui.th} whitespace-nowrap ${c.kind === "money" || c.kind === "num" || c.kind === "calc" ? "text-right" : ""}`}>
                       {c.header}
@@ -581,8 +581,8 @@ export function CreateLotModal({
                 ))}
               </tbody>
               <tfoot>
-                <tr className="h-11 border-t border-(--ff-line-strong) bg-(--ff-accent-soft) font-semibold">
-                  <td className="sticky left-0 bg-(--ff-accent-soft) px-3">{lines.length} SKU</td>
+                <tr className={`h-11 border-t border-(--ff-line-strong) ${ui.tableTotal}`}>
+                  <td className={`sticky left-0 px-3 ${ui.tableTotal}`}>{lines.length} SKU</td>
                   {COLUMNS.map((c) => (
                     <td key={c.header} className="px-3 text-right tabular-nums whitespace-nowrap">
                       {c.field === "quantity" ? fmtInt(totalQty) : c.field === "final" ? "Total" : c.field === "total" ? fmtMoney(totalAmount) : ""}

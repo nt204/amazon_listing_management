@@ -352,8 +352,8 @@ export function CreatePoModal({
 
             <div className="relative overflow-x-auto rounded-lg border border-(--ff-line)">
               <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
-                <thead>
-                  <tr className="border-b border-(--ff-line) bg-(--ff-head)">
+                <thead className={ui.tableHead}>
+                  <tr>
                     <th className={`${ui.th} w-10 text-right`}>#</th>
                     <th className={`${ui.th} min-w-44`}>SKU</th>
                     <th className={`${ui.th} min-w-36`}>Phôi</th>

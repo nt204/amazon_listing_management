@@ -258,21 +258,21 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
       <div className={`${ui.card} overflow-hidden`}>
         <div className="relative max-h-[max(18rem,calc(100dvh-240px))] overflow-auto print:max-h-none">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
-            <thead className="sticky top-0 z-20 bg-(--ff-head)">
+            <thead className={`sticky top-0 z-20 ${ui.tableHead}`}>
               <tr className="border-b border-(--ff-line)">
-                <th colSpan={14} className="px-3 pt-3 pb-1 text-xs font-medium text-(--ff-head-text)">
+                <th colSpan={14} className="px-3 pt-3 pb-1 text-xs font-medium">
                   <span className="sticky left-3 inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-(--ff-accent)" />Bên mình điền</span>
                 </th>
-                <th colSpan={7} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-head-text)`}>
+                <th colSpan={7} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium`}>
                   <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-amber-500" />Đóng gói FBA</span>
                 </th>
-                <th colSpan={8} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium text-(--ff-head-text)`}>
+                <th colSpan={8} className={`${GROUP_EDGE} px-3 pt-3 pb-1 text-xs font-medium`}>
                   <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-(--ff-pos)" />Xưởng cập nhật</span>
                 </th>
               </tr>
               <tr className="border-b border-(--ff-line-strong)">
-                <th className={`${ui.th} sticky left-0 z-10 w-10 min-w-10 bg-(--ff-head) text-right`}>#</th>
-                <th className={`${ui.th} sticky left-10 z-10 min-w-44 border-r border-(--ff-line) bg-(--ff-head)`}>SKU</th>
+                <th className={`${ui.th} sticky left-0 z-10 w-10 min-w-10 text-right`}>#</th>
+                <th className={`${ui.th} sticky left-10 z-10 min-w-44 border-r border-(--ff-line)`}>SKU</th>
                 <th className={`${ui.th} min-w-36`}>Phôi</th>
                 <th className={`${ui.th} min-w-24 text-right`}>Số lượng</th>
                 <th className={`${ui.th} min-w-28 text-right`}>Basecost</th>

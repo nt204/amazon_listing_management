@@ -191,8 +191,8 @@ export function SkuMasterView({ stores, selectedStoreId, onSelectStore }: SkuMas
       <div className={`${ui.card} overflow-hidden`}>
         <div className="relative overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
-            <thead>
-              <tr className="border-b border-(--ff-line) bg-(--ff-head)">
+            <thead className={ui.tableHead}>
+              <tr>
                 <th className={`${ui.th} pl-6`}>SKU</th>
                 <th className={ui.th}>Store</th>
                 <th className={ui.th}>ASIN</th>

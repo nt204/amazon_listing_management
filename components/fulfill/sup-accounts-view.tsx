@@ -101,7 +101,7 @@ export function SupAccountsView() {
         <h2 className="px-5 pt-4 pb-3 font-semibold">Accounts</h2>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
-            <thead className="bg-(--ff-head)">
+            <thead className={ui.tableHead}>
               <tr className="border-b border-(--ff-line)">
                 <th className={`${ui.th} pl-5`}>Email</th>
                 <th className={ui.th}>Name</th>
@@ -144,7 +144,7 @@ export function SupAccountsView() {
         <h2 className="px-5 pt-4 pb-3 font-semibold">Suppliers in Chi tiết đi hàng</h2>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
-            <thead className="bg-(--ff-head)">
+            <thead className={ui.tableHead}>
               <tr className="border-b border-(--ff-line)">
                 <th className={`${ui.th} pl-5`}>Sup</th>
                 <th className={`${ui.th} text-right`}>Lots</th>
@@ -193,13 +193,20 @@ export function SupAccountsView() {
             {log.rows.length === 0 ? (
               <p className="py-6 text-center text-sm text-(--ff-muted)">No visits yet.</p>
             ) : (
-              <table className="w-full text-sm">
+              <table className="w-full border-collapse text-left text-sm">
+                <thead className={ui.tableHead}>
+                  <tr>
+                    <th scope="col" className={ui.th}>Date</th>
+                    <th scope="col" className={ui.th}>Action</th>
+                    <th scope="col" className={ui.th}>Details</th>
+                  </tr>
+                </thead>
                 <tbody className="divide-y divide-(--ff-line)">
                   {log.rows.map((r, i) => (
                     <tr key={i}>
-                      <td className="py-2 pr-3 whitespace-nowrap tabular-nums text-(--ff-muted)">{fmtTime(r.at)}</td>
-                      <td className="py-2 pr-3">{r.action}</td>
-                      <td className="py-2">{r.detail ?? ""}</td>
+                      <td className="px-3 py-2 whitespace-nowrap tabular-nums text-(--ff-muted)">{fmtTime(r.at)}</td>
+                      <td className="px-3 py-2">{r.action}</td>
+                      <td className="px-3 py-2">{r.detail ?? ""}</td>
                     </tr>
                   ))}
                 </tbody>
