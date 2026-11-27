@@ -1,17 +1,33 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { SupPortal } from "@/components/fulfill/sup-portal";
-import { resolveSupAccount } from "@/lib/fulfill/sup-db";
+import { resolveActorFromHeaders } from "@/lib/auth-server";
+import { canAccessFulfill } from "@/lib/fulfill/access";
+import { getSupAccountById, resolveSupAccount, supPreviewId } from "@/lib/fulfill/sup-db";
 
 export const metadata: Metadata = {
   title: "Supplier requests",
   robots: { index: false, follow: false },
 };
 
-// Trang xưởng — CHỈ ĐỌC. Nhận diện bằng email Cloudflare Access trong bảng fulfill_sup_accounts,
-// không dùng tài khoản nội bộ (không gọi resolveActorFromHeaders để tránh tạo user chờ duyệt).
+// Trang xưởng — CHỈ ĐỌC. Nhận diện bằng email Cloudflare Access trong bảng fulfill_sup_accounts.
+// Team xem trước (cookie sup_preview, đặt từ tab Suppliers) phải có quyền Đi hàng nội bộ.
 export default async function SupPage() {
   const headerStore = await headers();
+
+  const previewId = supPreviewId(headerStore);
+  if (previewId) {
+    const { actor } = await resolveActorFromHeaders(headerStore);
+    const account = actor && canAccessFulfill(actor) ? await getSupAccountById(previewId) : null;
+    if (account) {
+      return (
+        <div className="fulfill-root min-h-dvh">
+          <SupPortal name={account.display_name || account.sup_names.join(", ")} email={account.email} preview />
+        </div>
+      );
+    }
+  }
+
   const account = await resolveSupAccount(headerStore);
 
   if (!account) {

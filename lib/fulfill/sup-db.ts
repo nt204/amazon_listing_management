@@ -3,6 +3,7 @@ import "server-only";
 import { ApiError } from "@/lib/api-guard";
 import { extractCloudflareEmail } from "@/lib/auth-server";
 import { getDatabaseClient } from "@/lib/db";
+import { authorizeFulfill } from "./authorize";
 import { lotNameOf } from "./lot-state";
 import { lotKey, summarizeLot, toLotLine, type RawRow } from "./lots-db";
 import type { FulfillLot, FulfillLotLine } from "./types";
@@ -21,6 +22,8 @@ export interface SupAccount {
   created_at: string;
   updated_at: string;
   last_seen_at: string | null;
+  /** Người trong team xem trước trang xưởng (không ghi nhật ký của xưởng) */
+  preview?: boolean;
 }
 
 const ACCOUNT_COLUMNS = `id, email, display_name, sup_names, is_active, notes, created_by,
@@ -158,7 +161,29 @@ export async function resolveSupAccount(headers: Headers): Promise<SupAccount | 
   return account;
 }
 
+export const SUP_PREVIEW_COOKIE = "sup_preview";
+
+export function supPreviewId(headers: Headers): string | null {
+  const id = headers.get("cookie")?.match(new RegExp(`(?:^|;\\s*)${SUP_PREVIEW_COOKIE}=([0-9a-fA-F-]{36})`))?.[1];
+  return id ?? null;
+}
+
+export async function getSupAccountById(id: string): Promise<SupAccount | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const sql = await getDatabaseClient();
+  const [account] = await sql.unsafe<SupAccount[]>(`SELECT ${ACCOUNT_COLUMNS} FROM fulfill_sup_accounts WHERE id = $1`, [id]);
+  return account ?? null;
+}
+
 export async function requireSupAccount(request: Request): Promise<SupAccount> {
+  // Team xem trước: cookie sup_preview + quyền Đi hàng nội bộ (kiểm tra lại ở mỗi request)
+  const previewId = supPreviewId(request.headers);
+  if (previewId) {
+    await authorizeFulfill(request, "read");
+    const preview = await getSupAccountById(previewId);
+    if (!preview) throw new ApiError("Supplier account not found.", 404);
+    return { ...preview, preview: true };
+  }
   const account = await resolveSupAccount(request.headers);
   if (!account) throw new ApiError("No supplier access for this account.", 403);
   return account;

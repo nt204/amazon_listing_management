@@ -16,7 +16,7 @@ const dayName = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short
 const fmtDay = (d: string | null) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? dayName.format(new Date(`${d}T00:00:00Z`)) : d ?? "—");
 const lotQuery = (lot: Pick<FulfillLot, "store_id" | "lot_name">) => new URLSearchParams({ storeId: lot.store_id, lot: lot.lot_name }).toString();
 
-export function SupPortal({ name, email }: { name: string; email: string }) {
+export function SupPortal({ name, email, preview = false }: { name: string; email: string; preview?: boolean }) {
   const [lots, setLots] = useState<FulfillLot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -96,12 +96,22 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
 
   return (
     <div className="min-h-dvh">
+      {preview && (
+        <div className="bg-amber-100 text-sm text-amber-900 print:hidden">
+          <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-2 sm:px-6 lg:px-8">
+            <span>Team preview — this is exactly what {name} sees.</span>
+            <a href="/api/sup/preview" className="font-semibold underline underline-offset-4">Exit preview</a>
+          </div>
+        </div>
+      )}
       <header className="border-b border-(--ff-line) bg-(--ff-side) print:hidden">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
           <span className="font-semibold">{name}</span>
           <span className="flex min-w-0 items-center gap-4 text-sm">
             <span className="truncate text-(--ff-muted)">{email}</span>
-            <a href={process.env.NODE_ENV === "production" ? "/cdn-cgi/access/logout" : "/api/sup/dev-login"} className="shrink-0 font-medium text-(--ff-accent) hover:underline">Sign out</a>
+            {!preview && (
+              <a href={process.env.NODE_ENV === "production" ? "/cdn-cgi/access/logout" : "/api/sup/dev-login"} className="shrink-0 font-medium text-(--ff-accent) hover:underline">Sign out</a>
+            )}
           </span>
         </div>
       </header>
@@ -261,6 +271,43 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
   );
 }
 
+/** Link hiện thẳng (rút gọn) để xưởng mở hoặc copy; giá trị không phải URL (VD tên file design) hiện chữ thường. */
+function CopyLink({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const area = document.createElement("textarea");
+      area.value = url;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <span className="inline-flex max-w-72 items-center gap-2">
+      {/^https?:\/\//i.test(url) ? (
+        <a href={url} target="_blank" rel="noreferrer" title={url} className="min-w-0 truncate text-(--ff-accent) underline-offset-4 hover:underline">
+          {url.replace(/^https?:\/\/(www\.)?/, "")}
+        </a>
+      ) : (
+        <span title={url} className="min-w-0 truncate">{url}</span>
+      )}
+      <button
+        type="button"
+        onClick={copy}
+        className="shrink-0 cursor-pointer rounded-md border border-(--ff-line-strong) px-1.5 py-0.5 text-xs font-medium text-(--ff-text-2) hover:border-(--ff-accent) hover:text-(--ff-accent) focus-visible:outline-2 focus-visible:outline-(--ff-accent) print:hidden"
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </span>
+  );
+}
+
 function SupMockup({ lineId }: { lineId: string }) {
   const [failed, setFailed] = useState(false);
   const src = `/api/sup/mockup?line=${lineId}&w=112`;
@@ -281,13 +328,7 @@ function cellValue(line: FulfillLotLine, column: LotColumn) {
   if (value === null || value === undefined || value === "") return <span className="text-(--ff-muted)">—</span>;
   if (column.kind === "money") return fmtMoney(Number(value));
   if (column.kind === "int") return fmtInt(Number(value));
-  if (column.kind === "link") {
-    return (
-      <a href={String(value)} target="_blank" rel="noreferrer" className={ui.link}>
-        Open
-      </a>
-    );
-  }
+  if (column.kind === "link") return <CopyLink url={String(value)} />;
   return String(value);
 }
 

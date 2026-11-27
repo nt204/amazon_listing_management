@@ -10,7 +10,7 @@ export async function GET(req: Request) {
     const lotName = searchParams.get("lot") ?? "";
     const data = storeId && lotName ? await getSupLot(account, storeId, lotName) : null;
     if (!data) return NextResponse.json({ error: "Lot not found." }, { status: 404 });
-    await logSupAccess(account.id, "view", lotName);
+    if (!account.preview) await logSupAccess(account.id, "view", lotName);
     return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return routeErrorResponse(error, "Could not load the lot.");

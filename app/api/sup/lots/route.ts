@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   try {
     const account = await requireSupAccount(req);
     const lots = await listSupLots(account);
-    await logSupAccess(account.id, "list");
+    if (!account.preview) await logSupAccess(account.id, "list");
     return NextResponse.json({ lots }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return routeErrorResponse(error, "Could not load lots.");

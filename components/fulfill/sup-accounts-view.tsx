@@ -126,6 +126,7 @@ export function SupAccountsView() {
                     <td className="px-3 whitespace-nowrap tabular-nums">{fmtTime(a.last_seen_at)}</td>
                     <td className="py-2 pr-5 pl-3">
                       <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
+                        <a href={`/api/sup/preview?as=${a.id}`} target="_blank" rel="noreferrer" className={ui.link}>View</a>
                         <button type="button" className={ui.link} onClick={() => setDraft({ ...a, display_name: a.display_name ?? "", notes: a.notes ?? "" })}>Edit</button>
                         <button type="button" className={ui.link} onClick={() => toggleActive(a)}>{a.is_active ? "Disable" : "Enable"}</button>
                         <button type="button" className={ui.link} onClick={() => openLog(a)}>History</button>
