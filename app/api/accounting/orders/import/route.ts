@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDatabaseClient } from "@/lib/db";
 import { parseOrdersBuffer, batchUpsertOrders, normalizeOrderRow } from "@/lib/accounting/orders-db";
 import { assertRowsInsideCoverage, normalizeImportCoverage } from "@/lib/accounting/import-coverage";
 import { triggerDailyReportCheckAfterImport } from "@/lib/accounting/daily-business-reporter";
@@ -41,6 +42,19 @@ export async function POST(request: NextRequest) {
       assertRowsInsideCoverage(parsedOrders, coverage);
       const result = await batchUpsertOrders(storeId, parsedOrders, { snapshot: "dates", coverage });
 
+      if (coverage) {
+        const sql = await getDatabaseClient();
+        await sql`
+          INSERT INTO app_settings (key, value, updated_at)
+          VALUES (
+            ${`order_import_audit:${storeId}:${coverage.start}`},
+            ${sql.json({ count: parsedOrders.length, fileName: file.name, at: new Date().toISOString() })},
+            NOW()
+          )
+          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+        `.catch((err) => console.warn("[Orders Import] Lỗi ghi nhận order_import_audit:", err));
+      }
+
       // Tự động kiểm tra và gửi báo cáo kinh doanh ngày qua Lark nếu các Store đã đủ dữ liệu
       if (!deferDailyReport) void triggerDailyReportCheckAfterImport().catch(() => {});
 
@@ -71,6 +85,19 @@ export async function POST(request: NextRequest) {
 
     assertRowsInsideCoverage(normalizedRows, coverage);
     const result = await batchUpsertOrders(store_id, normalizedRows, { snapshot: "dates", coverage });
+
+    if (coverage) {
+      const sql = await getDatabaseClient();
+      await sql`
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES (
+          ${`order_import_audit:${store_id}:${coverage.start}`},
+          ${sql.json({ count: normalizedRows.length, at: new Date().toISOString() })},
+          NOW()
+        )
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+      `.catch((err) => console.warn("[Orders Import] Lỗi ghi nhận order_import_audit:", err));
+    }
 
     // Tự động kiểm tra và gửi báo cáo kinh doanh ngày qua Lark nếu các Store đã đủ dữ liệu
     void triggerDailyReportCheckAfterImport().catch(() => {});

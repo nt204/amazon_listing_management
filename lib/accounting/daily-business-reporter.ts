@@ -342,20 +342,23 @@ export async function checkStoresCompletenessForDate(targetDate: string): Promis
       continue;
     }
 
-    const [counts] = await sql<Array<{ order_count: number; ad_count: number; other_count: number }>>`
+    const [counts] = await sql<Array<{ order_count: number; ad_count: number; has_order_audit: boolean }>>`
       SELECT 
         (SELECT COUNT(*)::int FROM accounting_orders WHERE store_id = ${store.id} AND date = ${targetDate}::date) AS order_count,
         (SELECT COUNT(*)::int FROM accounting_ads WHERE store_id = ${store.id} AND date = ${targetDate}::date) AS ad_count,
-        ((SELECT COUNT(*)::int FROM accounting_returns WHERE store_id = ${store.id} AND date = ${targetDate}::date) +
-         (SELECT COUNT(*)::int FROM accounting_service_fees WHERE store_id = ${store.id} AND date = ${targetDate}::date)) AS other_count
+        EXISTS (
+          SELECT 1 FROM app_settings 
+          WHERE key = ${`order_import_audit:${store.id}:${targetDate}`}
+        ) AS has_order_audit
     `;
 
-    const hasOrders = (counts?.order_count ?? 0) > 0;
+    // Có đơn hàng thật (order_count > 0) HOẶC file All Orders đã được cào & nạp xác nhận 0 đơn
+    const hasOrders = (counts?.order_count ?? 0) > 0 || Boolean(counts?.has_order_audit);
+    // Bắt buộc phải có cả Ads đã nạp
     const hasAds = (counts?.ad_count ?? 0) > 0;
-    const hasOtherData = (counts?.other_count ?? 0) > 0;
 
-    // Đã có đơn hàng, hoặc nếu không có đơn nào (file đọc xong có 0 đơn) thì đã nạp Ads / chi phí khác
-    if (hasOrders || hasAds || hasOtherData) {
+    // Chỉ coi store hoàn tất khi CẢ Orders VÀ Ads đều đã cào xong đầy đủ, tránh báo thiếu hoặc báo rời rạc
+    if (hasOrders && hasAds) {
       completedStores.push(storeName);
     } else {
       missingStores.push(storeName);
