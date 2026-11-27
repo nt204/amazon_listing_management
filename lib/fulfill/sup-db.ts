@@ -129,13 +129,14 @@ export async function listSupAccessLog(accountId: string, limit = 50) {
 
 /**
  * Email xưởng từ Cloudflare Access (production). Máy local không có Cloudflare: cho phép header
- * `x-dev-sup-email` CHỈ khi không phải production để thử giao diện.
+ * `x-dev-sup-email` hoặc cookie `dev_sup_email` (đặt qua /api/sup/dev-login) CHỈ khi không phải production.
  */
 function supEmailFrom(headers: Headers): string | null {
   const email = extractCloudflareEmail(headers);
   if (email) return email;
   if (process.env.NODE_ENV !== "production") {
-    const dev = headers.get("x-dev-sup-email")?.trim().toLowerCase();
+    const cookie = headers.get("cookie")?.match(/(?:^|;\s*)dev_sup_email=([^;]+)/)?.[1];
+    const dev = (headers.get("x-dev-sup-email") || (cookie ? decodeURIComponent(cookie) : ""))?.trim().toLowerCase();
     if (dev) return dev;
   }
   return null;

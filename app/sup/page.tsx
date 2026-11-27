@@ -20,7 +20,7 @@ export default async function SupPage() {
         <div className="max-w-sm text-center">
           <h1 className="text-xl font-semibold">No access</h1>
           <p className="mt-2 text-sm text-(--ff-muted)">This email has no supplier account. Contact NCE to get access.</p>
-          <a href="/cdn-cgi/access/logout" className="mt-4 inline-block text-sm font-medium text-(--ff-accent) hover:underline">
+          <a href={process.env.NODE_ENV === "production" ? "/cdn-cgi/access/logout" : "/api/sup/dev-login"} className="mt-4 inline-block text-sm font-medium text-(--ff-accent) hover:underline">
             Sign out
           </a>
         </div>

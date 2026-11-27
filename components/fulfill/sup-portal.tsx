@@ -45,7 +45,7 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
           <span className="font-semibold">{name}</span>
           <span className="flex min-w-0 items-center gap-4 text-sm">
             <span className="truncate text-(--ff-muted)">{email}</span>
-            <a href="/cdn-cgi/access/logout" className="shrink-0 font-medium text-(--ff-accent) hover:underline">Sign out</a>
+            <a href={process.env.NODE_ENV === "production" ? "/cdn-cgi/access/logout" : "/api/sup/dev-login"} className="shrink-0 font-medium text-(--ff-accent) hover:underline">Sign out</a>
           </span>
         </div>
       </header>
