@@ -1,24 +1,24 @@
 import "server-only";
 
 import ExcelJS from "exceljs";
-import { LOT_COLUMNS } from "./lot-columns";
+import { LOT_COLUMNS, type LotColumn } from "./lot-columns";
 import type { FulfillLot, FulfillLotLine } from "./types";
 
 // Màu tiêu đề giống sheet gửi xưởng: phần bên mình điền nền xám nhạt, phần xưởng / vận chuyển nền cam.
 const HEADER_FILL = { order: "FFEFEFEF", ship: "FFFF9900", amazon: "FFFFE599" } as const;
 
 /** File Excel 1 lô đúng cột sheet gửi xưởng, dòng cuối "Total" như sheet. Dùng cho trang nội bộ và trang xưởng. */
-export async function lotExcelResponse(lot: FulfillLot, lines: FulfillLotLine[]) {
+export async function lotExcelResponse(lot: FulfillLot, lines: FulfillLotLine[], columns: LotColumn[] = LOT_COLUMNS) {
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
   const ws = wb.addWorksheet(lot.lot_name.replace(/[\\/?*[\]:]/g, " ").slice(0, 31), {
     views: [{ state: "frozen", xSplit: 6, ySplit: 1 }],
   });
 
-  ws.columns = LOT_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
+  ws.columns = columns.map((c) => ({ header: c.header, key: c.key, width: c.width }));
   const header = ws.getRow(1);
   header.height = 22;
-  LOT_COLUMNS.forEach((c, i) => {
+  columns.forEach((c, i) => {
     const cell = header.getCell(i + 1);
     cell.font = { bold: true, size: 10 };
     cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
@@ -29,7 +29,7 @@ export async function lotExcelResponse(lot: FulfillLot, lines: FulfillLotLine[])
   for (const line of lines) {
     const row = ws.addRow(
       Object.fromEntries(
-        LOT_COLUMNS.map((c) => {
+        columns.map((c) => {
           const value = line[c.key];
           if (c.kind === "link" || c.kind === "image") return [c.key, value ? { text: String(value), hyperlink: String(value) } : ""];
           return [c.key, value ?? ""];
@@ -45,7 +45,7 @@ export async function lotExcelResponse(lot: FulfillLot, lines: FulfillLotLine[])
   });
   total.font = { bold: true };
 
-  LOT_COLUMNS.forEach((c, i) => {
+  columns.forEach((c, i) => {
     if (c.kind === "money") ws.getColumn(i + 1).numFmt = "$#,##0.00";
   });
 

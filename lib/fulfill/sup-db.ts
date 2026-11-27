@@ -185,6 +185,14 @@ async function loadSupRows(account: SupAccount, storeId?: string): Promise<RawRo
   }) as Promise<RawRow[]>;
 }
 
+/** Xưởng chỉ nhận dữ liệu của sheet gửi xưởng: bỏ thanh toán, trạng thái nội bộ (Phát triển/Test/Hủy), số Amazon nhận. */
+function forSupplierLot(lot: FulfillLot): FulfillLot {
+  return { ...lot, paid_amount: 0, units_expected: 0, units_located: 0 };
+}
+function forSupplierLine(line: FulfillLotLine): FulfillLotLine {
+  return { ...line, ngay_thanh_toan: null, status: null, so_luong_amazon_nhan: null, trang_thai: null, source: null, shipping_fee: null };
+}
+
 export async function listSupLots(account: SupAccount): Promise<FulfillLot[]> {
   const rows = await loadSupRows(account);
   const groups = new Map<string, { name: string; generated: boolean; rows: RawRow[] }>();
@@ -196,7 +204,7 @@ export async function listSupLots(account: SupAccount): Promise<FulfillLot[]> {
     groups.set(key, group);
   }
   return [...groups.entries()]
-    .map(([key, g]) => summarizeLot(key, g.name, g.generated, g.rows))
+    .map(([key, g]) => forSupplierLot(summarizeLot(key, g.name, g.generated, g.rows)))
     .sort((a, b) => (b.first_request ?? "").localeCompare(a.first_request ?? "") || a.lot_name.localeCompare(b.lot_name));
 }
 
@@ -209,8 +217,8 @@ export async function getSupLot(
   const rows = (await loadSupRows(account, storeId)).filter((row) => lotNameOf(row).name === lotName);
   if (!rows.length) return null;
   return {
-    lot: summarizeLot(lotKey(storeId, lotName), lotName, lotNameOf(rows[0]).generated, rows),
-    lines: rows.map(toLotLine),
+    lot: forSupplierLot(summarizeLot(lotKey(storeId, lotName), lotName, lotNameOf(rows[0]).generated, rows)),
+    lines: rows.map((row) => forSupplierLine(toLotLine(row))),
   };
 }
 

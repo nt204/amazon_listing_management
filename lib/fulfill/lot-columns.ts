@@ -144,3 +144,6 @@ export const LOT_EDIT_FIELDS = {
 export function isLotEditField(key: string): key is keyof typeof LOT_EDIT_FIELDS {
   return Object.hasOwn(LOT_EDIT_FIELDS, key);
 }
+
+/** Trang xưởng & Excel của xưởng: ĐÚNG 42 cột sheet gửi xưởng, đúng thứ tự — không có cột Amazon / thanh toán. */
+export const SUP_LOT_COLUMNS: LotColumn[] = LOT_COLUMNS.filter((c) => c.group !== "amazon");
