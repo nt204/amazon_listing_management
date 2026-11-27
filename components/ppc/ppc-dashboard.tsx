@@ -75,6 +75,8 @@ import { PpcSearchVolumeCell, PpcOrganicRankCell, PpcSponsoredRankCell } from ".
 import { PpcKeywordGroupRows, PpcSummarySearchVolumeBlankCells, PpcSummaryTableHead, usePpcSummarySort, useKeywordGroupSelection, type KeywordGroupRow } from "./ppc-keyword-group-rows";
 import { PpcSkuTrendModal, SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcSearchTermLaunchPanel } from "./ppc-search-term-launch-panel";
+import { PpcTargetActionPanel } from "./ppc-target-action-panel";
+import { useDragSelect } from "./use-drag-select";
 import type {
   PpcAlert,
   PpcAdTypeBreakdown,
@@ -172,6 +174,7 @@ const PpcPerformanceRankingChart = dynamic(
 );
 
 import { PpcOverviewSkeleton } from "./ppc-overview-skeleton";
+import { PPC_RUN_TYPES, PPC_RUN_TYPE_LABEL, type PpcRunType } from "@/lib/ppc/run-type";
 
 function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): string | null {
   if (!url) return null;
@@ -642,6 +645,11 @@ export function PpcDashboard({
   const [portfolioRanges, setPortfolioRanges] = useState<MetricRanges>({});
   const [campaignRanges, setCampaignRanges] = useState<MetricRanges>({});
   const [targetRanges, setTargetRanges] = useState<MetricRanges>({});
+  // Lọc target theo dạng chạy (SP03, SP04, SB01, SB05, SD, FL Asin) — chọn nhiều được
+  const [targetRunTypes, setTargetRunTypes] = useState<PpcRunType[]>([]);
+  const targetRunTypeParam = targetRunTypes.join(",");
+  // Lọc theo trạng thái target: tất cả / đang chạy / đang tạm dừng
+  const [targetStateFilter, setTargetStateFilter] = useState<"ALL" | "ACTIVE" | "PAUSED">("ALL");
   const [termRanges, setTermRanges] = useState<MetricRanges>({});
   const [skuRanges, setSkuRanges] = useState<MetricRanges>({});
   const portfolioRangeParam = useMemo(() => encodeMetricRanges(parseMetricRanges(portfolioRanges)), [portfolioRanges]);
@@ -1187,7 +1195,7 @@ export function PpcDashboard({
   useEffect(() => {
     if (activeTab !== "targets" || selectedStore === "ALL" || channelPending) return;
 
-    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}:${targetRangeParam}`;
+    const currentParamsKey = `${selectedStore}:${activeChannel ?? ""}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}:${targetRangeParam}:${targetRunTypeParam}:${targetStateFilter}`;
 
     // If targets are already loaded with the exact same parameters, keep current view instantly without reloading spinner
     if (lastLoadedTargetsParamsRef.current === currentParamsKey && serverTargets.length > 0) {
@@ -1208,6 +1216,8 @@ export function PpcDashboard({
           sortBy: targetSortField,
           sortDir: targetSortDir,
           ...(targetRangeParam ? { ranges: targetRangeParam } : {}),
+          ...(targetRunTypeParam ? { runTypes: targetRunTypeParam } : {}),
+          ...(targetStateFilter !== "ALL" ? { targetState: targetStateFilter } : {}),
           // Prioritize exact campaignId lookup (1.6ms index) - only pass campaignName if id is missing
           ...(selectedCampaignIdForDrilldown
             ? { campaignId: selectedCampaignIdForDrilldown }
@@ -1270,6 +1280,8 @@ export function PpcDashboard({
     selectedAdGroupForDrilldown,
     targetRefreshKey,
     targetRangeParam,
+    targetRunTypeParam,
+    targetStateFilter,
   ]);
 
   // Server-side paginated fetch for Search Terms (50 rows/page, accurate DB count)
@@ -2370,27 +2382,22 @@ export function PpcDashboard({
 
   // Chọn target để lên camp: giữ cả dòng qua nhiều trang / bộ lọc, Shift + click chọn cả đoạn
   const [selectedTargetRows, setSelectedTargetRows] = useState<Map<string, PpcTargetPerformance>>(new Map());
-  const lastTargetSelectIndexRef = useRef<number | null>(null);
   const clearSelectedTargets = useCallback(() => {
     setSelectedTargetRows(new Map());
-    lastTargetSelectIndexRef.current = null;
   }, []);
 
-  const toggleTargetSelect = (target: PpcTargetPerformance, index: number, shiftKey = false) => {
-    const key = targetRowKey(target);
-    const shouldSelect = !selectedTargetRows.has(key);
-    const last = lastTargetSelectIndexRef.current;
-    const range = shiftKey && last !== null && last < serverTargets.length
-      ? serverTargets.slice(Math.min(last, index), Math.max(last, index) + 1)
-      : [target];
-    const next = new Map(selectedTargetRows);
-    for (const row of range) {
-      if (shouldSelect) next.set(targetRowKey(row), row);
-      else next.delete(targetRowKey(row));
+  // Bấm / kéo tô / Shift trên dòng như tab Manual Bid (giữ lựa chọn ở trang khác)
+  const targetPageKeys = useMemo(() => serverTargets.map(targetRowKey), [serverTargets, targetRowKey]);
+  const selectedTargetKeySet = useMemo(() => new Set(selectedTargetRows.keys()), [selectedTargetRows]);
+  const targetDrag = useDragSelect(targetPageKeys, selectedTargetKeySet, (nextKeys) => {
+    const pageByKey = new Map(serverTargets.map((t) => [targetRowKey(t), t] as const));
+    const next = new Map<string, PpcTargetPerformance>();
+    for (const k of nextKeys) {
+      const row = selectedTargetRows.get(k) || pageByKey.get(k);
+      if (row) next.set(k, row);
     }
-    lastTargetSelectIndexRef.current = index;
     setSelectedTargetRows(next);
-  };
+  });
 
   const isTargetPageAllSelected = serverTargets.length > 0 && serverTargets.every((t) => selectedTargetRows.has(targetRowKey(t)));
   const toggleSelectAllTargets = () => {
@@ -4635,31 +4642,54 @@ export function PpcDashboard({
               </div>
 
 
-              {/* Dropdown chọn nhanh chiến dịch để chỉ tìm kiếm trong chiến dịch đó */}
-              <select
-                value={selectedCampaignForDrilldown || "ALL"}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === "ALL") {
-                    setSelectedCampaignForDrilldown(null);
-                    setSelectedCampaignIdForDrilldown(null);
-                  } else {
-                    const found = campaignPerformance.find((c) => c.campaignName === val);
-                    setSelectedCampaignForDrilldown(val);
-                    setSelectedCampaignIdForDrilldown(found?.campaignId || null);
-                  }
-                  setTargetPage(1);
-                }}
-                className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer max-w-[240px] truncate"
-                title="Lọc nhanh target theo chiến dịch để tìm kiếm tức thì"
-              >
-                <option value="ALL">Tất cả chiến dịch ({campaignPerformance.length})</option>
-                {campaignPerformance.map((c) => (
-                  <option key={c.campaignId || c.campaignName} value={c.campaignName}>
-                    {c.campaignName}
-                  </option>
+              {/* Lọc theo trạng thái target */}
+              <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5" role="radiogroup" aria-label="Lọc theo trạng thái">
+                {([["ALL", "Tất cả"], ["ACTIVE", "Active"], ["PAUSED", "Paused"]] as const).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="radio"
+                    aria-checked={targetStateFilter === k}
+                    onClick={() => {
+                      setTargetStateFilter(k);
+                      setTargetPage(1);
+                    }}
+                    className={`rounded-md px-3.5 py-1.5 text-sm font-semibold transition cursor-pointer ${
+                      targetStateFilter === k ? "bg-indigo-600 text-white shadow-2xs" : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    {label}
+                  </button>
                 ))}
-              </select>
+              </div>
+
+              <div className="mx-1 h-6 w-px bg-slate-300" aria-hidden="true" />
+
+              {/* Lọc theo dạng chạy: bấm để bật/tắt, chọn nhiều dạng cùng lúc */}
+              <div className="flex items-center gap-1.5" role="group" aria-label="Lọc theo dạng chạy">
+                {PPC_RUN_TYPES.map((t) => {
+                  const on = targetRunTypes.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => {
+                        setTargetRunTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
+                        setTargetPage(1);
+                      }}
+                      className={`py-2 px-3.5 rounded-lg border text-sm font-semibold transition cursor-pointer whitespace-nowrap ${
+                        on
+                          ? "border-indigo-600 bg-indigo-600 text-white"
+                          : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white"
+                      }`}
+                      title={`Chỉ hiện target thuộc camp ${PPC_RUN_TYPE_LABEL[t]}`}
+                    >
+                      {PPC_RUN_TYPE_LABEL[t]}
+                    </button>
+                  );
+                })}
+              </div>
 
               {/* Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR */}
               <PpcMetricRangeFilter
@@ -4671,11 +4701,13 @@ export function PpcDashboard({
               />
 
               {/* Reset Filters */}
-              {(targetQuery || selectedCampaignForDrilldown) && (
+              {(targetQuery || selectedCampaignForDrilldown || targetRunTypes.length > 0 || targetStateFilter !== "ALL") && (
                 <button
                   type="button"
                   onClick={() => {
                     setTargetQuery("");
+                    setTargetRunTypes([]);
+                    setTargetStateFilter("ALL");
                     setSelectedCampaignForDrilldown(null);
                     setSelectedCampaignIdForDrilldown(null);
                     setSelectedAdGroupForDrilldown(null);
@@ -4691,6 +4723,19 @@ export function PpcDashboard({
               <div className="ml-auto flex items-center gap-2">
                 {targetFrozen.columnPicker}
                 {selectedStore !== "ALL" && (
+                  <PpcTargetActionPanel
+                    selectedRows={Array.from(selectedTargetRows.values())}
+                    storeName={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.name || selectedStore}
+                    storeId={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id}
+                    notify={notify}
+                    onQueued={() => {
+                      clearSelectedTargets();
+                      void loadActionQueue(selectedStore);
+                      void loadActionQueueCount(selectedStore);
+                    }}
+                  />
+                )}
+                {selectedStore !== "ALL" && (
                   <PpcSearchTermLaunchPanel
                     selectedRows={[...groupLaunchRows(targetGroupSelection.selected), ...selectedTargetLaunchRows]}
                     storeName={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.name || selectedStore}
@@ -4703,14 +4748,6 @@ export function PpcDashboard({
                     onLaunched={() => { clearSelectedTargets(); targetGroupSelection.clear(); }}
                   />
                 )}
-              </div>
-              {/* Results count indicator */}
-              <div className="text-xs text-slate-500 font-medium">
-                Khớp <span className="font-extrabold text-slate-900">{serverTargetTotal.toLocaleString("vi-VN")}</span>
-                {detailCounts?.targets && (targetQuery || selectedCampaignForDrilldown)
-                  ? ` / ${detailCounts.targets.toLocaleString("vi-VN")}`
-                  : ""}{" "}
-                mục
               </div>
             </div>
           </div>
@@ -5022,13 +5059,17 @@ export function PpcDashboard({
 
                       return (
                         <Fragment key={targetKey}>
-                          <tr className={`group transition ${isSelected ? "bg-indigo-50/70" : isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
+                          <tr
+                            className={`group transition cursor-pointer select-none ${isSelected ? "bg-indigo-100/80" : isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}
+                            {...targetDrag.rowProps(targetIdx, targetKey)}
+                          >
                             <td className="px-3 py-2.5 text-center">
                               <input
                                 type="checkbox"
-                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                className="pointer-events-none rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                                 checked={isSelected}
-                                onChange={(e) => toggleTargetSelect(target, targetIdx, (e.nativeEvent as MouseEvent).shiftKey)}
+                                readOnly
+                                tabIndex={-1}
                               />
                             </td>
                             <td className="px-3 py-2.5 font-bold text-slate-900 min-w-[180px] col-primary">

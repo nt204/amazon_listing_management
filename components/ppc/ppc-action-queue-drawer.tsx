@@ -10,6 +10,7 @@ import {
   WarningCircle,
   ArrowUpRight,
   Pause,
+  Play,
   CheckSquare,
   Square,
   FileXls,
@@ -1780,6 +1781,10 @@ export function PpcActionQueueDrawer({
                                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                                                   <Pause size={11} weight="bold" /> Pause
                                                 </span>
+                                              ) : act.actionType === "ENABLE_TARGET" ? (
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                                  <Play size={11} weight="bold" /> Bật lại
+                                                </span>
                                               ) : (
                                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                                                   <ArrowUpRight size={11} weight="bold" /> Đổi Bid
@@ -1792,7 +1797,7 @@ export function PpcActionQueueDrawer({
                                             </td>
 
                                             <td className="py-1.5 px-2 text-right whitespace-nowrap">
-                                              {act.actionType === "PAUSE_TARGET" ? (
+                                              {act.actionType === "PAUSE_TARGET" || act.actionType === "ENABLE_TARGET" ? (
                                                 <span className="font-mono text-slate-400 text-xs">—</span>
                                               ) : (
                                                 <InlineBidInput

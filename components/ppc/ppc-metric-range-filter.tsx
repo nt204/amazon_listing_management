@@ -35,20 +35,20 @@ export function PpcMetricRangeFilter({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer shadow-2xs ${
+        className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg border text-sm font-semibold transition cursor-pointer shadow-2xs ${
           open || activeCount > 0
-            ? "border-slate-800 bg-white text-slate-900"
-            : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+            ? "border-indigo-600 bg-indigo-600 text-white"
+            : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white"
         }`}
       >
         Lọc
         {activeCount > 0 && (
-          <span className="rounded-full bg-slate-800 px-1.5 text-[10.5px] font-bold text-white">{activeCount}</span>
+          <span className="rounded-full bg-white px-1.5 text-[11px] font-bold text-indigo-700">{activeCount}</span>
         )}
-        <span className="text-[9px] text-slate-400">▼</span>
+        <span className={`text-[9px] ${open || activeCount > 0 ? "text-indigo-200" : "text-slate-400"}`}>▼</span>
       </button>
       {open && (
-        <div className="absolute left-0 top-9 z-40 w-80 space-y-1.5 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+        <div className="absolute left-0 top-11 z-40 w-80 space-y-1.5 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
           <div className="grid grid-cols-[1fr_76px_10px_76px] items-center gap-1 text-[10.5px] font-semibold text-slate-400">
             <span />
             <span className="text-center">từ</span>

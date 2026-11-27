@@ -160,11 +160,18 @@ export function usePpcFrozenColumns(
     let mutationObserver: MutationObserver | null = null;
     const observeOptions: MutationObserverInit = { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] };
 
+    let settleTimer = 0;
     const run = () => {
       frame = 0;
       mutationObserver?.disconnect();
       applyFrozenColumns(table, frozenCount);
       mutationObserver?.observe(table, observeOptions);
+      // Dòng đổi class (vd. tích chọn) có transition màu nền → đo lại sau khi chuyển màu xong,
+      // không thì ô bị khóa giữ màu cũ (trắng) trong khi cả dòng đã tô.
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => {
+        for (const row of Array.from(table.rows)) applyRowBackground(row, table);
+      }, 220);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(run);
@@ -196,6 +203,7 @@ export function usePpcFrozenColumns(
 
     return () => {
       if (frame) cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimer);
       timers.forEach((t) => clearTimeout(t));
       mutationObserver?.disconnect();
       resizeObserver.disconnect();

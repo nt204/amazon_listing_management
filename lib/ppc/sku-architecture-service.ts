@@ -2063,6 +2063,8 @@ export async function approveRecommendationsToActionQueue(
     approvedBy?: string;
     decisionSource?: "RULE_ENGINE" | "USER_EDIT" | "AI_AGENT";
     aiReview?: unknown;
+    /** Bật lại target đang tạm dừng (tab Target). Bỏ trống: suy từ recType như cũ. */
+    actionType?: "ENABLE_TARGET";
   }>,
   defaultApprovedBy = "User",
 ): Promise<{ addedCount: number; supersededCount: number }> {
@@ -2098,7 +2100,9 @@ export async function approveRecommendationsToActionQueue(
       const sku = (rec.sku || "").toUpperCase();
       const campaignId = rec.campaignId || "";
       const targetId = rec.keywordId || "";
-      const actionType: ActionType = rec.recType === "PAUSE_TARGET" ? "PAUSE_TARGET" : "UPDATE_BID";
+      const actionType: ActionType = item.actionType === "ENABLE_TARGET"
+        ? "ENABLE_TARGET"
+        : rec.recType === "PAUSE_TARGET" ? "PAUSE_TARGET" : "UPDATE_BID";
       const finalValue = item.userFinalBid ?? rec.recommendedBid ?? rec.currentBid ?? 0;
       const targetStoreId = (isUuid(rec.storeId) && rec.storeId !== "ALL")
         ? rec.storeId

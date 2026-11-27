@@ -12,6 +12,7 @@ import { campaignStatusCacheSuffix, getActiveCampaignNames, parseCampaignStatus,
 import { decodeMetricRanges, encodeMetricRanges } from "@/lib/ppc/manual-bid";
 import { metricRangeSql, plainMetricColumns } from "@/lib/ppc/metric-range-sql";
 import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
+import { parseRunTypes, runTypeSql } from "@/lib/ppc/run-type";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
@@ -30,6 +31,11 @@ export async function GET(request: Request) {
     const campaignId = searchParams.get("campaignId")?.trim() || "";
     const campaignName = searchParams.get("campaignName")?.trim() || "";
     const adGroupName = searchParams.get("adGroupName")?.trim() || "";
+    // Lọc theo dạng chạy (SP03, SP04, SB01, SB05, SD, FL Asin) — nhận theo tên campaign
+    const runTypes = parseRunTypes(searchParams.get("runTypes"));
+    // Trạng thái target: ACTIVE (enabled; trống coi như enabled như khi trả về) / PAUSED; khác → tất cả
+    const targetStateRaw = (searchParams.get("targetState") || "").toUpperCase();
+    const targetState = targetStateRaw === "ACTIVE" || targetStateRaw === "PAUSED" ? targetStateRaw : "";
     const sortBy = searchParams.get("sortBy") || "spend";
     const sortDir = (searchParams.get("sortDir") || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     // Nút "Lọc": khoảng Spend / Sales / ACOS / Click / Order / CPC / CVR của từng target
@@ -44,7 +50,7 @@ export async function GET(request: Request) {
     // Khoá có snapshot đang dùng (chỉ đổi khi nạp báo cáo mới) → giữ 30 phút thay vì 60 s: mở lại / lật trang cùng bộ
     // lọc không phải đọc lại ~1,1 triệu dòng TARGET (1–5 s production).
     const snapshotId = await getActiveSnapshotId(scope, storeName, days).catch(() => "no-snap");
-    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${snapshotId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}:${encodeMetricRanges(ranges)}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
+    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${snapshotId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${runTypes.join("+")}:${targetState}:${sortBy}:${sortDir}:${encodeMetricRanges(ranges)}${channelCacheSuffix(channelScope)}${campaignStatusCacheSuffix(campaignStatus)}`;
     const result = await getCachedOrFetch(cacheKey, 1800, async () => {
       // 1. Resolve Store ID if storeName is specified
       let storeId: string | null = null;
@@ -142,9 +148,15 @@ export async function GET(request: Request) {
         )`
       : sql``;
 
-    const campaignFilter = campaignId
+    const campaignOnlyFilter = campaignId
       ? sql`AND p.campaign_id = ${campaignId}`
       : (campaignName ? sql`AND lower(p.campaign_name) = lower(${campaignName})` : sql``);
+    const targetStateFilter = targetState === "PAUSED"
+      ? sql`AND lower(COALESCE(p.state, '')) LIKE 'pause%'`
+      : targetState === "ACTIVE"
+      ? sql`AND lower(COALESCE(p.state, '')) NOT LIKE 'pause%' AND lower(COALESCE(p.state, '')) NOT LIKE 'archiv%'`
+      : sql``;
+    const campaignFilter = sql`${campaignOnlyFilter} ${runTypeSql(sql, runTypes, { campaignCol: "p.campaign_name", adTypeCol: "p.ad_type" })} ${targetStateFilter}`;
     const adGroupFilter = adGroupName ? sql`AND lower(p.ad_group_name) = lower(${adGroupName})` : sql``;
     const skuFilter = sku !== "ALL" ? sql`AND lower(p.sku) = lower(${sku})` : sql``;
     const targetStoreId = snaps[0]?.store_id || null;
