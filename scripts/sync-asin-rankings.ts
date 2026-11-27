@@ -38,28 +38,59 @@ async function main() {
 
   const sql = await getDatabaseClient();
 
-  // 1. Thu thập ASIN từ PPC Performance Facts (30 ngày gần nhất) kèm tổng Spend
-  const ppcAsinRows = await sql<
+  // 1. Lấy snapshot 30D active của từng store mục tiêu
+  const activeSnaps = await sql<
     Array<{
+      store_id: string;
       store_name: string;
-      asin: string;
-      sku: string;
-      spend: number;
+      report_start_date: string;
+      report_end_date: string;
     }>
   >`
-    SELECT 
-      s.name AS store_name, 
-      upper(trim(f.asin)) AS asin, 
-      MAX(f.sku) AS sku, 
-      COALESCE(SUM(f.spend), 0)::numeric AS spend
-    FROM ppc_performance_facts f
-    JOIN ppc_stores s ON s.id = f.store_id
-    JOIN ppc_active_snapshots a ON a.store_id = f.store_id AND a.coverage_days = 30 AND a.report_end_date = f.snapshot_date
-    WHERE s.name IN ${sql(targetStores)}
-      AND f.asin ~* '^[A-Z0-9]{10}$'
-      AND f.grain = 'PRODUCT'
-    GROUP BY s.name, upper(trim(f.asin))
+    SELECT s.id AS store_id, s.name AS store_name, a.report_start_date, a.report_end_date
+    FROM ppc_active_snapshots a
+    JOIN ppc_stores s ON s.id = a.store_id
+    WHERE a.coverage_days = 30 AND s.name IN ${sql(targetStores)}
   `;
+
+  // 2. Thu thập ASIN từ PPC Performance Facts theo từng store (dùng index ppc_performance_scope_idx cực nhanh < 100ms)
+  const ppcAsinRows: Array<{
+    store_name: string;
+    asin: string;
+    sku: string;
+    spend: number;
+  }> = [];
+
+  for (const snap of activeSnaps) {
+    const rows = await sql<
+      Array<{
+        asin: string;
+        sku: string;
+        spend: number;
+      }>
+    >`
+      SELECT 
+        f.asin, 
+        MAX(f.sku) AS sku, 
+        COALESCE(SUM(f.spend), 0)::numeric AS spend
+      FROM ppc_performance_facts f
+      WHERE f.store_id = ${snap.store_id}
+        AND f.report_start_date = ${snap.report_start_date}
+        AND f.report_end_date = ${snap.report_end_date}
+        AND f.snapshot_date = ${snap.report_end_date}
+        AND f.grain = 'PRODUCT'
+        AND f.asin ~* '^[A-Z0-9]{10}$'
+      GROUP BY f.asin
+    `;
+    for (const r of rows) {
+      ppcAsinRows.push({
+        store_name: snap.store_name,
+        asin: r.asin,
+        sku: r.sku || "",
+        spend: Number(r.spend || 0),
+      });
+    }
+  }
 
   // 2. Thu thập thêm ASIN từ accounting_sku_master nếu chưa có trong PPC
   const masterAsinRows = await sql<
