@@ -1,5 +1,6 @@
 "use client";
 
+import { PpcH10UpdatedNote } from "@/components/ppc/ppc-h10-updated-note";
 import {
   EyeIcon,
   FilePdfIcon,
@@ -1624,6 +1625,12 @@ export function ListingWorkspace({
             </div>
           ) : viewMode === "ppc" ? (
             <AccBlackGrid className="acc-grid-soft font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
+              {/* Các mục PPC không dùng header của PpcDashboard: tự gắn nhãn thời điểm Helium 10 lên trên cùng */}
+              {ppcSection === "phoi" || ppcSection === "rules" || ppcSection === "new_camp" ? (
+                <div className="mb-3 flex justify-end">
+                  <PpcH10UpdatedNote />
+                </div>
+              ) : null}
               {ppcSection === "phoi" ? (
                 <PpcCostMasterStandalone />
               ) : ppcSection === "rules" ? (

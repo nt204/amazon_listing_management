@@ -76,6 +76,7 @@ import { PpcKeywordGroupRows, PpcSummarySearchVolumeBlankCells, PpcSummaryTableH
 import { PpcSkuTrendModal, SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcSearchTermLaunchPanel } from "./ppc-search-term-launch-panel";
 import { PpcTargetActionPanel } from "./ppc-target-action-panel";
+import { PpcH10UpdatedNote } from "./ppc-h10-updated-note";
 import { useDragSelect } from "./use-drag-select";
 import type {
   PpcAlert,
@@ -3113,6 +3114,8 @@ export function PpcDashboard({
 
           {/* Cụm Phải: Chọn Kỳ thời gian (Pills) + Sync time + Thao tác + Bell + AccountMenu */}
           <div className="flex items-center gap-1.5 sm:gap-2 justify-end shrink-0 ml-auto lg:ml-0">
+            {/* Thời điểm Helium 10 mới nhất: hiện ở mọi tab PPC */}
+            <PpcH10UpdatedNote />
             {/* Chọn Kỳ Thời Gian: Segmented Pill */}
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
               {[7, 14, 30, 60].map((d) => (
@@ -5060,10 +5063,14 @@ export function PpcDashboard({
                       return (
                         <Fragment key={targetKey}>
                           <tr
-                            className={`group transition cursor-pointer select-none ${isSelected ? "bg-indigo-100/80" : isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}
-                            {...targetDrag.rowProps(targetIdx, targetKey)}
+                            className={`group transition ${isSelected ? "bg-indigo-100/80" : isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}
+                            onMouseEnter={targetDrag.rowProps(targetIdx, targetKey).onMouseEnter}
                           >
-                            <td className="px-3 py-2.5 text-center">
+                            {/* Chọn dòng: bấm / kéo tô / Shift ở ô checkbox (như Manual Bid). Phần còn lại của dòng vẫn bôi đen chữ để copy. */}
+                            <td
+                              className="px-3 py-2.5 text-center cursor-pointer select-none"
+                              onMouseDown={targetDrag.rowProps(targetIdx, targetKey).onMouseDown}
+                            >
                               <input
                                 type="checkbox"
                                 className="pointer-events-none rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
