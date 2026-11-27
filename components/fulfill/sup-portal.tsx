@@ -291,9 +291,24 @@ function cellValue(line: FulfillLotLine, column: LotColumn) {
   return String(value);
 }
 
+const GROUP_LABEL: Record<LotColumn["group"], string> = { order: "Order", ship: "Packing & shipping", amazon: "Amazon" };
+const GROUP_BAND: Record<LotColumn["group"], string> = {
+  order: "bg-[#e8edf7]! text-(--ff-head-text)",
+  ship: "bg-[#ffd9a3]! text-[#7a3e00]",
+  amazon: "bg-[#fff0b3]! text-[#6b5200]",
+};
+// Cột luôn hiện dù trống (để xưởng đối chiếu)
+const ALWAYS_SHOWN = new Set<LotColumn["key"]>(["sku", "quantity", "real_total"]);
+
+function hasValue(line: FulfillLotLine, c: LotColumn) {
+  const v = c.kind === "image" ? line.mockup : line[c.key];
+  return v !== null && v !== undefined && v !== "";
+}
+
 function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) {
   const [data, setData] = useState<{ lot: FulfillLot; lines: FulfillLotLine[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const query = lotQuery(lot);
 
   useEffect(() => {
@@ -310,10 +325,27 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
     return () => controller.abort();
   }, [query]);
 
-  const lines = data?.lines ?? [];
+  const lines = useMemo(() => data?.lines ?? [], [data]);
+  const info = data?.lot ?? lot;
   const active = lines.filter((l) => l.stage !== "cancelled");
   const totalQty = active.reduce((a, l) => a + l.quantity, 0);
   const totalAmount = active.reduce((a, l) => a + l.real_total, 0);
+
+  const columns = useMemo(
+    () => (showAll || !lines.length ? LOT_COLUMNS : LOT_COLUMNS.filter((c) => ALWAYS_SHOWN.has(c.key) || lines.some((l) => hasValue(l, c)))),
+    [lines, showAll],
+  );
+  const hiddenCount = LOT_COLUMNS.length - columns.length;
+  const bands = useMemo(() => {
+    const out: Array<{ group: LotColumn["group"]; span: number }> = [];
+    for (const c of columns) {
+      const last = out[out.length - 1];
+      if (last && last.group === c.group) last.span += 1;
+      else out.push({ group: c.group, span: 1 });
+    }
+    return out;
+  }, [columns]);
+  const cellBorder = "border-r border-(--ff-line) last:border-r-0";
 
   return (
     <div className="space-y-4">
@@ -325,42 +357,91 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
         </div>
       </div>
 
-      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-        <h1 className="text-xl font-semibold">{lot.lot_name}</h1>
-        <span className="text-sm text-(--ff-text-2)">
-          {lot.store_name} · {fmtInt(lot.sku_count)} SKU · {fmtInt(lot.quantity)} pcs · <strong>{fmtMoney(lot.amount)}</strong>
-        </span>
-      </div>
+      <section className={`${ui.card} px-5 py-4`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-bold">{info.lot_name}</h1>
+          <LotStageLabel stage={info.stage} />
+        </div>
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+          <div>
+            <dt className="text-xs text-(--ff-muted)">Name</dt>
+            <dd className="mt-0.5 font-semibold">{info.store_name}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-(--ff-muted)">Date request</dt>
+            <dd className="mt-0.5 font-semibold">
+              {fmtDay(info.first_request)}
+              {info.last_request && info.last_request !== info.first_request ? ` – ${fmtDay(info.last_request)}` : ""}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-(--ff-muted)">SKU</dt>
+            <dd className="mt-0.5 font-semibold tabular-nums">{fmtInt(info.sku_count)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-(--ff-muted)">Quantity</dt>
+            <dd className="mt-0.5 font-semibold tabular-nums">{fmtInt(data ? totalQty : info.quantity)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-(--ff-muted)">Real total</dt>
+            <dd className="mt-0.5 text-lg leading-6 font-bold text-(--ff-accent) tabular-nums">{fmtMoney(data ? totalAmount : info.amount)}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-(--ff-muted)">Shipment</dt>
+            <dd className="mt-0.5 truncate font-mono text-xs font-semibold" title={info.shipment_ids.join(", ")}>
+              {info.shipment_ids.length ? info.shipment_ids.join(", ") : "—"}
+            </dd>
+          </div>
+        </dl>
+      </section>
 
       <section className={`${ui.card} overflow-hidden`}>
-        <div className="overflow-x-auto">
+        {data && lines.length > 0 && hiddenCount > 0 && !showAll && (
+          <div className="flex items-center justify-between gap-3 border-b border-(--ff-line) px-4 py-2 text-xs text-(--ff-muted) print:hidden">
+            <span>{hiddenCount} empty columns hidden</span>
+            <button type="button" className={ui.link} onClick={() => setShowAll(true)}>Show all columns</button>
+          </div>
+        )}
+        {showAll && (
+          <div className="flex items-center justify-end border-b border-(--ff-line) px-4 py-2 text-xs print:hidden">
+            <button type="button" className={ui.link} onClick={() => setShowAll(false)}>Hide empty columns</button>
+          </div>
+        )}
+        <div className="max-h-[70dvh] overflow-auto print:max-h-none print:overflow-visible">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap print:text-[9px]">
-            <thead className={ui.tableHead}>
-              <tr className="border-b border-(--ff-line)">
-                <th className={`${ui.th} pl-4 text-right`}>#</th>
-                {LOT_COLUMNS.map((c) => (
-                  <th
-                    key={c.key}
-                    className={`${ui.th} ${c.kind === "money" || c.kind === "int" ? "text-right" : ""}`}
-                  >
+            <thead className={`sticky top-0 z-10 ${ui.tableHead}`}>
+              <tr>
+                <th rowSpan={2} className={`${ui.th} ${cellBorder} pl-4 text-right align-bottom`}>#</th>
+                {bands.map((b, i) => (
+                  <th key={i} colSpan={b.span} className={`px-3 py-1 text-xs font-semibold ${GROUP_BAND[b.group]}`}>
+                    {GROUP_LABEL[b.group]}
+                  </th>
+                ))}
+              </tr>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c.key} className={`${ui.th} border-r border-white/15 last:border-r-0 ${c.kind === "money" || c.kind === "int" ? "text-right" : ""}`}>
                     {c.header}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-(--ff-line)">
+            <tbody>
               {error ? (
-                <tr><td colSpan={LOT_COLUMNS.length + 1} className="py-12 text-center text-(--ff-neg)">{error}</td></tr>
+                <tr><td colSpan={columns.length + 1} className="py-12 text-center text-(--ff-neg)">{error}</td></tr>
               ) : !data ? (
-                <tr><td colSpan={LOT_COLUMNS.length + 1} className="py-12 text-center text-(--ff-muted)">Loading…</td></tr>
+                <tr><td colSpan={columns.length + 1} className="py-12 text-center text-(--ff-muted)">Loading…</td></tr>
               ) : (
                 lines.map((line, index) => (
-                  <tr key={line.id} className={`hover:bg-neutral-50 ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}>
-                    <td className="py-2 pr-2 pl-4 text-right text-xs text-(--ff-muted)">{index + 1}</td>
-                    {LOT_COLUMNS.map((c) => (
+                  <tr
+                    key={line.id}
+                    className={`border-b border-(--ff-line) even:bg-[#f7f9fd] hover:bg-(--ff-raised) ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}
+                  >
+                    <td className={`${cellBorder} py-2 pr-2 pl-4 text-right text-xs text-(--ff-muted)`}>{index + 1}</td>
+                    {columns.map((c) => (
                       <td
                         key={c.key}
-                        className={`px-3 py-2 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${c.key === "sku" ? "font-mono text-xs" : ""} ${c.key === "note" ? "max-w-64 truncate" : ""}`}
+                        className={`${cellBorder} px-3 py-2 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${c.key === "sku" ? "font-mono text-xs font-semibold" : ""} ${c.key === "real_total" ? "font-semibold" : ""} ${c.key === "note" ? "max-w-64 truncate" : ""}`}
                         title={c.key === "note" && line.note ? line.note : undefined}
                       >
                         {cellValue(line, c)}
@@ -371,10 +452,10 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
               )}
             </tbody>
             {data && lines.length > 0 && (
-              <tfoot>
-                <tr className={`border-t border-(--ff-line-strong) ${ui.tableTotal}`}>
-                  <th colSpan={2} scope="row" className="px-4 text-left">Total</th>
-                  {LOT_COLUMNS.slice(1).map((c) => (
+              <tfoot className="sticky bottom-0">
+                <tr className={`border-t-2 border-(--ff-line-strong) ${ui.tableTotal}`}>
+                  <th scope="row" className="px-4 py-3 text-left">Total</th>
+                  {columns.map((c) => (
                     <td key={c.key} className={`px-3 py-3 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""}`}>
                       {c.key === "quantity" ? fmtInt(totalQty) : c.key === "real_total" ? fmtMoney(totalAmount) : ""}
                     </td>
