@@ -50,7 +50,8 @@ export async function POST(req: Request) {
     const targetListName = (isMove ? action.data.listAfter.name : (action.data?.list?.name || "")) || "";
     const cardId = action.data?.card?.id;
 
-    if (!cardId) {
+    // Webhook chưa xác thực chữ ký Trello: chỉ tin cardId (đúng định dạng), mọi thông tin khác kiểm tra lại từ Trello API.
+    if (!cardId || !/^[0-9a-f]{24}$/i.test(String(cardId))) {
       return NextResponse.json({ ok: true, ignored: true });
     }
 
@@ -86,14 +87,32 @@ export async function POST(req: Request) {
 
     // Tải thông tin chi tiết đầy đủ của thẻ từ Trello API (kèm labels, attachments, desc)
     const { apiKey, token } = getTrelloServerCredentials();
-    const cardUrl = `https://api.trello.com/1/cards/${cardId}?attachments=true&fields=id,name,desc,dateLastActivity,labels&key=${apiKey}&token=${token}`;
+    const cardUrl = `https://api.trello.com/1/cards/${cardId}?attachments=true&fields=id,name,desc,dateLastActivity,labels,idList,idBoard&list=true&list_fields=id,name&board=true&board_fields=id,shortLink&key=${apiKey}&token=${token}`;
     const cardRes = await fetch(cardUrl, { cache: "no-store" });
     if (!cardRes.ok) {
       console.error(`[Trello Webhook] Không lấy được chi tiết thẻ ${cardId}: ${cardRes.status}`);
       return NextResponse.json({ ok: false, error: "Failed to fetch card details" }, { status: 500 });
     }
 
-    const cardDetail = (await cardRes.json()) as TrelloCardDetail;
+    const cardDetail = (await cardRes.json()) as TrelloCardDetail & {
+      idList?: string;
+      idBoard?: string;
+      list?: { id: string; name: string };
+      board?: { id: string; shortLink?: string };
+    };
+
+    // Kiểm tra lại bằng dữ liệu thật của Trello (không tin board / cột trong payload)
+    const realListName = (cardDetail.list?.name || "").toLowerCase();
+    const realListId = cardDetail.list?.id || cardDetail.idList || "";
+    const realBoardIds = [cardDetail.board?.id, cardDetail.board?.shortLink, cardDetail.idBoard].filter(Boolean);
+    const boardMatches = config ? realBoardIds.includes(config.board_id) : true;
+    const listMatches = config
+      ? (config.target_list_id ? config.target_list_id === realListId : realListName.includes(config.target_list_name.toLowerCase()))
+      : realListName.includes("đi hàng fba") || realListName.includes("di hang fba");
+    if (!boardMatches || !listMatches) {
+      console.warn(`[Trello Webhook] Bỏ qua thẻ ${cardId}: board / cột thật không khớp payload.`);
+      return NextResponse.json({ ok: true, ignored: true, reason: "Card is not in the target list" });
+    }
 
     // Lấy danh sách Store và Product Type chuẩn từ DB
     const stores = await sql<Array<{ id: string; name: string }>>`SELECT id, name FROM stores ORDER BY name;`;

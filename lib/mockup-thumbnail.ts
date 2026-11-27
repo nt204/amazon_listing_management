@@ -35,6 +35,49 @@ function imageResponse(body: Buffer, mime: string, cacheStatus: string) {
   });
 }
 
+// Chỉ tải ảnh từ các nguồn mockup đã biết (chặn dùng proxy để gọi URL tuỳ ý / mạng nội bộ của máy chủ — SSRF).
+const ALLOWED_IMAGE_HOSTS = [
+  "media-amazon.com",
+  "images-amazon.com",
+  "ssl-images-amazon.com",
+  "drive.google.com",
+  "googleusercontent.com",
+  "ncehub.net",
+  "r2.dev",
+  "r2.cloudflarestorage.com",
+  "dropboxusercontent.com",
+];
+
+export function isAllowedImageUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || (url.port && url.port !== "443") || url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  return ALLOWED_IMAGE_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+
+/** fetch có kiểm tra tên miền ở mọi lần chuyển hướng (tối đa 3). */
+async function fetchAllowedImage(startUrl: string): Promise<Response> {
+  let current = startUrl;
+  for (let hop = 0; hop < 4; hop++) {
+    if (!isAllowedImageUrl(current)) throw new UpstreamError("Image source is not allowed", 400);
+    const res = await fetch(current, {
+      redirect: "manual",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (!location) return res;
+    current = new URL(location, current).toString();
+  }
+  throw new UpstreamError("Too many redirects", 400);
+}
+
 export function thumbnailWidth(widthParam: string | null) {
   const parsed = widthParam ? parseInt(widthParam, 10) : NaN;
   return Number.isFinite(parsed) ? Math.min(1000, Math.max(24, parsed)) : 64;
@@ -91,11 +134,7 @@ async function buildThumbnail(
         fetchUrl = `https://drive.google.com/thumbnail?id=${driveId}&sz=w${targetWidth * 2}`;
       }
 
-      const upstreamRes = await fetch(fetchUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
-      });
+      const upstreamRes = await fetchAllowedImage(fetchUrl);
 
       if (!upstreamRes.ok) {
         throw new UpstreamError(`Upstream failed: ${upstreamRes.status}`, upstreamRes.status);
