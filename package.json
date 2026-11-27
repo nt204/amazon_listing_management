@@ -26,6 +26,7 @@
     "accounting:import-worker": "node --max-old-space-size=4096 --conditions=react-server --env-file-if-exists=.env --import tsx scripts/accounting-import-worker.ts",
     "ppc:sync-search-volume": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/sync-search-volume.ts",
     "ppc:sync-fba-rankings": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/sync-fba-rankings.ts",
+    "ppc:sync-asin-rankings": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/sync-asin-rankings.ts",
     "ppc:sync-magnet": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/sync-magnet.ts",
     "ppc:outcome-worker": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-outcome-worker.ts",
     "ppc:outcome-worker:watch": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-outcome-worker.ts --watch",
