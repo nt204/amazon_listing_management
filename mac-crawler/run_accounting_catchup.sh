@@ -83,9 +83,12 @@ for name in stores:
     )
     row = cur.fetchone()
     orders, ads = (row or (0, 0))
-    if not orders or not ads:
+    # File 02 đã được tải về (dù 0 đơn do Amazon không có phát sinh đơn)
+    file02 = f"/Users/ad/AmazonAccounting/downloads/{os.environ['RUN_DATE']}/{name}/02_AllOrders_{os.environ['RUN_DATE']}.tsv"
+    has_order_file = os.path.exists(file02) and os.path.getsize(file02) > 0
+    if (not orders and not has_order_file) or not ads:
         missing.append(name)
-        print(f"[Catch-up] {name}: đơn {orders}, Ads {ads} → chạy bù", file=sys.stderr)
+        print(f"[Catch-up] {name}: đơn {orders} (có file={has_order_file}), Ads {ads} → chạy bù", file=sys.stderr)
 conn.close()
 print("\n".join(missing))
 PY

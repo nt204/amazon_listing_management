@@ -342,16 +342,20 @@ export async function checkStoresCompletenessForDate(targetDate: string): Promis
       continue;
     }
 
-    const [counts] = await sql<Array<{ order_count: number; ad_count: number }>>`
+    const [counts] = await sql<Array<{ order_count: number; ad_count: number; other_count: number }>>`
       SELECT 
         (SELECT COUNT(*)::int FROM accounting_orders WHERE store_id = ${store.id} AND date = ${targetDate}::date) AS order_count,
-        (SELECT COUNT(*)::int FROM accounting_ads WHERE store_id = ${store.id} AND date = ${targetDate}::date) AS ad_count
+        (SELECT COUNT(*)::int FROM accounting_ads WHERE store_id = ${store.id} AND date = ${targetDate}::date) AS ad_count,
+        ((SELECT COUNT(*)::int FROM accounting_returns WHERE store_id = ${store.id} AND date = ${targetDate}::date) +
+         (SELECT COUNT(*)::int FROM accounting_service_fees WHERE store_id = ${store.id} AND date = ${targetDate}::date)) AS other_count
     `;
 
     const hasOrders = (counts?.order_count ?? 0) > 0;
     const hasAds = (counts?.ad_count ?? 0) > 0;
+    const hasOtherData = (counts?.other_count ?? 0) > 0;
 
-    if (hasOrders && hasAds) {
+    // Đã có đơn hàng, hoặc nếu không có đơn nào (file đọc xong có 0 đơn) thì đã nạp Ads / chi phí khác
+    if (hasOrders || hasAds || hasOtherData) {
       completedStores.push(storeName);
     } else {
       missingStores.push(storeName);
