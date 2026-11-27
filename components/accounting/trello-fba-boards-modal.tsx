@@ -230,12 +230,7 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-500/20">
               <KanbanIcon className="h-5 w-5" weight="bold" />
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">Quản lý Bảng Trello FBA (Đa Team)</h2>
-              <p className="text-xs text-slate-500">
-                Tự động bắt sự kiện khi kéo thẻ sang cột &quot;ĐI HÀNG FBA&quot; và nạp phôi vào Bảng Mã theo thời gian thực (Webhook).
-              </p>
-            </div>
+            <h2 className="text-lg font-bold text-slate-900">Quản lý bảng Trello FBA</h2>
           </div>
           <button
             onClick={onClose}
@@ -280,7 +275,7 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Các Bảng Đang Kết Nối ({boards.length})
+                Bảng đã kết nối ({boards.length})
               </span>
               <button
                 onClick={fetchBoards}
@@ -297,10 +292,7 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
             ) : boards.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
                 <KanbanIcon className="mx-auto h-8 w-8 text-slate-300 mb-2" />
-                <p className="text-sm font-medium text-slate-600">Chưa có bảng Trello nào được kết nối</p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Nhập link hoặc ID bảng Trello bên dưới để bắt đầu theo dõi tự động.
-                </p>
+                <p className="text-sm font-medium text-slate-600">Chưa kết nối bảng Trello</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -384,7 +376,6 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
                             onClick={() => handleRetryWebhook(b)}
                             disabled={isActionLoading}
                             className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition"
-                            title="Thử đăng ký lại Webhook với Trello"
                           >
                             Kích hoạt Webhook
                           </button>
@@ -432,20 +423,19 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
           <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
               <PlusIcon className="h-3.5 w-3.5 text-blue-600" weight="bold" />
-              Thêm Bảng Trello Mới (Team 1, Team 2, Tri Test...)
+              Thêm bảng Trello
             </h3>
 
             <form onSubmit={handleAddBoard} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
                 <div className="sm:col-span-6">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Link Trello Board hoặc Board ID <span className="text-red-500">*</span>
+                    Link hoặc ID bảng <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
                     value={newUrlOrId}
                     onChange={(e) => setNewUrlOrId(e.target.value)}
-                    placeholder="https://trello.com/b/hcmdsBOh/tri-test hoặc hcmdsBOh"
                     required
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
@@ -453,14 +443,14 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
 
                 <div className="sm:col-span-3">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Store Mặc Định (Tùy chọn)
+                    Store mặc định
                   </label>
                   <select
                     value={newDefaultStoreId}
                     onChange={(e) => setNewDefaultStoreId(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    <option value="">-- Tự nhận qua nhãn --</option>
+                    <option value="">Tự nhận qua nhãn</option>
                     {stores.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
@@ -470,7 +460,7 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
                 </div>
 
                 <div className="sm:col-span-3">
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Tên Cột Theo Dõi</label>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Cột theo dõi</label>
                   <input
                     type="text"
                     value={newTargetListName}
@@ -488,41 +478,10 @@ export function TrelloFbaBoardsModal({ isOpen, onClose, onSuccess }: TrelloFbaBo
                   className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700 transition disabled:opacity-50"
                 >
                   <LightningIcon className="h-4 w-4" weight="fill" />
-                  {isSubmitting ? "Đang kết nối..." : "Kết Nối Board & Kích Hoạt Webhook"}
+                  {isSubmitting ? "Đang kết nối..." : "Kết nối bảng"}
                 </button>
               </div>
             </form>
-          </div>
-
-          {/* Hướng dẫn quy tắc Trello */}
-          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-xs text-blue-900 space-y-1.5">
-            <p className="font-bold text-blue-950 flex items-center gap-1.5">
-              <LightningIcon className="h-4 w-4 text-blue-600" weight="fill" />
-              Quy tắc tự động bóc tách thông tin phôi từ thẻ Trello:
-            </p>
-            <ul className="list-disc list-inside space-y-1 text-slate-600 pl-1">
-              <li>
-                <strong>Tiêu đề thẻ:</strong> Mã SKU đứng đầu (trước dấu gạch dưới <code>_</code>), ví dụ:{" "}
-                <code>SPC086945_Slate Plate Circle</code>.
-              </li>
-              <li>
-                <strong>Nhãn Store, Product Type, Ngách:</strong> Hệ thống so khớp tự động không phân biệt hoa/thường,
-                không quan trọng màu sắc hay thứ tự gắn nhãn. Nếu không có nhãn Product Type, hệ thống sẽ lấy tên phôi
-                trong tiêu đề thẻ.
-              </li>
-              <li>
-                <strong>Mô tả thẻ (Description):</strong> Tự động đọc các dòng <code>PIC MKT: &lt;tên&gt;</code>,{" "}
-                <code>PIC Idea: &lt;tên&gt;</code>, <code>Status: &lt;trạng thái&gt;</code>,{" "}
-                <code>Event: &lt;mùa vụ&gt;</code>, và link Google Drive.
-              </li>
-              <li>
-                <strong>Tháng listing:</strong> Tự động lấy theo tháng của ngày kéo thẻ vào cột &quot;ĐI HÀNG FBA&quot;.
-              </li>
-              <li>
-                <strong>Ảnh Mockup:</strong> Ưu tiên lấy file đính kèm có tên chứa <code>mk.jpg</code> / <code>mk.png</code>{" "}
-                hoặc ảnh đính kèm đầu tiên trên thẻ.
-              </li>
-            </ul>
           </div>
         </div>
 

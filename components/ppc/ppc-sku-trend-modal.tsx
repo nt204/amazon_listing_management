@@ -563,13 +563,13 @@ function SkuTargetBreakdown({
                           </div>
                         </div>
                       </td>
-                      <td className="py-2 px-2 text-[11px] text-slate-500 break-all max-w-[320px]">{t.campaignName}</td>
+                      <td className="py-2 px-2 text-[11px] text-slate-500 max-w-[240px] truncate whitespace-nowrap" title={t.campaignName}>{t.campaignName}</td>
                       <td className="py-2 px-2 text-right font-mono text-slate-500">{t.impressions.toLocaleString("en-US")}</td>
                       <td className="py-2 px-2 text-right font-mono">{t.clicks}</td>
                       <td className="py-2 px-2 text-right font-mono font-semibold text-slate-900">${t.spend.toFixed(2)}</td>
                       <td className={`py-2 px-2 text-right font-mono ${t.orders ? "font-bold text-emerald-700" : "text-slate-300"}`}>{t.orders}</td>
                       <td className={`py-2 px-2 text-right font-mono ${t.sales ? "text-slate-900" : "text-slate-300"}`}>${t.sales.toFixed(2)}</td>
-                      <td className={`py-2 pl-2 pr-3 text-right font-mono font-semibold ${acosClass(t.spend, t.sales)}`}>{acosText(t.spend, t.sales)}</td>
+                      <td className={`py-2 pl-2 pr-3 text-right font-mono font-semibold whitespace-nowrap ${acosClass(t.spend, t.sales)}`}>{acosText(t.spend, t.sales)}</td>
                     </tr>
                     {isOpen && t.terms.map((st) => (
                       <tr key={`${t.key}|${st.searchTerm}`} className="bg-slate-50/60 text-slate-500">

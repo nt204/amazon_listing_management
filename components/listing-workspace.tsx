@@ -111,6 +111,10 @@ const KanbanBoard = dynamic(
   () => import("@/components/kanban/kanban-board").then((module) => module.KanbanBoard),
   { loading: ViewLoading },
 );
+const FulfillView = dynamic(
+  () => import("@/components/fulfill/fulfill-view").then((module) => module.FulfillView),
+  { loading: ViewLoading },
+);
 
 interface SystemGuideItem {
   id: string;
@@ -134,7 +138,7 @@ const ACCOUNTING_ADMIN_SECTIONS = new Set<string>([
   "admin", "files", "stores", "orders", "import", "reports", "pnl", "settlements", "access",
 ]);
 
-type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
+type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban" | "fulfill";
 type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "new_camp" | "auto_bid" | "manual_bid" | "phoi" | "rules";
 type PpcDashboardTab = "overview" | "portfolios" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
 type AccountingSection =
@@ -983,6 +987,34 @@ function WorkspaceSidebar({
             </div>
           )}
 
+          {/* Fulfill (Đặt sản xuất FBA gửi xưởng) */}
+          <motion.button
+            type="button"
+            whileTap={{ scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 500, damping: 25 }}
+            onClick={() => {
+              selectView("fulfill");
+              onClose?.();
+            }}
+            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${
+              activeView === "fulfill"
+                ? "bg-blue-50 text-blue-700 font-extrabold shadow-2xs ring-1 ring-blue-200/60"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            }`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <PackageIcon
+                size={17}
+                weight={activeView === "fulfill" ? "fill" : "duotone"}
+                className={activeView === "fulfill" ? "text-blue-600" : "text-slate-500"}
+              />
+              <span className="truncate">Đặt xưởng (Fulfill)</span>
+            </div>
+            <span className="rounded-full bg-blue-100 text-blue-800 px-2 py-0.5 text-[10px] font-extrabold uppercase">
+              FBA
+            </span>
+          </motion.button>
+
           {/* Divider */}
           <div className="my-2 border-t border-slate-100" />
 
@@ -1068,7 +1100,7 @@ export function ListingWorkspace({
   initialSidebarDark = false,
 }: ListingWorkspaceProps) {
   const allowedFeatureSet = useMemo(
-    () => new Set<WorkspaceView>([...((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc", "accounting"]), "kanban"]),
+    () => new Set<WorkspaceView>([...((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc", "accounting"]), "kanban", "fulfill"]),
     [actor?.allowedFeatures],
   );
   const hasTrelloAccess = allowedFeatureSet.has("listing") || allowedFeatureSet.has("mockups");
@@ -1081,7 +1113,7 @@ export function ListingWorkspace({
   const [accountingSubTab, setAccountingSubTab] = useState<string | undefined>(undefined);
   const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
   const viewMode =
-    activeView === "sellersprite" || activeView === "ppc" || activeView === "accounting" || activeView === "kanban"
+    activeView === "sellersprite" || activeView === "ppc" || activeView === "accounting" || activeView === "kanban" || activeView === "fulfill"
       ? activeView
       : "trello";
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
@@ -1259,7 +1291,7 @@ export function ListingWorkspace({
       const savedTab = localStorage.getItem("nce_ppc_last_tab") as PpcDashboardTab | null;
 
       const effectiveView = urlView || savedView;
-      const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban"];
+      const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban", "fulfill"];
       const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "new_camp", "auto_bid", "manual_bid", "phoi", "rules"];
       const validDashboardTabs: PpcDashboardTab[] = ["overview", "portfolios", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
       const validAccountingSections: AccountingSection[] = [
@@ -1713,6 +1745,10 @@ export function ListingWorkspace({
                 activeSubTab={accountingSubTab}
                 onSectionChange={(s, tab) => selectAccountingSection(s, tab)}
               />
+            </div>
+          ) : viewMode === "fulfill" ? (
+            <div className="h-full w-full overflow-y-auto bg-[#f8fafc]">
+              <FulfillView />
             </div>
           ) : (
             <div className="h-full w-full overflow-hidden">

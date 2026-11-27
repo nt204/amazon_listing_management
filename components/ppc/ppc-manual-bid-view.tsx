@@ -105,11 +105,11 @@ interface Props {
 }
 
 const TIER_STYLE: Record<ManualBidTier, { dot: string; chip: string; chipOn: string; text: string }> = {
-  A20: { dot: "bg-emerald-500", chip: "border-emerald-200 bg-emerald-50/60", chipOn: "border-emerald-600 bg-emerald-600 text-white", text: "text-emerald-700" },
-  A40: { dot: "bg-sky-500", chip: "border-sky-200 bg-sky-50/60", chipOn: "border-sky-600 bg-sky-600 text-white", text: "text-sky-700" },
-  A60: { dot: "bg-amber-500", chip: "border-amber-200 bg-amber-50/60", chipOn: "border-amber-500 bg-amber-500 text-white", text: "text-amber-700" },
-  A60P: { dot: "bg-rose-500", chip: "border-rose-200 bg-rose-50/60", chipOn: "border-rose-600 bg-rose-600 text-white", text: "text-rose-700" },
-  NO_ORDER: { dot: "bg-fuchsia-600", chip: "border-fuchsia-200 bg-fuchsia-50/60", chipOn: "border-fuchsia-700 bg-fuchsia-700 text-white", text: "text-fuchsia-700" },
+  A20: { dot: "bg-emerald-500", chip: "border-emerald-400 bg-emerald-100", chipOn: "border-emerald-600 bg-emerald-600 text-white", text: "text-emerald-700" },
+  A40: { dot: "bg-sky-500", chip: "border-sky-400 bg-sky-100", chipOn: "border-sky-600 bg-sky-600 text-white", text: "text-sky-700" },
+  A60: { dot: "bg-amber-500", chip: "border-amber-400 bg-amber-100", chipOn: "border-amber-500 bg-amber-500 text-white", text: "text-amber-700" },
+  A60P: { dot: "bg-rose-600", chip: "border-rose-500 bg-rose-200", chipOn: "border-rose-700 bg-rose-700 text-white", text: "text-rose-800" },
+  NO_ORDER: { dot: "bg-fuchsia-600", chip: "border-fuchsia-400 bg-fuchsia-100", chipOn: "border-fuchsia-700 bg-fuchsia-700 text-white", text: "text-fuchsia-700" },
   OTHER: { dot: "bg-slate-300", chip: "border-slate-200 bg-slate-50", chipOn: "border-slate-600 bg-slate-600 text-white", text: "text-slate-500" },
 };
 
@@ -300,28 +300,39 @@ const TIER_NUM_BG: Record<ManualBidTier, string> = {
   A20: "bg-emerald-300",
   A40: "bg-sky-300",
   A60: "bg-amber-300",
-  A60P: "bg-rose-300",
+  A60P: "bg-rose-500",
   NO_ORDER: "bg-fuchsia-300",
   OTHER: "bg-slate-200",
 };
 
 const TIER_ROW_BG: Record<ManualBidTier, string> = {
-  A20: "bg-emerald-50",
-  A40: "bg-sky-50",
-  A60: "bg-amber-50",
-  A60P: "bg-rose-50",
-  NO_ORDER: "bg-fuchsia-50",
+  A20: "bg-emerald-100",
+  A40: "bg-sky-100",
+  A60: "bg-amber-100",
+  A60P: "bg-rose-200",
+  NO_ORDER: "bg-fuchsia-100",
   OTHER: "bg-white",
 };
 
+// Vạch màu nấc bên trái: dùng inset shadow ở ô checkbox (đã khoá cột) vì border của <tr> không bám theo khi cuộn ngang.
 const TIER_BORDER: Record<ManualBidTier, string> = {
-  A20: "border-l-4 border-l-emerald-500",
-  A40: "border-l-4 border-l-sky-500",
-  A60: "border-l-4 border-l-amber-500",
-  A60P: "border-l-4 border-l-rose-500",
-  NO_ORDER: "border-l-4 border-l-fuchsia-500",
-  OTHER: "border-l-4 border-l-slate-200",
+  A20: "shadow-[inset_4px_0_0_#10b981,inset_-1px_0_0_rgb(203,213,225)]",
+  A40: "shadow-[inset_4px_0_0_#0ea5e9,inset_-1px_0_0_rgb(203,213,225)]",
+  A60: "shadow-[inset_4px_0_0_#f59e0b,inset_-1px_0_0_rgb(203,213,225)]",
+  A60P: "shadow-[inset_4px_0_0_#e11d48,inset_-1px_0_0_rgb(203,213,225)]",
+  NO_ORDER: "shadow-[inset_4px_0_0_#d946ef,inset_-1px_0_0_rgb(203,213,225)]",
+  OTHER: "shadow-[inset_4px_0_0_#e2e8f0,inset_-1px_0_0_rgb(203,213,225)]",
 };
+
+// Ô khoá cột: kế thừa nền của dòng (nền dòng phải đặc để nội dung cuộn ngang không lộ qua).
+// Bảng border-collapse: viền ô khoá không bám theo khi cuộn và để lộ chữ cột sau qua khe viền,
+// nên ô khoá bỏ border-r, kẻ vạch phải bằng inset shadow.
+const STICKY_TD = "sticky z-10 bg-inherit !border-r-0";
+const STICKY_SEP = "shadow-[inset_-1px_0_0_rgb(203,213,225)]";
+// Nền tiêu đề cột: màu đậm cho nổi bật. Style chung PPC ép màu chữ trong th (kể cả con) nên phải dùng !text-….
+const HEAD = "bg-blue-300 !text-blue-950 [&_*]:!text-blue-950";
+// Vạch phân cách sau cột Campaign (cột khoá cuối cùng).
+const STICKY_EDGE = "shadow-[inset_-1px_0_0_rgb(203,213,225),4px_0_6px_-3px_rgba(15,23,42,0.18)]";
 
 function ColumnFilterMenu({
   distinctItems,
@@ -778,9 +789,16 @@ export function PpcManualBidView({
   const shownColWidths = useMemo(() => {
     if (campaignResized) return colWidths;
     const longest = rows.reduce((m, r) => Math.max(m, r.campaignName.length + (isLive(r) ? 0 : 7)), 0);
-    const auto = Math.min(760, Math.max(DEFAULT_COL_WIDTHS.campaign, Math.round(longest * 7 + 24)));
+    const auto = Math.min(460, Math.max(DEFAULT_COL_WIDTHS.campaign, Math.round(longest * 7 + 24)));
     return { ...colWidths, campaign: auto };
   }, [colWidths, campaignResized, rows]);
+  // Khoá 4 cột trái (checkbox, #, Target, Campaign) khi cuộn ngang: vị trí left cộng dồn độ rộng cột.
+  const stickyLeft = {
+    cb: 0,
+    idx: colWidths.cb,
+    target: colWidths.cb + colWidths.idx,
+    campaign: colWidths.cb + colWidths.idx + colWidths.target,
+  };
 
   const startResize = (key: ColKey, e: React.MouseEvent) => {
     e.preventDefault();
@@ -1244,24 +1262,24 @@ export function PpcManualBidView({
 
   const renderAcosBadge = (r: Row) => {
     if (r.sales > 0 && r.acos != null) {
-      let colorClass = "bg-rose-100 text-rose-800 border-rose-300";
+      let colorClass = "bg-rose-600 text-white border-rose-700";
       if (r.acos <= 20) colorClass = "bg-emerald-100 text-emerald-800 border-emerald-300";
       else if (r.acos <= 40) colorClass = "bg-sky-100 text-sky-800 border-sky-300";
       else if (r.acos <= 60) colorClass = "bg-amber-100 text-amber-800 border-amber-300";
       return (
-        <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono font-bold border ${colorClass}`}>
+        <span className={`inline-block px-1.5 py-0.5 rounded-full text-[11px] tabular-nums font-bold border ${colorClass}`}>
           {r.acos.toFixed(1)}%
         </span>
       );
     }
     if (r.orders === 0 && r.clicks > 7) {
       return (
-        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300" title="Click > 7, 0 đơn">
+        <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300" title="Click > 7, 0 đơn">
           0 đơn ({r.clicks})
         </span>
       );
     }
-    return <span className="text-slate-400 font-mono text-[11px]">—</span>;
+    return <span className="text-slate-300 text-[11px]">—</span>;
   };
 
   const renderHeaderCell = ({
@@ -1271,6 +1289,8 @@ export function PpcManualBidView({
     align = "left",
     hasFilter = false,
     distinctItems = [],
+    className = HEAD,
+    style,
   }: {
     colKey: ColKey;
     sortKey?: SortKey;
@@ -1278,6 +1298,8 @@ export function PpcManualBidView({
     align?: "left" | "right" | "center";
     hasFilter?: boolean;
     distinctItems?: Array<{ key: string; label: string; count: number }>;
+    className?: string;
+    style?: React.CSSProperties;
   }) => {
     const isSorted = sortKey && sort.key === sortKey;
     const filterKey = colKey === "matchType" ? "matchType" : colKey === "campaign" ? "campaignName" : colKey === "acos" ? "tier" : colKey === "target" ? "target" : undefined;
@@ -1286,7 +1308,8 @@ export function PpcManualBidView({
 
     return (
       <th
-        className={`relative select-none border-r border-slate-300 py-1.5 px-2 bg-slate-100 text-slate-700 font-semibold text-xs ${
+        style={style}
+        className={`relative select-none border-r border-slate-300 py-2 px-2 font-semibold text-xs ${className} ${
           align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left"
         }`}
       >
@@ -1296,7 +1319,7 @@ export function PpcManualBidView({
               type="button"
               onClick={() => setSort((s) => (s.key === sortKey ? { key: sortKey, dir: (s.dir * -1) as 1 | -1 } : { key: sortKey, dir: -1 }))}
               className={`cursor-pointer whitespace-nowrap inline-flex items-center gap-1 truncate ${
-                isSorted ? "text-slate-900 font-bold" : "text-slate-700 hover:text-slate-900"
+                isSorted ? "text-indigo-700 font-bold" : "hover:text-slate-900"
               }`}
             >
               <span className="truncate">{label}</span>
@@ -1320,8 +1343,8 @@ export function PpcManualBidView({
                 title={`Lọc & Sắp xếp ${label}`}
                 className={`h-4.5 px-1 rounded cursor-pointer text-[10px] transition ${
                   isFiltered
-                    ? "bg-indigo-600 text-white font-bold"
-                    : "text-slate-400 hover:text-slate-700 hover:bg-slate-200"
+                    ? "bg-blue-600 font-bold [&&]:!text-white"
+                    : "opacity-70 hover:opacity-100 hover:bg-blue-200"
                 }`}
               >
                 ▾
@@ -1586,7 +1609,7 @@ export function PpcManualBidView({
                   }}
                   className={`flex h-7 cursor-pointer items-center gap-1.5 rounded border px-2.5 text-xs font-semibold transition disabled:cursor-default ${
                     on ? `${style.chipOn} font-bold` : `${style.chip} ${style.text} hover:brightness-95`
-                  } ${n === 0 && !on ? "opacity-40" : ""}`}
+                  } ${n === 0 && !on ? "opacity-70" : ""}`}
                 >
                   {!on && <span className={`h-2 w-2 rounded-full ${style.dot}`} />}
                   {t.label} ({n})
@@ -1701,7 +1724,7 @@ export function PpcManualBidView({
 
           {/* Bảng target dạng lưới Excel với kéo dãn cột & đánh màu ACOS */}
           {refreshing && <ProgressBar />}
-          <div className={`overflow-auto max-h-[calc(100vh-120px)] border border-slate-300 bg-white shadow-xs transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
+          <div className={`overflow-auto max-h-[calc(100vh-120px)] rounded-lg border border-slate-200 bg-white shadow-sm transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
             <table
               className="border-collapse text-xs table-fixed w-full"
               style={{ minWidth: Object.values(shownColWidths).reduce((a, b) => a + b, 0) }}
@@ -1725,9 +1748,9 @@ export function PpcManualBidView({
                 <col style={{ width: colWidths.bid }} />
                 <col style={{ width: colWidths.newBid }} />
               </colgroup>
-              <thead className="sticky top-0 z-20 bg-slate-100 shadow-[0_1px_0_0_rgb(203,213,225)] text-slate-700 font-semibold border-b border-slate-300">
+              <thead className="sticky top-0 z-20 bg-blue-300 font-semibold">
                 <tr>
-                  <th className="relative border-r border-slate-300 px-1 py-1.5 text-center bg-slate-100 select-none">
+                  <th style={{ left: stickyLeft.cb }} className={`sticky z-30 ${HEAD} shadow-[inset_-1px_0_0_rgb(96,165,250)] px-1 py-2 text-center select-none`}>
                     <input
                       type="checkbox"
                       checked={allVisibleChecked}
@@ -1739,15 +1762,15 @@ export function PpcManualBidView({
                       className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-500 z-10"
                     />
                   </th>
-                  <th className="relative border-r border-slate-300 px-1 py-1.5 text-center text-slate-500 font-medium bg-slate-100 select-none">
+                  <th style={{ left: stickyLeft.idx }} className={`sticky z-30 ${HEAD} shadow-[inset_-1px_0_0_rgb(96,165,250)] px-1 py-2 text-center font-semibold select-none`}>
                     #
                     <div
                       onMouseDown={(e) => startResize("idx", e)}
                       className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-500 z-10"
                     />
                   </th>
-                  {renderHeaderCell({ colKey: "target", sortKey: "keyword", label: "Target", hasFilter: true, distinctItems: targetDistinctItems })}
-                  {renderHeaderCell({ colKey: "campaign", sortKey: "campaignName", label: "Campaign", hasFilter: true, distinctItems: campaignDistinctItems })}
+                  {renderHeaderCell({ colKey: "target", sortKey: "keyword", label: "Target", hasFilter: true, distinctItems: targetDistinctItems, className: `!sticky z-30 !border-r-0 shadow-[inset_-1px_0_0_rgb(96,165,250)] ${HEAD}`, style: { left: stickyLeft.target } })}
+                  {renderHeaderCell({ colKey: "campaign", sortKey: "campaignName", label: "Campaign", hasFilter: true, distinctItems: campaignDistinctItems, className: `!sticky z-30 !border-r-0 ${HEAD} shadow-[inset_-1px_0_0_rgb(96,165,250),4px_0_6px_-3px_rgba(15,23,42,0.25)]`, style: { left: stickyLeft.campaign } })}
                   {renderHeaderCell({ colKey: "matchType", sortKey: "matchType", label: "Match Type", align: "center", hasFilter: true, distinctItems: matchTypeDistinctItems })}
                   {renderHeaderCell({ colKey: "sv", sortKey: "searchVolume", label: "SV", align: "right" })}
                   {renderHeaderCell({ colKey: "org", sortKey: "organicRank", label: "Org", align: "center" })}
@@ -1759,8 +1782,8 @@ export function PpcManualBidView({
                   {renderHeaderCell({ colKey: "sales", sortKey: "sales", label: "Sales", align: "right" })}
                   {renderHeaderCell({ colKey: "acos", sortKey: "acos", label: "ACOS", align: "right", hasFilter: true, distinctItems: acosDistinctItems })}
                   {renderHeaderCell({ colKey: "cpc", sortKey: "cpc", label: "CPC", align: "right" })}
-                  {renderHeaderCell({ colKey: "bid", sortKey: "bid", label: "Bid", align: "right" })}
-                  <th className="relative px-2 py-1.5 text-right bg-slate-200/70 font-bold text-slate-900 select-none">
+                  {renderHeaderCell({ colKey: "bid", sortKey: "bid", label: "Bid", align: "right", className: "bg-blue-600 !text-white [&_*]:!text-white" })}
+                  <th className="relative px-2 py-2 text-right bg-amber-300 !text-amber-950 font-semibold select-none">
                     Bid mới
                     <div
                       onMouseDown={(e) => startResize("newBid", e)}
@@ -1768,8 +1791,49 @@ export function PpcManualBidView({
                     />
                   </th>
                 </tr>
+                {/* Dòng Tổng nằm ngay dưới tiêu đề, dính cùng tiêu đề khi cuộn dọc. */}
+                <tr className="bg-slate-100 font-bold text-slate-900">
+                  <td colSpan={4} style={{ left: 0 }} className={`sticky z-30 bg-slate-100 px-3 py-2 text-right uppercase tracking-wide !text-slate-600 ${STICKY_EDGE}`}>
+                    Tổng ({visible.length} target)
+                  </td>
+                  <td colSpan={4} className="border-r border-slate-200" />
+                  <td className="border-r border-slate-200 px-2 py-2 text-right tabular-nums !text-slate-900 !font-bold">
+                    {int(totals.impressions)}
+                  </td>
+                  <td className="border-r border-slate-200 px-2 py-2 text-right tabular-nums !text-slate-900 !font-bold">
+                    {int(totals.clicks)}
+                  </td>
+                  <td className="border-r border-slate-200 px-2 py-2 text-right tabular-nums !text-slate-900 !font-bold">
+                    {int(totals.orders)}
+                  </td>
+                  <td className="border-r border-slate-200 px-2 py-2 text-right tabular-nums !text-slate-900 !font-bold">
+                    {money(totals.spend)}
+                  </td>
+                  <td className="border-r border-slate-200 px-2 py-2 text-right tabular-nums !text-slate-900 !font-bold">
+                    {money(totals.sales)}
+                  </td>
+                  <td className="border-r border-slate-200 px-2 py-2 text-right tabular-nums !text-slate-900 !font-bold">
+                    {totals.acos != null ? (
+                      <span className={`inline-block px-1.5 py-0.5 rounded-full text-[11px] tabular-nums font-bold border ${
+                        totals.acos <= 20
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                          : totals.acos <= 40
+                          ? "bg-sky-100 text-sky-800 border-sky-300"
+                          : totals.acos <= 60
+                          ? "bg-amber-100 text-amber-800 border-amber-300"
+                          : "bg-rose-600 text-white border-rose-700"
+                      }`}>
+                        {totals.acos.toFixed(1)}%
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td className="border-r border-slate-200 px-2 py-2 text-right tabular-nums !text-slate-900 !font-bold">
+                    {totals.cpc > 0 ? money(totals.cpc) : "—"}
+                  </td>
+                  <td colSpan={2} className="border-r-0 bg-slate-100" />
+                </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
+              <tbody className="divide-y divide-slate-200/80">
                 {visible.slice(0, renderCount).map((r, idx) => {
                   const draft = drafts.get(r.key);
                   const queued = queuedByTarget.get(`${r.campaignId}|${r.targetId}`);
@@ -1781,7 +1845,7 @@ export function PpcManualBidView({
                     {newRunType && (
                       <tr className="bg-slate-200">
                         <td colSpan={17} className="border-y border-slate-300 px-3 py-1 text-xs font-bold tracking-wide text-slate-900">
-                          {r.runType}
+                          <span className="sticky left-3 inline-block">{r.runType}</span>
                           <span className="ml-2 font-normal text-slate-600">
                             {visible.filter((x) => x.runType === r.runType).length} target
                           </span>
@@ -1789,15 +1853,15 @@ export function PpcManualBidView({
                       </tr>
                     )}
                     <tr
-                      className={`h-8 transition-colors ${TIER_BORDER[r.tier]} ${
+                      className={`h-8 transition-colors ${
                         isSel
-                          ? "bg-indigo-50/80"
+                          ? "bg-indigo-200"
                           : TIER_ROW_BG[r.tier]
-                      } ${live ? "" : "opacity-60"} cursor-pointer select-none hover:bg-slate-100/70`}
+                      } ${live ? "" : "opacity-60"} cursor-pointer select-none hover:bg-slate-200`}
                       onMouseDown={(e) => startRowDrag(idx, r.key, e)}
                       onMouseEnter={() => enterRowDrag(idx)}
                     >
-                      <td className="border-r border-slate-200 px-1 py-0.5 text-center">
+                      <td style={{ left: stickyLeft.cb }} className={`${STICKY_TD} ${TIER_BORDER[r.tier]} px-1 py-0.5 text-center`}>
                         <input
                           type="checkbox"
                           checked={isSel}
@@ -1806,58 +1870,60 @@ export function PpcManualBidView({
                         />
                       </td>
                       <td
-                        className={`border-r border-slate-200 px-1 py-0.5 text-center font-mono text-[11px] select-none ${
-                          `${TIER_NUM_BG[r.tier]} ${draft ? "font-bold !text-indigo-700 shadow-[inset_4px_0_0_#4f46e5]" : "text-slate-900"}`
+                        style={{ left: stickyLeft.idx }}
+                        className={`sticky z-10 px-1 py-0.5 text-center text-[11px] font-semibold tabular-nums select-none ${
+                          `${TIER_NUM_BG[r.tier]} ${draft ? "font-bold !text-indigo-700 shadow-[inset_4px_0_0_#4f46e5,inset_-1px_0_0_rgb(203,213,225)]" : `text-slate-900 ${STICKY_SEP}`}`
                         }`}
                       >
                         {idx + 1}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 font-medium text-slate-900 truncate" title={r.keyword}>
+                      <td style={{ left: stickyLeft.target }} className={`${STICKY_TD} ${STICKY_SEP} px-2 py-0.5 font-medium text-slate-900 truncate`} title={r.keyword}>
                         {r.keyword || "—"}
                       </td>
                       <td
-                        className="truncate whitespace-nowrap border-r border-slate-200 px-2 py-0.5 text-slate-600"
+                        style={{ left: stickyLeft.campaign }}
+                        className={`${STICKY_TD} ${STICKY_EDGE} truncate whitespace-nowrap px-2 py-0.5 text-slate-600`}
                         title={r.adGroupName ? `${r.campaignName}\nAd group: ${r.adGroupName}` : r.campaignName}
                       >
                         <span>{r.campaignName}</span>
                         {!live && <span className="ml-1 text-[11px] text-slate-400 font-normal">(dừng)</span>}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-center font-medium text-slate-600 truncate">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-center font-medium text-slate-600 truncate">
                         {shortMatch(r.matchType)}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-700">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums text-slate-700">
                         {r.searchVolume != null ? int(r.searchVolume) : <span className="text-slate-400">—</span>}
                       </td>
-                      <td className="border-r border-slate-200 px-1 py-0.5 text-center font-mono tabular-nums text-slate-700">
+                      <td className="border-r border-slate-200/70 px-1 py-0.5 text-center tabular-nums text-slate-700">
                         {r.organicRank != null ? r.organicRank : <span className="text-slate-400">—</span>}
                       </td>
-                      <td className="border-r border-slate-200 px-1 py-0.5 text-center font-mono tabular-nums text-slate-700">
+                      <td className="border-r border-slate-200/70 px-1 py-0.5 text-center tabular-nums text-slate-700">
                         {r.sponsoredRank != null ? r.sponsoredRank : <span className="text-slate-400">—</span>}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-500">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums text-slate-500">
                         {int(r.impressions)}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-700">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums text-slate-700">
                         {int(r.clicks)}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums font-semibold text-slate-800">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums font-semibold text-slate-800">
                         {r.orders || 0}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-700">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums text-slate-700">
                         {money(r.spend)}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-700">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums text-slate-700">
                         {money(r.sales)}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right">
                         {renderAcosBadge(r)}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-600">
+                      <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums text-slate-600">
                         {money(r.cpc)}
                       </td>
-                      <td className="border-r border-slate-200 px-2 py-0.5 text-right font-mono tabular-nums text-slate-800">
+                      <td className="border-r border-blue-200 bg-blue-50 px-2 py-0.5 text-right tabular-nums text-indigo-950">
                         <div className="flex flex-col items-end">
-                          <span className={draft ? "text-slate-400 line-through decoration-slate-400" : "font-semibold"}>{money(r.bid)}</span>
+                          <span className={draft ? "text-indigo-500 line-through decoration-indigo-500" : "font-bold"}>{money(r.bid)}</span>
                           {queued && (
                             <span className="text-[10px] text-indigo-600">
                               (chờ: {queued.actionType === "PAUSE_TARGET" ? "dừng" : money(Number(queued.finalValue || 0))})
@@ -1880,48 +1946,6 @@ export function PpcManualBidView({
                   );
                 })}
               </tbody>
-              <tfoot className="sticky bottom-0 z-10 bg-slate-100 font-bold text-slate-800 border-t-2 border-slate-300">
-                <tr>
-                  <td colSpan={5} className="border-r border-slate-300 px-2 py-1.5 text-right uppercase tracking-wider text-slate-600">
-                    Tổng ({visible.length} target)
-                  </td>
-                  <td colSpan={3} className="border-r border-slate-300" />
-                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                    {int(totals.impressions)}
-                  </td>
-                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                    {int(totals.clicks)}
-                  </td>
-                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                    {int(totals.orders)}
-                  </td>
-                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                    {money(totals.spend)}
-                  </td>
-                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                    {money(totals.sales)}
-                  </td>
-                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                    {totals.acos != null ? (
-                      <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono font-bold border ${
-                        totals.acos <= 20
-                          ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                          : totals.acos <= 40
-                          ? "bg-sky-100 text-sky-800 border-sky-300"
-                          : totals.acos <= 60
-                          ? "bg-amber-100 text-amber-800 border-amber-300"
-                          : "bg-rose-100 text-rose-800 border-rose-300"
-                      }`}>
-                        {totals.acos.toFixed(1)}%
-                      </span>
-                    ) : "—"}
-                  </td>
-                  <td className="border-r border-slate-300 px-2 py-1.5 text-right font-mono tabular-nums">
-                    {totals.cpc > 0 ? money(totals.cpc) : "—"}
-                  </td>
-                  <td colSpan={2} className="border-r-0 bg-slate-100" />
-                </tr>
-              </tfoot>
             </table>
             {renderCount < visible.length && (
               <div ref={moreRowsRef} className="border-t border-slate-200 bg-white">
@@ -1940,7 +1964,7 @@ const ACOS_PILL: Record<ManualBidTier, string> = {
   A20: "bg-emerald-100 text-emerald-800",
   A40: "bg-sky-100 text-sky-800",
   A60: "bg-amber-100 text-amber-800",
-  A60P: "bg-rose-100 text-rose-700",
+  A60P: "bg-rose-600 text-white",
   NO_ORDER: "bg-fuchsia-100 text-fuchsia-800",
   OTHER: "text-slate-400",
 };
@@ -2089,7 +2113,7 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
       <input
         data-mb-bid={index}
         value={focused ? text : shown}
-        placeholder={row.bid.toFixed(2)}
+        placeholder=""
         inputMode="decimal"
         onFocus={(e) => {
           setText(shown);
@@ -2142,16 +2166,16 @@ function BidCell({ index, row, draft, onChange, onNavigate, onPasteBatch }: {
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className={`h-7 min-w-0 flex-1 px-2 text-right font-mono text-[12px] font-bold outline-none transition-all ${
+        className={`h-7 min-w-0 flex-1 px-2 text-right tabular-nums text-[12px] font-bold outline-none transition-all ${
           focused
             ? "bg-white ring-2 ring-indigo-500 ring-inset text-slate-900"
             : isDraft
             ? `bg-transparent font-bold ${up ? "text-emerald-900" : "text-rose-900"}`
-            : "bg-transparent text-slate-700 placeholder:text-slate-300 placeholder:font-normal"
+            : "bg-transparent text-slate-700 placeholder:text-slate-500 placeholder:font-semibold"
         }`}
       />
       {factorPct && !focused && (
-        <span className={`pointer-events-none shrink-0 pr-1.5 font-mono text-[10.5px] font-semibold ${up ? "text-emerald-700" : "text-rose-700"}`}>
+        <span className={`pointer-events-none shrink-0 pr-1.5 text-[10.5px] font-semibold ${up ? "text-emerald-700" : "text-rose-700"}`}>
           {factorPct}
         </span>
       )}

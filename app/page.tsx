@@ -4,18 +4,18 @@ import { ListingWorkspace } from "@/components/listing-workspace";
 import { resolveActorFromHeaders } from "@/lib/auth-server";
 import { DEFAULT_UI_PREFERENCES, getUiPreferences } from "@/lib/ui-preferences";
 
-type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
+type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban" | "fulfill";
 
 function resolveAllowedView(
   candidateView: string | string[] | undefined,
-  allowedFeatures: string[] = ["listing", "mockups", "sellersprite", "ppc", "accounting"],
+  allowedFeatures: string[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "fulfill"],
 ): WorkspaceView | null {
   const candidate = (Array.isArray(candidateView) ? candidateView[0] : candidateView) as WorkspaceView;
-  const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban"];
+  const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban", "fulfill"];
 
-  // Cho phép view kanban cho tất cả người dùng
-  if (candidate === "kanban") {
-    return "kanban";
+  // Cho phép view kanban và fulfill cho người dùng được cấp quyền hoặc admin
+  if (candidate === "kanban" || candidate === "fulfill") {
+    return candidate;
   }
 
   // Nếu người dùng chọn một view hợp lệ và có quyền, cho phép
@@ -50,7 +50,14 @@ export default async function Home({
     return <AccessStatusScreen status="no_features" email={email} />;
   }
 
-  const initialView = resolveAllowedView((await searchParams).view, features) || "listing";
+  const host = headerStore.get("host") || "";
+  const search = await searchParams;
+  let initialView = resolveAllowedView(search.view, features);
+  if (!search.view && host.startsWith("fulfill.")) {
+    initialView = "fulfill";
+  } else if (!initialView) {
+    initialView = "listing";
+  }
 
   const uiPreferences = await getUiPreferences(actor).catch(() => DEFAULT_UI_PREFERENCES);
 
