@@ -53,12 +53,16 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
     <div className="min-h-dvh">
       <header className="border-b border-(--ff-line) bg-(--ff-side) print:hidden">
         <div className="mx-auto grid max-w-[1440px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 px-4 py-3 sm:px-6 md:grid-cols-[1fr_auto_1fr] lg:px-8">
-          <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2.5">
+          <Link
+            href="/?view=accounting"
+            title="Back to Accounting"
+            className="col-start-1 row-start-1 flex min-w-0 items-center gap-2.5 justify-self-start rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ff-accent)"
+          >
             <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-(--ff-accent) text-white">
               <PackageIcon size={20} weight="fill" aria-hidden />
             </span>
             <span className="whitespace-nowrap font-(family-name:--font-app-sans) text-lg font-bold tracking-tight">Fulfill</span>
-          </div>
+          </Link>
 
           <nav aria-label="Fulfill" className="col-span-2 col-start-1 row-start-2 grid grid-cols-3 gap-1 rounded-full border border-(--ff-line) bg-(--ff-raised) p-1 md:col-span-1 md:col-start-2 md:row-start-1 md:flex">
             {TABS.filter((t) => t.id !== "sku_master" || canManageFulfill(actor)).map(({ id, label, icon: Icon }) => (
