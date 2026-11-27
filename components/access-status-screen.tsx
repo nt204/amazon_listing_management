@@ -6,7 +6,6 @@ import {
   CopyIcon,
   LockKeyIcon,
   ProhibitIcon,
-  ShieldCheckIcon,
 } from "@phosphor-icons/react";
 import { useState } from "react";
 
@@ -39,15 +38,7 @@ export function AccessStatusScreen({ status, email }: AccessStatusScreenProps) {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="NCE HUB Logo" className="h-full w-full object-contain" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-black tracking-tight text-[#1f2933]">NCE HUB</h1>
-                <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                  <ShieldCheckIcon size={12} weight="fill" /> Cloudflare Access
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs font-medium text-[#65717c]">Hệ thống bảo vệ phân quyền tập trung</p>
-            </div>
+            <h1 className="text-xl font-black tracking-tight text-[#1f2933]">NCE HUB</h1>
           </div>
         </div>
 
@@ -108,12 +99,9 @@ export function AccessStatusScreen({ status, email }: AccessStatusScreenProps) {
               <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-sky-50 text-sky-600 border border-sky-200 shadow-xs mb-4">
                 <LockKeyIcon size={32} weight="duotone" />
               </div>
-              <h2 className="text-base font-extrabold text-slate-900">Yêu cầu xác thực Cloudflare</h2>
+              <h2 className="text-base font-extrabold text-slate-900">Bạn cần đăng nhập</h2>
               <p className="mt-2 text-xs font-medium text-slate-600 leading-relaxed">
-                Hệ thống chỉ chấp nhận các yêu cầu truy cập đã qua cổng xác thực bảo mật của Cloudflare Zero Trust.
-              </p>
-              <p className="mt-3 text-[11px] text-slate-500">
-                Vui lòng truy cập qua đường dẫn chính thức đã được cấu hình Cloudflare Access.
+                Mở đường dẫn NCE HUB chính thức và đăng nhập bằng email của bạn.
               </p>
             </div>
           )}
@@ -127,9 +115,6 @@ export function AccessStatusScreen({ status, email }: AccessStatusScreenProps) {
             >
               Kiểm tra lại quyền truy cập
             </button>
-            <p className="mt-3 text-[10px] text-slate-400">
-              Đã gỡ bỏ toàn bộ mật khẩu • Bảo vệ qua Cloudflare Access Email
-            </p>
           </div>
         </div>
       </section>

@@ -2,14 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  BuildingsIcon,
-  CheckCircleIcon,
-  EnvelopeIcon,
-  MapPinIcon,
   PencilSimpleIcon,
-  PhoneIcon,
   PlusIcon,
-  UserIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import type { FulfillSupplier } from "@/lib/fulfill/types";
@@ -62,15 +56,16 @@ export function SuppliersView() {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs">
+    <div className="space-y-6">
+      {/* Header - Spacious, clean */}
+      <div className="flex items-center justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs">
         <div>
-          <h2 className="text-sm font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-            <BuildingsIcon size={18} className="text-blue-600" weight="bold" />
-            Danh sách Nhà Xưởng (Suppliers)
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">
+            Danh Sách Nhà Xưởng
           </h2>
-          <p className="text-xs text-slate-500">Quản lý đối tác xưởng sản xuất gia công cho các Store</p>
+          <span className="text-xs font-semibold text-slate-500 mt-1 block">
+            Đối tác xưởng sản xuất gia công cho các Store
+          </span>
         </div>
 
         <button
@@ -81,45 +76,40 @@ export function SuppliersView() {
               is_active: true,
             })
           }
-          className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700 transition"
+          className="inline-flex h-11 items-center gap-2 rounded-full bg-blue-600 px-6 text-sm font-bold text-white shadow-md shadow-blue-500/25 hover:bg-blue-700 transition cursor-pointer"
         >
-          <PlusIcon size={14} weight="bold" />
+          <PlusIcon size={16} weight="bold" />
           <span>Thêm Nhà Xưởng</span>
         </button>
       </div>
 
       {/* Grid of Suppliers Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {loading ? (
-          <div className="col-span-full py-12 text-center text-xs text-slate-400">
+          <div className="col-span-full py-16 text-center text-sm font-medium text-slate-400">
             Đang tải danh sách nhà xưởng...
           </div>
         ) : suppliers.length === 0 ? (
-          <div className="col-span-full py-12 text-center text-xs text-slate-400">
-            Chưa có nhà xưởng nào. Nhấn <strong>Thêm Nhà Xưởng</strong> để tạo mới.
+          <div className="col-span-full py-16 text-center text-sm text-slate-400">
+            Chưa có nhà xưởng nào. Bấm <strong>Thêm Nhà Xưởng</strong> để tạo mới.
           </div>
         ) : (
           suppliers.map((sup) => (
             <div
               key={sup.id}
-              className="relative flex flex-col justify-between rounded-3xl border border-slate-200/90 bg-white p-5 shadow-xs hover:border-blue-300 transition"
+              className="relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs hover:border-blue-400 transition"
             >
               <div>
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 font-black text-white shadow-md shadow-blue-500/20 text-sm">
-                      {sup.code.slice(0, 3)}
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-extrabold text-slate-900">{sup.name}</h3>
-                      <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md inline-block mt-0.5">
-                        Mã: {sup.code}
-                      </span>
-                    </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">{sup.name}</h3>
+                    <span className="mt-1 inline-block rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700 border border-blue-200/60">
+                      Mã: {sup.code}
+                    </span>
                   </div>
 
                   <span
-                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${
+                    className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${
                       sup.is_active
                         ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                         : "bg-slate-100 text-slate-500 border border-slate-200"
@@ -129,49 +119,49 @@ export function SuppliersView() {
                   </span>
                 </div>
 
-                <div className="mt-4 space-y-2 text-xs text-slate-600 border-t border-slate-100 pt-3">
+                <div className="mt-5 space-y-2.5 text-sm text-slate-600 border-t border-slate-100 pt-4">
                   {sup.contact_name && (
-                    <div className="flex items-center gap-2">
-                      <UserIcon size={14} className="text-slate-400 shrink-0" />
-                      <span>{sup.contact_name}</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase text-slate-400">Liên hệ:</span>
+                      <span className="font-semibold text-slate-800">{sup.contact_name}</span>
                     </div>
                   )}
                   {sup.phone && (
-                    <div className="flex items-center gap-2">
-                      <PhoneIcon size={14} className="text-slate-400 shrink-0" />
-                      <span>{sup.phone}</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase text-slate-400">Điện thoại:</span>
+                      <span className="font-semibold text-slate-800">{sup.phone}</span>
                     </div>
                   )}
                   {sup.email && (
-                    <div className="flex items-center gap-2">
-                      <EnvelopeIcon size={14} className="text-slate-400 shrink-0" />
-                      <span className="truncate">{sup.email}</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase text-slate-400">Email:</span>
+                      <span className="font-semibold text-slate-800 truncate max-w-xs">{sup.email}</span>
                     </div>
                   )}
                   {sup.address && (
-                    <div className="flex items-center gap-2">
-                      <MapPinIcon size={14} className="text-slate-400 shrink-0" />
-                      <span className="truncate">{sup.address}</span>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-bold uppercase text-slate-400 shrink-0">Địa chỉ:</span>
+                      <span className="font-semibold text-slate-800 text-right">{sup.address}</span>
                     </div>
                   )}
                   {sup.notes && (
-                    <p className="text-[11px] text-slate-500 italic mt-2 line-clamp-2">
+                    <p className="text-xs text-slate-500 italic mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                       &ldquo;{sup.notes}&rdquo;
                     </p>
                   )}
                 </div>
               </div>
 
-              <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3">
-                <span className="text-xs font-semibold text-slate-500">
-                  Tổng đơn PO: <strong className="text-slate-800">{sup.po_count || 0}</strong>
+              <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+                <span className="text-sm font-semibold text-slate-500">
+                  Tổng đơn: <strong className="text-slate-900 font-bold">{sup.po_count || 0} PO</strong>
                 </span>
 
                 <button
                   onClick={() => setEditingSup(sup)}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-4 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition cursor-pointer"
                 >
-                  <PencilSimpleIcon size={13} weight="bold" />
+                  <PencilSimpleIcon size={14} weight="bold" />
                   <span>Sửa</span>
                 </button>
               </div>
@@ -180,126 +170,144 @@ export function SuppliersView() {
         )}
       </div>
 
-      {/* Edit / Add Modal */}
+      {/* Edit/Create Modal */}
       {editingSup && (
-        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-base font-extrabold text-slate-900">
-                {editingSup.id ? `Sửa thông tin: ${editingSup.name}` : "Thêm Nhà Xưởng mới"}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-8 shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <h3 className="text-xl font-black text-slate-900">
+                {editingSup.id ? `Sửa nhà xưởng: ${editingSup.name}` : "Thêm Nhà Xưởng Mới"}
               </h3>
               <button
                 onClick={() => setEditingSup(null)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
               >
-                <XIcon size={18} />
+                <XIcon size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="mt-4 space-y-3.5">
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSave} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Mã xưởng (Code) *</label>
+                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
+                    Mã Sup (Viết tắt)
+                  </label>
                   <input
                     type="text"
-                    placeholder="VD: BFF"
                     value={editingSup.code || ""}
-                    onChange={(e) => setEditingSup({ ...editingSup, code: e.target.value.toUpperCase() })}
+                    onChange={(e) =>
+                      setEditingSup((prev) => ({ ...prev, code: e.target.value.trim().toUpperCase() }))
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-black text-slate-900 uppercase"
+                    placeholder="VD: BFF"
                     required
-                    className="w-full rounded-xl border border-slate-300 p-2 text-xs font-extrabold uppercase"
                   />
                 </div>
-
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Tên xưởng *</label>
+                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
+                    Tên đầy đủ của xưởng
+                  </label>
                   <input
                     type="text"
-                    placeholder="VD: Xưởng BFF"
                     value={editingSup.name || ""}
-                    onChange={(e) => setEditingSup({ ...editingSup, name: e.target.value })}
+                    onChange={(e) => setEditingSup((prev) => ({ ...prev, name: e.target.value }))}
+                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-900"
+                    placeholder="VD: Xưởng BFF Bắc Ninh"
                     required
-                    className="w-full rounded-xl border border-slate-300 p-2 text-xs font-bold"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Người phụ trách liên hệ</label>
+                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
+                    Người liên hệ
+                  </label>
                   <input
                     type="text"
                     value={editingSup.contact_name || ""}
-                    onChange={(e) => setEditingSup({ ...editingSup, contact_name: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 p-2 text-xs"
+                    onChange={(e) =>
+                      setEditingSup((prev) => ({ ...prev, contact_name: e.target.value }))
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-slate-800"
                   />
                 </div>
-
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Số điện thoại</label>
+                  <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
+                    Số điện thoại / Zalo
+                  </label>
                   <input
                     type="text"
                     value={editingSup.phone || ""}
-                    onChange={(e) => setEditingSup({ ...editingSup, phone: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 p-2 text-xs"
+                    onChange={(e) => setEditingSup((prev) => ({ ...prev, phone: e.target.value }))}
+                    className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-slate-800"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">Email</label>
+                <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
+                  Email
+                </label>
                 <input
                   type="email"
                   value={editingSup.email || ""}
-                  onChange={(e) => setEditingSup({ ...editingSup, email: e.target.value })}
-                  className="w-full rounded-xl border border-slate-300 p-2 text-xs"
+                  onChange={(e) => setEditingSup((prev) => ({ ...prev, email: e.target.value.trim() }))}
+                  className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-slate-800"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">Địa chỉ nhà xưởng</label>
+                <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
+                  Địa chỉ xưởng
+                </label>
                 <input
                   type="text"
                   value={editingSup.address || ""}
-                  onChange={(e) => setEditingSup({ ...editingSup, address: e.target.value })}
-                  className="w-full rounded-xl border border-slate-300 p-2 text-xs"
+                  onChange={(e) => setEditingSup((prev) => ({ ...prev, address: e.target.value }))}
+                  className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm text-slate-800"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">Ghi chú</label>
+                <label className="text-xs font-bold uppercase text-slate-600 block mb-1.5">
+                  Ghi chú
+                </label>
                 <textarea
                   rows={2}
                   value={editingSup.notes || ""}
-                  onChange={(e) => setEditingSup({ ...editingSup, notes: e.target.value })}
-                  className="w-full rounded-xl border border-slate-300 p-2 text-xs"
+                  onChange={(e) => setEditingSup((prev) => ({ ...prev, notes: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-800"
+                  placeholder="Thế mạnh sản phẩm, thời gian làm việc..."
                 />
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="sup-active"
-                  checked={editingSup.is_active ?? true}
-                  onChange={(e) => setEditingSup({ ...editingSup, is_active: e.target.checked })}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                />
-                <label htmlFor="sup-active" className="text-xs font-semibold text-slate-700">
-                  Đang hợp tác / Nhận đơn sản xuất
+              <div className="flex items-center gap-3 pt-2">
+                <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={editingSup.is_active ?? true}
+                    onChange={(e) =>
+                      setEditingSup((prev) => ({ ...prev, is_active: e.target.checked }))
+                    }
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>Đang hợp tác sản xuất</span>
                 </label>
               </div>
 
-              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setEditingSup(null)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  className="rounded-full px-6 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
                 >
-                  Đóng
+                  Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700"
+                  className="rounded-full bg-blue-600 px-8 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-500/25 hover:bg-blue-700 transition disabled:opacity-50 cursor-pointer"
                 >
                   {saving ? "Đang lưu..." : "Lưu Nhà Xưởng"}
                 </button>

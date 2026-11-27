@@ -1,28 +1,16 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
-  BuildingsIcon,
-  CalendarBlankIcon,
-  CheckCircleIcon,
-  ClockIcon,
+  MagnifyingGlassIcon,
+  PlusIcon,
   EyeIcon,
   FileXlsIcon,
-  FunnelIcon,
-  HourglassIcon,
-  MagnifyingGlassIcon,
-  PackageIcon,
-  PlusIcon,
-  StorefrontIcon,
   TrashIcon,
-  TruckIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import type { FulfillDashboardSummary, FulfillPo, FulfillPoStatus, FulfillSupplier } from "@/lib/fulfill/types";
 import { CreatePoModal } from "./create-po-modal";
 import { PoDetailView } from "./po-detail-view";
-import { SkuMasterView } from "./sku-master-view";
-import { SuppliersView } from "./suppliers-view";
 
 interface StoreOption {
   id: string;
@@ -38,10 +26,7 @@ const PO_STATUS_LABELS: Record<FulfillPoStatus, { label: string; bg: string; tex
   cancelled: { label: "Đã hủy", bg: "bg-rose-50", text: "text-rose-800", border: "border-rose-300" },
 };
 
-type FulfillTab = "pos" | "sku_master" | "suppliers";
-
 export function FulfillView() {
-  const [activeTab, setActiveTab] = useState<FulfillTab>("pos");
   const [selectedPoId, setSelectedPoId] = useState<string | null>(null);
 
   const [stores, setStores] = useState<StoreOption[]>([]);
@@ -133,335 +118,269 @@ export function FulfillView() {
   // If a PO is selected, show detail view
   if (selectedPoId) {
     return (
-      <div className="p-4 sm:p-6 bg-[#f8fafc] min-h-[calc(100vh-64px)]">
-        <PoDetailView poId={selectedPoId} onBack={() => { setSelectedPoId(null); void fetchPos(); }} />
-      </div>
+      <PoDetailView
+        poId={selectedPoId}
+        onBack={() => {
+          setSelectedPoId(null);
+          void fetchPos();
+        }}
+      />
     );
   }
 
   return (
-    <div className="p-4 sm:p-6 bg-[#f8fafc] min-h-[calc(100vh-64px)] space-y-6">
-      {/* Top Header Card */}
-      <div className="rounded-3xl border border-slate-200/90 bg-white p-6 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-lg shadow-blue-500/20">
-              <PackageIcon size={26} weight="bold" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-black text-slate-900 tracking-tight">
-                  Quản Lý Đặt Sản Xuất FBA
-                </h1>
-                <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-[10px] font-extrabold uppercase text-blue-700 border border-blue-200">
-                  Fulfill System
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Quản lý các đợt đặt hàng gửi xưởng gia công, đồng bộ thiết kế, đóng gói FBA và tiến độ sản xuất
-              </p>
-            </div>
-          </div>
-
-          {/* Quick Tab Switcher */}
-          <div className="flex items-center gap-1.5 rounded-2xl bg-slate-100 p-1.5 self-start md:self-center">
-            <button
-              onClick={() => setActiveTab("pos")}
-              className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
-                activeTab === "pos"
-                  ? "bg-white text-blue-700 shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Đợt Hàng ({pos.length})
-            </button>
-            <button
-              onClick={() => setActiveTab("sku_master")}
-              className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
-                activeTab === "sku_master"
-                  ? "bg-white text-blue-700 shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              SKU Master
-            </button>
-            <button
-              onClick={() => setActiveTab("suppliers")}
-              className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
-                activeTab === "suppliers"
-                  ? "bg-white text-blue-700 shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Nhà Xưởng ({suppliers.length})
-            </button>
+    <div className="space-y-6">
+      {/* 5 KPI Metric Cards - Clean, bold, large typography */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        {/* Card 1: Total POs */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs transition hover:shadow-sm">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+            Tổng số đợt hàng
+          </span>
+          <div className="mt-2.5 flex items-baseline gap-2">
+            <span className="text-3xl sm:text-4xl font-extrabold text-slate-900">
+              {summary.total_pos}
+            </span>
+            <span className="text-sm font-medium text-slate-500">đợt</span>
           </div>
         </div>
 
-        {/* 5 KPI Metric Cards (Clean, rounded-2xl cards as in design kit) */}
-        <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-          {/* Card 1: Total POs */}
-          <div className="rounded-2xl border border-slate-200/80 bg-[#f8fafc]/70 p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
-              Tổng số đợt hàng
+        {/* Card 2: Producing */}
+        <div className="rounded-2xl border border-blue-200/90 bg-white p-5 shadow-xs transition hover:shadow-sm">
+          <span className="text-xs font-bold uppercase tracking-wider text-blue-600 block">
+            Đang sản xuất
+          </span>
+          <div className="mt-2.5 flex items-baseline gap-2">
+            <span className="text-3xl sm:text-4xl font-extrabold text-blue-600">
+              {summary.total_producing}
             </span>
-            <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-slate-900">{summary.total_pos}</span>
-              <span className="text-xs font-semibold text-slate-500">đợt</span>
-            </div>
+            <span className="text-sm font-medium text-blue-500">đợt</span>
           </div>
+        </div>
 
-          {/* Card 2: Producing */}
-          <div className="rounded-2xl border border-blue-200/80 bg-blue-50/50 p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 block flex items-center justify-between">
-              Đang sản xuất
-              <span className="flex h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+        {/* Card 3: Shipped */}
+        <div className="rounded-2xl border border-purple-200/90 bg-white p-5 shadow-xs transition hover:shadow-sm">
+          <span className="text-xs font-bold uppercase tracking-wider text-purple-600 block">
+            Đã xuất xưởng (Ship)
+          </span>
+          <div className="mt-2.5 flex items-baseline gap-2">
+            <span className="text-3xl sm:text-4xl font-extrabold text-purple-600">
+              {summary.total_shipped}
             </span>
-            <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-blue-900">{summary.total_producing}</span>
-              <span className="text-xs font-semibold text-blue-600">đợt</span>
-            </div>
+            <span className="text-sm font-medium text-purple-500">đợt</span>
           </div>
+        </div>
 
-          {/* Card 3: Shipped */}
-          <div className="rounded-2xl border border-purple-200/80 bg-purple-50/50 p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-purple-700 block">
-              Đã xuất xưởng (Ship)
+        {/* Card 4: Received */}
+        <div className="rounded-2xl border border-emerald-200/90 bg-white p-5 shadow-xs transition hover:shadow-sm">
+          <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 block">
+            Đã nhận kho FBA
+          </span>
+          <div className="mt-2.5 flex items-baseline gap-2">
+            <span className="text-3xl sm:text-4xl font-extrabold text-emerald-600">
+              {summary.total_received}
             </span>
-            <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-purple-900">{summary.total_shipped}</span>
-              <span className="text-xs font-semibold text-purple-600">đợt</span>
-            </div>
+            <span className="text-sm font-medium text-emerald-500">đợt</span>
           </div>
+        </div>
 
-          {/* Card 4: Received */}
-          <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/50 p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 block">
-              Đã nhận kho FBA
-            </span>
-            <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-emerald-900">{summary.total_received}</span>
-              <span className="text-xs font-semibold text-emerald-600">đợt</span>
-            </div>
-          </div>
-
-          {/* Card 5: Total Cost */}
-          <div className="col-span-2 sm:col-span-1 rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-900 to-blue-950 p-4 text-white shadow-xs">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block">
-              Tổng tiền sản xuất
-            </span>
-            <div className="mt-2 flex items-baseline gap-1">
-              <span className="text-2xl font-black text-emerald-400">
-                ${summary.total_amount.toLocaleString()}
-              </span>
-            </div>
-            <span className="text-[10px] text-slate-400 mt-1 block font-medium">
-              SL: {summary.total_quantity.toLocaleString()} pcs
+        {/* Card 5: Total Cost */}
+        <div className="col-span-2 sm:col-span-1 rounded-2xl border border-slate-200/90 bg-slate-900 p-5 text-white shadow-xs">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+            Tổng tiền sản xuất
+          </span>
+          <div className="mt-2.5 flex items-baseline gap-1">
+            <span className="text-3xl sm:text-4xl font-extrabold text-emerald-400">
+              ${summary.total_amount.toLocaleString()}
             </span>
           </div>
+          <span className="text-xs text-slate-400 mt-1 block font-medium">
+            {summary.total_quantity.toLocaleString()} pcs
+          </span>
         </div>
       </div>
 
-      {/* Main Tab Content */}
-      {activeTab === "pos" ? (
-        <div className="space-y-4">
-          {/* Action & Filter Bar */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs">
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              {/* Store filter */}
-              <div className="flex items-center gap-1.5">
-                <StorefrontIcon size={15} className="text-blue-600" weight="bold" />
-                <select
-                  value={selectedStoreId}
-                  onChange={(e) => setSelectedStoreId(e.target.value)}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none"
-                >
-                  <option value="">Tất cả Store</option>
-                  {stores.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+      {/* Action & Filter Bar - Spacious, clean inputs, no micro-icons */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs">
+        {/* Filters */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Store filter */}
+          <select
+            value={selectedStoreId}
+            onChange={(e) => setSelectedStoreId(e.target.value)}
+            className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer"
+          >
+            <option value="">Tất cả Store</option>
+            {stores.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
 
-              {/* Sup filter */}
-              <div className="flex items-center gap-1.5">
-                <BuildingsIcon size={15} className="text-blue-600" weight="bold" />
-                <select
-                  value={selectedSupplierId}
-                  onChange={(e) => setSelectedSupplierId(e.target.value)}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none"
-                >
-                  <option value="">Tất cả Sup</option>
-                  {suppliers.map((sp) => (
-                    <option key={sp.id} value={sp.id}>
-                      {sp.name} ({sp.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
+          {/* Sup filter */}
+          <select
+            value={selectedSupplierId}
+            onChange={(e) => setSelectedSupplierId(e.target.value)}
+            className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer"
+          >
+            <option value="">Tất cả Nhà xưởng (Sup)</option>
+            {suppliers.map((sp) => (
+              <option key={sp.id} value={sp.id}>
+                {sp.name} ({sp.code})
+              </option>
+            ))}
+          </select>
 
-              {/* Status filter */}
-              <div className="flex items-center gap-1.5">
-                <FunnelIcon size={15} className="text-slate-500" weight="bold" />
-                <select
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none"
-                >
-                  <option value="">Tất cả Trạng thái</option>
-                  <option value="draft">Nháp</option>
-                  <option value="pending_sup">Chờ sup nhận</option>
-                  <option value="producing">Đang sản xuất</option>
-                  <option value="shipped">Đã ship</option>
-                  <option value="received">Đã nhận hàng</option>
-                  <option value="cancelled">Đã hủy</option>
-                </select>
-              </div>
+          {/* Status filter */}
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 cursor-pointer"
+          >
+            <option value="">Tất cả Trạng thái</option>
+            <option value="draft">Nháp</option>
+            <option value="pending_sup">Chờ sup nhận</option>
+            <option value="producing">Đang sản xuất</option>
+            <option value="shipped">Đã ship</option>
+            <option value="received">Đã nhận hàng</option>
+            <option value="cancelled">Đã hủy</option>
+          </select>
 
-              {/* Search */}
-              <div className="relative">
-                <MagnifyingGlassIcon size={14} className="absolute left-3 top-2.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Tìm PO#, Store, Sup..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-52 rounded-xl border border-slate-200 bg-white pl-8 pr-3 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Create PO button */}
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-extrabold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700 transition cursor-pointer self-end lg:self-center"
-            >
-              <PlusIcon size={15} weight="bold" />
-              <span>Tạo Đợt Hàng Mới</span>
-            </button>
-          </div>
-
-          {/* Table */}
-          <div className="rounded-3xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-[#f8fafc] text-[11px] font-extrabold uppercase text-slate-700 tracking-wider whitespace-nowrap">
-                    <th className="px-3.5 py-3.5 w-12 text-center">STT</th>
-                    <th className="px-4 py-3.5 w-48">Mã đợt (PO#)</th>
-                    <th className="px-3.5 py-3.5 w-32">Store</th>
-                    <th className="px-3.5 py-3.5 w-28">Nhà xưởng (Sup)</th>
-                    <th className="px-3.5 py-3.5 w-28">Ngày đặt</th>
-                    <th className="px-3.5 py-3.5 w-28">Hẹn giao</th>
-                    <th className="px-3.5 py-3.5 w-24 text-center">Số dòng</th>
-                    <th className="px-3.5 py-3.5 w-28 text-right">Tổng SL</th>
-                    <th className="px-3.5 py-3.5 w-32 text-right">Tổng tiền ($)</th>
-                    <th className="px-4 py-3.5 w-36 text-center">Trạng thái</th>
-                    <th className="px-4 py-3.5 w-28 text-center">Thao tác</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 whitespace-nowrap">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={11} className="py-12 text-center text-slate-400">
-                        Đang tải danh sách đợt hàng...
-                      </td>
-                    </tr>
-                  ) : pos.length === 0 ? (
-                    <tr>
-                      <td colSpan={11} className="py-12 text-center text-slate-400">
-                        Chưa có đợt hàng nào phù hợp bộ lọc. Nhấn <strong>Tạo Đợt Hàng Mới</strong> để bắt đầu.
-                      </td>
-                    </tr>
-                  ) : (
-                    pos.map((p, idx) => {
-                      const status = PO_STATUS_LABELS[p.status] || PO_STATUS_LABELS.draft;
-                      return (
-                        <tr
-                          key={p.id}
-                          onClick={() => setSelectedPoId(p.id)}
-                          className="hover:bg-blue-50/40 transition cursor-pointer group"
-                        >
-                          <td className="px-3.5 py-3 text-center text-slate-400 font-semibold">{idx + 1}</td>
-                          <td className="px-4 py-3">
-                            <span className="font-extrabold text-blue-700 group-hover:underline">
-                              {p.po_number}
-                            </span>
-                            {p.notes && (
-                              <p className="text-[11px] text-slate-400 truncate max-w-xs">{p.notes}</p>
-                            )}
-                          </td>
-                          <td className="px-3.5 py-3 font-bold text-slate-800">{p.store_name}</td>
-                          <td className="px-3.5 py-3">
-                            <span className="rounded-md bg-slate-100 px-2 py-0.5 font-bold text-slate-700 text-[11px]">
-                              {p.supplier_code || p.supplier_name}
-                            </span>
-                          </td>
-                          <td className="px-3.5 py-3 text-slate-600">{p.order_date}</td>
-                          <td className="px-3.5 py-3 text-slate-600">{p.target_date || "—"}</td>
-                          <td className="px-3.5 py-3 text-center font-semibold text-slate-700">
-                            {p.line_count} SKU
-                          </td>
-                          <td className="px-3.5 py-3 text-right font-extrabold text-slate-900">
-                            {p.total_quantity.toLocaleString()} pcs
-                          </td>
-                          <td className="px-3.5 py-3 text-right font-black text-emerald-700">
-                            ${p.total_amount.toFixed(2)}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span
-                              className={`rounded-full px-3 py-1 text-[11px] font-extrabold uppercase tracking-wide border ${status.bg} ${status.text} ${status.border}`}
-                            >
-                              {status.label}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                onClick={() => setSelectedPoId(p.id)}
-                                className="rounded-lg p-1.5 text-blue-600 hover:bg-blue-50 transition"
-                                title="Mở bảng chi tiết"
-                              >
-                                <EyeIcon size={16} weight="bold" />
-                              </button>
-                              <a
-                                href={`/api/fulfill/pos/${p.id}/export`}
-                                download
-                                className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 transition"
-                                title="Xuất file Excel cho sup"
-                              >
-                                <FileXlsIcon size={16} weight="bold" />
-                              </a>
-                              <button
-                                onClick={(e) => handleDeletePo(e, p.id, p.po_number)}
-                                className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                                title="Xóa đợt hàng"
-                              >
-                                <TrashIcon size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+          {/* Search */}
+          <div className="relative">
+            <MagnifyingGlassIcon size={16} className="absolute left-3.5 top-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Tìm PO#, Store, SKU..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="h-11 w-64 rounded-xl border border-slate-200 bg-white pl-10 pr-4 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            />
           </div>
         </div>
-      ) : activeTab === "sku_master" ? (
-        <SkuMasterView
-          stores={stores}
-          selectedStoreId={selectedStoreId}
-          onSelectStore={(id) => setSelectedStoreId(id)}
-        />
-      ) : (
-        <SuppliersView />
-      )}
+
+        {/* Create PO button - Prominent rounded-full pill */}
+        <button
+          type="button"
+          onClick={() => setShowCreateModal(true)}
+          className="inline-flex h-11 items-center gap-2 rounded-full bg-blue-600 px-6 text-sm font-bold text-white shadow-md shadow-blue-500/25 hover:bg-blue-700 transition cursor-pointer self-start lg:self-center shrink-0"
+        >
+          <PlusIcon size={16} weight="bold" />
+          <span>Tạo Đợt Hàng Mới</span>
+        </button>
+      </div>
+
+      {/* Orders Table - Spacious, clean rows, high contrast */}
+      <div className="rounded-2xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase text-slate-600 tracking-wider whitespace-nowrap">
+                <th className="px-4 py-4 w-12 text-center">STT</th>
+                <th className="px-5 py-4 w-52">Mã đợt (PO#)</th>
+                <th className="px-4 py-4 w-36">Store</th>
+                <th className="px-4 py-4 w-32">Nhà xưởng</th>
+                <th className="px-4 py-4 w-32">Ngày đặt</th>
+                <th className="px-4 py-4 w-32">Hẹn giao</th>
+                <th className="px-4 py-4 w-24 text-center">Số dòng</th>
+                <th className="px-4 py-4 w-32 text-right">Tổng SL</th>
+                <th className="px-5 py-4 w-36 text-right">Tổng tiền ($)</th>
+                <th className="px-5 py-4 w-40 text-center">Trạng thái</th>
+                <th className="px-4 py-4 w-28 text-center">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 whitespace-nowrap">
+              {loading ? (
+                <tr>
+                  <td colSpan={11} className="py-16 text-center text-slate-400 font-medium">
+                    Đang tải danh sách đợt hàng...
+                  </td>
+                </tr>
+              ) : pos.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="py-16 text-center text-slate-400">
+                    Chưa có đợt hàng nào. Bấm <strong>Tạo Đợt Hàng Mới</strong> để bắt đầu.
+                  </td>
+                </tr>
+              ) : (
+                pos.map((p, idx) => {
+                  const status = PO_STATUS_LABELS[p.status] || PO_STATUS_LABELS.draft;
+                  return (
+                    <tr
+                      key={p.id}
+                      onClick={() => setSelectedPoId(p.id)}
+                      className="hover:bg-blue-50/50 transition cursor-pointer group"
+                    >
+                      <td className="px-4 py-4 text-center text-slate-400 font-semibold">{idx + 1}</td>
+                      <td className="px-5 py-4">
+                        <span className="text-base font-bold text-blue-600 group-hover:underline">
+                          {p.po_number}
+                        </span>
+                        {p.notes && (
+                          <p className="text-xs text-slate-400 truncate max-w-xs mt-0.5">{p.notes}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 font-bold text-slate-900">{p.store_name}</td>
+                      <td className="px-4 py-4">
+                        <span className="rounded-lg bg-slate-100 px-3 py-1 font-bold text-slate-700 text-xs">
+                          {p.supplier_code || p.supplier_name}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 text-slate-600 font-medium">{p.order_date}</td>
+                      <td className="px-4 py-4 text-slate-600 font-medium">{p.target_date || "—"}</td>
+                      <td className="px-4 py-4 text-center font-bold text-slate-700">
+                        {p.line_count} SKU
+                      </td>
+                      <td className="px-4 py-4 text-right font-extrabold text-slate-900">
+                        {p.total_quantity.toLocaleString()} pcs
+                      </td>
+                      <td className="px-5 py-4 text-right font-black text-emerald-700">
+                        ${p.total_amount.toFixed(2)}
+                      </td>
+                      <td className="px-5 py-4 text-center">
+                        <span
+                          className={`inline-block rounded-full px-3.5 py-1 text-xs font-bold uppercase tracking-wide border ${status.bg} ${status.text} ${status.border}`}
+                        >
+                          {status.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPoId(p.id)}
+                            className="rounded-lg p-2 text-blue-600 hover:bg-blue-50 transition"
+                            title="Mở bảng chi tiết"
+                          >
+                            <EyeIcon size={18} weight="bold" />
+                          </button>
+                          <a
+                            href={`/api/fulfill/pos/${p.id}/export`}
+                            download
+                            className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50 transition"
+                            title="Xuất file Excel cho sup"
+                          >
+                            <FileXlsIcon size={18} weight="bold" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeletePo(e, p.id, p.po_number)}
+                            className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
+                            title="Xóa đợt hàng"
+                          >
+                            <TrashIcon size={18} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Create PO Modal */}
       <CreatePoModal

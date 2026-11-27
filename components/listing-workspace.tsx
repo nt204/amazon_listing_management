@@ -993,7 +993,7 @@ function WorkspaceSidebar({
             whileTap={{ scale: 0.97 }}
             transition={{ type: "spring", stiffness: 500, damping: 25 }}
             onClick={() => {
-              selectView("fulfill");
+              window.location.href = "/fulfill";
               onClose?.();
             }}
             className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer ${

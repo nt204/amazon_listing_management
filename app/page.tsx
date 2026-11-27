@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { AccessStatusScreen } from "@/components/access-status-screen";
 import { ListingWorkspace } from "@/components/listing-workspace";
 import { resolveActorFromHeaders } from "@/lib/auth-server";
@@ -52,10 +53,11 @@ export default async function Home({
 
   const host = headerStore.get("host") || "";
   const search = await searchParams;
+  if (search.view === "fulfill" || host.startsWith("fulfill.")) {
+    redirect("/fulfill");
+  }
   let initialView = resolveAllowedView(search.view, features);
-  if (!search.view && host.startsWith("fulfill.")) {
-    initialView = "fulfill";
-  } else if (!initialView) {
+  if (!initialView) {
     initialView = "listing";
   }
 
