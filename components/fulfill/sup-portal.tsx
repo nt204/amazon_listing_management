@@ -43,7 +43,10 @@ export function SupPortal({ name, email }: { name: string; email: string }) {
       <header className="border-b border-(--ff-line) bg-(--ff-side) print:hidden">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
           <span className="font-semibold">{name}</span>
-          <span className="truncate text-sm text-(--ff-muted)">{email}</span>
+          <span className="flex min-w-0 items-center gap-4 text-sm">
+            <span className="truncate text-(--ff-muted)">{email}</span>
+            <a href="/cdn-cgi/access/logout" className="shrink-0 font-medium text-(--ff-accent) hover:underline">Sign out</a>
+          </span>
         </div>
       </header>
 
