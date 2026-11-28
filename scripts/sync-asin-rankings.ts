@@ -78,6 +78,7 @@ async function main() {
         AND f.report_start_date = ${snap.report_start_date}
         AND f.report_end_date = ${snap.report_end_date}
         AND f.snapshot_date = ${snap.report_end_date}
+        AND f.ad_type = 'SP'
         AND f.grain = 'PRODUCT'
         AND f.asin ~* '^[A-Z0-9]{10}$'
       GROUP BY f.asin
