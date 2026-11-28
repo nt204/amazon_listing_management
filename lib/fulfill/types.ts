@@ -147,6 +147,11 @@ export interface FulfillLot {
   units_located: number;
   stage: FulfillLotStage;
   stage_counts: Record<FulfillLotStage, number>;
+  /** Tài khoản tạo yêu cầu đi hàng trên web Fulfill (null với lô từ sheet / import) */
+  created_by_user_id: string | null;
+  created_by_name: string | null;
+  /** Thời điểm tạo (ISO UTC) */
+  created_at: string | null;
 }
 
 export interface FulfillLotLine {

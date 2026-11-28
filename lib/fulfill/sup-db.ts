@@ -154,7 +154,10 @@ export async function resolveSupAccount(headers: Headers): Promise<SupAccount | 
   if (!email) return null;
   const sql = await getDatabaseClient();
   const [account] = await sql.unsafe<SupAccount[]>(
-    `SELECT ${ACCOUNT_COLUMNS} FROM fulfill_sup_accounts WHERE lower(btrim(email)) = $1 AND is_active`,
+    // Kiểm tra lại mỗi lần: email đã thành user nội bộ (kể cả sau khi tạo tài khoản xưởng) thì không vào trang xưởng
+    `SELECT ${ACCOUNT_COLUMNS} FROM fulfill_sup_accounts a
+     WHERE lower(btrim(a.email)) = $1 AND a.is_active
+       AND NOT EXISTS (SELECT 1 FROM app_users u WHERE lower(btrim(u.username)) = $1)`,
     [email],
   );
   if (!account || !account.sup_names.length) return null;

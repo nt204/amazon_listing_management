@@ -1,4 +1,5 @@
 import { getDatabaseClient } from "@/lib/db";
+import { fillSkuIdentifiersFromInventory } from "./sku-identifiers";
 import { parseCsv } from "@/lib/csv";
 
 /** Các cột số của báo cáo Inventory Ledger ngoài 2 cột tạo nên tồn kho (cột DB → tiêu đề trong file). */
@@ -418,6 +419,8 @@ export async function ingestInventoryLedgerRows(
   }
 
   const totalTonKho = aggregatedList.reduce((acc, it) => acc + it.tonKho, 0);
+  // Ledger có FNSKU / ASIN → điền ô trống trong Bảng Mã
+  await fillSkuIdentifiersFromInventory(storeId);
 
   return {
     insertedCount: rows.length,

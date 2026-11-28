@@ -70,7 +70,7 @@ export function MonthRangePicker({
       onKeyDown={(event) => {
         if (event.key === "Escape") onClose();
       }}
-      className="absolute top-full left-0 z-30 mt-2 w-[min(320px,calc(100vw-2rem))] rounded-xl border border-(--ff-line) bg-(--ff-card) p-3 shadow-[0_12px_32px_rgba(15,23,42,0.14)]"
+      className="animate-ff-popover origin-top-left absolute top-full left-0 z-30 mt-2 w-[min(320px,calc(100vw-2rem))] rounded-xl border border-(--ff-line) bg-(--ff-card) p-3 shadow-[0_12px_32px_rgba(15,23,42,0.14)]"
     >
       <div className="flex items-center justify-between">
         <button type="button" className={ui.iconBtn} onClick={() => setYear((y) => y - 1)} aria-label="Previous year">
@@ -96,7 +96,7 @@ export function MonthRangePicker({
               aria-pressed={edge || Boolean(inside)}
               onClick={() => pick(k)}
               onMouseEnter={() => setHover(k)}
-              className={`flex h-10 cursor-pointer items-center justify-center rounded-lg text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--ff-accent) ${
+              className={`flex h-10 cursor-pointer items-center justify-center rounded-lg text-sm motion-safe:active:scale-95 transition-[background-color,color,scale] duration-150 ease focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--ff-accent) ${
                 edge
                   ? "bg-(--ff-accent) font-semibold text-white"
                   : inside

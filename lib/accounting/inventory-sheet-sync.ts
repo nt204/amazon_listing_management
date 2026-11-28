@@ -57,6 +57,8 @@ export interface SheetSyncResult {
   deletedSkus?: string[];
   /** Chi Tiết Đi Hàng: dòng tạo từ web Đi hàng chưa có trên sheet, được giữ lại (không xóa) */
   keptFulfillRows?: number;
+  /** Bảng Mã FBA: SKU tạo từ thẻ Trello — đồng bộ sheet không ghi đè, không xóa */
+  keptTrelloSkus?: number;
   /** Số dòng thay đổi theo từng cột (để biết lần đồng bộ sửa những gì). */
   changedFields: Record<string, number>;
   duplicatesInSheet: string[];
@@ -536,6 +538,8 @@ async function writeSkuRecords(
       ),
     ) as Row;
     const current = existingByKey.get(key);
+    // SKU tạo từ thẻ Trello: web là bản gốc, sheet không ghi đè (đếm ở keptTrelloSkus bên dưới)
+    if (isTrelloSku(current)) continue;
     if (!current) {
       const values: Row = { store_id: storeId, sku: record.sku, ...fields };
       for (const field of Object.keys(values)) values[field] = roundTo(values[field], scales.get(field));
@@ -576,9 +580,11 @@ async function writeSkuRecords(
   // SKU trên web không còn trong BẢNG MÃ (FBA) của sheet → xóa mềm (sheet là bản gốc). Thêm lại vào sheet thì lần đồng bộ
   // sau tự khôi phục (nhánh wasDeleted ở trên). Chốt an toàn: thiếu quá nửa Bảng mã (đọc nhầm tab / sheet trống)
   // thì không xóa gì, chỉ cảnh báo.
-  const missing = existing.filter((row) => row.deleted_at == null && !bySku.has(keyOf(row.sku, row.asin)));
+  const trelloRows = existing.filter(isTrelloSku);
+  if (trelloRows.length) result.keptTrelloSkus = trelloRows.length;
+  const missing = existing.filter((row) => row.deleted_at == null && !isTrelloSku(row) && !bySku.has(keyOf(row.sku, row.asin)));
   result.missingOnSheet = missing.length;
-  const active = existing.filter((row) => row.deleted_at == null).length;
+  const active = existing.filter((row) => row.deleted_at == null && !isTrelloSku(row)).length;
   // Chỉ BẢNG MÃ FBA: BẢNG MÃ FBM khóa SKU + ASIN, một SKU có nhiều ASIN và đơn — vẫn chỉ cảnh báo.
   if (channel === "fba" && missing.length && bySku.size > 0 && missing.length <= active * MAX_MISSING_DELETE_RATIO) {
     await tx`
@@ -591,8 +597,11 @@ async function writeSkuRecords(
   }
 }
 
-/** BẢNG MÃ FBA: các cột ô trống trên sheet vẫn giữ giá trị đang có trên web */
-const KEEP_WHEN_BLANK = new Set(["asin", "mockup", "mockup_url"]);
+/** BẢNG MÃ FBA: các cột ô trống trên sheet vẫn giữ giá trị đang có trên web (ASIN / FNSKU bổ sung từ báo cáo Amazon) */
+const KEEP_WHEN_BLANK = new Set(["asin", "fnsku", "mockup", "mockup_url"]);
+
+/** Dòng BẢNG MÃ tạo từ thẻ Trello (đang hoạt động): đồng bộ sheet bỏ qua */
+const isTrelloSku = (row: Record<string, unknown> | undefined) => row?.source === "trello" && row.deleted_at == null;
 
 /** BẢNG MÃ FBM: các cột giá vốn — ô trống trên sheet thì xóa trống trên web (Total = Basecost + Shipping + Add shipping) */
 const FBM_CLEAR_WHEN_BLANK = new Set(["basecost", "shipping_fee", "add_shipping_fee"]);
@@ -909,6 +918,9 @@ export async function syncSheetToDatabase(
         ? `${result.missingOnSheet} SKU trên web không có trong sheet (Bảng mã FBM không tự xóa).`
         : `${result.missingOnSheet} SKU trên web không có trong sheet — quá nửa Bảng mã nên KHÔNG tự xóa, kiểm tra lại link/tab sheet.`,
     );
+  }
+  if (type === "sku" && result.keptTrelloSkus) {
+    result.warnings.push(`${result.keptTrelloSkus} SKU tạo từ thẻ Trello — sheet không ghi đè, không xóa (sửa trên web).`);
   }
   if (type === "inbound" && result.keptFulfillRows) {
     result.warnings.push(`${result.keptFulfillRows} dòng tạo từ web Đi hàng chưa có trên sheet — giữ lại, không xóa.`);

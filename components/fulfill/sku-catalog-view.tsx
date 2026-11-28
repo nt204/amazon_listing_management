@@ -111,7 +111,7 @@ export function SkuCatalogView({ stores, selectedStoreId, onSelectStore }: { sto
                 <tr><td colSpan={12} className="py-12 text-center text-(--ff-muted)">No SKUs match.</td></tr>
               ) : (
                 items.map((s) => (
-                  <tr key={s.id} className="border-t border-(--ff-line) hover:bg-(--ff-raised)">
+                  <tr key={s.id} className="border-t border-(--ff-line) transition-colors duration-150 ease hover:bg-(--ff-raised)/50">
                     <td className="py-2 pr-3 pl-5"><MockupThumbnail url={s.mockup} size={44} /></td>
                     <td className="px-3 font-mono text-xs font-semibold">{s.sku}</td>
                     <td className="px-3">{s.store_name}</td>

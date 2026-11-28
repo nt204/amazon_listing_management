@@ -1,7 +1,7 @@
 import "server-only";
 
-import { getDatabaseClient } from "@/lib/db";
 import { getTrelloServerCredentials } from "@/lib/trello-server-config";
+import { TRELLO_CARD_FIELDS, TRELLO_STATUS_VALUES, type TrelloCardFieldKey } from "@/lib/trello-fba-card-template";
 
 export interface ParsedTrelloFbaCard {
   cardId: string;
@@ -13,11 +13,16 @@ export interface ParsedTrelloFbaCard {
   niche: string | null;
   picMkt: string | null;
   picIdea: string | null;
-  status: string;
+  /** null khi mô tả thẻ không ghi Status (để trống, không tự gán) */
+  status: string | null;
   event: string | null;
   thangListing: string | null;
   mockupUrl: string | null;
   fileDesign: string | null;
+  /** Người thiết kế (cột Design PIC) — dòng "Design: …" */
+  designPic: string | null;
+  /** Kích thước — dòng "Size: …" */
+  size: string | null;
   desc: string;
   labels: string[];
   rawDateMoved: string | null;
@@ -39,62 +44,69 @@ export function normalizeKey(text: string | null | undefined): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+const foldLabel = (text: string) =>
+  text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .replace(/[*_`#>]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const LABEL_TO_KEY = new Map<string, TrelloCardFieldKey>(TRELLO_CARD_FIELDS.map((f) => [foldLabel(f.label), f.key]));
+
+/** Giá trị Status chuẩn (so khớp không dấu, không phân biệt hoa thường) */
+const STATUS_BY_FOLD = new Map<string, string>(TRELLO_STATUS_VALUES.map((v) => [foldLabel(v), v]));
+
+/** Link đầu tiên trong giá trị (Trello hay đổi link thành markdown [url](url "smartCard-inline")) */
+const firstUrl = (value: string) => value.match(/https?:\/\/[^\s)\]"'<>]+/i)?.[0] ?? null;
+
 /**
- * Trích xuất các trường từ phần Description do R&D / MKT điền:
- * Hỗ trợ các dạng:
- * - PIC MKT: Truong  (hoặc MKT: Truong)
- * - PIC Idea: My     (hoặc Idea: My)
- * - Status: Test     (hoặc Trạng thái: Test)
- * - Event: Evergreen (hoặc Mùa vụ: Evergreen)
+ * Đọc mô tả thẻ theo ĐÚNG mẫu (lib/trello-fba-card-template.ts):
+ *   PIC MKT: / PIC Idea: / Design: / Status: / Event: / Size: / File Design:
+ * Chỉ đọc các dòng có đúng nhãn này (không phân biệt hoa thường, bỏ qua in đậm markdown); dòng khác bỏ qua.
+ * Dòng để trống hoặc còn chữ gợi ý trong ngoặc "(…)" → để trống. Nhãn ghi 2 lần thì lấy dòng đầu.
  */
 export function parseDescriptionFields(desc: string) {
-  const lines = desc.split(/\r?\n/);
-  let picMkt: string | null = null;
-  let picIdea: string | null = null;
+  const values: Partial<Record<TrelloCardFieldKey, string>> = {};
+  const warnings: string[] = [];
+
+  for (const rawLine of desc.split(/\r?\n/)) {
+    const match = rawLine.match(/^\s*(?:[-*•]\s+)?([^:：]+?)\s*[:：]\s*(.*)$/);
+    if (!match) continue;
+    const key = LABEL_TO_KEY.get(foldLabel(match[1]));
+    if (!key || key in values) continue;
+    const value = match[2].replace(/^[*_\s]+|[*_\s]+$/g, "").trim();
+    if (!value || /^\(.*\)$/.test(value)) continue;
+    values[key] = value;
+  }
+
   let status: string | null = null;
-  let event: string | null = null;
+  if (values.status) {
+    status = STATUS_BY_FOLD.get(foldLabel(values.status)) ?? null;
+    if (!status) warnings.push(`Status "${values.status}" không hợp lệ (chỉ nhận ${TRELLO_STATUS_VALUES.join(" / ")}) — để trống`);
+  }
+
   let fileDesign: string | null = null;
-
-  // Tìm link Google Drive trong mô tả
-  const driveMatch = desc.match(/https:\/\/drive\.google\.com\/[^\s)\]"]+/i);
-  if (driveMatch) {
-    fileDesign = driveMatch[0];
+  if (values.fileDesign) {
+    fileDesign = firstUrl(values.fileDesign);
+    if (!fileDesign) warnings.push("File Design không phải link — để trống");
   }
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) continue;
+  // "Design:" là tên người thiết kế; dán nhầm link vào đây thì bỏ qua
+  const designPic = values.designPic && !firstUrl(values.designPic) ? values.designPic : null;
 
-    // PIC MKT
-    const mktMatch = line.match(/^(?:pic\s*mkt|mkt|marketing)\s*[:=\-]\s*(.+)$/i);
-    if (mktMatch && !picMkt) {
-      picMkt = mktMatch[1].trim();
-      continue;
-    }
-
-    // PIC Idea
-    const ideaMatch = line.match(/^(?:pic\s*idea|idea|r&d|rd)\s*[:=\-]\s*(.+)$/i);
-    if (ideaMatch && !picIdea) {
-      picIdea = ideaMatch[1].trim();
-      continue;
-    }
-
-    // Status
-    const statusMatch = line.match(/^(?:status|trạng\s*thái)\s*[:=\-]\s*(.+)$/i);
-    if (statusMatch && !status) {
-      status = statusMatch[1].trim();
-      continue;
-    }
-
-    // Event
-    const eventMatch = line.match(/^(?:event|mùa\s*vụ|sự\s*kiện)\s*[:=\-]\s*(.+)$/i);
-    if (eventMatch && !event) {
-      event = eventMatch[1].trim();
-      continue;
-    }
-  }
-
-  return { picMkt, picIdea, status, event, fileDesign };
+  return {
+    picMkt: values.picMkt ?? null,
+    picIdea: values.picIdea ?? null,
+    designPic,
+    status,
+    event: values.event ?? null,
+    size: values.size ?? null,
+    fileDesign,
+    warnings,
+  };
 }
 
 /**
@@ -224,12 +236,9 @@ export async function parseTrelloFbaCard(
   }
 
   // 7. Chuẩn hóa Status
-  let status = descFields.status || "Test";
-  // Chuẩn hóa viết hoa chữ cái đầu (Test, Phát triển, Hủy)
-  const normStatus = normalizeKey(status);
-  if (normStatus === "test") status = "Test";
-  else if (normStatus === "phát triển" || normStatus === "phat trien" || normStatus === "win") status = "Phát triển";
-  else if (normStatus === "hủy" || normStatus === "huy" || normStatus === "fail") status = "Hủy";
+  // Mô tả không ghi Status / Event thì để trống (không tự gán Test / Evergreen)
+  const status = descFields.status;
+  errors.push(...descFields.warnings);
 
   return {
     cardId: card.id,
@@ -242,10 +251,12 @@ export async function parseTrelloFbaCard(
     picMkt: descFields.picMkt,
     picIdea: descFields.picIdea,
     status,
-    event: descFields.event || "Evergreen",
+    event: descFields.event,
     thangListing,
     mockupUrl,
     fileDesign: descFields.fileDesign,
+    designPic: descFields.designPic,
+    size: descFields.size,
     desc: card.desc,
     labels: labelNames,
     rawDateMoved: effectiveDate || null,

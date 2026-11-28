@@ -54,6 +54,10 @@ export interface RawRow {
   cs_status: string | null;
   units_expected: number | null;
   units_located: number | null;
+  /** Chỉ có ở loadRows nội bộ (view của xưởng không có) */
+  created_at?: string | null;
+  created_by_user_id?: string | null;
+  created_by_name?: string | null;
 }
 
 const clean = (value: string | null | undefined) => {
@@ -116,6 +120,8 @@ async function loadRows(storeIds: string[] | null): Promise<RawRow[]> {
       i.final_basecost::float, i.total_basecost::float,
       i.ten_lo_hang, i.shipment_id, i.ngay_di, i.ngay_den, i.status, i.amazon_received, i.so_luong_amazon_nhan,
       i.ngay_thanh_toan, i.note, i.trang_thai, i.custom_fields, i.source,
+      to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+      i.created_by_user_id, i.created_by_name,
       sm.kich_thuoc, sm.file_design, sm.fnsku, sm.mockup_url AS sku_mockup,
       cs.sid AS cs_shipment, cs.status AS cs_status, cs.units_expected, cs.units_located
     FROM accounting_inbound_shipments i
@@ -408,8 +414,11 @@ export function summarizeLot(key: string, name: string, generated: boolean, rows
   let quantity = 0;
   let amount = 0;
   let paid = 0;
+  // Người tạo = dòng tạo sớm nhất có ghi người tạo (yêu cầu tạo từ web Fulfill)
+  let creator: RawRow | null = null;
 
   for (const row of rows) {
+    if (row.created_by_user_id && (!creator || (row.created_at ?? "") < (creator.created_at ?? ""))) creator = row;
     const stage = stageOf(row);
     stageCounts[stage] += 1;
     if (stage === "cancelled") continue;
@@ -450,5 +459,8 @@ export function summarizeLot(key: string, name: string, generated: boolean, rows
     units_located: [...shipments.values()].reduce((a, s) => a + s.located, 0),
     stage: LOT_STAGE_ORDER.find((stage) => stageCounts[stage] > 0) ?? "cancelled",
     stage_counts: stageCounts,
+    created_by_user_id: creator?.created_by_user_id ?? null,
+    created_by_name: creator?.created_by_name ?? null,
+    created_at: creator?.created_at ?? null,
   };
 }

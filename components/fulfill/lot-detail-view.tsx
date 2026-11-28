@@ -9,6 +9,7 @@ import { LotStageLabel, MockupThumbnail, Notice, StoreDot, fmtInt, fmtMoney, ui 
 interface LotDetailViewProps {
   storeId: string;
   lotName: string;
+  initialLot?: FulfillLot;
   storeColor?: string;
   onBack: () => void;
 }
@@ -60,7 +61,7 @@ function cell(line: FulfillLotLine, column: LotColumn) {
   }
 }
 
-export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetailViewProps) {
+export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack }: LotDetailViewProps) {
   const [data, setData] = useState<DetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -92,7 +93,8 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
     return () => controller.abort();
   }, [query]);
 
-  const lot = data?.lot;
+  const lot = data?.lot ?? initialLot;
+  const loading = !data && !error;
   const lines = data?.lines ?? [];
   const active = lines.filter((l) => l.stage !== "cancelled");
   const totalQty = active.reduce((a, l) => a + l.quantity, 0);
@@ -301,7 +303,7 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
   };
 
   return (
-    <div className="space-y-5">
+    <div className="animate-ff-content space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <button type="button" onClick={() => {
           if (!hasChanges || window.confirm("Discard unsaved changes?")) onBack();
@@ -361,6 +363,19 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
                 {lot.last_request && lot.last_request !== lot.first_request ? ` → ${lot.last_request}` : ""}
               </dd>
             </div>
+            {lot.created_by_name && (
+              <div>
+                <dt className="text-xs text-(--ff-muted)">Created by</dt>
+                <dd className="mt-0.5 font-medium" title={lot.created_by_user_id ?? undefined}>
+                  {lot.created_by_name}
+                  {lot.created_at && (
+                    <span className="block text-xs font-normal text-(--ff-muted)">
+                      {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Ho_Chi_Minh" }).format(new Date(lot.created_at))}
+                    </span>
+                  )}
+                </dd>
+              </div>
+            )}
             <div>
               <dt className="text-xs text-(--ff-muted)">SKUs · Units</dt>
               <dd className="mt-0.5 font-medium">{lot.sku_count} · {fmtInt(lot.quantity)}</dd>
@@ -388,7 +403,7 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
         )}
       </div>
 
-      <section className={`${ui.card} overflow-hidden`} aria-label="Lot details">
+      <section className={`${ui.card} overflow-hidden`} aria-label="Lot details" aria-busy={loading}>
         <div ref={scroller} className={data?.canEdit ? "max-h-[65dvh] overflow-auto print:max-h-none" : "overflow-x-auto"}>
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap print:text-[9px]">
             <thead className={ui.tableHead}>
@@ -405,7 +420,7 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-(--ff-line)">
+            <tbody className={`divide-y divide-(--ff-line) ${data ? "animate-ff-content" : ""}`}>
               {error ? (
                 <tr>
                   <td colSpan={LOT_COLUMNS.length + 1} className="py-12 text-center text-(--ff-neg)">{error}</td>
@@ -419,7 +434,7 @@ export function LotDetailView({ storeId, lotName, storeColor, onBack }: LotDetai
                   <tr
                     key={line.id}
                     data-lot-row={index}
-                    className={`h-11 hover:bg-neutral-50 ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}
+                    className={`h-11 transition-colors duration-150 ease hover:bg-(--ff-raised)/40 ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}
                     title={line.stage === "cancelled" ? "Canceled line, excluded from totals" : undefined}
                   >
                     <td className="pr-2 pl-4 text-right text-xs text-(--ff-muted)">{index + 1}</td>

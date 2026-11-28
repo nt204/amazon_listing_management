@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CalendarBlankIcon, CaretDownIcon, CaretLeftIcon, CaretRightIcon, ChartBarIcon, FileXlsIcon, MagnifyingGlassIcon, PlusIcon, CheckIcon } from "@phosphor-icons/react";
 import type { FulfillLot, FulfillLotStage } from "@/lib/fulfill/types";
@@ -33,6 +34,11 @@ const lotHref = (lot: FulfillLot, path = "") =>
   `/api/fulfill/lots${path}?${new URLSearchParams({ storeId: lot.store_id, lot: lot.lot_name })}`;
 
 const dayFormatter = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+type PaymentFilter = "" | "paid" | "unpaid";
+const isPaidInFull = (lot: FulfillLot) => lot.amount > 0 && lot.paid_amount >= lot.amount - 0.005;
+const hasDue = (lot: FulfillLot) => lot.amount - lot.paid_amount > 0.005;
+
 const fmtDay = (d: string | null) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? dayFormatter.format(new Date(`${d}T00:00:00Z`)) : d ?? "");
 
 function useControlled<T>(value: T | undefined, onChange: ((v: T) => void) | undefined, initial: T): [T, (v: T) => void] {
@@ -62,6 +68,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
   const [selectedSup, setSelectedSup] = useControlled(props.sup, props.onSupChange, "");
   const [searchTerm, setSearchTerm] = useControlled(props.search, props.onSearchChange, "");
   const [selectedStage, setSelectedStage] = useState<FulfillLotStage | "">("");
+  const [selectedPayment, setSelectedPayment] = useState<PaymentFilter>("");
   const [fromMonth, setFromMonth] = useState("");
   const [toMonth, setToMonth] = useState("");
   const [monthDraft, setMonthDraft] = useState<{ mode: "single" | "range"; from: string; to: string } | null>(null);
@@ -128,7 +135,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
 
   const refresh = () => setRefreshVersion((version) => version + 1);
   const hasMonthRange = Boolean(fromMonth || toMonth);
-  const hasFilters = Boolean(query || selectedStage || hasMonthRange);
+  const hasFilters = Boolean(query || selectedStage || selectedPayment || hasMonthRange);
   const closeMonthPicker = useCallback(() => setMonthDraft(null), []);
   const applyMonths = (from: string, to: string) => {
     setPage(1);
@@ -143,6 +150,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
     setSelectedStoreId("");
     setSelectedSup("");
     setSelectedStage("");
+    setSelectedPayment("");
     setFromMonth("");
     setToMonth("");
     setMonthDraft(null);
@@ -166,17 +174,23 @@ export function FulfillView(props: FulfillViewProps = {}) {
     });
   }, [lots, fromMonth, toMonth, hasMonthRange]);
   const monthActive = monthLots.filter((l) => l.stage !== "cancelled");
+  const paymentLots = useMemo(
+    () => selectedPayment === "paid" ? monthLots.filter(isPaidInFull)
+      : selectedPayment === "unpaid" ? monthLots.filter(hasDue)
+        : monthLots,
+    [monthLots, selectedPayment],
+  );
 
   const stageCounts = useMemo(() => {
     const counts: Record<FulfillLotStage, number> = { waiting: 0, in_transit: 0, receiving: 0, closed: 0, cancelled: 0 };
-    for (const lot of monthLots) counts[lot.stage] += 1;
+    for (const lot of paymentLots) counts[lot.stage] += 1;
     return counts;
-  }, [monthLots]);
+  }, [paymentLots]);
 
   const unpaid = monthActive.reduce((a, l) => a + Math.max(0, l.amount - l.paid_amount), 0);
   const unpaidLots = monthActive.filter((l) => l.amount - l.paid_amount > 0.005).length;
 
-  const visibleLots = selectedStage ? monthLots.filter((l) => l.stage === selectedStage) : monthLots;
+  const visibleLots = selectedStage ? paymentLots.filter((l) => l.stage === selectedStage) : paymentLots;
   const pageCount = Math.max(1, Math.ceil(visibleLots.length / LOTS_PER_PAGE));
   const currentPage = Math.min(page, pageCount);
   const pageStart = (currentPage - 1) * LOTS_PER_PAGE;
@@ -209,23 +223,22 @@ export function FulfillView(props: FulfillViewProps = {}) {
     return [...m.values()].sort((a, b) => b.amount - a.amount);
   })();
 
-  if (selectedLot) {
-    return (
-      <LotDetailView
-        storeId={selectedLot.store_id}
-        lotName={selectedLot.lot_name}
-        storeColor={colors[selectedLot.store_id]}
-        onBack={() => {
-          setSelectedLot(null);
-          refresh();
-        }}
-      />
-    );
-  }
+  const detail = selectedLot && (
+    <LotDetailView
+      storeId={selectedLot.store_id}
+      lotName={selectedLot.lot_name}
+      initialLot={lots.find((lot) => lot.store_id === selectedLot.store_id && lot.lot_name === selectedLot.lot_name)}
+      storeColor={colors[selectedLot.store_id]}
+      onBack={() => {
+        setSelectedLot(null);
+        refresh();
+      }}
+    />
+  );
 
   const dash = loading || loadError;
 
-  return (
+  const list = !detail && (
     <div className="space-y-4">
       <div className={`${ui.heading} py-4! sm:py-5!`}>
         <h1 className={ui.title}>Shipment <span className="text-(--ff-accent)">lots</span></h1>
@@ -281,22 +294,22 @@ export function FulfillView(props: FulfillViewProps = {}) {
               />
             </label>
             <div className="relative">
-            <button
-              ref={monthFilterRef}
-              type="button"
-              aria-expanded={monthPickerOpen}
-              aria-controls={monthDraft ? monthPickerId : undefined}
-              onClick={() => setMonthDraft((draft) => draft ? null : {
-                mode: !hasMonthRange || fromMonth === toMonth ? "single" : "range",
-                from: fromMonth,
-                to: toMonth,
-              })}
-              className={`${ui.select} inline-flex items-center gap-2 whitespace-nowrap ${hasMonthRange ? "border-(--ff-accent) text-(--ff-accent)" : ""}`}
-            >
-              <CalendarBlankIcon size={16} aria-hidden />
-              {monthRangeLabel}
-              <CaretDownIcon size={13} aria-hidden />
-            </button>
+              <button
+                ref={monthFilterRef}
+                type="button"
+                aria-expanded={monthPickerOpen}
+                aria-controls={monthDraft ? monthPickerId : undefined}
+                onClick={() => setMonthDraft((draft) => draft ? null : {
+                  mode: !hasMonthRange || fromMonth === toMonth ? "single" : "range",
+                  from: fromMonth,
+                  to: toMonth,
+                })}
+                className={`${ui.select} inline-flex items-center gap-2 whitespace-nowrap motion-safe:active:scale-[0.98] transition-[border-color,background-color,color,scale] duration-150 ${hasMonthRange ? "border-(--ff-accent) text-(--ff-accent)" : ""}`}
+              >
+                <CalendarBlankIcon size={16} aria-hidden />
+                {monthRangeLabel}
+                <CaretDownIcon size={13} aria-hidden />
+              </button>
               {monthPickerOpen && (
                 <MonthRangePicker
                   id={monthPickerId}
@@ -321,6 +334,14 @@ export function FulfillView(props: FulfillViewProps = {}) {
               <option value="">All suppliers</option>
               {sups.map((sup) => <option key={sup} value={sup}>{sup}</option>)}
             </select>
+            <select aria-label="Filter by payment" value={selectedPayment} onChange={(event) => {
+              setPage(1);
+              setSelectedPayment(event.target.value as PaymentFilter);
+            }} className={`${ui.select} ${selectedPayment ? "border-(--ff-accent) text-(--ff-accent)" : ""}`}>
+              <option value="">All payments</option>
+              <option value="paid">Paid</option>
+              <option value="unpaid">Unpaid</option>
+            </select>
             {hasFilters && (
               <button type="button" className={ui.link} onClick={clearFilters}>Clear filters</button>
             )}
@@ -329,7 +350,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
         <div role="group" aria-label="Filter by shipment stage" className="flex flex-wrap items-center gap-1 border-b border-(--ff-line) px-4 py-3 sm:px-6">
           {(["", ...LOT_STAGE_ORDER, "cancelled"] as Array<FulfillLotStage | "">).map((s) => {
             const active = selectedStage === s;
-            const n = s ? stageCounts[s] : monthLots.length;
+            const n = s ? stageCounts[s] : paymentLots.length;
             if (s === "cancelled" && n === 0 && !active) return null;
             return (
               <button
@@ -341,9 +362,8 @@ export function FulfillView(props: FulfillViewProps = {}) {
                   setSelectedStage(s);
                 }}
                 aria-pressed={active}
-                className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-2 text-sm transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ff-accent) sm:gap-2 sm:px-3 ${
-                  active ? "bg-(--ff-accent) font-semibold text-white" : "text-(--ff-text-2) hover:bg-(--ff-raised) hover:text-(--ff-accent)"
-                }`}
+                className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-2 text-sm transition-[background-color,color,scale] duration-150 ease motion-safe:active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ff-accent) sm:gap-2 sm:px-3 ${active ? "bg-(--ff-accent) font-semibold text-white shadow-xs" : "text-(--ff-text-2) hover:bg-(--ff-raised) hover:text-(--ff-accent)"
+                  }`}
               >
                 {s && <span aria-hidden className={`size-2 shrink-0 rounded-full ${active ? "bg-white" : LOT_STAGE[s].dot}`} />}
                 {s ? LOT_STAGE[s].label : "All"}
@@ -391,10 +411,34 @@ export function FulfillView(props: FulfillViewProps = {}) {
             </tbody>
           )}
           <tbody role="rowgroup" className="block md:table-row-group">
-            {loading || loadError || visibleLots.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <tr key={i} className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.85fr)_minmax(0,1fr)] items-start gap-x-3 gap-y-2 border-t border-(--ff-line) px-4 py-3 motion-safe:animate-pulse md:table-row">
+                  <td className={`${LOT_CELL} col-span-3 pr-9 md:pl-6`}>
+                    <div className="h-4 w-48 rounded bg-(--ff-line)/70" />
+                    <div className="mt-1.5 h-3 w-28 rounded bg-(--ff-line)/40" />
+                  </td>
+                  <td className={LOT_CELL}>
+                    <div className="h-4 w-28 rounded bg-(--ff-line)/60" />
+                  </td>
+                  <td className={`${LOT_CELL} text-right`}>
+                    <div className="ml-auto h-4 w-16 rounded bg-(--ff-line)/60" />
+                  </td>
+                  <td className={`${LOT_CELL} text-right`}>
+                    <div className="ml-auto h-4 w-20 rounded bg-(--ff-line)/60" />
+                  </td>
+                  <td className={LOT_CELL}>
+                    <div className="h-4 w-32 rounded bg-(--ff-line)/60" />
+                  </td>
+                  <td className={LOT_CELL}>
+                    <div className="size-6 rounded bg-(--ff-line)/40" />
+                  </td>
+                </tr>
+              ))
+            ) : loadError || visibleLots.length === 0 ? (
               <tr role="row" className="block md:table-row">
                 <td role="cell" colSpan={6} className="block px-4 py-12 text-center text-(--ff-muted) md:table-cell">
-                  {loading ? "Loading shipment lots…" : loadError ? (
+                  {loadError ? (
                     <>
                       Could not load shipment lots.{" "}
                       <button type="button" className={ui.link} onClick={refresh}>Retry</button>
@@ -404,7 +448,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
               </tr>
             ) : (
               pageLots.map((lot) => {
-                const paidInFull = lot.amount > 0 && lot.paid_amount >= lot.amount - 0.005;
+                const paidInFull = isPaidInFull(lot);
                 const receivedShort = lot.stage === "closed" && lot.units_located < lot.units_expected;
                 const shipmentCount = lot.shipment_ids.length;
                 const due = Math.max(0, lot.amount - lot.paid_amount);
@@ -415,7 +459,7 @@ export function FulfillView(props: FulfillViewProps = {}) {
                     key={lot.key}
                     role="row"
                     onClick={() => setSelectedLot(lot)}
-                    className="group relative grid cursor-pointer grid-cols-[minmax(0,1.1fr)_minmax(0,0.85fr)_minmax(0,1fr)] items-start gap-x-3 gap-y-2 border-t border-(--ff-line) px-4 py-3 transition-colors hover:bg-(--ff-accent-soft) focus-within:bg-(--ff-accent-soft) md:table-row"
+                    className="group relative grid cursor-pointer grid-cols-[minmax(0,1.1fr)_minmax(0,0.85fr)_minmax(0,1fr)] items-start gap-x-3 gap-y-2 border-t border-(--ff-line) px-4 py-3 transition-colors duration-150 ease hover:bg-(--ff-accent-soft) focus-within:bg-(--ff-accent-soft) md:table-row"
                   >
                     <td role="cell" className={`${LOT_CELL} col-span-3 pr-9 md:pl-6`}>
                       <button
@@ -521,10 +565,10 @@ export function FulfillView(props: FulfillViewProps = {}) {
       </section>
 
       <details className={`${ui.card} group overflow-hidden`} open>
-        <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3.5 font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--ff-accent) sm:px-6 [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3.5 font-semibold transition-colors duration-150 ease hover:bg-(--ff-raised)/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--ff-accent) sm:px-6 [&::-webkit-details-marker]:hidden">
           <ChartBarIcon size={18} className="shrink-0 text-(--ff-accent)" aria-hidden />
           Store breakdown{hasMonthRange ? ` · ${monthRangeLabel}` : ""}
-          <CaretDownIcon size={16} className="ml-auto shrink-0 text-(--ff-muted) group-open:rotate-180" aria-hidden />
+          <CaretDownIcon size={16} className="ml-auto shrink-0 text-(--ff-muted) transition-transform duration-200 ease-out group-open:rotate-180" aria-hidden />
         </summary>
         <div className="overflow-x-auto border-t border-(--ff-line)">
           <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
@@ -592,19 +636,27 @@ export function FulfillView(props: FulfillViewProps = {}) {
           </table>
         </div>
       </details>
-      {showCreate && (
-        <CreateLotModal
-          stores={stores}
-          defaultStoreId={selectedStoreId}
-          defaultSup={selectedSup}
-          onClose={() => setShowCreate(false)}
-          onCreated={(lot) => {
-            setShowCreate(false);
-            setSelectedLot({ store_id: lot.storeId, lot_name: lot.lotName });
-            refresh();
-          }}
-        />
-      )}
     </div>
+  );
+
+  return (
+    <>
+      {detail || list}
+      <AnimatePresence>
+        {showCreate && (
+          <CreateLotModal
+            stores={stores}
+            defaultStoreId={selectedStoreId}
+            defaultSup={selectedSup}
+            onClose={() => setShowCreate(false)}
+            onCreated={(lot) => {
+              setShowCreate(false);
+              setSelectedLot({ store_id: lot.storeId, lot_name: lot.lotName });
+              refresh();
+            }}
+          />
+        )}
+      </AnimatePresence>
+    </>
   );
 }

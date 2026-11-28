@@ -172,7 +172,7 @@ export function PoDetailView({ poId, onBack }: PoDetailViewProps) {
   return (
     <div className="space-y-6">
       <div className="print:hidden">
-        <button type="button" onClick={onBack} className="inline-flex cursor-pointer items-center gap-2 text-sm text-(--ff-text-2) transition-colors duration-150 hover:text-(--ff-text)">
+        <button type="button" onClick={onBack} className="inline-flex cursor-pointer items-center gap-2 text-sm text-(--ff-text-2) transition-[color,transform] duration-150 ease hover:text-(--ff-text) hover:-translate-x-0.5 will-change-transform motion-safe:active:scale-95">
           <ArrowLeftIcon size={16} />
           Đợt hàng
         </button>

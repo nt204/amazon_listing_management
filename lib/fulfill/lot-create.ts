@@ -154,7 +154,15 @@ export function lineTotals(line: Pick<CreateLotInput["lines"][number], "base_cos
   return { final, total: round2(final * line.quantity) };
 }
 
-export async function createFulfillLot(input: CreateLotInput, actor: string) {
+export interface LotCreator {
+  /** id tài khoản đăng nhập (app_users / admin) */
+  userId: string;
+  /** tên hiển thị lúc tạo */
+  name: string;
+}
+
+export async function createFulfillLot(input: CreateLotInput, creator: LotCreator) {
+  const actor = creator.name;
   const store = await getStoreById(input.store_id);
   if (!store) throw new ApiError("Store not found.", 404);
 
@@ -229,6 +237,8 @@ export async function createFulfillLot(input: CreateLotInput, actor: string) {
         source: "fulfill",
         row_order: next_order + index,
         last_changed_by: actor,
+        created_by_user_id: creator.userId,
+        created_by_name: creator.name,
       };
       const [row] = await tx<{ id: string }[]>`INSERT INTO accounting_inbound_shipments ${tx(values)} RETURNING id`;
       ids.push(row.id);

@@ -35,7 +35,10 @@ export async function POST(req: Request) {
     }
     const input = parsed.data;
     await requireFulfillStore(actor, input.store_id, "write");
-    const result = await createFulfillLot(input, actor.displayName || actor.email || actor.userId);
+    const result = await createFulfillLot(input, {
+      userId: actor.userId,
+      name: actor.displayName || actor.email || actor.userId,
+    });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return routeErrorResponse(error, "Could not create the shipment request.");

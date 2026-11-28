@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeftIcon, BarcodeIcon, FactoryIcon, PackageIcon, StackIcon } from "@phosphor-icons/react";
+import { motion, useReducedMotion } from "motion/react";
 import type { RequestActor } from "@/lib/auth";
 import { FulfillView } from "./fulfill-view";
 import { SkuCatalogView } from "./sku-catalog-view";
@@ -23,7 +24,8 @@ const TABS: Array<{ id: FulfillPortalTab; label: string; icon: typeof StackIcon 
 ];
 
 export function FulfillPortal({ actor }: FulfillPortalProps) {
-  const [activeTab, setActiveTab] = useState<FulfillPortalTab>("pos");
+  const [{ activeTab, animateTab }, setTab] = useState<{ activeTab: FulfillPortalTab; animateTab: boolean }>({ activeTab: "pos", animateTab: false });
+  const reducedMotion = useReducedMotion();
   const [stores, setStores] = useState<StoreOption[]>([]);
   const [storeId, setStoreId] = useState("");
   const [sup, setSup] = useState("");
@@ -68,16 +70,27 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
               <button
                 key={id}
                 type="button"
-                onClick={() => setActiveTab(id)}
+                onClick={(event) => {
+                  if (id !== activeTab) setTab({ activeTab: id, animateTab: event.detail > 0 });
+                }}
                 aria-current={activeTab === id ? "page" : undefined}
-                className={`flex min-h-9 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ff-accent) sm:px-4 sm:text-sm ${
+                className={`relative flex min-h-9 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2 text-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ff-accent) sm:px-4 sm:text-sm ${
                   activeTab === id
-                    ? "bg-(--ff-accent) font-semibold text-white shadow-sm"
-                    : "text-(--ff-text-2) hover:bg-(--ff-card) hover:text-(--ff-accent)"
+                    ? "font-semibold text-white"
+                    : "text-(--ff-text-2) hover:text-(--ff-accent)"
                 }`}
               >
-                <Icon size={16} className="hidden shrink-0 min-[360px]:block" aria-hidden />
-                {label}
+                {activeTab === id && (
+                  <motion.span
+                    layoutId={reducedMotion ? undefined : "fulfill-portal-tab-pill"}
+                    className="absolute inset-0 rounded-full bg-(--ff-accent) shadow-sm"
+                    transition={{ duration: animateTab ? 0.18 : 0, ease: [0.645, 0.045, 0.355, 1] }}
+                  />
+                )}
+                <span className="relative z-10 flex items-center gap-1.5">
+                  <Icon size={16} className="hidden shrink-0 min-[360px]:block" aria-hidden />
+                  {label}
+                </span>
               </button>
             ))}
           </nav>
@@ -86,7 +99,7 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
             <span className="hidden truncate text-sm text-(--ff-muted) lg:block">{actor.displayName || actor.email || actor.userId}</span>
             <Link
               href="/?view=accounting"
-              className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-2 text-sm font-medium text-(--ff-accent) hover:bg-(--ff-accent-soft) focus-visible:outline-2 focus-visible:outline-(--ff-accent)"
+              className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-medium text-(--ff-accent) transition-[color,background-color,scale] duration-150 ease hover:bg-(--ff-accent-soft) motion-safe:active:scale-95 focus-visible:outline-2 focus-visible:outline-(--ff-accent)"
             >
               <ArrowLeftIcon size={14} aria-hidden />
               Accounting
@@ -96,18 +109,20 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
       </header>
 
       <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8 print:max-w-none print:p-0">
-        {activeTab === "pos" && (
-          <FulfillView
-            storeId={storeId}
-            sup={sup}
-            search={search}
-            onStoreChange={setStoreId}
-            onSupChange={setSup}
-            onSearchChange={setSearch}
-          />
-        )}
-        {activeTab === "sku_master" && <SkuCatalogView stores={stores} selectedStoreId={storeId} onSelectStore={setStoreId} />}
-        {activeTab === "suppliers" && <SupAccountsView />}
+        <div key={activeTab} className={animateTab ? "animate-ff-content" : undefined}>
+          {activeTab === "pos" && (
+            <FulfillView
+              storeId={storeId}
+              sup={sup}
+              search={search}
+              onStoreChange={setStoreId}
+              onSupChange={setSup}
+              onSearchChange={setSearch}
+            />
+          )}
+          {activeTab === "sku_master" && <SkuCatalogView stores={stores} selectedStoreId={storeId} onSelectStore={setStoreId} />}
+          {activeTab === "suppliers" && <SupAccountsView />}
+        </div>
       </main>
     </div>
   );

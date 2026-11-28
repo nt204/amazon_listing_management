@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence } from "motion/react";
 import { useEffect, useState } from "react";
 import { Modal, Notice, fmtInt, fmtMoney, ui } from "./fulfill-ui";
 
@@ -182,46 +183,50 @@ export function SupAccountsView() {
         </div>
       </section>
 
-      {draft && (
-        <AccountForm
-          draft={draft}
-          sups={(data?.sups ?? []).map((s) => s.sup)}
-          onClose={() => setDraft(null)}
-          onSaved={() => {
-            setDraft(null);
-            reload();
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {draft && (
+          <AccountForm
+            draft={draft}
+            sups={(data?.sups ?? []).map((s) => s.sup)}
+            onClose={() => setDraft(null)}
+            onSaved={() => {
+              setDraft(null);
+              reload();
+            }}
+          />
+        )}
+      </AnimatePresence>
 
-      {log && (
-        <Modal title={`History · ${log.account.email}`} onClose={() => setLog(null)}>
-          <div className="max-h-[60dvh] overflow-y-auto px-5 py-3">
-            {log.rows.length === 0 ? (
-              <p className="py-6 text-center text-sm text-(--ff-muted)">No visits yet.</p>
-            ) : (
-              <table className="w-full border-collapse text-left text-sm">
-                <thead className={ui.tableHead}>
-                  <tr>
-                    <th scope="col" className={ui.th}>Date</th>
-                    <th scope="col" className={ui.th}>Action</th>
-                    <th scope="col" className={ui.th}>Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-(--ff-line)">
-                  {log.rows.map((r, i) => (
-                    <tr key={i}>
-                      <td className="px-3 py-2 whitespace-nowrap tabular-nums text-(--ff-muted)">{fmtTime(r.at)}</td>
-                      <td className="px-3 py-2">{r.action}</td>
-                      <td className="px-3 py-2">{r.detail ?? ""}</td>
+      <AnimatePresence>
+        {log && (
+          <Modal title={`History · ${log.account.email}`} onClose={() => setLog(null)}>
+            <div className="max-h-[60dvh] overflow-y-auto px-5 py-3">
+              {log.rows.length === 0 ? (
+                <p className="py-6 text-center text-sm text-(--ff-muted)">No visits yet.</p>
+              ) : (
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead className={ui.tableHead}>
+                    <tr>
+                      <th scope="col" className={ui.th}>Date</th>
+                      <th scope="col" className={ui.th}>Action</th>
+                      <th scope="col" className={ui.th}>Details</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </Modal>
-      )}
+                  </thead>
+                  <tbody className="divide-y divide-(--ff-line)">
+                    {log.rows.map((r, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-2 whitespace-nowrap tabular-nums text-(--ff-muted)">{fmtTime(r.at)}</td>
+                        <td className="px-3 py-2">{r.action}</td>
+                        <td className="px-3 py-2">{r.detail ?? ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

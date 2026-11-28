@@ -293,12 +293,12 @@ export function CreatePoModal({
     }
   };
 
-  const lineInput = "h-9 w-full rounded-md border border-(--ff-line) bg-(--ff-card) px-2 text-sm focus-visible:outline-2 focus-visible:outline-(--ff-accent)";
+  const lineInput = "h-9 w-full rounded-md border border-(--ff-line) bg-(--ff-card) px-2 text-sm transition-[border-color,box-shadow] duration-150 ease focus-visible:outline-2 focus-visible:outline-(--ff-accent)";
 
   return (
     <Modal title="Tạo đợt hàng" onClose={onClose} width="max-w-5xl">
       <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-        <div className="flex-1 space-y-6 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
+        <div className="flex-1 space-y-6 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6 sm:py-6">
           {errorNotice && (
             <Notice tone="error" onClose={() => setErrorNotice(null)}>
               {errorNotice}
@@ -376,7 +376,7 @@ export function CreatePoModal({
                     const lineTotal = (Number(line.quantity) || 0) * unitTotal;
 
                     return (
-                      <tr key={line.id}>
+                      <tr key={line.id} className="transition-colors duration-150 ease hover:bg-(--ff-raised)/40">
                         <td className="px-3 text-right font-mono text-xs text-(--ff-muted)">{idx + 1}</td>
                         <td className="px-1 py-2">
                           <input

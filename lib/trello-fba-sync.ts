@@ -7,6 +7,61 @@ import {
   getCardMoveDate,
   type ParsedTrelloFbaCard,
 } from "./trello-fba-parser";
+import { fillSkuIdentifiersFromInventory } from "@/lib/accounting/sku-identifiers";
+
+/** Mặc định cho SKU mới list từ Trello: Loại FBA, % referral 15%. */
+export const TRELLO_SKU_DEFAULTS = { loai: "FBA", referral_fee_pct: 0.15 } as const;
+
+/**
+ * Ghi 1 thẻ Trello vào BẢNG MÃ FBA (dùng chung cho đồng bộ cả cột và webhook).
+ * Dòng mới (hoặc dòng đã bị xoá mềm được tạo lại) đánh dấu source = 'trello': đồng bộ Google Sheet không ghi đè / không xoá.
+ * Dòng đang theo sheet thì vẫn theo sheet (chỉ cập nhật như trước).
+ */
+export async function upsertTrelloSku(parsed: ParsedTrelloFbaCard, actor: string): Promise<{ id: string; inserted: boolean }> {
+  const sql = await getDatabaseClient();
+  const [row] = await sql<{ id: string; inserted: boolean }[]>`
+    INSERT INTO accounting_sku_master (
+      store_id, sku, brand, product_type, mockup, mockup_url, niche, pic_mkt, pic_idea, status, event,
+      thang_listing, file_design, design_pic, kich_thuoc, loai, referral_fee_pct, source,
+      last_changed_by, created_at, updated_at
+    ) VALUES (
+      ${parsed.storeId}, ${parsed.sku}, ${parsed.storeName}, ${parsed.productType}, ${parsed.mockupUrl}, ${parsed.mockupUrl},
+      ${parsed.niche}, ${parsed.picMkt}, ${parsed.picIdea}, ${parsed.status}, ${parsed.event},
+      ${parsed.thangListing}, ${parsed.fileDesign}, ${parsed.designPic}, ${parsed.size},
+      ${TRELLO_SKU_DEFAULTS.loai}, ${TRELLO_SKU_DEFAULTS.referral_fee_pct}, 'trello',
+      ${actor}, NOW(), NOW()
+    )
+    ON CONFLICT (store_id, sku) DO UPDATE SET
+      brand = COALESCE(EXCLUDED.brand, accounting_sku_master.brand),
+      product_type = COALESCE(EXCLUDED.product_type, accounting_sku_master.product_type),
+      mockup = CASE
+        WHEN EXCLUDED.mockup IS NOT NULL AND EXCLUDED.mockup != '[object Object]' THEN EXCLUDED.mockup
+        ELSE accounting_sku_master.mockup
+      END,
+      mockup_url = CASE
+        WHEN EXCLUDED.mockup_url IS NOT NULL AND EXCLUDED.mockup_url != '[object Object]' THEN EXCLUDED.mockup_url
+        ELSE accounting_sku_master.mockup_url
+      END,
+      niche = COALESCE(EXCLUDED.niche, accounting_sku_master.niche),
+      pic_mkt = COALESCE(EXCLUDED.pic_mkt, accounting_sku_master.pic_mkt),
+      pic_idea = COALESCE(EXCLUDED.pic_idea, accounting_sku_master.pic_idea),
+      status = COALESCE(EXCLUDED.status, accounting_sku_master.status),
+      event = COALESCE(EXCLUDED.event, accounting_sku_master.event),
+      thang_listing = COALESCE(EXCLUDED.thang_listing, accounting_sku_master.thang_listing),
+      file_design = COALESCE(EXCLUDED.file_design, accounting_sku_master.file_design),
+      design_pic = COALESCE(EXCLUDED.design_pic, accounting_sku_master.design_pic),
+      kich_thuoc = COALESCE(EXCLUDED.kich_thuoc, accounting_sku_master.kich_thuoc),
+      -- Mặc định chỉ điền khi đang trống (vài SKU dùng 17%)
+      loai = COALESCE(NULLIF(btrim(accounting_sku_master.loai), ''), EXCLUDED.loai),
+      referral_fee_pct = COALESCE(accounting_sku_master.referral_fee_pct, EXCLUDED.referral_fee_pct),
+      source = CASE WHEN accounting_sku_master.deleted_at IS NOT NULL THEN 'trello' ELSE accounting_sku_master.source END,
+      deleted_at = NULL,
+      last_changed_by = EXCLUDED.last_changed_by,
+      updated_at = NOW()
+    RETURNING id, (xmax = 0) AS inserted
+  `;
+  return row;
+}
 
 export interface SyncTrelloFbaOptions {
   boardId: string;
@@ -115,71 +170,17 @@ export async function syncTrelloFbaToSkuMaster(options: SyncTrelloFbaOptions): P
     }
 
     // 4. Upsert vào accounting_sku_master
-    const upsertRes = await sql<{ id: string; is_inserted: string }[]>`
-      INSERT INTO accounting_sku_master (
-        store_id,
-        sku,
-        brand,
-        product_type,
-        mockup,
-        mockup_url,
-        niche,
-        pic_mkt,
-        pic_idea,
-        status,
-        event,
-        thang_listing,
-        file_design,
-        last_changed_by,
-        created_at,
-        updated_at
-      ) VALUES (
-        ${parsed.storeId},
-        ${parsed.sku},
-        ${parsed.storeName},
-        ${parsed.productType},
-        ${parsed.mockupUrl},
-        ${parsed.mockupUrl},
-        ${parsed.niche},
-        ${parsed.picMkt},
-        ${parsed.picIdea},
-        ${parsed.status},
-        ${parsed.event},
-        ${parsed.thangListing},
-        ${parsed.fileDesign},
-        'trello_sync',
-        NOW(),
-        NOW()
-      )
-      ON CONFLICT (store_id, sku) DO UPDATE SET
-        brand = COALESCE(EXCLUDED.brand, accounting_sku_master.brand),
-        product_type = COALESCE(EXCLUDED.product_type, accounting_sku_master.product_type),
-        mockup = CASE 
-          WHEN EXCLUDED.mockup IS NOT NULL AND EXCLUDED.mockup != '[object Object]' THEN EXCLUDED.mockup
-          ELSE accounting_sku_master.mockup
-        END,
-        mockup_url = CASE 
-          WHEN EXCLUDED.mockup_url IS NOT NULL AND EXCLUDED.mockup_url != '[object Object]' THEN EXCLUDED.mockup_url
-          ELSE accounting_sku_master.mockup_url
-        END,
-        niche = COALESCE(EXCLUDED.niche, accounting_sku_master.niche),
-        pic_mkt = COALESCE(EXCLUDED.pic_mkt, accounting_sku_master.pic_mkt),
-        pic_idea = COALESCE(EXCLUDED.pic_idea, accounting_sku_master.pic_idea),
-        status = COALESCE(EXCLUDED.status, accounting_sku_master.status),
-        event = COALESCE(EXCLUDED.event, accounting_sku_master.event),
-        thang_listing = COALESCE(EXCLUDED.thang_listing, accounting_sku_master.thang_listing),
-        file_design = COALESCE(EXCLUDED.file_design, accounting_sku_master.file_design),
-        deleted_at = NULL,
-        last_changed_by = 'trello_sync',
-        updated_at = NOW()
-      RETURNING id, (xmax = 0)::text as is_inserted;
-    `;
-
-    const row = upsertRes[0];
-    if (row?.is_inserted === "true") {
+    const row = await upsertTrelloSku(parsed, "trello_sync");
+    if (row.inserted) {
       insertedSkus.push(parsed.sku);
     } else {
       updatedSkus.push(parsed.sku);
+    }
+  }
+
+  if (!options.dryRun) {
+    for (const storeId of new Set(parsedDetails.map((p) => p.storeId).filter((id): id is string => Boolean(id)))) {
+      await fillSkuIdentifiersFromInventory(storeId);
     }
   }
 

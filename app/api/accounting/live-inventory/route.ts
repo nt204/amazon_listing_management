@@ -2,6 +2,7 @@
 // multipart: file, store_id, source = FBA | AWD
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { requireStoreAccess } from "@/lib/accounting/access";
+import { fillSkuIdentifiersFromInventory } from "@/lib/accounting/sku-identifiers";
 import {
   parseAwdInventoryReport,
   parseFbaInventoryReport,
@@ -30,6 +31,8 @@ export async function POST(request: Request) {
       return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
     }
     const result = await replaceLiveInventory(storeId, source, parsed, file.name);
+    // Báo cáo có FNSKU / ASIN của cả listing chưa có hàng → điền ô trống trong Bảng Mã
+    if (source === "FBA") await fillSkuIdentifiersFromInventory(storeId);
     return Response.json({
       success: true,
       message: `Đã nạp tồn ${source}: ${result.rows} SKU, ${result.totalUnits} units.`,

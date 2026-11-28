@@ -349,11 +349,11 @@ export function CreateLotModal({
     }
   };
 
-  const cellInput = "h-8 w-full rounded-md border border-transparent bg-transparent px-2 text-sm hover:border-(--ff-line-strong) focus:border-(--ff-accent) focus:bg-(--ff-card) focus:outline-none";
+  const cellInput = "h-8 w-full rounded-md border border-transparent bg-transparent px-2 text-sm transition-[border-color,background-color,box-shadow] duration-150 ease hover:border-(--ff-line-strong) focus:border-(--ff-accent) focus:bg-(--ff-card) focus:outline-none";
 
   return (
     <Modal title="New Shipment Request" onClose={onClose} width="max-w-[1560px]" minHeight="md:min-h-[min(580px,85dvh)]">
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <label>
             <span className={ui.label}>{H.name}</span>
@@ -444,7 +444,7 @@ export function CreateLotModal({
                     className={ui.input}
                   />
                   {skuPickerOpen && (
-                    <div className="absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-lg border border-(--ff-line-strong) bg-(--ff-card) shadow-(--ff-shadow)">
+                    <div className="animate-ff-popover origin-top absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-lg border border-(--ff-line-strong) bg-(--ff-card) shadow-(--ff-shadow)">
                       <ul id={skuListId} role="listbox" aria-label="Matching SKUs" className="max-h-56 overflow-y-auto p-1">
                         {skuMatches.map((option, index) => (
                           <li
@@ -454,7 +454,7 @@ export function CreateLotModal({
                             aria-selected={index === activeSkuIndex}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => selectSku(option)}
-                            className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-(--ff-raised) ${index === activeSkuIndex ? "bg-(--ff-accent-soft)" : ""}`}
+                            className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-100 ease hover:bg-(--ff-raised) ${index === activeSkuIndex ? "bg-(--ff-accent-soft)" : ""}`}
                           >
                             <MockupThumbnail url={option.mockup} size={40} />
                             <span className="min-w-0">
@@ -507,7 +507,7 @@ export function CreateLotModal({
         {message && <Notice tone={message.tone} onClose={() => setMessage(null)}>{message.text}</Notice>}
 
         {lines.length > 0 ? (
-          <div className="overflow-x-auto rounded-xl border border-(--ff-line)">
+          <div className="overflow-x-auto rounded-xl border border-(--ff-line) overscroll-x-contain">
             <table className="w-max min-w-full border-collapse text-left text-sm">
               <thead className={ui.tableHead}>
                 <tr className="border-b border-(--ff-line)">
@@ -522,8 +522,8 @@ export function CreateLotModal({
               </thead>
               <tbody className="divide-y divide-(--ff-line)">
                 {lines.map((line) => (
-                  <tr key={line.key} className="align-middle">
-                    <th scope="row" className="sticky left-0 z-10 bg-(--ff-card) px-3 py-1 font-mono text-xs font-semibold whitespace-nowrap">
+                  <tr key={line.key} className="align-middle transition-colors duration-150 ease hover:bg-(--ff-raised)/40">
+                    <th scope="row" className="sticky left-0 z-10 bg-(--ff-card) px-3 py-1 font-mono text-xs font-semibold whitespace-nowrap transition-colors duration-150 ease">
                       {line.sku}
                       <SkuStatus status={line.status} />
                       {line.lastRequest && <span className="block font-sans text-[11px] font-normal text-(--ff-muted)">Last ordered {line.lastRequest}</span>}

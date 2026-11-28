@@ -21,6 +21,7 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [store, setStore] = useState("");
+  const [sup, setSup] = useState("");
   const [stage, setStage] = useState<FulfillLotStage | "">("");
   const [fromMonth, setFromMonth] = useState("");
   const [toMonth, setToMonth] = useState("");
@@ -43,6 +44,9 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
   }, []);
 
   const stores = useMemo(() => [...new Set((lots ?? []).map((l) => l.store_name))].sort(), [lots]);
+  // Tài khoản phụ trách nhiều xưởng: hiện cột + bộ lọc Sup
+  const sups = useMemo(() => [...new Set((lots ?? []).map((l) => l.sup ?? ""))].filter(Boolean).sort((a, b) => a.localeCompare(b)), [lots]);
+  const multiSup = sups.length > 1;
 
   // Lọc theo tìm kiếm / tháng / store trước, rồi đếm theo trạng thái để hiện trên nút Status
   const scoped = useMemo(() => {
@@ -52,11 +56,12 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
       return (
         (!needle || l.lot_name.toLowerCase().includes(needle) || l.store_name.toLowerCase().includes(needle)) &&
         (!store || l.store_name === store) &&
+        (!sup || l.sup === sup) &&
         (!fromMonth || (m && m >= fromMonth)) &&
         (!toMonth || (m && m <= toMonth))
       );
     });
-  }, [lots, search, store, fromMonth, toMonth]);
+  }, [lots, search, store, sup, fromMonth, toMonth]);
   const stageCounts = useMemo(() => {
     const counts: Record<FulfillLotStage, number> = { waiting: 0, in_transit: 0, receiving: 0, closed: 0, cancelled: 0 };
     for (const l of scoped) counts[l.stage] += 1;
@@ -85,10 +90,11 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
   const monthText = fromMonth && toMonth
     ? fromMonth === toMonth ? monthLabel(fromMonth) : `${monthLabel(fromMonth)} – ${monthLabel(toMonth)}`
     : "All months";
-  const hasFilters = Boolean(search || store || stage || fromMonth || toMonth);
+  const hasFilters = Boolean(search || store || sup || stage || fromMonth || toMonth);
   const clear = () => {
     setSearch("");
     setStore("");
+    setSup("");
     setStage("");
     setFromMonth("");
     setToMonth("");
@@ -173,6 +179,12 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
                     />
                   )}
                 </div>
+                {multiSup && (
+                  <select aria-label="Supplier" value={sup} onChange={(e) => setSup(e.target.value)} className={`${ui.select} ${sup ? "border-(--ff-accent) text-(--ff-accent)" : ""}`}>
+                    <option value="">All suppliers</option>
+                    {sups.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                )}
                 {stores.length > 1 && (
                   <select aria-label="Name" value={store} onChange={(e) => setStore(e.target.value)} className={ui.select}>
                     <option value="">All names</option>
@@ -194,8 +206,8 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
                       type="button"
                       aria-pressed={on}
                       onClick={() => setStage(s)}
-                      className={`inline-flex h-8 cursor-pointer items-center gap-2 rounded-full px-3 text-sm focus-visible:outline-2 focus-visible:outline-(--ff-accent) ${
-                        on ? "bg-(--ff-accent) font-semibold text-white" : "text-(--ff-text-2) hover:bg-(--ff-raised)"
+                      className={`inline-flex h-8 cursor-pointer items-center gap-2 rounded-full px-3 text-sm transition-[background-color,color,transform] duration-150 ease will-change-transform motion-safe:active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-(--ff-accent) ${
+                        on ? "bg-(--ff-accent) font-semibold text-white shadow-xs" : "text-(--ff-text-2) hover:bg-(--ff-raised)"
                       }`}
                     >
                       {s ? LOT_STAGE[s].label : "All"}
@@ -211,6 +223,7 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
                 <thead className={ui.tableHead}>
                   <tr>
                     <th className={`${ui.th} pl-5`}>Lot</th>
+                    {multiSup && <th className={ui.th}>Sup</th>}
                     <th className={ui.th}>Name</th>
                     <th className={ui.th}>Date request</th>
                     <th className={`${ui.th} text-right`}>SKU</th>
@@ -221,11 +234,11 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
                 </thead>
                 <tbody>
                   {error ? (
-                    <tr><td colSpan={7} className="py-12 text-center text-(--ff-neg)">{error}</td></tr>
+                    <tr><td colSpan={multiSup ? 8 : 7} className="py-12 text-center text-(--ff-neg)">{error}</td></tr>
                   ) : !lots ? (
-                    <tr><td colSpan={7} className="py-12 text-center text-(--ff-muted)">Loading…</td></tr>
+                    <tr><td colSpan={multiSup ? 8 : 7} className="py-12 text-center text-(--ff-muted)">Loading…</td></tr>
                   ) : visible.length === 0 ? (
-                    <tr><td colSpan={7} className="py-12 text-center text-(--ff-muted)">{hasFilters ? "No lots match these filters." : "No requests."}</td></tr>
+                    <tr><td colSpan={multiSup ? 8 : 7} className="py-12 text-center text-(--ff-muted)">{hasFilters ? "No lots match these filters." : "No requests."}</td></tr>
                   ) : (
                     visible.map((lot, i) => {
                       const month = monthOf(lot.first_request);
@@ -235,7 +248,7 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
                         <Fragment key={lot.key}>
                           {showMonth && t && (
                             <tr className="border-t border-(--ff-line-strong) bg-(--ff-head)">
-                              <td colSpan={4} className="px-5 py-2.5 text-sm font-bold text-(--ff-head-text)">
+                              <td colSpan={multiSup ? 5 : 4} className="px-5 py-2.5 text-sm font-bold text-(--ff-head-text)">
                                 {monthLabel(month)}
                                 <span className="ml-2 font-normal text-(--ff-muted)">{t.lots} {t.lots === 1 ? "lot" : "lots"}</span>
                               </td>
@@ -250,6 +263,7 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
                                 {lot.lot_name}
                               </button>
                             </td>
+                            {multiSup && <td className="px-3">{lot.sup ?? "—"}</td>}
                             <td className="px-3">{lot.store_name}</td>
                             <td className="px-3 whitespace-nowrap tabular-nums">{fmtDay(lot.first_request)}</td>
                             <td className="px-3 text-right tabular-nums">{fmtInt(lot.sku_count)}</td>

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getDatabaseClient } from "@/lib/db";
 import { parseTrelloFbaCard, type TrelloCardDetail } from "@/lib/trello-fba-parser";
 import { getTrelloServerCredentials } from "@/lib/trello-server-config";
+import { upsertTrelloSku } from "@/lib/trello-fba-sync";
+import { fillSkuIdentifiersFromInventory } from "@/lib/accounting/sku-identifiers";
 
 // HEAD /api/trello/webhook
 // Trello gọi HEAD request khi đăng ký Webhook để kiểm tra endpoint có tồn tại (phải trả về HTTP 200)
@@ -139,40 +141,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, skipped: true, reason: "Missing SKU or Store" });
     }
 
-    // Upsert vào accounting_sku_master
-    await sql`
-      INSERT INTO accounting_sku_master (
-        store_id, sku, brand, product_type, mockup, mockup_url,
-        niche, pic_mkt, pic_idea, status, event, thang_listing,
-        file_design, last_changed_by, created_at, updated_at
-      ) VALUES (
-        ${parsed.storeId}, ${parsed.sku}, ${parsed.storeName}, ${parsed.productType},
-        ${parsed.mockupUrl}, ${parsed.mockupUrl}, ${parsed.niche}, ${parsed.picMkt},
-        ${parsed.picIdea}, ${parsed.status}, ${parsed.event}, ${parsed.thangListing},
-        ${parsed.fileDesign}, 'trello_webhook', NOW(), NOW()
-      )
-      ON CONFLICT (store_id, sku) DO UPDATE SET
-        brand = COALESCE(EXCLUDED.brand, accounting_sku_master.brand),
-        product_type = COALESCE(EXCLUDED.product_type, accounting_sku_master.product_type),
-        mockup = CASE 
-          WHEN EXCLUDED.mockup IS NOT NULL AND EXCLUDED.mockup != '[object Object]' THEN EXCLUDED.mockup
-          ELSE accounting_sku_master.mockup
-        END,
-        mockup_url = CASE 
-          WHEN EXCLUDED.mockup_url IS NOT NULL AND EXCLUDED.mockup_url != '[object Object]' THEN EXCLUDED.mockup_url
-          ELSE accounting_sku_master.mockup_url
-        END,
-        niche = COALESCE(EXCLUDED.niche, accounting_sku_master.niche),
-        pic_mkt = COALESCE(EXCLUDED.pic_mkt, accounting_sku_master.pic_mkt),
-        pic_idea = COALESCE(EXCLUDED.pic_idea, accounting_sku_master.pic_idea),
-        status = COALESCE(EXCLUDED.status, accounting_sku_master.status),
-        event = COALESCE(EXCLUDED.event, accounting_sku_master.event),
-        thang_listing = COALESCE(EXCLUDED.thang_listing, accounting_sku_master.thang_listing),
-        file_design = COALESCE(EXCLUDED.file_design, accounting_sku_master.file_design),
-        deleted_at = NULL,
-        last_changed_by = 'trello_webhook',
-        updated_at = NOW()
-    `;
+    // Upsert vào accounting_sku_master (dòng mới đánh dấu nguồn Trello: đồng bộ sheet không ghi đè / xoá)
+    await upsertTrelloSku(parsed, "trello_webhook");
+    await fillSkuIdentifiersFromInventory(parsed.storeId);
 
     // Cập nhật timestamp cho board
     if (config) {

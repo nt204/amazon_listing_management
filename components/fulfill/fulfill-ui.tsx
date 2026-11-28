@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { ImageIcon } from "@phosphor-icons/react";
+import { motion, useIsPresent, useReducedMotion, type Variants } from "motion/react";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 import type { FulfillLotStage, FulfillPoStatus } from "@/lib/fulfill/types";
 
@@ -86,30 +87,30 @@ export const fmtMoney = (value: number | null | undefined) => money.format(Numbe
 export const fmtInt = (value: number | null | undefined) => integer.format(Number(value) || 0);
 
 const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ff-accent)";
-const control = "transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50";
+const control = "transition-[background-color,border-color,color,box-shadow,scale] duration-150 ease disabled:cursor-not-allowed disabled:opacity-50";
 
 export const ui = {
-  btnPrimary: `inline-flex min-h-10 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full bg-(--ff-accent) px-5 text-sm font-semibold text-white shadow-[0_3px_8px_#244fe833] enabled:hover:bg-(--ff-accent-hover) motion-safe:active:scale-[0.98] ${control} ${focus}`,
-  btnSecondary: `inline-flex min-h-10 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full border border-(--ff-line-strong) bg-(--ff-card) px-4 text-sm font-semibold text-(--ff-accent) shadow-sm hover:bg-(--ff-raised) ${control} ${focus}`,
-  btnGhost: `inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-(--ff-text-2) hover:bg-(--ff-raised) hover:text-(--ff-accent) ${control} ${focus}`,
-  iconBtn: `inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-(--ff-muted) hover:bg-(--ff-raised) hover:text-(--ff-text) ${control} ${focus}`,
-  iconBtnDanger: `inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-(--ff-muted) hover:bg-red-50 hover:text-(--ff-neg) ${control} ${focus}`,
-  input: `h-9 w-full rounded-lg border border-(--ff-line-strong) bg-(--ff-card) px-3 text-sm text-(--ff-text) placeholder:text-(--ff-muted) focus:border-(--ff-accent) focus:ring-2 focus:ring-(--ff-accent)/15 focus:outline-none ${control}`,
-  select: `h-9 max-w-full cursor-pointer rounded-full border border-(--ff-line-strong) bg-(--ff-card) px-3 text-sm text-(--ff-text) focus:border-(--ff-accent) focus:ring-2 focus:ring-(--ff-accent)/15 focus:outline-none ${control}`,
+  btnPrimary: `inline-flex min-h-10 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full bg-(--ff-accent) px-5 text-sm font-semibold text-white shadow-[0_3px_8px_#244fe833] enabled:hover:bg-(--ff-accent-hover) enabled:hover:shadow-[0_5px_15px_#244fe840] motion-safe:enabled:active:scale-[0.97] motion-safe:active:shadow-xs ${control} ${focus}`,
+  btnSecondary: `inline-flex min-h-10 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full border border-(--ff-line-strong) bg-(--ff-card) px-4 text-sm font-semibold text-(--ff-accent) shadow-sm enabled:hover:bg-(--ff-raised) enabled:hover:border-(--ff-accent)/50 enabled:hover:shadow-xs motion-safe:enabled:active:scale-[0.97] ${control} ${focus}`,
+  btnGhost: `inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-(--ff-text-2) enabled:hover:bg-(--ff-raised) enabled:hover:text-(--ff-accent) motion-safe:enabled:active:scale-[0.97] ${control} ${focus}`,
+  iconBtn: `inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-(--ff-muted) enabled:hover:bg-(--ff-raised) enabled:hover:text-(--ff-text) motion-safe:enabled:active:scale-95 ${control} ${focus}`,
+  iconBtnDanger: `inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-(--ff-muted) enabled:hover:bg-red-50 enabled:hover:text-(--ff-neg) motion-safe:enabled:active:scale-95 ${control} ${focus}`,
+  input: `h-9 w-full rounded-lg border border-(--ff-line-strong) bg-(--ff-card) px-3 text-sm text-(--ff-text) placeholder:text-(--ff-muted) focus:border-(--ff-accent) focus:ring-2 focus:ring-(--ff-accent)/15 focus:outline-none transition-[border-color,box-shadow,background-color] duration-150 ease ${focus}`,
+  select: `h-9 max-w-full cursor-pointer rounded-full border border-(--ff-line-strong) bg-(--ff-card) px-3 text-sm text-(--ff-text) focus:border-(--ff-accent) focus:ring-2 focus:ring-(--ff-accent)/15 focus:outline-none transition-[border-color,box-shadow,background-color] duration-150 ease ${focus}`,
   label: "mb-1.5 block text-xs font-medium text-(--ff-text-2)",
-  card: "rounded-2xl border border-(--ff-line) bg-(--ff-card) shadow-(--ff-shadow)",
+  card: "rounded-2xl border border-(--ff-line) bg-(--ff-card) shadow-(--ff-shadow) transition-shadow duration-200 ease",
   heading: "fulfill-heading flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-(--ff-line) px-5 py-6 shadow-(--ff-shadow) sm:px-8 sm:py-8",
   title: "font-(family-name:--font-app-sans) text-[29px] leading-tight font-bold tracking-tight sm:text-[38px]",
   th: "px-3 py-3 text-sm font-bold",
   tableHead: "bg-(--ff-table-head) text-white [&_th]:bg-(--ff-table-head) print:bg-white print:text-black print:[&_th]:bg-white",
   tableTotal: "bg-neutral-100 font-bold text-(--ff-head-text) print:bg-white print:text-black",
-  link: `cursor-pointer rounded-sm text-sm font-medium text-(--ff-accent) hover:text-(--ff-accent-hover) hover:underline underline-offset-4 ${focus}`,
+  link: `cursor-pointer rounded-sm text-sm font-medium text-(--ff-accent) hover:text-(--ff-accent-hover) hover:underline underline-offset-4 transition-[color,opacity] duration-150 ease active:opacity-75 ${focus}`,
 };
 
 export function Notice({ tone, children, onClose }: { tone: "error" | "success"; children: ReactNode; onClose?: () => void }) {
   const toneClass = tone === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-green-200 bg-green-50 text-green-800";
   return (
-    <div role={tone === "error" ? "alert" : "status"} className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${toneClass}`}>
+    <div role={tone === "error" ? "alert" : "status"} className={`animate-ff-slide-down flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${toneClass}`}>
       <span className="flex-1">{children}</span>
       {onClose && (
         <button type="button" onClick={onClose} className="cursor-pointer text-xs underline underline-offset-4">
@@ -119,6 +120,16 @@ export function Notice({ tone, children, onClose }: { tone: "error" | "success";
     </div>
   );
 }
+
+const modalBackdrop: Variants = {
+  closed: { opacity: 0 },
+  open: { opacity: 1 },
+};
+
+const modalPanel: Variants = {
+  closed: { opacity: 0, transform: "translateY(6px) scale(0.98)" },
+  open: { opacity: 1, transform: "translateY(0px) scale(1)" },
+};
 
 export function Modal({
   title,
@@ -133,13 +144,46 @@ export function Modal({
   width?: string;
   minHeight?: string;
 }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const isPresent = useIsPresent();
+  const reducedMotion = useReducedMotion();
+  const transition = { duration: reducedMotion ? 0 : isPresent ? 0.24 : 0.2, ease: [0.23, 1, 0.32, 1] as const };
+
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const opener = document.activeElement;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      // Restore focus after React finishes removing the exit animation's DOM.
+      queueMicrotask(() => {
+        if (!dialog.open && document.activeElement === document.body && opener instanceof HTMLElement && opener.isConnected) {
+          opener.focus({ preventScroll: true });
+        }
+      });
+    };
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-[#101a32]/40 p-3 sm:p-4">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className={`flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-2xl border border-(--ff-line) bg-(--ff-card) shadow-[0_16px_48px_rgba(15,23,42,0.16)] ${width} ${minHeight}`}
+    <motion.dialog
+      ref={dialogRef}
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (isPresent) onClose();
+      }}
+      initial={reducedMotion ? false : "closed"}
+      animate="open"
+      exit="closed"
+      className="fixed inset-0 m-0 h-full max-h-none w-full max-w-none overflow-hidden bg-transparent p-3 text-(--ff-text) backdrop:bg-transparent open:grid open:place-items-center sm:p-4 print:hidden"
+    >
+      <motion.div aria-hidden className="absolute inset-0 bg-[#101a32]/40" variants={modalBackdrop} transition={transition} />
+      <motion.div
+        inert={!isPresent}
+        variants={modalPanel}
+        transition={transition}
+        className={`relative flex max-h-[92dvh] w-full flex-col overflow-hidden overscroll-contain rounded-2xl border border-(--ff-line) bg-(--ff-card) shadow-[0_16px_48px_rgba(15,23,42,0.16)] ${width} ${minHeight}`}
       >
         <div className="flex min-h-16 shrink-0 items-center justify-between gap-2 border-b border-(--ff-line) bg-(--ff-card) px-4 sm:px-6">
           <h2 className="text-lg font-semibold">{title}</h2>
@@ -148,8 +192,8 @@ export function Modal({
           </button>
         </div>
         {children}
-      </div>
-    </div>
+      </motion.div>
+    </motion.dialog>
   );
 }
 

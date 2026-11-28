@@ -670,6 +670,13 @@ table tbody tr.weekly-team-gap > td {
   --font-mono: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif;
 
+  --ff-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* Cuộn mượt mà & thanh cuộn sleek hiện đại */
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+
   color-scheme: light;
   --ff-bg: #ffffff;
   --ff-side: #ffffff;
@@ -715,6 +722,76 @@ table tbody tr.weekly-team-gap > td {
 .fulfill-root ::selection {
   background: var(--ff-accent);
   color: var(--ff-card);
+}
+
+/* Thanh cuộn sleek hiện đại & momentum scrolling cho Fulfill */
+.fulfill-root * {
+  -webkit-overflow-scrolling: touch;
+}
+
+.fulfill-root ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.fulfill-root ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.fulfill-root ::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 9999px;
+  transition: background-color 150ms ease;
+}
+
+.fulfill-root ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.75);
+}
+
+.fulfill-root ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Fulfill GPU-accelerated animations (transform & opacity only) */
+@keyframes ff-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ff-popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(-3px);
+  }
+}
+
+@keyframes ff-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media screen and (prefers-reduced-motion: no-preference) {
+  .fulfill-root .animate-ff-content {
+    animation: ff-fade-in 160ms var(--ff-ease-out) backwards;
+  }
+
+  .fulfill-root .animate-ff-popover {
+    animation: ff-popover-in 160ms var(--ff-ease-out) backwards;
+  }
+
+  .fulfill-root .animate-ff-slide-down {
+    animation: ff-slide-down 180ms var(--ff-ease-out) backwards;
+  }
 }
 
 @media print {
