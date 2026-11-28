@@ -51,16 +51,16 @@ export function SkuCatalogView({ stores, selectedStoreId, onSelectStore }: { sto
   const items = current?.items ?? [];
 
   return (
-    <div className="space-y-4">
-      <div className={`${ui.heading} py-4! sm:py-5!`}>
+    <div data-scroll-table className="flex min-h-0 flex-1 flex-col gap-4 print:block print:space-y-4">
+      <div className={`${ui.heading} shrink-0 py-4! sm:py-5!`}>
         <div>
           <h1 className={ui.title}>SKU Master</h1>
           <p className="mt-1 text-sm text-(--ff-muted)">Bảng Mã from Accounting (read-only), with each SKU&apos;s latest order.</p>
         </div>
       </div>
 
-      <section className={`${ui.card} overflow-hidden`}>
-        <div className="flex flex-wrap items-center gap-2 px-5 py-4">
+      <section className={`${ui.card} flex min-h-56 flex-col overflow-hidden print:block print:min-h-0 print:overflow-visible`}>
+        <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 py-4">
           <input
             type="search"
             value={search}
@@ -84,9 +84,9 @@ export function SkuCatalogView({ stores, selectedStoreId, onSelectStore }: { sto
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
-            <thead className={ui.tableHead}>
+        <div className="min-h-0 overflow-auto print:overflow-visible">
+          <table className="w-full border-separate border-spacing-0 text-left text-sm whitespace-nowrap">
+            <thead className={`sticky top-0 z-10 print:static ${ui.tableHead}`}>
               <tr>
                 <th className={`${ui.th} pl-5`}>Image</th>
                 <th className={ui.th}>SKU</th>
@@ -111,7 +111,7 @@ export function SkuCatalogView({ stores, selectedStoreId, onSelectStore }: { sto
                 <tr><td colSpan={12} className="py-12 text-center text-(--ff-muted)">No SKUs match.</td></tr>
               ) : (
                 items.map((s) => (
-                  <tr key={s.id} className="border-t border-(--ff-line) transition-colors duration-150 ease hover:bg-(--ff-raised)/50">
+                  <tr key={s.id} className="transition-colors duration-150 ease hover:bg-(--ff-raised)/50 [&>td]:border-t [&>td]:border-(--ff-line)">
                     <td className="py-2 pr-3 pl-5"><MockupThumbnail url={s.mockup} size={44} /></td>
                     <td className="px-3 font-mono text-xs font-semibold">{s.sku}</td>
                     <td className="px-3">{s.store_name}</td>

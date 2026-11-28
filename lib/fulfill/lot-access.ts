@@ -10,5 +10,9 @@ export async function fulfillStoreScope(actor: RequestActor): Promise<string[] |
   return [...access.stores.entries()].filter(([, s]) => s.channels.includes("FBA")).map(([id]) => id);
 }
 
-export const requireFulfillStore = (actor: RequestActor, storeId: string, mode: "read" | "write" = "read") =>
-  requireStoreAccess(actor, storeId, "FBA", mode);
+/**
+ * Đi hàng theo store team: người có quyền Đi hàng + store FBA thuộc team mình là được xem, tạo, sửa / xoá lô chưa đi hàng.
+ * KHÔNG đòi quyền sửa Kế toán (can_edit) — tạo yêu cầu đi hàng là việc của team phụ trách store.
+ */
+export const requireFulfillStore = (actor: RequestActor, storeId: string) =>
+  requireStoreAccess(actor, storeId, "FBA", "read");

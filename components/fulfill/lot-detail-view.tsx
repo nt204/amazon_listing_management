@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import { ArrowLeftIcon, ArrowSquareOutIcon, FileXlsIcon, PrinterIcon, TrashIcon } from "@phosphor-icons/react";
 import { isLotEditField, LOT_COLUMNS, type LotColumn, type LOT_EDIT_FIELDS } from "@/lib/fulfill/lot-columns";
 import type { FulfillLot, FulfillLotLine } from "@/lib/fulfill/types";
+import { sectionEdge, useFrozenColumns } from "./use-frozen-columns";
 import { LotStageLabel, MockupThumbnail, Notice, StoreDot, fmtInt, fmtMoney, ui } from "./fulfill-ui";
 
 interface LotDetailViewProps {
@@ -71,6 +72,12 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
   const [drafts, setDrafts] = useState<Drafts>({});
   const [fillRange, setFillRange] = useState<FillRange | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  // Gợi ý khi sửa ô Sup / Line ship / Type: cùng danh sách với form tạo yêu cầu (lấy 1 lần khi lô sửa được)
+  const listId = useId();
+  const [editOptions, setEditOptions] = useState<{ sups: string[]; lineShips: string[]; types: string[] } | null>(null);
+  // Khoá cột # → Quantity khi lướt ngang (index 0 = cột #, 1..frozenCount = các cột khoá)
+  const frozenCount = LOT_COLUMNS.findIndex((c) => c.key === "quantity_request") + 1;
+  const { tableRef, frozenWidth, freeze } = useFrozenColumns(frozenCount + 1, data);
   const drag = useRef<FillDrag | null>(null);
   const query = new URLSearchParams({ storeId, lot: lotName }).toString();
 
@@ -93,11 +100,26 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
     return () => controller.abort();
   }, [query]);
 
+  const canEditLot = data?.canEdit === true;
+  useEffect(() => {
+    if (!canEditLot) return;
+    const controller = new AbortController();
+    fetch(`/api/fulfill/lots/options?${new URLSearchParams({ storeId })}`, { signal: controller.signal })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (body && !controller.signal.aborted) setEditOptions({ sups: body.sups ?? [], lineShips: body.lineShips ?? [], types: body.types ?? [] });
+      })
+      // Không có gợi ý thì vẫn gõ tay được — không báo lỗi
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [canEditLot, storeId]);
+
   const lot = data?.lot ?? initialLot;
   const loading = !data && !error;
   const lines = data?.lines ?? [];
   const active = lines.filter((l) => l.stage !== "cancelled");
   const totalQty = active.reduce((a, l) => a + l.quantity, 0);
+  const totalRequested = active.reduce((a, l) => a + (l.quantity_request ?? 0), 0);
   const totalAmount = active.reduce((a, l) => a + l.real_total, 0);
   const totalReceived = active.reduce((a, l) => a + (l.so_luong_amazon_nhan ?? 0), 0);
   const hasChanges = Object.keys(drafts).length > 0;
@@ -224,6 +246,9 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
     }
   };
 
+  const optionListFor = (field: string) =>
+    field === "sup" ? `${listId}-sups` : field === "line_ship" ? `${listId}-ships` : field === "product_type" ? `${listId}-types` : undefined;
+
   const renderCell = (line: FulfillLotLine, column: LotColumn, index: number) => {
     const field = column.key;
     if (!data?.canEdit || !isLotEditField(field) ||
@@ -262,6 +287,8 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
                 ref={focusCellInput}
                 aria-label={`${column.header} for ${line.sku}`}
                 type={column.kind === "date" ? "date" : "text"}
+                list={optionListFor(field)}
+                autoComplete="off"
                 inputMode={column.kind === "money" ? "decimal" : column.kind === "int" ? "numeric" : undefined}
                 value={value}
                 disabled={saving}
@@ -303,8 +330,8 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
   };
 
   return (
-    <div className="animate-ff-content space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
+    <div data-wide-page data-scroll-table className="animate-ff-content flex min-h-0 flex-1 flex-col gap-5 print:block print:space-y-5">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 print:hidden">
         <button type="button" onClick={() => {
           if (!hasChanges || window.confirm("Discard unsaved changes?")) onBack();
         }} disabled={saving} className={ui.btnGhost}>
@@ -338,7 +365,7 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
       </div>
       {actionError && <Notice tone="error" onClose={() => setActionError(null)}>{actionError}</Notice>}
 
-      <div className={`${ui.card} px-5 py-5 sm:px-6`}>
+      <div className={`${ui.card} shrink-0 px-5 py-5 sm:px-6`}>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="min-w-0 text-xl font-bold tracking-tight text-(--ff-text) [overflow-wrap:anywhere] sm:text-2xl">{lotName}</h1>
           {lot && <LotStageLabel stage={lot.stage} />}
@@ -403,24 +430,42 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
         )}
       </div>
 
-      <section className={`${ui.card} overflow-hidden`} aria-label="Lot details" aria-busy={loading}>
-        <div ref={scroller} className={data?.canEdit ? "max-h-[65dvh] overflow-auto print:max-h-none" : "overflow-x-auto"}>
-          <table className="w-full border-collapse text-left text-sm whitespace-nowrap print:text-[9px]">
-            <thead className={ui.tableHead}>
+      {editOptions && (
+        <>
+          <datalist id={`${listId}-sups`}>{editOptions.sups.map((v) => <option key={v} value={v} />)}</datalist>
+          <datalist id={`${listId}-ships`}>{editOptions.lineShips.map((v) => <option key={v} value={v} />)}</datalist>
+          <datalist id={`${listId}-types`}>{editOptions.types.map((v) => <option key={v} value={v} />)}</datalist>
+        </>
+      )}
+      <section className={`${ui.card} flex min-h-44 flex-col overflow-hidden print:block print:min-h-0 print:overflow-visible`} aria-label="Lot details" aria-busy={loading}>
+        <div
+          ref={scroller}
+          className="min-h-0 overflow-auto scroll-pt-12 print:overflow-visible"
+          // Ô đang sửa không bị che sau vùng cột khoá khi trình duyệt tự cuộn tới
+          style={frozenWidth ? { scrollPaddingLeft: frozenWidth } : undefined}
+        >
+          {/* border-separate: viền nằm trên từng ô để đi theo cột khoá (border-collapse để hở khe khi sticky) */}
+          <table ref={tableRef} className="w-full border-separate border-spacing-0 text-left text-sm whitespace-nowrap print:text-[9px]">
+            <thead className={`sticky top-0 z-30 print:static ${ui.tableHead}`}>
               <tr>
-                <th scope="col" className={`${ui.th} pl-4 text-right`}>#</th>
-                {LOT_COLUMNS.map((c) => (
-                  <th
-                    key={c.key}
-                    scope="col"
-                    className={`${ui.th} ${c.kind === "money" || c.kind === "int" ? "text-right" : ""}`}
-                  >
-                    {c.header}
-                  </th>
-                ))}
+                <th scope="col" data-freeze className={`${ui.th} pl-4 text-right ${freeze(0, "z-20").className}`} style={freeze(0, "", "var(--ff-table-head)").style}>#</th>
+                {LOT_COLUMNS.map((c, i) => {
+                  const f = freeze(i + 1, "z-20", "var(--ff-table-head)");
+                  return (
+                    <th
+                      key={c.key}
+                      scope="col"
+                      data-freeze={i < frozenCount ? "" : undefined}
+                      className={`${ui.th} ${c.kind === "money" || c.kind === "int" ? "text-right" : ""} ${sectionEdge(c, "head")} ${f.className}`}
+                      style={f.style}
+                    >
+                      {c.header}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
-            <tbody className={`divide-y divide-(--ff-line) ${data ? "animate-ff-content" : ""}`}>
+            <tbody className={`[&>tr:not(:last-child)>td]:border-b [&>tr>td]:border-(--ff-line) ${data ? "animate-ff-content" : ""}`}>
               {error ? (
                 <tr>
                   <td colSpan={LOT_COLUMNS.length + 1} className="py-12 text-center text-(--ff-neg)">{error}</td>
@@ -434,38 +479,48 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
                   <tr
                     key={line.id}
                     data-lot-row={index}
-                    className={`h-11 transition-colors duration-150 ease hover:bg-(--ff-raised)/40 ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}
+                    // Nền đặc (không trong suốt) để ô khoá che được nội dung cột đang cuộn bên dưới
+                    className={`h-11 bg-white transition-colors duration-150 ease hover:bg-[color-mix(in_srgb,var(--ff-raised)_40%,white)] ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}
                     title={line.stage === "cancelled" ? "Canceled line, excluded from totals" : undefined}
                   >
-                    <td className="pr-2 pl-4 text-right text-xs text-(--ff-muted)">{index + 1}</td>
-                    {LOT_COLUMNS.map((c) => (
-                      <td
-                        key={c.key}
-                        className={`px-3 py-2 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${c.key === "real_total" ? "font-semibold" : ""} ${c.key === "note" ? "max-w-64 truncate" : ""}`}
-                        title={c.key === "note" && line.note ? line.note : undefined}
-                      >
-                        {renderCell(line, c, index)}
-                      </td>
-                    ))}
+                    <td className={`pr-2 pl-4 text-right text-xs text-(--ff-muted) ${freeze(0, "z-10 bg-inherit").className}`} style={freeze(0, "").style}>{index + 1}</td>
+                    {LOT_COLUMNS.map((c, i) => {
+                      const f = freeze(i + 1, "z-10 bg-inherit");
+                      return (
+                        <td
+                          key={c.key}
+                          className={`px-3 py-2 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${c.key === "real_total" ? "font-semibold" : ""} ${c.key === "note" ? "max-w-64 truncate" : ""} ${sectionEdge(c, "body")} ${f.className}`}
+                          style={f.style}
+                          title={c.key === "note" && line.note ? line.note : undefined}
+                        >
+                          {renderCell(line, c, index)}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))
               )}
             </tbody>
             {data && lines.length > 0 && (
               <tfoot>
-                <tr className={`h-12 border-t border-(--ff-line-strong) ${ui.tableTotal}`}>
-                  <th colSpan={2} scope="row" className="px-4 text-left">Total</th>
-                  {LOT_COLUMNS.slice(1).map((c) => (
-                    <td key={c.key} className={`px-3 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""}`}>
+                <tr className={`h-12 ${ui.tableTotal} [&>*]:border-t [&>*]:border-t-(--ff-line-strong)`}>
+                  <th scope="row" className={`px-4 text-left ${freeze(0, "z-10 bg-inherit").className}`} style={freeze(0, "").style}>Total</th>
+                  {LOT_COLUMNS.map((c, i) => {
+                    const f = freeze(i + 1, "z-10 bg-inherit");
+                    return (
+                    <td key={c.key} className={`px-3 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${sectionEdge(c, "body")} ${f.className}`} style={f.style}>
                       {c.key === "quantity"
                         ? fmtInt(totalQty)
+                        : c.key === "quantity_request" && totalRequested > 0
+                          ? fmtInt(totalRequested)
                         : c.key === "real_total"
                           ? fmtMoney(totalAmount)
                           : c.key === "so_luong_amazon_nhan" && totalReceived > 0
                             ? fmtInt(totalReceived)
                             : ""}
                     </td>
-                  ))}
+                    );
+                  })}
                 </tr>
               </tfoot>
             )}

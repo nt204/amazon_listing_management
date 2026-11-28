@@ -171,7 +171,8 @@ export function SupAccountsView() {
                     <td className="px-3 text-right tabular-nums">{fmtInt(s.lots)}</td>
                     <td className="px-3 text-right tabular-nums">{fmtMoney(s.amount)}</td>
                     <td className="px-3 tabular-nums">{s.last_request ?? "—"}</td>
-                    <td className="px-3 text-(--ff-text-2)">{linked.length ? linked.map((a) => a.email).join(", ") : "—"}</td>
+                    <td className="px-3 text-(--ff-text-2)">{/* Team không thấy email (API ẩn) → chỉ hiện số tài khoản */}
+                      {!linked.length ? "—" : canManage ? linked.map((a) => a.email).join(", ") : `${linked.length} ${linked.length === 1 ? "account" : "accounts"}`}</td>
                     <td className="py-2 pr-5 pl-3 text-right">
                       {canManage && <button type="button" className={ui.link} onClick={() => setDraft(emptyDraft(s.sup))}>Add account</button>}
                     </td>

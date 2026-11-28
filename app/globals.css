@@ -713,6 +713,26 @@ table tbody tr.weekly-team-gap > td {
   background: var(--ff-card);
 }
 
+@media screen {
+  .fulfill-portal:has([data-scroll-table]) {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+  }
+
+  .fulfill-portal:has([data-scroll-table]) > main,
+  .fulfill-portal:has([data-scroll-table]) > main > div {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .fulfill-portal:has([data-scroll-table]) > main {
+    overflow-y: auto;
+  }
+}
+
 /* Rule input/select { font-family: inherit } ở trên không nằm trong layer nên thắng utility font-mono */
 .fulfill-root input.font-mono,
 .fulfill-root select.font-mono {

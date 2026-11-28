@@ -2,10 +2,12 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import { CheckIcon, CopyIcon } from "@phosphor-icons/react";
 import { SUP_LOT_COLUMNS, type LotColumn } from "@/lib/fulfill/lot-columns";
 import type { FulfillLot, FulfillLotLine, FulfillLotStage } from "@/lib/fulfill/types";
 import { LOT_STAGE, LOT_STAGE_ORDER, LotStageLabel, fmtInt, fmtMoney, ui } from "./fulfill-ui";
 import { MonthRangePicker } from "./month-range-picker";
+import { sectionEdge, useFrozenColumns } from "./use-frozen-columns";
 
 // Trang xưởng /sup — chỉ đọc. Danh sách lô của xưởng và chi tiết từng lô đúng cột file Excel gửi xưởng.
 
@@ -101,18 +103,18 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
   };
 
   return (
-    <div className="min-h-dvh">
+    <div className={open ? "flex h-dvh flex-col print:block print:h-auto" : "min-h-dvh"}>
       {preview && (
-        <div className="bg-amber-100 text-sm text-amber-900 print:hidden">
+        <div className="shrink-0 bg-amber-100 text-sm text-amber-900 print:hidden">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-2 sm:px-6 lg:px-8">
             <span>Team preview — this is exactly what {name} sees.</span>
             <a href="/api/sup/preview" className="font-semibold underline underline-offset-4">Exit preview</a>
           </div>
         </div>
       )}
-      <header className="border-b border-(--ff-line) bg-(--ff-side) print:hidden">
+      <header className="shrink-0 border-b border-(--ff-line) bg-(--ff-side) print:hidden">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
-          <span className="font-semibold">{name}</span>
+          <span className="min-w-0 text-lg font-semibold [overflow-wrap:anywhere]">{name}</span>
           <span className="flex min-w-0 items-center gap-4 text-sm">
             <span className="truncate text-(--ff-muted)">{email}</span>
             {!preview && (
@@ -122,7 +124,8 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 print:max-w-none print:p-0">
+      {/* Trang chi tiết lô (bảng 42 cột) dùng hết chiều ngang màn hình; danh sách giữ khung 1440px */}
+      <main className={`mx-auto px-4 py-6 sm:px-6 lg:px-8 print:max-w-none print:p-0 ${open ? "flex min-h-0 w-full flex-1 flex-col overflow-y-auto print:block print:overflow-visible" : "max-w-[1440px]"}`}>
         {open ? (
           <SupLotDetail lot={open} onBack={() => setOpen(null)} />
         ) : (
@@ -247,7 +250,7 @@ export function SupPortal({ name, email, preview = false }: { name: string; emai
                       return (
                         <Fragment key={lot.key}>
                           {showMonth && t && (
-                            <tr className="border-t border-(--ff-line-strong) bg-(--ff-head)">
+                            <tr className="border-y border-amber-200 bg-amber-100">
                               <td colSpan={multiSup ? 5 : 4} className="px-5 py-2.5 text-sm font-bold text-(--ff-head-text)">
                                 {monthLabel(month)}
                                 <span className="ml-2 font-normal text-(--ff-muted)">{t.lots} {t.lots === 1 ? "lot" : "lots"}</span>
@@ -314,9 +317,11 @@ function CopyLink({ url }: { url: string }) {
       <button
         type="button"
         onClick={copy}
-        className="shrink-0 cursor-pointer rounded-md border border-(--ff-line-strong) px-1.5 py-0.5 text-xs font-medium text-(--ff-text-2) hover:border-(--ff-accent) hover:text-(--ff-accent) focus-visible:outline-2 focus-visible:outline-(--ff-accent) print:hidden"
+        aria-label={copied ? "Copied" : "Copy"}
+        title={copied ? "Copied" : "Copy"}
+        className="shrink-0 cursor-pointer rounded-md p-1 text-(--ff-muted) hover:bg-(--ff-raised) hover:text-(--ff-accent) focus-visible:outline-2 focus-visible:outline-(--ff-accent) print:hidden"
       >
-        {copied ? "Copied" : "Copy"}
+        {copied ? <CheckIcon size={14} weight="bold" className="text-(--ff-pos)" aria-hidden /> : <CopyIcon size={14} aria-hidden />}
       </button>
     </span>
   );
@@ -384,6 +389,7 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
   const info = data?.lot ?? lot;
   const active = lines.filter((l) => l.stage !== "cancelled");
   const totalQty = active.reduce((a, l) => a + l.quantity, 0);
+  const totalRequested = active.reduce((a, l) => a + (l.quantity_request ?? 0), 0);
   const totalAmount = active.reduce((a, l) => a + l.real_total, 0);
 
   // Đúng 42 cột sheet gửi xưởng, đúng thứ tự (kể cả cột trống)
@@ -391,9 +397,23 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
   const bands = SUP_BANDS;
   const cellBorder = "border-r border-(--ff-line) last:border-r-0";
 
+  // Khoá cột # → Quantity khi lướt ngang (index 0 = cột #, 1..frozenCount = các cột khoá)
+  const frozenCount = columns.findIndex((c) => c.key === "quantity_request") + 1;
+  const { tableRef, frozen, freeze, freezeSpan } = useFrozenColumns(frozenCount + 1, data);
+  // Viền tiêu đề trắng mờ để lộ chữ cột cuộn bên dưới → ô khoá dùng màu đặc tương đương (gán bằng style để thắng border-white/15)
+  const headLayer = "z-20";
+  const headStyle = (index: number) => {
+    const f = freeze(index, headLayer, "var(--ff-table-head)");
+    return f.style ? { ...f.style, borderRightColor: "color-mix(in srgb, #fff 15%, var(--ff-table-head))" } : undefined;
+  };
+  // Dải nhóm cột: tách phần nằm trong vùng khoá thành ô riêng (sticky), phần còn lại cuộn như cũ
+  const bandCells = frozen
+    ? [{ group: bands[0].group, span: frozenCount, sticky: true }, { ...bands[0], span: bands[0].span - frozenCount, sticky: false }, ...bands.slice(1).map((b) => ({ ...b, sticky: false }))].filter((b) => b.span > 0)
+    : bands.map((b) => ({ ...b, sticky: false }));
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 print:block print:space-y-4">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 print:hidden">
         <button type="button" onClick={onBack} className={ui.btnGhost}>← Requests</button>
         <div className="flex gap-2">
           <button type="button" onClick={() => window.print()} className={ui.btnSecondary} disabled={!data}>Print</button>
@@ -401,7 +421,7 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
         </div>
       </div>
 
-      <section className={`${ui.card} px-5 py-4`}>
+      <section className={`${ui.card} shrink-0 px-5 py-4`}>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-bold">{info.lot_name}</h1>
           <LotStageLabel stage={info.stage} />
@@ -439,24 +459,37 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
         </dl>
       </section>
 
-      <section className={`${ui.card} overflow-hidden`}>
-        <div className="max-h-[70dvh] overflow-auto print:max-h-none print:overflow-visible">
-          <table className="w-full border-collapse text-left text-sm whitespace-nowrap print:text-[9px]">
-            <thead className={`sticky top-0 z-10 ${ui.tableHead}`}>
+      <section className={`${ui.card} flex min-h-44 flex-col overflow-hidden print:block print:min-h-0 print:overflow-visible`}>
+        <div className="min-h-0 overflow-auto print:overflow-visible">
+          {/* border-separate: viền nằm trên từng ô để đi theo cột khoá (border-collapse để hở khe khi sticky) */}
+          <table ref={tableRef} className="w-full border-separate border-spacing-0 text-left text-sm whitespace-nowrap print:text-[9px]">
+            <thead className={`sticky top-0 z-30 print:static ${ui.tableHead}`}>
               <tr>
-                <th rowSpan={2} className={`${ui.th} ${cellBorder} pl-4 text-right align-bottom`}>#</th>
-                {bands.map((b, i) => (
-                  <th key={i} colSpan={b.span} className={`px-3 py-1 text-xs font-semibold ${GROUP_BAND[b.group]}`}>
-                    {GROUP_LABEL[b.group]}
-                  </th>
-                ))}
+                <th rowSpan={2} data-freeze className={`${ui.th} ${cellBorder} pl-4 text-right align-bottom ${freeze(0, headLayer).className}`} style={headStyle(0)}>#</th>
+                {bandCells.map((b, i) => {
+                  const f = b.sticky ? freezeSpan("z-20", 1) : { className: "", style: undefined };
+                  return (
+                    <th key={i} colSpan={b.span} className={`px-3 py-1 text-xs font-semibold ${GROUP_BAND[b.group]} ${f.className}`} style={f.style}>
+                      {/* Nhãn nhóm chỉ hiện 1 lần: ở ô khoá nếu có, phần còn lại của cùng nhóm để trống */}
+                      {b.sticky || i === 0 || bandCells[i - 1].group !== b.group ? GROUP_LABEL[b.group] : ""}
+                    </th>
+                  );
+                })}
               </tr>
               <tr>
-                {columns.map((c) => (
-                  <th key={c.key} className={`${ui.th} border-r border-white/15 last:border-r-0 ${c.kind === "money" || c.kind === "int" ? "text-right" : ""}`}>
-                    {c.header}
-                  </th>
-                ))}
+                {columns.map((c, i) => {
+                  const f = freeze(i + 1, headLayer);
+                  return (
+                    <th
+                      key={c.key}
+                      data-freeze={i < frozenCount ? "" : undefined}
+                      className={`${ui.th} border-r border-white/15 last:border-r-0 ${c.kind === "money" || c.kind === "int" ? "text-right" : ""} ${sectionEdge(c, "head")} ${f.className}`}
+                      style={headStyle(i + 1)}
+                    >
+                      {c.header}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -468,31 +501,38 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
                 lines.map((line, index) => (
                   <tr
                     key={line.id}
-                    className={`border-b border-(--ff-line) even:bg-[#f7f9fd] hover:bg-(--ff-raised) ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}
+                    className={`bg-white even:bg-[#f7f9fd] hover:bg-(--ff-raised) [&>td]:border-b [&>td]:border-b-(--ff-line) ${line.stage === "cancelled" ? "text-(--ff-muted) line-through" : ""}`}
                   >
-                    <td className={`${cellBorder} py-2 pr-2 pl-4 text-right text-xs text-(--ff-muted)`}>{index + 1}</td>
-                    {columns.map((c) => (
-                      <td
-                        key={c.key}
-                        className={`${cellBorder} px-3 py-2 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${c.key === "sku" ? "font-mono text-xs font-semibold" : ""} ${c.key === "real_total" ? "font-semibold" : ""} ${c.key === "note" ? "max-w-64 truncate" : ""}`}
-                        title={c.key === "note" && line.note ? line.note : undefined}
-                      >
-                        {cellValue(line, c)}
-                      </td>
-                    ))}
+                    <td className={`${cellBorder} py-2 pr-2 pl-4 text-right text-xs text-(--ff-muted) ${freeze(0, "z-10 bg-inherit").className}`} style={freeze(0, "").style}>{index + 1}</td>
+                    {columns.map((c, i) => {
+                      const f = freeze(i + 1, "z-10 bg-inherit");
+                      return (
+                        <td
+                          key={c.key}
+                          className={`${cellBorder} px-3 py-2 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${c.key === "sku" ? "font-mono text-xs font-semibold" : ""} ${c.key === "real_total" ? "font-semibold" : ""} ${c.key === "note" ? "max-w-64 truncate" : ""} ${sectionEdge(c, "body")} ${f.className}`}
+                          style={f.style}
+                          title={c.key === "note" && line.note ? line.note : undefined}
+                        >
+                          {cellValue(line, c)}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))
               )}
             </tbody>
             {data && lines.length > 0 && (
-              <tfoot className="sticky bottom-0">
-                <tr className={`border-t-2 border-(--ff-line-strong) ${ui.tableTotal}`}>
-                  <th scope="row" className="px-4 py-3 text-left">Total</th>
-                  {columns.map((c) => (
-                    <td key={c.key} className={`px-3 py-3 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""}`}>
-                      {c.key === "quantity" ? fmtInt(totalQty) : c.key === "real_total" ? fmtMoney(totalAmount) : ""}
-                    </td>
-                  ))}
+              <tfoot className="sticky bottom-0 z-30 print:static">
+                <tr className={`${ui.tableTotal} [&>*]:border-t-2 [&>*]:border-t-(--ff-line-strong)`}>
+                  <th scope="row" className={`px-4 py-3 text-left ${freeze(0, "bg-inherit").className}`} style={freeze(0, "").style}>Total</th>
+                  {columns.map((c, i) => {
+                    const f = freeze(i + 1, "bg-inherit");
+                    return (
+                      <td key={c.key} className={`px-3 py-3 ${c.kind === "money" || c.kind === "int" ? "text-right tabular-nums" : ""} ${sectionEdge(c, "body")} ${f.className}`} style={f.style}>
+                        {c.key === "quantity" ? fmtInt(totalQty) : c.key === "quantity_request" && totalRequested > 0 ? fmtInt(totalRequested) : c.key === "real_total" ? fmtMoney(totalAmount) : ""}
+                      </td>
+                    );
+                  })}
                 </tr>
               </tfoot>
             )}

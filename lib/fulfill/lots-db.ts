@@ -256,7 +256,7 @@ export function toLotLine(row: RawRow): FulfillLotLine {
 export async function getFulfillLot(
   storeId: string,
   lotName: string,
-): Promise<{ lot: FulfillLot; lines: FulfillLotLine[]; unshipped: boolean; hasExplicitLotName: boolean; versions: Record<string, string> } | null> {
+): Promise<{ lot: FulfillLot; lines: FulfillLotLine[]; unshipped: boolean; unpaid: boolean; hasExplicitLotName: boolean; versions: Record<string, string> } | null> {
   const rows = await loadRows([storeId]);
   const lotRows = rows.filter((row) => lotNameOf(row).name === lotName);
   if (lotRows.length === 0) return null;
@@ -267,6 +267,7 @@ export async function getFulfillLot(
     lot,
     lines,
     unshipped: !lotRows.some(hasShipmentEvidence),
+    unpaid: !lotRows.some((row) => clean(row.ngay_thanh_toan)),
     hasExplicitLotName: lotRows.every((row) => !lotNameOf(row).generated),
     versions: Object.fromEntries(lotRows.map((row) => [row.id, row.updated_at])),
   };
@@ -282,8 +283,8 @@ async function lockUnshippedLot(tx: postgres.TransactionSql, storeId: string, lo
   const ids = candidates.filter((row) => lotNameOf(row).name === lotName).map((row) => row.id);
   if (!ids.length) throw new ApiError("Shipment lot not found.", 404);
 
-  const rows = await tx<Pick<RawRow, "id" | "ten_lo_hang" | "sup" | "ngay_request" | "shipment_id" | "ngay_di" | "ngay_den" | "status" | "amazon_received" | "so_luong_amazon_nhan" | "updated_at" | "custom_fields" | "quantity" | "base_cost_per_unit" | "card" | "tag" | "hop_tui" | "final_basecost" | "total_basecost">[]>`
-    SELECT id, ten_lo_hang, sup, ngay_request, shipment_id, ngay_di, ngay_den, status, amazon_received, so_luong_amazon_nhan,
+  const rows = await tx<Pick<RawRow, "id" | "ten_lo_hang" | "sup" | "ngay_request" | "ngay_thanh_toan" | "shipment_id" | "ngay_di" | "ngay_den" | "status" | "amazon_received" | "so_luong_amazon_nhan" | "updated_at" | "custom_fields" | "quantity" | "base_cost_per_unit" | "card" | "tag" | "hop_tui" | "final_basecost" | "total_basecost">[]>`
+    SELECT id, ten_lo_hang, sup, ngay_request, ngay_thanh_toan, shipment_id, ngay_di, ngay_den, status, amazon_received, so_luong_amazon_nhan,
       updated_at::text, custom_fields, quantity, base_cost_per_unit::float, card::float, tag::float, hop_tui::float,
       final_basecost::float, total_basecost::float
     FROM accounting_inbound_shipments
@@ -303,7 +304,12 @@ async function lockUnshippedLot(tx: postgres.TransactionSql, storeId: string, lo
 export async function deleteUnshippedFulfillLot(storeId: string, lotName: string, changedBy: string): Promise<number> {
   const sql = await getDatabaseClient();
   return sql.begin(async (tx) => {
-    const ids = (await lockUnshippedLot(tx, storeId, lotName)).map((row) => row.id);
+    const rows = await lockUnshippedLot(tx, storeId, lotName);
+    // Đã thanh toán (có Ngày thanh toán) thì không xoá — giữ chứng từ công nợ
+    if (rows.some((row) => clean(row.ngay_thanh_toan))) {
+      throw new ApiError("This lot cannot be deleted because it has been paid.", 409);
+    }
+    const ids = rows.map((row) => row.id);
     const deleted = await tx`
       UPDATE accounting_inbound_shipments
       SET deleted_at = NOW(), updated_at = NOW(), last_changed_by = ${changedBy},

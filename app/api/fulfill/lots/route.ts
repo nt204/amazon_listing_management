@@ -34,7 +34,7 @@ export async function POST(req: Request) {
       throw new ApiError(`${where}${issue.message}`, 400);
     }
     const input = parsed.data;
-    await requireFulfillStore(actor, input.store_id, "write");
+    await requireFulfillStore(actor, input.store_id);
     const result = await createFulfillLot(input, {
       userId: actor.userId,
       name: actor.displayName || actor.email || actor.userId,

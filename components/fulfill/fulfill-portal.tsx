@@ -51,8 +51,8 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
   }, [activeTab]);
 
   return (
-    <div className="min-h-dvh">
-      <header className="border-b border-(--ff-line) bg-(--ff-side) print:hidden">
+    <div className="fulfill-portal min-h-dvh">
+      <header className="shrink-0 border-b border-(--ff-line) bg-(--ff-side) print:hidden">
         <div className="mx-auto grid max-w-[1440px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 px-4 py-3 sm:px-6 md:grid-cols-[1fr_auto_1fr] lg:px-8">
           <Link
             href="/?view=accounting"
@@ -108,7 +108,8 @@ export function FulfillPortal({ actor }: FulfillPortalProps) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8 print:max-w-none print:p-0">
+      {/* Trang chi tiết lô (bảng 42 cột) dùng hết chiều ngang màn hình; danh sách giữ khung 1440px */}
+      <main className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8 has-[[data-wide-page]]:max-w-none print:max-w-none print:p-0">
         <div key={activeTab} className={animateTab ? "animate-ff-content" : undefined}>
           {activeTab === "pos" && (
             <FulfillView
