@@ -77,7 +77,10 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
   const [editOptions, setEditOptions] = useState<{ sups: string[]; lineShips: string[]; types: string[] } | null>(null);
   // Khoá cột # → Quantity khi lướt ngang (index 0 = cột #, 1..frozenCount = các cột khoá)
   const frozenCount = LOT_COLUMNS.findIndex((c) => c.key === "quantity_request") + 1;
-  const { tableRef, frozenWidth, freeze } = useFrozenColumns(frozenCount + 1, data);
+  const { tableRef, frozen, frozenWidth, freeze } = useFrozenColumns(frozenCount + 1, data);
+  // Kẻ dọc tiêu đề là trắng mờ → ô khoá dùng màu đặc tương đương để không lộ chữ cột cuộn bên dưới
+  const headBorder = (index: number) =>
+    frozen && index <= frozenCount ? { borderRightColor: "color-mix(in srgb, #fff 15%, var(--ff-table-head))" } : {};
   const drag = useRef<FillDrag | null>(null);
   const query = new URLSearchParams({ storeId, lot: lotName }).toString();
 
@@ -447,8 +450,8 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
           {/* border-separate: viền nằm trên từng ô để đi theo cột khoá (border-collapse để hở khe khi sticky) */}
           <table ref={tableRef} className="w-full border-separate border-spacing-0 text-left text-sm whitespace-nowrap print:text-[9px]">
             <thead className={`sticky top-0 z-30 print:static ${ui.tableHead}`}>
-              <tr>
-                <th scope="col" data-freeze className={`${ui.th} pl-4 text-right ${freeze(0, "z-20").className}`} style={freeze(0, "", "var(--ff-table-head)").style}>#</th>
+              <tr className="[&>th]:border-r [&>th]:border-r-white/15 [&>th:last-child]:border-r-0">
+                <th scope="col" data-freeze className={`${ui.th} pl-4 text-right ${freeze(0, "z-20").className}`} style={{ ...freeze(0, "", "var(--ff-table-head)").style, ...headBorder(0) }}>#</th>
                 {LOT_COLUMNS.map((c, i) => {
                   const f = freeze(i + 1, "z-20", "var(--ff-table-head)");
                   return (
@@ -457,7 +460,7 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
                       scope="col"
                       data-freeze={i < frozenCount ? "" : undefined}
                       className={`${ui.th} ${c.kind === "money" || c.kind === "int" ? "text-right" : ""} ${sectionEdge(c, "head")} ${f.className}`}
-                      style={f.style}
+                      style={{ ...f.style, ...headBorder(i + 1) }}
                     >
                       {c.header}
                     </th>
@@ -465,7 +468,7 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
                 })}
               </tr>
             </thead>
-            <tbody className={`[&>tr:not(:last-child)>td]:border-b [&>tr>td]:border-(--ff-line) ${data ? "animate-ff-content" : ""}`}>
+            <tbody className={`[&>tr:not(:last-child)>td]:border-b [&>tr>td]:border-r [&>tr>td:last-child]:border-r-0 [&>tr>td]:border-(--ff-line) ${data ? "animate-ff-content" : ""}`}>
               {error ? (
                 <tr>
                   <td colSpan={LOT_COLUMNS.length + 1} className="py-12 text-center text-(--ff-neg)">{error}</td>
@@ -503,7 +506,7 @@ export function LotDetailView({ storeId, lotName, initialLot, storeColor, onBack
             </tbody>
             {data && lines.length > 0 && (
               <tfoot>
-                <tr className={`h-12 ${ui.tableTotal} [&>*]:border-t [&>*]:border-t-(--ff-line-strong)`}>
+                <tr className={`h-12 ${ui.tableTotal} [&>*]:border-t [&>*]:border-t-(--ff-line-strong) [&>*]:border-r [&>*]:border-r-(--ff-line) [&>*:last-child]:border-r-0`}>
                   <th scope="row" className={`px-4 text-left ${freeze(0, "z-10 bg-inherit").className}`} style={freeze(0, "").style}>Total</th>
                   {LOT_COLUMNS.map((c, i) => {
                     const f = freeze(i + 1, "z-10 bg-inherit");

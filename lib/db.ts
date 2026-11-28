@@ -27,6 +27,7 @@ import type {
   MockupContentItem,
   MockupPromptReferenceImage,
   ProductCategoryPreset,
+  SharedMockupPresetVersion,
 } from "@/types/mockup-preset";
 import {
   deleteStoredObjects,
@@ -2372,9 +2373,173 @@ export async function listSharedMockupPresets(
   }));
 }
 
+/** Các lần lưu liên tiếp của cùng một người trong khoảng này gộp vào một bản lịch sử. */
+const MOCKUP_PRESET_VERSION_MERGE_MINUTES = 10;
+/** Số bản lịch sử giữ lại cho mỗi phôi. */
+const MOCKUP_PRESET_VERSION_KEEP = 100;
+
+interface SharedMockupPresetVersionRow {
+  id: string;
+  preset_id: string;
+  label: string;
+  icon: string;
+  contents_json: MockupContentItem[] | string;
+  source: SharedMockupPresetVersion["source"];
+  restored_from_id: string | null;
+  saved_by: string;
+  saved_by_name: string | null;
+  saved_at: string;
+}
+
+function stripReferenceImages(contents: readonly MockupContentItem[]) {
+  return contents.map((content) => {
+    const rest = { ...content };
+    delete rest.referenceImages;
+    return rest;
+  });
+}
+
+async function recordSharedMockupPresetVersion(
+  scope: DataScope,
+  preset: ProductCategoryPreset,
+  source: "edit" | "restore",
+  restoredFromId: string | null,
+) {
+  const sql = getDatabase();
+  const contents = sql.json(toJson(stripReferenceImages(preset.contents)));
+  await sql.begin(async (transaction) => {
+    // Khoá theo phôi để hai lần lưu cùng lúc không cùng chèn bản mới.
+    await transaction`
+      SELECT pg_advisory_xact_lock(hashtext(${`mockup_preset_versions:${scope.teamId}:${preset.id}`}))
+    `;
+    const latest = await transaction<
+      { id: string; saved_by: string; source: string; recent: boolean; unchanged: boolean }[]
+    >`
+      SELECT id::text, saved_by, source,
+        saved_at > NOW() - make_interval(mins => ${MOCKUP_PRESET_VERSION_MERGE_MINUTES}) AS recent,
+        (label = ${preset.label} AND icon = ${preset.icon || "📦"}
+          AND contents_json = ${contents}::jsonb) AS unchanged
+      FROM shared_mockup_preset_versions
+      WHERE team_id = ${scope.teamId} AND preset_id = ${preset.id}
+      ORDER BY saved_at DESC, id DESC
+      LIMIT 1
+    `;
+    const last = latest[0];
+    if (source === "edit" && last?.unchanged) return;
+    if (
+      source === "edit" &&
+      last &&
+      last.source === "edit" &&
+      last.saved_by === scope.actorId &&
+      last.recent
+    ) {
+      await transaction`
+        UPDATE shared_mockup_preset_versions
+        SET label = ${preset.label}, icon = ${preset.icon || "📦"},
+          contents_json = ${contents}, saved_at = NOW()
+        WHERE id = ${last.id}
+      `;
+      return;
+    }
+    await transaction`
+      INSERT INTO shared_mockup_preset_versions (
+        team_id, preset_id, label, icon, contents_json, source, restored_from_id, saved_by
+      ) VALUES (
+        ${scope.teamId}, ${preset.id}, ${preset.label}, ${preset.icon || "📦"},
+        ${contents}, ${source}, ${restoredFromId}, ${scope.actorId}
+      )
+    `;
+    await transaction`
+      DELETE FROM shared_mockup_preset_versions
+      WHERE team_id = ${scope.teamId} AND preset_id = ${preset.id}
+        AND id NOT IN (
+          SELECT id FROM shared_mockup_preset_versions
+          WHERE team_id = ${scope.teamId} AND preset_id = ${preset.id}
+          ORDER BY saved_at DESC, id DESC
+          LIMIT ${MOCKUP_PRESET_VERSION_KEEP}
+        )
+    `;
+  });
+}
+
+function toSharedMockupPresetVersion(
+  row: SharedMockupPresetVersionRow,
+): SharedMockupPresetVersion {
+  return {
+    id: row.id,
+    presetId: row.preset_id,
+    label: row.label,
+    icon: row.icon,
+    contents: parseJson(row.contents_json),
+    source: row.source,
+    restoredFromId: row.restored_from_id,
+    savedBy: row.saved_by,
+    savedByName: row.saved_by_name || row.saved_by,
+    savedAt: row.saved_at,
+  };
+}
+
+export async function listSharedMockupPresetVersions(
+  scope: DataScope,
+  presetId: string,
+): Promise<SharedMockupPresetVersion[]> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<SharedMockupPresetVersionRow[]>`
+    SELECT v.id::text, v.preset_id, v.label, v.icon, v.contents_json, v.source,
+      v.restored_from_id::text, v.saved_by, u.display_name AS saved_by_name,
+      v.saved_at::text
+    FROM shared_mockup_preset_versions v
+    LEFT JOIN app_users u ON u.team_id = v.team_id AND u.user_id = v.saved_by
+    WHERE v.team_id = ${scope.teamId} AND v.preset_id = ${presetId}
+    ORDER BY v.saved_at DESC, v.id DESC
+    LIMIT ${MOCKUP_PRESET_VERSION_KEEP}
+  `;
+  return rows.map(toSharedMockupPresetVersion);
+}
+
+export async function restoreSharedMockupPresetVersion(
+  scope: DataScope,
+  presetId: string,
+  versionId: string,
+): Promise<ProductCategoryPreset> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<SharedMockupPresetVersionRow[]>`
+    SELECT id::text, preset_id, label, icon, contents_json, source,
+      restored_from_id::text, saved_by, NULL AS saved_by_name, saved_at::text
+    FROM shared_mockup_preset_versions
+    WHERE team_id = ${scope.teamId} AND preset_id = ${presetId} AND id = ${versionId}
+    LIMIT 1
+  `;
+  const version = rows[0] ? toSharedMockupPresetVersion(rows[0]) : null;
+  if (!version) throw new Error("Không tìm thấy bản lịch sử này.");
+  const current = (await listSharedMockupPresets(scope)).find(
+    (preset) => preset.id === presetId,
+  );
+  // Ảnh tham chiếu lưu riêng, không nằm trong lịch sử: giữ ảnh hiện có của từng Content.
+  const contents = version.contents.map((content) => ({
+    ...content,
+    referenceImages:
+      current?.contents.find((item) => item.id === content.id)?.referenceImages || [],
+  }));
+  return saveSharedMockupPreset(
+    scope,
+    {
+      id: presetId,
+      label: version.label,
+      icon: version.icon,
+      isSystem: current?.isSystem,
+      contents,
+    },
+    { source: "restore", restoredFromId: version.id },
+  );
+}
+
 export async function saveSharedMockupPreset(
   scope: DataScope,
   preset: ProductCategoryPreset,
+  options: { source?: "edit" | "restore"; restoredFromId?: string } = {},
 ): Promise<ProductCategoryPreset> {
   await ensureSchema();
   const sql = getDatabase();
@@ -2397,22 +2562,38 @@ export async function saveSharedMockupPreset(
     RETURNING preset_id AS id, label, icon, is_system, contents_json,
       revision::int, updated_at::text, updated_by
   `;
-  const validContentIds = preset.contents.map((content) => content.id);
-  const orphanedImages = await sql<{ object_key: string | null }[]>`
-    DELETE FROM mockup_prompt_reference_images
-    WHERE team_id = ${scope.teamId}
-      AND storage_scope = 'shared'
-      AND preset_id = ${preset.id}
-      AND content_id NOT IN ${sql(validContentIds)}
-    RETURNING object_key
-  `;
-  await deleteObjectKeysBestEffort(orphanedImages.map((row) => row.object_key));
+  const source = options.source || "edit";
+  // Khi khôi phục, chưa xoá ảnh của Content không còn trong bản cũ:
+  // lỡ khôi phục nhầm thì khôi phục lại bản mới vẫn còn ảnh.
+  if (source === "edit") {
+    const validContentIds = preset.contents.map((content) => content.id);
+    const orphanedImages = await sql<{ object_key: string | null }[]>`
+      DELETE FROM mockup_prompt_reference_images
+      WHERE team_id = ${scope.teamId}
+        AND storage_scope = 'shared'
+        AND preset_id = ${preset.id}
+        AND content_id NOT IN ${sql(validContentIds)}
+      RETURNING object_key
+    `;
+    await deleteObjectKeysBestEffort(orphanedImages.map((row) => row.object_key));
+  }
+  try {
+    await recordSharedMockupPresetVersion(
+      scope,
+      preset,
+      source,
+      options.restoredFromId || null,
+    );
+  } catch (error) {
+    // Lịch sử hỏng không được chặn việc lưu prompt.
+    console.error("Không ghi được lịch sử phôi mockup:", error);
+  }
   await recordAuditEvent(
     scope,
-    "mockup_preset.saved",
+    source === "restore" ? "mockup_preset.restored" : "mockup_preset.saved",
     "mockup_preset",
     preset.id,
-    { revision: rows[0].revision },
+    { revision: rows[0].revision, restoredFromId: options.restoredFromId },
   );
   return toSharedMockupPreset(rows[0]);
 }

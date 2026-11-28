@@ -55,6 +55,9 @@ import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcFloatingActionQueue } from "./ppc-floating-action-queue";
 import { GuideAssistant } from "@/components/guide/guide-assistant";
 import { PPC_AUTOBID_TOURS } from "@/lib/guide/ppc-autobid-tours";
+import { PPC_MANUAL_BID_TOURS } from "@/lib/guide/ppc-manual-bid-tours";
+import { PPC_NEGATIVE_TOURS } from "@/lib/guide/ppc-negative-tours";
+import { PPC_SALE_KW_TOURS } from "@/lib/guide/ppc-sale-kw-tours";
 import { PpcManualBidView } from "./ppc-manual-bid-view";
 import { PpcMetricRangeFilter } from "./ppc-metric-range-filter";
 import { encodeMetricRanges, parseMetricRanges, passesMetricRanges, type MetricRanges } from "@/lib/ppc/manual-bid";
@@ -2989,11 +2992,10 @@ export function PpcDashboard({
       )}
 
       {/* MASTER TOP CONTROL BAR - UNIFIED 1-ROW HEADER */}
-      <div className={`border border-slate-200/90 bg-white/95 backdrop-blur-md shadow-2xs ${
-        isEmbedded
-          ? "sticky -top-3 sm:-top-4 md:-top-6 z-40 -mt-3 sm:-mt-4 md:-mt-6 -mx-3 sm:-mx-4 md:-mx-6 mb-3 sm:mb-4 px-3 sm:px-5 py-2 border-x-0 border-t-0"
-          : "rounded-xl p-2.5 mb-4"
-      }`}>
+      <div className={`border border-slate-200/90 bg-white/95 backdrop-blur-md shadow-2xs ${isEmbedded
+        ? "sticky -top-3 sm:-top-4 md:-top-6 z-40 -mt-3 sm:-mt-4 md:-mt-6 -mx-3 sm:-mx-4 md:-mx-6 mb-3 sm:mb-4 px-3 sm:px-5 py-2 border-x-0 border-t-0"
+        : "rounded-xl p-2.5 mb-4"
+        }`}>
         <div className="flex items-center justify-between gap-2 sm:gap-3 flex-wrap lg:flex-nowrap">
           {/* Cụm Trái: Title + Phân cách + Chọn Store */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -3024,10 +3026,10 @@ export function PpcDashboard({
                 type="button"
                 onClick={() => setIsStoreDropdownOpen((prev) => !prev)}
                 className={`flex items-center gap-1.5 sm:gap-2 rounded-xl px-2.5 sm:px-3 py-1.5 transition-all duration-200 cursor-pointer select-none ${isStoreHighlight
-                    ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50 text-emerald-950 shadow-md scale-105"
-                    : isStoreDropdownOpen
-                      ? "bg-emerald-100 border border-emerald-400 text-emerald-950 shadow-xs"
-                      : "bg-emerald-50/90 hover:bg-emerald-100/90 border border-emerald-300/90 shadow-2xs text-emerald-950"
+                  ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50 text-emerald-950 shadow-md scale-105"
+                  : isStoreDropdownOpen
+                    ? "bg-emerald-100 border border-emerald-400 text-emerald-950 shadow-xs"
+                    : "bg-emerald-50/90 hover:bg-emerald-100/90 border border-emerald-300/90 shadow-2xs text-emerald-950"
                   }`}
               >
                 <Storefront
@@ -3064,8 +3066,8 @@ export function PpcDashboard({
                         setIsStoreDropdownOpen(false);
                       }}
                       className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${selectedStore === "ALL"
-                          ? "bg-emerald-600 text-white font-black shadow-xs"
-                          : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
+                        ? "bg-emerald-600 text-white font-black shadow-xs"
+                        : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
                         }`}
                     >
                       <div className="flex items-center gap-2 truncate">
@@ -3095,8 +3097,8 @@ export function PpcDashboard({
                               setIsStoreDropdownOpen(false);
                             }}
                             className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${isSelected
-                                ? "bg-emerald-600 text-white font-black shadow-xs"
-                                : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
+                              ? "bg-emerald-600 text-white font-black shadow-xs"
+                              : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
                               }`}
                           >
                             <span className="truncate">
@@ -3129,8 +3131,8 @@ export function PpcDashboard({
                     setSelectedDays(d);
                   }}
                   className={`px-2 sm:px-2.5 py-1 rounded-md transition cursor-pointer text-xs ${!isCustomDate && selectedDays === d
-                      ? "bg-white text-indigo-700 shadow-2xs font-bold"
-                      : "text-slate-600 hover:text-slate-900"
+                    ? "bg-white text-indigo-700 shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-slate-900"
                     }`}
                 >
                   {d}D
@@ -4659,9 +4661,8 @@ export function PpcDashboard({
                       setTargetStateFilter(k);
                       setTargetPage(1);
                     }}
-                    className={`rounded-md px-3.5 py-1.5 text-sm font-semibold transition cursor-pointer ${
-                      targetStateFilter === k ? "bg-indigo-600 text-white shadow-2xs" : "text-slate-500 hover:text-slate-800"
-                    }`}
+                    className={`rounded-md px-3.5 py-1.5 text-sm font-semibold transition cursor-pointer ${targetStateFilter === k ? "bg-indigo-600 text-white shadow-2xs" : "text-slate-500 hover:text-slate-800"
+                      }`}
                   >
                     {label}
                   </button>
@@ -4683,11 +4684,10 @@ export function PpcDashboard({
                         setTargetRunTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
                         setTargetPage(1);
                       }}
-                      className={`py-2 px-3.5 rounded-lg border text-sm font-semibold transition cursor-pointer whitespace-nowrap ${
-                        on
-                          ? "border-indigo-600 bg-indigo-600 text-white"
-                          : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white"
-                      }`}
+                      className={`py-2 px-3.5 rounded-lg border text-sm font-semibold transition cursor-pointer whitespace-nowrap ${on
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white"
+                        }`}
                       title={`Chỉ hiện target thuộc camp ${PPC_RUN_TYPE_LABEL[t]}`}
                     >
                       {PPC_RUN_TYPE_LABEL[t]}
@@ -4771,15 +4771,15 @@ export function PpcDashboard({
                   {targetSummarySort.sortSkuGroups((serverTargetSummary.skuGroups?.length
                     ? serverTargetSummary.skuGroups
                     : [{
-                        sku: selectedSku !== "ALL" ? selectedSku : "TẤT CẢ SKU",
-                        totalImpressions: serverTargetSummary.impressions,
-                        totalClicks: serverTargetSummary.clicks,
-                        totalSpend: serverTargetSummary.spend,
-                        totalSales: serverTargetSummary.sales,
-                        totalOrders: serverTargetSummary.orders,
-                        acos: serverTargetSummary.acos,
-                        mockupUrl: null,
-                      }]
+                      sku: selectedSku !== "ALL" ? selectedSku : "TẤT CẢ SKU",
+                      totalImpressions: serverTargetSummary.impressions,
+                      totalClicks: serverTargetSummary.clicks,
+                      totalSpend: serverTargetSummary.spend,
+                      totalSales: serverTargetSummary.sales,
+                      totalOrders: serverTargetSummary.orders,
+                      acos: serverTargetSummary.acos,
+                      mockupUrl: null,
+                    }]
                   ) as SearchTermSkuSummary[]).map((group) => (
                     <tr key={group.sku} className="hover:bg-slate-50/70">
                       <td className="px-3 py-3 text-center">
@@ -4820,15 +4820,14 @@ export function PpcDashboard({
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
                       <td className="px-3 py-3 text-right">
                         <span
-                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
-                            group.acos > 500
-                              ? "bg-rose-100 text-rose-700"
-                              : group.acos < 30
-                                ? "bg-emerald-100 text-emerald-700"
-                                : group.acos <= 50
-                                  ? "bg-amber-200 text-amber-900"
-                                  : "bg-rose-100 text-rose-700"
-                          }`}
+                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${group.acos > 500
+                            ? "bg-rose-100 text-rose-700"
+                            : group.acos < 30
+                              ? "bg-emerald-100 text-emerald-700"
+                              : group.acos <= 50
+                                ? "bg-amber-200 text-amber-900"
+                                : "bg-rose-100 text-rose-700"
+                            }`}
                         >
                           {group.acos > 500 ? "0 sales" : `${Number(group.acos || 0).toFixed(1)}%`}
                         </span>
@@ -5025,15 +5024,14 @@ export function PpcDashboard({
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black whitespace-nowrap">
                         <span
-                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-xs font-black ${
-                            serverTargetSummary.spend > 0 && serverTargetSummary.sales <= 0
-                              ? "bg-rose-100 text-rose-700"
-                              : serverTargetSummary.acos < 30
-                                ? "bg-emerald-100 text-emerald-700"
-                                : serverTargetSummary.acos <= 50
-                                  ? "bg-amber-200 text-amber-900"
-                                  : "bg-rose-100 text-rose-700"
-                          }`}
+                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-xs font-black ${serverTargetSummary.spend > 0 && serverTargetSummary.sales <= 0
+                            ? "bg-rose-100 text-rose-700"
+                            : serverTargetSummary.acos < 30
+                              ? "bg-emerald-100 text-emerald-700"
+                              : serverTargetSummary.acos <= 50
+                                ? "bg-amber-200 text-amber-900"
+                                : "bg-rose-100 text-rose-700"
+                            }`}
                         >
                           {serverTargetSummary.spend > 0 && serverTargetSummary.sales <= 0
                             ? "0 sales"
@@ -5127,21 +5125,19 @@ export function PpcDashboard({
                             <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
                               {target.orders === 0 || target.sales === 0 ? (
                                 <span
-                                  className={`inline-flex min-w-[64px] justify-center rounded-md px-2 py-0.5 font-mono text-[11px] font-black ${
-                                    target.spend > 0 ? "bg-rose-100 text-rose-700" : "text-slate-400"
-                                  }`}
+                                  className={`inline-flex min-w-[64px] justify-center rounded-md px-2 py-0.5 font-mono text-[11px] font-black ${target.spend > 0 ? "bg-rose-100 text-rose-700" : "text-slate-400"
+                                    }`}
                                 >
                                   {target.spend > 0 ? "0 sales" : "—"}
                                 </span>
                               ) : (
                                 <span
-                                  className={`inline-flex min-w-[64px] justify-center rounded-md px-2 py-0.5 font-mono text-[11px] font-black ${
-                                    target.acos < 30
-                                      ? "bg-emerald-100 text-emerald-700"
-                                      : target.acos <= 50
-                                        ? "bg-amber-200 text-amber-900"
-                                        : "bg-rose-100 text-rose-700"
-                                  }`}
+                                  className={`inline-flex min-w-[64px] justify-center rounded-md px-2 py-0.5 font-mono text-[11px] font-black ${target.acos < 30
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : target.acos <= 50
+                                      ? "bg-amber-200 text-amber-900"
+                                      : "bg-rose-100 text-rose-700"
+                                    }`}
                                   title={`ACOS: ${target.acos.toFixed(1)}%`}
                                 >
                                   {target.acos.toFixed(1)}%
@@ -5538,22 +5534,22 @@ export function PpcDashboard({
                       </td>
                       <td className="py-2.5 px-3.5 font-bold text-slate-900 col-primary">
                         <span className="inline-flex items-center gap-1.5">
-                        <span
-                          role="link"
-                          tabIndex={0}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handleJumpToAutoBid(s.sku);
-                          }}
-                          onClick={() => {
-                            if (window.getSelection()?.toString()) return; // đang bôi đen để copy
-                            handleJumpToAutoBid(s.sku);
-                          }}
-                          className="truncate max-w-[280px] font-bold text-slate-900 font-mono hover:text-indigo-600 hover:underline cursor-pointer text-left transition inline-block align-bottom select-text"
-                          title={`Mở đề xuất Auto Bid cho SKU: ${s.sku}`}
-                        >
-                          {s.sku}
-                        </span>
-                        <PpcSkuStatusBadge status={s.skuStatus} />
+                          <span
+                            role="link"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleJumpToAutoBid(s.sku);
+                            }}
+                            onClick={() => {
+                              if (window.getSelection()?.toString()) return; // đang bôi đen để copy
+                              handleJumpToAutoBid(s.sku);
+                            }}
+                            className="truncate max-w-[280px] font-bold text-slate-900 font-mono hover:text-indigo-600 hover:underline cursor-pointer text-left transition inline-block align-bottom select-text"
+                            title={`Mở đề xuất Auto Bid cho SKU: ${s.sku}`}
+                          >
+                            {s.sku}
+                          </span>
+                          <PpcSkuStatusBadge status={s.skuStatus} />
                         </span>
                       </td>
                       {selectedStore === "ALL" && <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>}
@@ -5859,15 +5855,14 @@ export function PpcDashboard({
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
                       <td className="px-3 py-3 text-right">
                         <span
-                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
-                            group.acos > 500
-                              ? "bg-rose-100 text-rose-700"
-                              : group.acos < 30
-                                ? "bg-emerald-100 text-emerald-700"
-                                : group.acos <= 50
-                                  ? "bg-amber-200 text-amber-900"
-                                  : "bg-rose-100 text-rose-700"
-                          }`}
+                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${group.acos > 500
+                            ? "bg-rose-100 text-rose-700"
+                            : group.acos < 30
+                              ? "bg-emerald-100 text-emerald-700"
+                              : group.acos <= 50
+                                ? "bg-amber-200 text-amber-900"
+                                : "bg-rose-100 text-rose-700"
+                            }`}
                         >
                           {group.acos > 500 ? "0 sales" : `${Number(group.acos || 0).toFixed(1)}%`}
                         </span>
@@ -6483,6 +6478,54 @@ export function PpcDashboard({
             "Làm sao giảm bid cho 1 SKU?",
             "Vì sao SKU của mình không có đề xuất?",
             "Auto giảm Bid hoạt động thế nào?",
+          ]}
+        />
+      )}
+
+      {/* Trợ lý hướng dẫn sử dụng — tab Negative Keyword */}
+      {activeTab === "st_optimization" && (
+        <GuideAssistant
+          agent="ppc-negative-guide"
+          title="Trợ lý hướng dẫn Negative Keyword"
+          tours={PPC_NEGATIVE_TOURS}
+          context={{ page: "PPC · Negative Keyword", store: selectedStore, windowDays: selectedDays }}
+          contextChips={[selectedStore === "ALL" ? "Tất cả store" : selectedStore, `${selectedDays}D`]}
+          suggestions={[
+            "Quy trình phủ định search term từ đầu đến cuối thế nào?",
+            "Phủ định có ảnh hưởng đến các campaign khác không?",
+            "Xuất file xong có cần làm gì tiếp không?",
+          ]}
+        />
+      )}
+
+      {/* Trợ lý hướng dẫn sử dụng — tab Lên Camp Sale KW */}
+      {activeTab === "sale_kw" && (
+        <GuideAssistant
+          agent="ppc-salekw-guide"
+          title="Trợ lý hướng dẫn Lên Camp Sale KW"
+          tours={PPC_SALE_KW_TOURS}
+          context={{ page: "PPC · Lên Camp Sale KW", store: selectedStore, windowDays: selectedDays }}
+          contextChips={[selectedStore === "ALL" ? "Tất cả store" : selectedStore, `${selectedDays}D`]}
+          suggestions={[
+            "Quy trình lên camp sale kw từ đầu tới cuối thế nào?",
+            "Phủ định ở camp cũ có tác dụng gì?",
+            "Bid của camp mới được tính thế nào?",
+          ]}
+        />
+      )}
+
+      {/* Trợ lý hướng dẫn sử dụng — tab Chỉnh Bid Tay */}
+      {activeTab === "manual_bid" && (
+        <GuideAssistant
+          agent="ppc-manualbid-guide"
+          title="Trợ lý hướng dẫn Chỉnh Bid Tay"
+          tours={PPC_MANUAL_BID_TOURS}
+          context={{ page: "PPC · Chỉnh Bid Tay", store: selectedStore, windowDays: selectedDays }}
+          contextChips={[selectedStore === "ALL" ? "Tất cả store" : selectedStore, `${selectedDays}D`]}
+          suggestions={[
+            "Quy trình chỉnh bid tay từ đầu đến cuối thế nào?",
+            "Cách gõ sửa bid trực tiếp trên ô như thế nào?",
+            "Chỉnh bid hàng loạt cho nhiều target thế nào?",
           ]}
         />
       )}

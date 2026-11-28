@@ -61,15 +61,14 @@ export function useFrozenColumns(columnCount: number, remeasureKey: unknown) {
     return { className: `sticky ${layer}${isEdge ? ` ${EDGE}` : ""} print:static print:shadow-none`, style };
   };
 
-  /** Ô gộp từ cột `from` tới hết vùng khoá (vd. dải nhóm cột phía trên tiêu đề). */
-  const freezeSpan = (layer: string, from = 0): FrozenCell =>
-    lefts ? { className: `sticky ${layer} ${EDGE} print:static print:shadow-none`, style: { left: lefts[from] } } : { className: "" };
-
-  return { tableRef, frozen: lefts !== null, frozenWidth: lefts?.[lefts.length - 1] ?? 0, freeze, freezeSpan };
+  return { tableRef, frozen: lefts !== null, frozenWidth: lefts?.[lefts.length - 1] ?? 0, freeze };
 }
 
-/** Vạch ngăn đậm sau cột Shipment ID (tách phần đóng gói / vận chuyển với phần sau). Dùng chung cho 2 bảng chi tiết lô. */
+/**
+ * Vạch ngăn đậm ở ranh giới 2 nhóm cột: sau "one box quantity" (hết phần Order) — trước "Transparency Code"
+ * (bắt đầu Packing & shipping). Dùng chung cho 2 bảng chi tiết lô.
+ */
 export function sectionEdge(column: { key: string }, part: "head" | "body"): string {
-  if (column.key !== "shipment_id") return "";
+  if (column.key !== "box_quantity") return "";
   return part === "head" ? "border-r-2! border-r-white/70!" : "border-r-2! border-r-(--ff-line-strong)!";
 }

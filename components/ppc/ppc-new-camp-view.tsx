@@ -9,6 +9,8 @@ import { findPpcStoreForAccountingName } from "@/lib/ppc/store-aliases";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowCounterClockwise, ArrowsClockwise, CaretDown, Check, CheckCircle, CircleNotch, CloudArrowUp, DownloadSimple, FileXls, FolderOpen, GearSix, ImageSquare, MagnifyingGlass, PencilSimple, Plus, RocketLaunch, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
+import { GuideAssistant } from "@/components/guide/guide-assistant";
+import { PPC_NEW_CAMP_TOURS } from "@/lib/guide/ppc-new-camp-tours";
 import type { NewCampSkuInfo, PlannedCampaign } from "@/lib/ppc/new-camp-generator";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 import {
@@ -96,7 +98,17 @@ function normalizeKeywordList(raw: string): string[] {
 
 function Section({ step, title, right, children, className = "", bodyClassName = "" }: { step?: number; title: string; right?: React.ReactNode; children: React.ReactNode; className?: string; bodyClassName?: string }) {
   return (
-    <section id={step !== undefined ? `nc-step-${step}` : undefined} className={`${cardCls} ${className}`}>
+    <section
+      id={step !== undefined ? `nc-step-${step}` : undefined}
+      data-tour={
+        step === 1 ? "nc-step-1" :
+        step === 2 ? "nc-step-2" :
+        step === 3 ? "nc-step-3" :
+        step === 4 ? "nc-step-4" :
+        step === 5 ? "nc-step-5" : undefined
+      }
+      className={`${cardCls} ${className}`}
+    >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
         <h2 className="flex items-center gap-2.5 text-[15px] font-extrabold text-slate-900">
           {step !== undefined && (
@@ -162,7 +174,7 @@ function NameFields({ value, edits, onChange }: { value: KwName; edits: KwNameEd
     { key: "set", label: "Bộ keyword" },
   ];
   return (
-    <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+    <div data-tour="nc-kw-save-fields" className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
       <p className="mb-3 text-[13px] font-extrabold text-indigo-900">Lưu vào kho keyword</p>
       <div className="grid grid-cols-2 gap-3">
         {fields.map((f) => (
@@ -195,10 +207,10 @@ function SelectedChip({ label, onClear }: { label: string; onClear: () => void }
 }
 
 /** Thẻ 1 dạng chạy: tắt thì thu gọn, bật thì mở phần cài đặt. */
-function RunCard({ title, on, onToggle, children }: { title: string; on: boolean; onToggle: (v: boolean) => void; children: React.ReactNode }) {
+function RunCard({ title, on, onToggle, toggleTour, children }: { title: string; on: boolean; onToggle: (v: boolean) => void; toggleTour?: string; children: React.ReactNode }) {
   return (
     <div className={`overflow-hidden rounded-xl border-2 transition ${on ? "border-indigo-500 shadow-sm shadow-indigo-100" : "border-slate-200 hover:border-slate-300"}`}>
-      <button type="button" onClick={() => onToggle(!on)} className={`flex w-full items-center gap-3 px-4 py-3 text-left cursor-pointer ${on ? "bg-indigo-50" : "bg-white"}`}>
+      <button type="button" data-tour={toggleTour} aria-pressed={on} onClick={() => onToggle(!on)} className={`flex w-full items-center gap-3 px-4 py-3 text-left cursor-pointer ${on ? "bg-indigo-50" : "bg-white"}`}>
         <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition ${on ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white"}`}>
           {on && <Check size={12} weight="bold" />}
         </span>
@@ -1024,7 +1036,7 @@ export function PpcNewCampView() {
       </div>
 
       {notices.length > 0 && (
-        <div className="space-y-2">
+        <div data-tour="nc-notices" className="space-y-2">
           {notices.map((n, i) => (
             <div
               key={i}
@@ -1041,7 +1053,7 @@ export function PpcNewCampView() {
       )}
 
       {uploadJobs && (
-        <div className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
+        <div data-tour="nc-upload-jobs" className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
               <CloudArrowUp size={18} weight="bold" className="text-indigo-600" /> Upload lên Amazon · {uploadJobs.stores.join(", ")}
@@ -1255,7 +1267,8 @@ export function PpcNewCampView() {
                 const m = match[g.key];
                 const set = (patch: Partial<MatchRun>) => setMatch((prev) => ({ ...prev, [g.key]: { ...prev[g.key], ...patch } }));
                 return (
-                  <RunCard key={g.key} title={g.label} on={m.run} onToggle={(v) => set({ run: v })}>
+                  <div key={g.key} data-tour={g.key === "sp03" ? "nc-run-sp03" : g.key === "sb01" ? "nc-run-sb01" : "nc-run-sb05"}>
+                  <RunCard title={g.label} on={m.run} onToggle={(v) => set({ run: v })} toggleTour={g.key === "sp03" ? "nc-run-sp03-toggle" : g.key === "sb01" ? "nc-run-sb01-toggle" : "nc-run-sb05-toggle"}>
                     <div className="flex flex-wrap items-end gap-4">
                       <div className="w-32"><MoneyInput label="Budget / ngày" value={m.dailyBudget} onChange={(v) => set({ dailyBudget: v })} /></div>
                       <div>
@@ -1278,10 +1291,12 @@ export function PpcNewCampView() {
                       </div>
                     </div>
                   </RunCard>
+                  </div>
                 );
               })}
 
-              <RunCard title="SP04 Auto" on={sp04.run} onToggle={(v) => setSp04({ ...sp04, run: v })}>
+              <div data-tour="nc-run-sp04">
+              <RunCard title="SP04 Auto" toggleTour="nc-run-sp04-toggle" on={sp04.run} onToggle={(v) => setSp04({ ...sp04, run: v })}>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <MoneyInput label="Budget / ngày" value={sp04.dailyBudget} onChange={(v) => setSp04({ ...sp04, dailyBudget: v })} />
                   {([["bidClose", "Close"], ["bidLoose", "Loose"], ["bidComp", "Complements"], ["bidSub", "Substitutes"]] as const).map(([k, label]) => (
@@ -1289,8 +1304,10 @@ export function PpcNewCampView() {
                   ))}
                 </div>
               </RunCard>
+              </div>
 
-              <RunCard title="FL Asin" on={flasin.run} onToggle={(v) => setFlasin({ ...flasin, run: v })}>
+              <div data-tour="nc-run-flasin">
+              <RunCard title="FL Asin" toggleTour="nc-run-flasin-toggle" on={flasin.run} onToggle={(v) => setFlasin({ ...flasin, run: v })}>
                 <div className="space-y-4">
                   <div className="grid max-w-xs grid-cols-2 gap-3">
                     <MoneyInput label="Budget / ngày" value={flasin.dailyBudget} onChange={(v) => setFlasin({ ...flasin, dailyBudget: v })} />
@@ -1306,10 +1323,13 @@ export function PpcNewCampView() {
                   </div>
                 </div>
               </RunCard>
+              </div>
 
-              <div className="rounded-xl border border-slate-200">
+              <div data-tour="nc-advanced" className="rounded-xl border border-slate-200">
                 <button
                   type="button"
+                  data-tour="nc-advanced-toggle"
+                  aria-pressed={showAdvanced}
                   onClick={() => setShowAdvanced((v) => !v)}
                   className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
                 >
@@ -1389,6 +1409,7 @@ export function PpcNewCampView() {
                 </div>
               }
             >
+              <div data-tour="nc-kw-mode">
               <Segmented
                 value={shownTab}
                 onChange={setKwTab}
@@ -1399,6 +1420,7 @@ export function PpcNewCampView() {
                   { value: "create", label: <><PencilSimple size={16} weight="bold" /> Tạo mới</> },
                 ]}
               />
+              </div>
 
               <div className="mt-4">
                 {shownTab === "upload" && (
@@ -1577,7 +1599,7 @@ export function PpcNewCampView() {
         right={
           <div className="flex items-center gap-4">
             {previewLoading && <CircleNotch size={16} className="animate-spin text-slate-400" />}
-            <div className="w-40">
+            <div data-tour="nc-name-suffix" className="w-40">
               <input className={inputCls} placeholder="Đuôi tên" value={naming.suffix} onChange={(e) => setNaming({ ...naming, suffix: e.target.value })} />
             </div>
           </div>
@@ -1664,7 +1686,7 @@ export function PpcNewCampView() {
       </Section>
 
       {sbActive && selected.length > 0 && (
-        <div ref={sbPanelRef} id="nc-step-sb">
+        <div ref={sbPanelRef} id="nc-step-sb" data-tour="nc-step-sb">
           <Section
             className={sbBlocking.length ? "border-rose-300" : ""}
             title="Thông tin SB còn thiếu"
@@ -1841,9 +1863,17 @@ export function PpcNewCampView() {
             </div>
 
             <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 bg-slate-50/60 px-6 py-4">
-              <button type="button" onClick={() => setConfirmOpen(false)} className="rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">Huỷ</button>
               <button
                 type="button"
+                data-tour="nc-modal-cancel"
+                onClick={() => setConfirmOpen(false)}
+                className="rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Huỷ
+              </button>
+              <button
+                type="button"
+                data-tour="nc-modal-confirm"
                 onClick={() => void submit("upload", true)}
                 disabled={uploadBusy || uploadGroups.noStore.length > 0}
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-black text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
@@ -1858,7 +1888,7 @@ export function PpcNewCampView() {
 
       <div className="sticky bottom-0 z-10 -mx-3 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_12px_-6px_rgba(15,23,42,0.12)] backdrop-blur sm:-mx-4 md:-mx-6">
         {showIssues && issues.length > 0 && (
-          <div className="mx-auto mb-3 max-w-[1600px] rounded-xl border border-rose-300 bg-rose-50 px-4 py-3">
+          <div data-tour="nc-issues-panel" className="mx-auto mb-3 max-w-[1600px] rounded-xl border border-rose-300 bg-rose-50 px-4 py-3">
             <div className="mb-1.5 flex items-center gap-2">
               <WarningCircle size={18} weight="fill" className="text-rose-600" />
               <span className="text-sm font-black text-rose-900">Còn {issues.length} mục cần điền trước khi tạo file</span>
@@ -1893,6 +1923,7 @@ export function PpcNewCampView() {
           )}
           <button
             type="button"
+            data-tour="nc-btn-upload"
             onClick={() => void submit("upload")}
             disabled={busy || uploadBusy || selected.length === 0 || uploadGroups.noStore.length > 0}
             title={uploadGroups.noStore.length ? `Không xác định được store: ${uploadGroups.noStore.slice(0, 3).join(", ")}` : undefined}
@@ -1903,6 +1934,7 @@ export function PpcNewCampView() {
           </button>
           <button
             type="button"
+            data-tour="nc-btn-create-file"
             onClick={() => void submit()}
             disabled={busy || uploadBusy}
             className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-indigo-600 px-8 py-3 text-sm font-black tracking-wide text-white shadow-md shadow-indigo-200 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
@@ -1913,6 +1945,19 @@ export function PpcNewCampView() {
           </div>
         </div>
       </div>
+
+      <GuideAssistant
+        agent="ppc-newcamp-guide"
+        title="Trợ lý hướng dẫn Lên Camp SKU Mới"
+        tours={PPC_NEW_CAMP_TOURS}
+        context={{ page: "PPC · Lên Camp SKU Mới" }}
+        contextChips={["SKU Mới", `${selected.length} SKU đã chọn`]}
+        suggestions={[
+          "Quy trình lên camp SKU mới từ đầu tới cuối thế nào?",
+          "3 cách nạp file keyword hoạt động ra sao?",
+          "Lỗi thiếu thông tin SB sửa thế nào?",
+        ]}
+      />
     </div>
   );
 }

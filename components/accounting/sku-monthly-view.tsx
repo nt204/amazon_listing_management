@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { profitColClass } from "./profit-column";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
@@ -187,6 +188,7 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
       : null;
   const endYear = rangeEnd?.year ?? null;
   const endMonth = rangeEnd?.month ?? null;
+  const stockMonth = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
 
   // Search & Sorting
   const [search, setSearch] = useState("");
@@ -607,6 +609,13 @@ export function SkuMonthlyView({ storeId: propStoreId, channel = "fba" }: SkuMon
 
   return (
     <div className="flex flex-col h-full overflow-hidden select-none font-accounting-system">
+      <AccountingFreshness
+        view="monthly" storeIds={[selectedStoreId]} channel={isFbm ? "FBM" : "FBA"} enabled={Boolean(selectedStoreId)}
+        showStock={!isFbm && items.length > 0 && visibleColumns.some((c) => c.id === "available_now")}
+        stockMonths={selectedMonth === "all"
+          ? [stockMonth(selectedYear, 1), stockMonth(selectedYear, 12)]
+          : [stockMonth(selectedYear, selectedMonth), stockMonth(endYear ?? selectedYear, endMonth ?? selectedMonth)]}
+      />
       {/* 1. TOOLBAR: Store, Month, Search, Zoom, Actions (Đồng bộ 100% với FBA ngày) */}
       <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0 select-none">
         <div className="flex items-center gap-2 flex-wrap">

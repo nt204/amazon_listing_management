@@ -12,6 +12,7 @@ import {
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { listTeams } from "@/lib/accounting/store-teams";
+import { AccountingFreshness } from "./accounting-freshness";
 
 interface AccessUser {
   userId: string;
@@ -230,6 +231,7 @@ export function AccountingAccessView() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 py-3 sm:py-6">
+      <AccountingFreshness view="access" />
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div className="flex items-center gap-3">

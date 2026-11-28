@@ -26,6 +26,20 @@ export interface ProductCategoryPreset {
   updatedBy?: string;
 }
 
+/** Một bản trong lịch sử chỉnh sửa phôi (prompt chung), dùng để khôi phục. */
+export interface SharedMockupPresetVersion {
+  id: string;
+  presetId: string;
+  label: string;
+  icon: string;
+  contents: MockupContentItem[];
+  source: "baseline" | "edit" | "restore";
+  restoredFromId: string | null;
+  savedBy: string;
+  savedByName: string;
+  savedAt: string;
+}
+
 export interface PresetExportPayload {
   version: string;
   exportedAt: string;

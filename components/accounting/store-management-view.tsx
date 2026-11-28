@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Store } from "@/lib/accounting/types";
 import { storeCanEdit } from "@/lib/accounting/store-teams";
@@ -202,6 +203,7 @@ export function StoreManagementView() {
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6">
+      <AccountingFreshness view="stores" />
       {/* Top Main Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-5">
         <div>

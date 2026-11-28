@@ -266,6 +266,10 @@ function scheduleHour() {
   return Number.isInteger(h) && h >= 0 && h <= 23 ? h : 10;
 }
 
+export function getSkuEvalReminderSchedule() {
+  return { enabled: process.env.SKU_EVAL_REMINDER_SCHEDULE !== "off", day: scheduleDay(), hour: scheduleHour() };
+}
+
 async function runIfDue() {
   const now = vietnamNow();
   // Chỉ chạy đúng ngày hẹn, từ giờ hẹn trở đi (server bật muộn trong ngày vẫn gửi bù)

@@ -18,6 +18,7 @@ import {
   savePresetToServer,
   deletePresetFromServer,
   createNewPreset,
+  normalizePresetIcon,
   clonePreset,
   exportPresetsPayload,
   importPresetsPayload,
@@ -40,7 +41,9 @@ import {
   CheckCircleIcon,
   SparkleIcon,
   LightningIcon,
+  ClockCounterClockwiseIcon,
 } from "@phosphor-icons/react";
+import { PresetHistoryDialog } from "./preset-history-dialog";
 
 interface ProductPresetModalProps {
   isOpen: boolean;
@@ -63,6 +66,7 @@ export function ProductPresetModal({
   const [batchModalOpen, setBatchModalOpen] = useState<boolean>(false);
   const [batchInputText, setBatchInputText] = useState<string>("");
   const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
+  const [historyPresetId, setHistoryPresetId] = useState<string | null>(null);
 
   // Edit category modal state
   const [editingCategory, setEditingCategory] = useState<ProductCategoryPreset | null>(null);
@@ -73,7 +77,6 @@ export function ProductPresetModal({
   // Create category modal state
   const [isCreatingCategory, setIsCreatingCategory] = useState<boolean>(false);
   const [newCategoryLabel, setNewCategoryLabel] = useState<string>("");
-  const [newCategoryIcon, setNewCategoryIcon] = useState<string>("📦");
   const [createCategoryError, setCreateCategoryError] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -137,6 +140,9 @@ export function ProductPresetModal({
   if (!isOpen) return null;
 
   const currentPreset = presets.find((p) => p.id === selectedId) || presets[0];
+  const historyPreset = historyPresetId
+    ? presets.find((p) => p.id === historyPresetId)
+    : undefined;
 
   const handleSaveAll = (
     updatedPresets: ProductCategoryPreset[],
@@ -191,7 +197,6 @@ export function ProductPresetModal({
 
   const handleOpenCreateCategory = () => {
     setNewCategoryLabel("");
-    setNewCategoryIcon("📦");
     setCreateCategoryError("");
     setIsCreatingCategory(true);
   };
@@ -199,7 +204,6 @@ export function ProductPresetModal({
   const handleConfirmCreateCategory = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const label = newCategoryLabel.trim() || "Sản phẩm mới";
-    const icon = newCategoryIcon.trim() || "📦";
 
     // Duplicate name check
     const isDuplicate = presets.some(
@@ -211,7 +215,7 @@ export function ProductPresetModal({
     }
 
     setCreateCategoryError("");
-    const newP = createNewPreset(label, icon);
+    const newP = createNewPreset(label);
     const updated = [...presets, newP];
     handleSaveAll(updated, newP.id, true);
     setSelectedId(newP.id);
@@ -288,7 +292,7 @@ export function ProductPresetModal({
     setEditCategoryError("");
     const updated = presets.map((p) =>
       p.id === editingCategory.id
-        ? { ...p, label, icon: editIcon.trim() || "📦" }
+        ? { ...p, label, icon: normalizePresetIcon(editIcon) }
         : p,
     );
     handleSaveAll(updated, editingCategory.id, true);
@@ -517,6 +521,7 @@ export function ProductPresetModal({
             </div>
           </div>
           <button
+            data-tour="mk-preset-apply-btn"
             onClick={handleApplyAndClose}
             className="flex h-9 w-9 items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition shadow-2xs"
           >
@@ -537,13 +542,14 @@ export function ProductPresetModal({
         {/* Main 2-Column Studio Layout */}
         <div className="flex flex-1 overflow-hidden">
           {/* LEFT SIDEBAR: Categories List & Preset Actions */}
-          <div className="w-80 shrink-0 border-r border-slate-100 bg-slate-50/50 flex flex-col justify-between p-4 overflow-y-auto space-y-4">
+          <div className="w-80 shrink-0 border-r border-slate-100 bg-slate-50/50 flex flex-col justify-between p-4 overflow-x-hidden overflow-y-auto space-y-4">
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black uppercase tracking-wider text-slate-500">
                   Loại Sản Phẩm ({presets.length})
                 </span>
                 <button
+                  data-tour="mk-preset-create-btn"
                   onClick={handleOpenCreateCategory}
                   className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-bold text-white shadow-2xs hover:bg-indigo-700 transition"
                   title="Thêm loại sản phẩm mới"
@@ -561,19 +567,19 @@ export function ProductPresetModal({
                     <div
                       key={p.id}
                       onClick={() => handleSelectPreset(p)}
-                      className={`group relative flex items-center justify-between rounded-2xl p-3 border transition cursor-pointer ${
+                      className={`group relative flex items-center gap-2 rounded-2xl p-3 border transition cursor-pointer ${
                         isSelected
                           ? "border-indigo-500 bg-indigo-50/70 shadow-xs ring-2 ring-indigo-400/20"
                           : "border-slate-200/80 bg-white hover:border-indigo-300 hover:bg-slate-50"
                       }`}
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
                         <span className="text-xl shrink-0">{p.icon || "📦"}</span>
                         <div className="min-w-0">
-                          <h4 className="text-xs font-extrabold text-slate-900 truncate">
+                          <h4 className="truncate text-xs font-extrabold text-slate-900" title={p.label}>
                             {p.label}
                           </h4>
-                          <span className="text-[11px] font-semibold text-slate-500">
+                          <span className="block truncate text-[11px] font-semibold text-slate-500">
                             {p.contents.length} Content • {p.isSystem ? "Hệ thống" : "Tự tạo"}
                           </span>
                         </div>
@@ -591,6 +597,19 @@ export function ProductPresetModal({
                           title="Sửa tên / Icon"
                         >
                           <PencilIcon className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          data-tour="mk-preset-history-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setHistoryPresetId(p.id);
+                          }}
+                          className="p-1 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-indigo-600 transition"
+                          title="Lịch sử chỉnh sửa / Khôi phục"
+                          aria-label={`Lịch sử chỉnh sửa ${p.label}`}
+                        >
+                          <ClockCounterClockwiseIcon className="h-3.5 w-3.5" />
                         </button>
                         <button
                           type="button"
@@ -661,11 +680,11 @@ export function ProductPresetModal({
           {currentPreset && (
             <div className="flex-1 flex flex-col overflow-hidden bg-white">
               {/* Active Category Header */}
-              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-3.5 bg-slate-50/30 shrink-0">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-6 py-3.5 bg-slate-50/30 shrink-0">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="text-2xl">{currentPreset.icon}</span>
-                  <div>
-                    <h3 className="text-sm font-black text-slate-900 truncate">
+                  <span className="shrink-0 text-2xl">{currentPreset.icon}</span>
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-black text-slate-900" title={currentPreset.label}>
                       {currentPreset.label}
                     </h3>
                     <span className="text-xs text-slate-500 font-semibold">
@@ -674,11 +693,11 @@ export function ProductPresetModal({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
-                    onClick={handleBatchAddContents}
-                    onClickCapture={() => setBatchModalOpen(true)}
+                    data-tour="mk-preset-batch-btn"
+                    onClick={() => setBatchModalOpen(true)}
                     className="flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs font-extrabold text-amber-800 shadow-2xs hover:bg-amber-100 transition"
                   >
                     <LightningIcon className="h-4 w-4 text-amber-600" weight="fill" />
@@ -708,7 +727,7 @@ export function ProductPresetModal({
               </div>
 
               {/* Content List Table / Editor */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-3">
+              <div data-tour="mk-preset-content-list" className="flex-1 overflow-y-auto p-6 space-y-3">
                 {currentPreset.contents.map((item, index) => {
                   const isFirst = item.id === 1;
                   return (
@@ -793,6 +812,7 @@ export function ProductPresetModal({
                         </div>
                         <textarea
                           rows={item.customPrompt && item.customPrompt.length > 80 ? 3 : 2}
+                          data-tour={index === 0 ? "mk-preset-prompt-first" : undefined}
                           value={item.customPrompt || ""}
                           onChange={(e) => handleUpdateCustomPrompt(item.id, e.target.value)}
                           placeholder="Nhập mô tả bối cảnh AI tùy chỉnh (Ví dụ: Hero main product photography on pure white background #FFFFFF...)"
@@ -811,6 +831,7 @@ export function ProductPresetModal({
                 </span>
                 <button
                   type="button"
+                  data-tour="mk-preset-done-apply-btn"
                   onClick={handleApplyAndClose}
                   className="flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-slate-800 transition cursor-pointer"
                 >
@@ -847,22 +868,6 @@ export function ProductPresetModal({
             </div>
 
             <div className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Biểu Tượng Emoji Icon
-                </label>
-                <input
-                  type="text"
-                  value={newCategoryIcon}
-                  onChange={(e) => {
-                    setNewCategoryIcon(e.target.value);
-                    if (createCategoryError) setCreateCategoryError("");
-                  }}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-base outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
-                  placeholder="📦"
-                />
-              </div>
-
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
                   Tên Loại Sản Phẩm <span className="text-rose-500">*</span>
@@ -1006,6 +1011,7 @@ export function ProductPresetModal({
               </p>
               <button
                 type="button"
+                data-tour="mk-chatgpt-copy-btn"
                 onClick={handleCopyChatGPTTemplate}
                 className={`flex items-center gap-1.5 shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-extrabold transition-all duration-200 cursor-pointer ${
                   copiedPrompt
@@ -1030,6 +1036,7 @@ export function ProductPresetModal({
 
             <textarea
               rows={8}
+              data-tour="mk-batch-input"
               value={batchInputText}
               onChange={(e) => setBatchInputText(e.target.value)}
               placeholder={`Loại Sản Phẩm: 🍺 Beer Mug\nContent 1 | Ảnh 1: Nền Trắng CTR | Hero product photography on white background\nContent 2 | Ảnh 2: Quán Pub Gia Đình | Cozy indoor wood pub table with warm ambient lights\nContent 3 | Ảnh 3: Kích Thước 16oz | 16oz capacity 3D size infographic`}
@@ -1039,6 +1046,7 @@ export function ProductPresetModal({
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
+                data-tour="mk-batch-cancel"
                 onClick={() => setBatchModalOpen(false)}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100"
               >
@@ -1046,6 +1054,7 @@ export function ProductPresetModal({
               </button>
               <button
                 type="button"
+                data-tour="mk-batch-submit-btn"
                 onClick={handleBatchAddContents}
                 className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 shadow-2xs"
               >
@@ -1054,6 +1063,18 @@ export function ProductPresetModal({
             </div>
           </div>
         </div>
+      )}
+
+      {historyPreset && (
+        <PresetHistoryDialog
+          preset={historyPreset}
+          hasPendingSave={(presetId) => pendingPresetIdsRef.current.has(presetId)}
+          onClose={() => setHistoryPresetId(null)}
+          onRestored={async () => {
+            applyServerPresets(await fetchPresetsFromServer());
+            setNotice(`↺ Đã khôi phục prompt của "${historyPreset.label}".`);
+          }}
+        />
       )}
 
     </div>

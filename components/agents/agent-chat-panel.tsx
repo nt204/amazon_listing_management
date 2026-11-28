@@ -104,6 +104,8 @@ export interface AgentChatPanelProps {
   request?: AgentChatRequest | null;
   /** Khối riêng của agent hiện dưới tiêu đề (vd dải cảnh báo dữ liệu của AI đối soát). */
   banner?: ReactNode;
+  /** false = chỉ hiện banner khi đã có hội thoại (lời chào đã chứa cùng nội dung). Mặc định true. */
+  bannerWhenEmpty?: boolean;
   footnote?: string;
   onClose: () => void;
   /** "docked" = ghim cạnh phải cao hết màn hình (mặc định); "floating" = cửa sổ nhỏ góc dưới phải. */
@@ -135,6 +137,7 @@ export function AgentChatPanel({
   suggestions = [],
   request,
   banner,
+  bannerWhenEmpty = true,
   footnote,
   onClose,
   variant = "docked",
@@ -464,7 +467,7 @@ export function AgentChatPanel({
         </div>
       ) : (
         <>
-          {banner}
+          {(bannerWhenEmpty || messages.length > 0 || queue.length > 0) && banner}
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-[13px] leading-relaxed text-slate-700">
             {historyLoading && (
               <div className="flex items-center gap-1.5 text-xs text-slate-400">

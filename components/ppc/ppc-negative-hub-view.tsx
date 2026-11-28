@@ -237,7 +237,7 @@ export function PpcNegativeHubView({ selectedStore, channel = null, notify, onCh
   return (
     <div className="space-y-4">
       {/* 1. Tổng quan */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div data-tour="neg-hub-summary" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
             <ShieldCheck size={22} weight="bold" />
@@ -285,9 +285,8 @@ export function PpcNegativeHubView({ selectedStore, channel = null, notify, onCh
                 key={t}
                 type="button"
                 onClick={() => setAdTypeFilter(t)}
-                className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                  adTypeFilter === t ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
-                }`}
+                className={`px-2.5 py-1 rounded-md transition cursor-pointer ${adTypeFilter === t ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
+                  }`}
               >
                 {t === "ALL" ? "Tất cả" : t === "SP" ? "SP (Products)" : "SB (Brands)"}
               </button>
@@ -338,7 +337,7 @@ export function PpcNegativeHubView({ selectedStore, channel = null, notify, onCh
             </span>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div data-tour="neg-hub-table" className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
@@ -406,6 +405,7 @@ export function PpcNegativeHubView({ selectedStore, channel = null, notify, onCh
                         <td className="py-2.5 pl-2 pr-4 text-right">
                           <button
                             type="button"
+                            data-tour="neg-hub-delete-btn"
                             onClick={(e) => {
                               e.stopPropagation();
                               setDeleteTarget(b);

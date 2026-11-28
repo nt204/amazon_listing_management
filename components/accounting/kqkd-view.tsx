@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useDeferredValue, type ReactNode } from "react";
 import {
   ArrowClockwiseIcon,
@@ -2005,6 +2006,7 @@ export function KqkdView() {
 
   return (
     <div className="flex h-full w-full flex-col gap-2 overflow-auto p-2 font-sans">
+      <AccountingFreshness view="testing" storeIds={[selectedStoreId]} channel="FBA" enabled={Boolean(selectedStoreId) && !loadingStores} showStock={mode === "skus" && baseSkus.some((sku) => sku.ton_kho != null)} />
       {/* TOOLBAR — tầng 1: bối cảnh (store · năm · chế độ) · tầng 2 (SKU Testing): tìm + lọc · tuỳ chọn hiển thị */}
       <div className="flex shrink-0 flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center gap-2 p-2">

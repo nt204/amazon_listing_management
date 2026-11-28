@@ -905,6 +905,11 @@ export function autoDecreaseHour(): number {
   return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 9;
 }
 
+export function isAutoDecreaseScheduleEnabled(): boolean {
+  const mode = process.env.PPC_AUTO_DECREASE_SCHEDULE;
+  return mode !== "off" && (mode === "on" || process.env.NODE_ENV === "production");
+}
+
 async function runIfDue() {
   const now = vietnamNow();
   const hour = autoDecreaseHour();
@@ -933,8 +938,7 @@ const globalForScheduler = globalThis as typeof globalThis & {
 
 export function startAutoDecreaseScheduler() {
   // DB local là bản sao production (có kết nối Lark thật) → máy dev không tự gửi thẻ, trừ khi bật rõ "on".
-  const mode = process.env.PPC_AUTO_DECREASE_SCHEDULE;
-  if (mode === "off" || (mode !== "on" && process.env.NODE_ENV !== "production")) return;
+  if (!isAutoDecreaseScheduleEnabled()) return;
   if (globalForScheduler.autoDecreaseScheduler) {
     if (globalForScheduler.autoDecreaseSchedulerOwner === MODULE_ID) return;
     clearInterval(globalForScheduler.autoDecreaseScheduler);

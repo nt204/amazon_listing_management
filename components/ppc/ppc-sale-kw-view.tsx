@@ -1575,6 +1575,7 @@ export function PpcSaleKwView({
         <div className="flex items-center gap-2">
           <button
             type="button"
+            data-tour="sale-subtab-candidates"
             onClick={() => setSubTab("candidates")}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${subTab === "candidates"
                 ? "bg-emerald-600 text-white shadow-xs"
@@ -1595,6 +1596,7 @@ export function PpcSaleKwView({
 
           <button
             type="button"
+            data-tour="sale-subtab-registry"
             onClick={() => setSubTab("registry")}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${subTab === "registry"
                 ? "bg-slate-900 text-white shadow-xs"
@@ -1615,7 +1617,7 @@ export function PpcSaleKwView({
         {subTab === "candidates" && (
           <div className="flex items-center gap-2">
 
-            <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
+            <label data-tour="sale-hide-launched" className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
               <input
                 type="checkbox"
                 checked={hideLaunched}
@@ -1630,7 +1632,7 @@ export function PpcSaleKwView({
               )}
             </label>
 
-            <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
+            <label data-tour="sale-negate-source" className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
               <input
                 type="checkbox"
                 checked={negateInSource}
@@ -1654,7 +1656,7 @@ export function PpcSaleKwView({
               {/* Left: Filter Controls */}
               <div className="flex flex-wrap items-center gap-2.5">
                 {/* Lọc Orders (giống ST Optim Clicks) */}
-                <div className="flex items-center rounded-lg border border-emerald-300 bg-emerald-50/80 px-2 py-1 shadow-2xs">
+                <div data-tour="sale-filter-orders" className="flex items-center rounded-lg border border-emerald-300 bg-emerald-50/80 px-2 py-1 shadow-2xs">
                   <label className="text-[11px] font-extrabold text-emerald-900 mr-1.5 flex items-center gap-1">
                     <Funnel size={13} weight="bold" />
                     <span>Orders:</span>
@@ -1681,7 +1683,7 @@ export function PpcSaleKwView({
 
                 {/* Quick SKU Filter */}
                 {candidateSkus.length > 1 && (
-                  <div className="relative">
+                  <div data-tour="sale-filter-sku" className="relative">
                     <select
                       value={skuFilter}
                       onChange={(e) => {
@@ -1701,7 +1703,7 @@ export function PpcSaleKwView({
                 )}
 
                 {/* Search Input */}
-                <div className="relative min-w-[220px] flex-1 sm:flex-initial">
+                <div data-tour="sale-search" className="relative min-w-[220px] flex-1 sm:flex-initial">
                   <MagnifyingGlass size={13} className="absolute left-2.5 top-2.5 text-slate-400" />
                   <input
                     type="text"
@@ -1739,6 +1741,7 @@ export function PpcSaleKwView({
 
                 <button
                   type="button"
+                  data-tour="sale-btn-export"
                   onClick={handleExportBulksheet}
                   disabled={candidateActionsDisabled || isExporting || launchableTargetItems.length === 0 || targetCampaignCount === 0}
                   className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1759,6 +1762,8 @@ export function PpcSaleKwView({
 
                 <button
                   type="button"
+                  data-tour="sale-btn-auto-upload"
+                  data-tour-safe="opens-modal"
                   onClick={handleOpenAutoUploadModal}
                   disabled={candidateActionsDisabled || launchableTargetItems.length === 0 || targetCampaignCount === 0 || selectedStore === "ALL" || Boolean(sbUploadBlocker)}
                   className="px-4 py-1.5 rounded-lg bg-linear-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1772,7 +1777,7 @@ export function PpcSaleKwView({
 
             {/* Campaign Config Parameters (Row 2 inside Card) */}
             <div className="flex flex-wrap items-center gap-3 pt-2.5 border-t border-slate-100 text-xs text-slate-600">
-              <div className="flex items-center gap-1.5">
+              <div data-tour="sale-config-user" className="flex items-center gap-1.5">
                 <span className="font-semibold text-slate-600" title="Tên người dùng gắn vào tên chiến dịch">Người dùng:</span>
                 <input
                   type="text"
@@ -1784,7 +1789,7 @@ export function PpcSaleKwView({
                 />
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div data-tour="sale-config-run-type" className="flex items-center gap-1.5">
                 <span className="font-semibold text-slate-600" title="Dạng chạy (ví dụ SP03)">Dạng chạy:</span>
                 <div className="flex gap-1">
                   {SALE_KW_RUN_OPTIONS.map((o) => {
@@ -1793,6 +1798,8 @@ export function PpcSaleKwView({
                       <button
                         key={o.value}
                         type="button"
+                        data-tour={o.value === "SB01" ? "sale-run-sb01" : o.value === "SB05" ? "sale-run-sb05" : "sale-run-sp03"}
+                        aria-pressed={on}
                         onClick={() => toggleAdType(o.value)}
                         className={`px-2 py-0.5 rounded border font-bold cursor-pointer ${
                           on ? "bg-emerald-600 border-emerald-600 text-white" : "bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-800"
@@ -1806,7 +1813,7 @@ export function PpcSaleKwView({
               </div>
 
               {sbRun && (
-                <div className="flex items-center gap-1.5" title="Bid SB = % CPC từng term (CPC phần lớn là của SP)">
+                <div data-tour="sale-config-sb-bids" className="flex items-center gap-1.5" title="Bid SB = % CPC từng term (CPC phần lớn là của SP)">
                   {(["SB01", "SB05"] as const).filter((code) => adTypeCodes.includes(code)).map((code) => (
                     <span key={code} className="flex items-center gap-1">
                       <span className="font-semibold text-slate-600">Bid {code}:</span>
@@ -1838,7 +1845,7 @@ export function PpcSaleKwView({
                 />
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div data-tour="sale-config-budget" className="flex items-center gap-1.5">
                 <span className="font-semibold text-slate-600">Budget:</span>
                 <div className="flex items-center">
                   <span className="text-slate-400 mr-1">$</span>
@@ -1853,7 +1860,7 @@ export function PpcSaleKwView({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div data-tour="sale-config-bid" className="flex items-center gap-1.5">
                 <span className="font-semibold text-slate-600">Bid:</span>
                 <select
                   value={bidMode}
@@ -1878,7 +1885,7 @@ export function PpcSaleKwView({
           </div>
 
           {/* 3. Summary Metric Cards (bố cục dưới toolbar giống ST Optimization) */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div data-tour="sale-metrics" className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
               <span className="text-[11px] font-bold text-slate-400 block uppercase">ST Tiềm năng</span>
               <div className="flex items-baseline gap-1.5 mt-1">
@@ -2034,7 +2041,7 @@ export function PpcSaleKwView({
               </div>
 
               {/* SKU Group Cards */}
-              {paginatedGroups.map((group) => {
+              {paginatedGroups.map((group, groupIdx) => {
                 const isCollapsed = collapsedSkus.has(group.sku);
                 const isGroupFullySelected = group.items.every((it) => selectedKeys.has(it.key));
                 const isGroupPartiallySelected =
@@ -2046,6 +2053,7 @@ export function PpcSaleKwView({
                 return (
                   <div
                     key={group.sku}
+                    data-tour={groupIdx === 0 ? "sale-sku-group" : undefined}
                     className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden transition-all"
                   >
                     {/* SKU Group Header */}
@@ -2179,6 +2187,7 @@ export function PpcSaleKwView({
                               <div className="flex items-center gap-2 min-w-0">
                                 <input
                                   type="checkbox"
+                                  data-tour={groupIdx === 0 ? "sale-mt-broad-first" : undefined}
                                   checked={broadEnabled}
                                   onChange={() => handleToggleMatchType(group.sku, "broad")}
                                   className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer shrink-0"
@@ -2235,7 +2244,7 @@ export function PpcSaleKwView({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                            {group.items.map((item) => {
+                            {group.items.map((item, itemIdx) => {
                               const isChecked = selectedKeys.has(item.key);
 
                               return (
@@ -2247,6 +2256,7 @@ export function PpcSaleKwView({
                                   <td className="py-2.5 px-4">
                                     <input
                                       type="checkbox"
+                                      data-tour={groupIdx === 0 && itemIdx === 0 ? "sale-row-first-checkbox" : undefined}
                                       disabled={item.isAlreadyLaunched}
                                       checked={isChecked && !item.isAlreadyLaunched}
                                       onChange={() => handleToggleKey(item.key)}
@@ -2455,6 +2465,7 @@ export function PpcSaleKwView({
                     Copy Camp Cũ ({selectedRegIds.size})
                   </button>
                   <button
+                    data-tour="sale-reg-delete-btn"
                     onClick={handleDeleteRegistrySelected}
                     disabled={isDeletingReg}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition cursor-pointer"
@@ -2476,7 +2487,7 @@ export function PpcSaleKwView({
           </div>
 
           {/* Registry Table */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div data-tour="sale-reg-table" className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
@@ -2734,12 +2745,14 @@ export function PpcSaleKwView({
 
                 <div className="flex items-center justify-end gap-2.5 pt-2">
                   <button
+                    data-tour="sale-modal-cancel"
                     onClick={() => setIsAutoUploadModalOpen(false)}
                     className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
                   >
                     Hủy bỏ
                   </button>
                   <button
+                    data-tour="sale-modal-confirm"
                     onClick={handleExecuteAutoUpload}
                     disabled={isAutoUploading}
                     className="flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50"

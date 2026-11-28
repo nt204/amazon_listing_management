@@ -17,7 +17,8 @@ const actor: RequestActor = {
 interface Case { q: string[]; tours?: string[]; mustTool?: boolean; mustInclude?: RegExp[]; mustNot?: RegExp[] }
 const ONLY = process.argv[3] ? new RegExp(process.argv[3], "i") : null;
 const ALL_CASES: Case[] = [
-  { q: ["Làm sao giảm bid cho 1 SKU?"], tours: ["duyet-1-sku"], mustInclude: [/Duyệt/i, /Action Queue/i] },
+  { q: ["Quy trình điều chỉnh bid theo gợi ý từ đầu tới cuối thế nào?"], tours: ["autobid-a-to-z"], mustInclude: [/Duyệt/i, /Action Queue/i] },
+  { q: ["Làm sao giảm bid cho 1 SKU?"], tours: ["duyet-1-sku", "autobid-a-to-z"], mustInclude: [/Duyệt/i, /Action Queue/i] },
   { q: ["Luật SP03 khi target chưa có đơn thì sao?"], mustTool: true, mustInclude: [/click/i] },
   { q: ["BE ACoS là gì, tính thế nào?"], mustInclude: [/Giá bán/i, /Basecost/i] },
   { q: ["Vì sao SKU ABC123 không có đề xuất nào?"], tours: ["ly-do-de-xuat", "loc-sku", "max-bid"], mustInclude: [/Lỗi Prefix|Hold|SP01|paused/i] },

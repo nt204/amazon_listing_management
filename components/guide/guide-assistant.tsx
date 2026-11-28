@@ -81,7 +81,46 @@ export function GuideAssistant({ agent, title, tours, context, contextChips, sug
     return found.length ? <>{found.map(tourCard)}</> : null;
   };
 
-  const tourChip = (tour: GuideTour, index: number) => (
+  // Chức năng chính của màn (luồng ra kết quả) ở trên; tùy chọn thêm (lọc, giải thích, mẹo) ở dưới.
+  const mainTours = tours.filter((t) => t.kind === "main");
+  const extraTours = tours.filter((t) => t.kind !== "main");
+
+  /** Chức năng chính: dòng nổi bật, bấm cả dòng = xem làm mẫu, nút tay = tự đi từng bước. */
+  const mainRow = (tour: GuideTour) => (
+    <div key={tour.id} className="flex items-stretch overflow-hidden rounded-lg border border-indigo-200 bg-white">
+      <button
+        type="button"
+        disabled={Boolean(running)}
+        onClick={() => {
+          setShowTours(false);
+          void play(tour, "auto");
+        }}
+        title={tour.summary}
+        className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2 text-left text-[12.5px] font-bold text-indigo-900 hover:bg-indigo-50 disabled:cursor-wait disabled:opacity-50"
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white">
+          <PlayIcon size={10} weight="fill" />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{tour.title}</span>
+      </button>
+      <button
+        type="button"
+        disabled={Boolean(running)}
+        onClick={() => {
+          setShowTours(false);
+          void play(tour, "manual");
+        }}
+        title="Đi từng bước (tự bấm Tiếp)"
+        aria-label={`Đi từng bước: ${tour.title}`}
+        className="flex shrink-0 cursor-pointer items-center border-l border-indigo-100 px-2.5 text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-wait disabled:opacity-50"
+      >
+        <HandPointingIcon size={14} weight="bold" />
+      </button>
+    </div>
+  );
+
+  /** Tùy chọn thêm: dòng nhỏ. */
+  const extraRow = (tour: GuideTour) => (
     <button
       key={tour.id}
       type="button"
@@ -91,13 +130,31 @@ export function GuideAssistant({ agent, title, tours, context, contextChips, sug
         void play(tour, "auto");
       }}
       title={tour.summary}
-      className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+      className="group flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] font-semibold text-slate-600 hover:bg-slate-50 hover:text-indigo-800 disabled:opacity-50"
     >
-      <span className="text-[10px] font-black text-indigo-400">{index + 1}</span> {tour.title}
+      <PlayIcon size={10} weight="fill" className="shrink-0 text-slate-400 group-hover:text-indigo-600" />
+      <span className="min-w-0 flex-1 truncate">{tour.title}</span>
     </button>
   );
 
-  // Danh sách hướng dẫn luôn mở được (kể cả khi đã có hội thoại), xếp theo quy trình tới đầu ra
+  const tourLists = (
+    <div className="space-y-3">
+      {mainTours.length > 0 && (
+        <div>
+          <div className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-indigo-900">Chức năng chính</div>
+          <div className="space-y-1.5">{mainTours.map(mainRow)}</div>
+        </div>
+      )}
+      {extraTours.length > 0 && (
+        <div>
+          <div className="mb-0.5 px-2 text-[11px] font-semibold text-slate-400">Tùy chọn thêm</div>
+          {extraTours.map(extraRow)}
+        </div>
+      )}
+    </div>
+  );
+
+  // Khi đã có hội thoại: thanh gọn để mở lại hướng dẫn bất cứ lúc nào
   const toursBar = (
     <div className="border-b border-slate-100 px-4 py-2">
       <button
@@ -107,21 +164,17 @@ export function GuideAssistant({ agent, title, tours, context, contextChips, sug
         className="flex w-full cursor-pointer items-center gap-1.5 text-[11.5px] font-bold text-indigo-700"
       >
         <BookOpenTextIcon size={14} weight="bold" />
-        Tất cả hướng dẫn ({tours.length}) — theo thứ tự quy trình
+        Hướng dẫn sử dụng ({tours.length})
         <CaretDownIcon size={12} weight="bold" className={`ml-auto transition-transform ${showTours ? "rotate-180" : ""}`} />
       </button>
-      {showTours && <div className="mt-2 flex flex-wrap gap-1.5 pb-1">{tours.map(tourChip)}</div>}
+      {showTours && <div className="mt-2 pb-1">{tourLists}</div>}
     </div>
   );
 
   const welcome = (
-    <div className="space-y-2 pb-1">
-      <p className="text-[12.5px] text-slate-600">
-        Chào bạn 👋 Mình hướng dẫn màn <b>Đề xuất &amp; Auto Bid</b> từ lọc SKU → duyệt → Action Queue → <b>xuất file Bulk
-        hoặc Auto Upload</b> lên Amazon. Hỏi bất cứ điều gì, hoặc chọn một hướng dẫn để mình làm mẫu ngay trên màn hình:
-      </p>
-      <div className="flex flex-wrap gap-1.5">{tours.map(tourChip)}</div>
-      {suggestions?.length ? <p className="pt-1 text-[11px] font-semibold text-slate-400">Hoặc hỏi thử:</p> : null}
+    <div className="space-y-3 pb-1">
+      {tourLists}
+      {suggestions?.length ? <div className="px-2 pt-1 text-[11px] font-semibold text-slate-400">Hoặc hỏi</div> : null}
     </div>
   );
 
@@ -138,10 +191,11 @@ export function GuideAssistant({ agent, title, tours, context, contextChips, sug
           suggestions={suggestions}
           welcome={welcome}
           banner={toursBar}
+          bannerWhenEmpty={false}
           placeholder="Hỏi cách dùng… vd: làm sao giảm bid cho 1 SKU? (Enter để gửi)"
           formatAnswer={stripTourMarkers}
           renderAnswerExtras={renderAnswerExtras}
-          footnote="Thử nghiệm · AI chỉ hướng dẫn, không tự duyệt / lưu thay bạn. Lịch sử chat lưu theo tài khoản của bạn."
+          footnote="Thử nghiệm · Hướng dẫn chỉ làm mẫu, không tự đẩy gì lên Amazon."
           onClose={() => setOpen(false)}
         />
       )}

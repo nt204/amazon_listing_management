@@ -42,6 +42,8 @@ import {
   extractTrelloBoardId,
   prioritizeTrelloCoverAttachment,
 } from "@/lib/trello";
+import { GuideAssistant } from "@/components/guide/guide-assistant";
+import { LISTING_TOURS } from "@/lib/guide/listing-tours";
 const AutoMockupGenerator = dynamic(
   () => import("@/components/auto-mockup-generator").then((mod) => mod.AutoMockupGenerator),
   {
@@ -1234,6 +1236,8 @@ export function TrelloBoardView({
               <div className="relative z-40">
                 <button
                   type="button"
+                  data-tour="lst-model-dropdown"
+                  data-tour-safe
                   onClick={() => setOpenDropdown((prev) => (prev === "model" ? null : "model"))}
                   className={`flex items-center gap-2.5 rounded-2xl border px-3.5 py-2 text-left transition-all duration-150 cursor-pointer shadow-2xs ${openDropdown === "model"
                     ? "border-purple-400 bg-white ring-2 ring-purple-100 shadow-xs"
@@ -1301,6 +1305,8 @@ export function TrelloBoardView({
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
+                    data-tour="lst-brand-dropdown"
+                    data-tour-safe
                     onClick={() => setOpenDropdown((prev) => (prev === "brand" ? null : "brand"))}
                     className={`flex items-center gap-2.5 rounded-2xl border px-3.5 py-2 text-left transition-all duration-150 cursor-pointer shadow-2xs ${openDropdown === "brand"
                       ? "border-blue-400 bg-white ring-2 ring-blue-100 shadow-xs"
@@ -1327,6 +1333,8 @@ export function TrelloBoardView({
 
                   <button
                     type="button"
+                    data-tour="lst-btn-add-brand"
+                    data-tour-safe
                     onClick={() => setShowAddBrandModal(true)}
                     className="flex h-9 w-9 items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:border-blue-300 text-sm font-black transition shrink-0 cursor-pointer shadow-2xs"
                     title="Thêm thương hiệu mới"
@@ -1404,6 +1412,8 @@ export function TrelloBoardView({
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
+                          data-tour="lst-template-dropdown"
+                          data-tour-safe
                           onClick={() => setOpenDropdown((prev) => (prev === "template" ? null : "template"))}
                           className={`flex items-center gap-2.5 rounded-2xl border px-3.5 py-2 text-left transition-all duration-150 cursor-pointer shadow-2xs ${
                             openDropdown === "template"
@@ -1461,6 +1471,8 @@ export function TrelloBoardView({
 
                         <button
                           type="button"
+                          data-tour="lst-btn-add-template"
+                          data-tour-safe
                           onClick={openAddTemplateModal}
                           aria-label="Quản lý và thêm template"
                           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-100 text-xs font-black text-emerald-900 transition hover:bg-emerald-200 cursor-pointer shadow-2xs"
@@ -1579,6 +1591,8 @@ export function TrelloBoardView({
               {/* Batch History & ZIP Button */}
               <button
                 type="button"
+                data-tour="lst-btn-batch-history"
+                data-tour-safe
                 onClick={() => {
                   void fetchBatchHistory();
                   setShowBatchHistoryModal(true);
@@ -1696,6 +1710,7 @@ export function TrelloBoardView({
               </h3>
               <button
                 type="button"
+                data-tour="lst-trello-modal-close"
                 onClick={() => {
                   setShowConfig(false);
                   onCloseConfigModal?.();
@@ -1707,7 +1722,7 @@ export function TrelloBoardView({
             </div>
 
             <div className="space-y-4">
-              <div>
+              <div data-tour="lst-trello-board-input">
                 <label className="mb-1 block text-xs font-extrabold text-slate-700">Board ID / URL Trello Board</label>
                 <input
                   type="text"
@@ -1729,7 +1744,7 @@ export function TrelloBoardView({
               </div>
 
               {boardLists.length > 0 && (
-                <div className="grid grid-cols-1 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+                <div data-tour="lst-trello-columns-grid" className="grid grid-cols-1 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
                   {(activeTab === "listing"
                     ? [
                       ["Cột đầu", listingSourceListId, setListingSourceListId],
@@ -1787,7 +1802,7 @@ export function TrelloBoardView({
 
       {/* Floating Multi-Select Batch Action Bar */}
       {selectedCardIds.size > 0 && (
-        <div className="sticky top-0 z-20 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 border-b border-sky-300 bg-sky-600 px-3 py-2.5 sm:px-6 sm:py-3 text-white shadow-lg">
+        <div data-tour="lst-batch-bar" className="sticky top-0 z-20 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 border-b border-sky-300 bg-sky-600 px-3 py-2.5 sm:px-6 sm:py-3 text-white shadow-lg">
           <div className="flex items-center gap-2.5">
             <span className="flex h-6 w-6 sm:h-7 sm:w-7 items-center justify-center rounded-full bg-white text-xs font-bold text-sky-700 shrink-0">
               {selectedCardIds.size}
@@ -1819,6 +1834,7 @@ export function TrelloBoardView({
               </button>
             ) : (
               <button
+                data-tour="lst-btn-batch-run"
                 onClick={processBatchListings}
                 disabled={!shopId || !templateId || submittingBatch}
                 title={!shopId || !templateId ? "Hãy chọn shop và blank template trước" : undefined}
@@ -2029,13 +2045,14 @@ export function TrelloBoardView({
 
           <div className="flex flex-1 overflow-x-auto p-3 sm:p-4 lg:p-6 gap-4 lg:gap-6 min-h-0">
             {/* Configured Listing source column */}
-            <div className={`w-full lg:w-1/2 flex-col rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-2xs ${
+            <div data-tour="lst-source-col" className={`w-full lg:w-1/2 flex-col rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-2xs ${
               mobileTrelloColumn === "review" ? "flex" : "hidden lg:flex"
             }`}>
             {/* Column Header */}
             <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2.5">
                 <button
+                  data-tour="lst-select-all"
                   onClick={toggleSelectAll}
                   className="text-slate-400 hover:text-blue-600 transition cursor-pointer"
                   title="Chọn/Bỏ chọn tất cả"
@@ -2160,7 +2177,7 @@ export function TrelloBoardView({
                   </p>
                 </div>
               ) : (
-                paginatedReviewCards.map((card) => {
+                paginatedReviewCards.map((card, idx) => {
                   const isSelected = selectedCardIds.has(card.id);
                   const isProcessing = processingCardIds.has(card.id);
                   const imageAttachments = prioritizeTrelloCoverAttachment(
@@ -2268,6 +2285,7 @@ export function TrelloBoardView({
                   return (
                     <div
                       key={card.id}
+                      data-tour={idx === 0 ? "lst-card-item" : undefined}
                       draggable={!loading && !batchProcessing && !isProcessing}
                       onDragStart={(e) => {
                         setDraggedCardId(card.id);
@@ -2360,6 +2378,7 @@ export function TrelloBoardView({
                         </a>
 
                         <button
+                          data-tour={idx === 0 ? "lst-btn-process-single" : undefined}
                           onClick={() => {
                             if (isProcessing) cancelCardListing(card.id);
                             else void processCardToListing(card);
@@ -2433,6 +2452,7 @@ export function TrelloBoardView({
 
           {/* Column 2: LISTING */}
           <div
+            data-tour="lst-target-col"
             onDragOver={(e) => {
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
@@ -2608,7 +2628,7 @@ export function TrelloBoardView({
                   </p>
                 </div>
               ) : (
-                paginatedListingCards.map((card) => {
+                paginatedListingCards.map((card, idx) => {
                   const fileUrl = `/api/trello/download-card-excel?cardId=${card.id}&shopId=${encodeURIComponent(shopId)}&templateId=${encodeURIComponent(templateId)}`;
                   const fileName = `${selectedShopName}-${(card.parsed?.sku || "listing").toLowerCase()}.xlsx`;
                   const imageAttachments = prioritizeTrelloCoverAttachment(
@@ -2684,6 +2704,7 @@ export function TrelloBoardView({
                       <div className="flex items-center gap-2 shrink-0">
                         {latestExcel ? (
                           <a
+                            data-tour={idx === 0 ? "lst-btn-download-excel" : undefined}
                             href={latestExcel.url}
                             target="_blank"
                             rel="noreferrer"
@@ -2847,6 +2868,7 @@ export function TrelloBoardView({
               </h3>
               <button
                 type="button"
+                data-tour="lst-template-modal-close"
                 onClick={() => {
                   templateScanRequestRef.current += 1;
                   setScanningTemplate(false);
@@ -3227,6 +3249,7 @@ export function TrelloBoardView({
                 )}
                 <button
                   type="button"
+                  data-tour="lst-history-modal-close"
                   onClick={() => setShowBatchHistoryModal(false)}
                   className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition cursor-pointer"
                 >
@@ -3357,6 +3380,26 @@ export function TrelloBoardView({
             </div>
           </div>
         </div>
+      )}
+
+      {activeTab === "listing" && (
+        <GuideAssistant
+          agent="listing-guide"
+          title="Trợ lý hướng dẫn Listing"
+          tours={LISTING_TOURS}
+          context={{ page: "Bảng Trello Kanban · Tool Listing" }}
+          contextChips={[
+            selectedBrandName || "Chưa chọn Brand",
+            selectedTemplate?.name || "Chưa chọn Template",
+            `Mô hình AI: ${selectedModel}`,
+          ]}
+          suggestions={[
+            "Quy trình tạo listing từ đầu tới cuối thế nào?",
+            "Làm sao để chạy batch tạo listing nhiều thẻ?",
+            "Template cần cấu hình là gì và sửa thế nào?",
+            "Tải file Excel listing ở đâu?",
+          ]}
+        />
       )}
     </div>
   );

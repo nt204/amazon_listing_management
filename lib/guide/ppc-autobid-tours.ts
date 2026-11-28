@@ -16,8 +16,76 @@ const closeQueue = { type: "click", target: "aq-close", ifPresent: true } as con
 
 const TOURS: GuideTour[] = [
   {
+    id: "autobid-a-to-z",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "main",
+    title: "Điều chỉnh bid theo gợi ý",
+    summary: "Chọn store → lọc SKU có đề xuất → mở SKU, xem bid gợi ý → Duyệt → Action Queue → Xuất Bulk File hoặc Auto Upload → xem kết quả.",
+    whenToUse: "Người mới, hỏi quy trình điều chỉnh bid theo gợi ý / đề xuất từ đầu tới cuối, bắt đầu từ đâu, tổng quan A-Z cách dùng Auto Bid.",
+    cleanup: [closeQueue, closeSkuModal],
+    steps: [
+      {
+        title: "Điều chỉnh bid theo gợi ý",
+        body: "Tour đi từ đề xuất của hệ thống tới lúc bid mới lên Amazon. Bấm “Duyệt” thôi thì Amazon <b>chưa đổi gì</b>.",
+      },
+      {
+        target: "ppc-store-select",
+        title: "Chọn 1 store",
+        body: "Đề xuất tính riêng cho từng store. Ở “Tất cả store” thì màn này không có đề xuất.",
+        side: "bottom",
+      },
+      {
+        target: ["rec-chip-decrease", "rec-chips"],
+        title: "Lọc SKU có đề xuất",
+        body: "Tour vừa bấm chip “Giảm Bid” để chỉ còn SKU cần giảm bid, kết thúc sẽ bỏ lọc. Chip Tăng Bid, Pause dùng tương tự.",
+        before: [{ type: "click", target: "rec-chip-decrease", ifPresent: true, undo: "rec-chip-all" }, { type: "wait", ms: 700 }],
+        side: "bottom",
+      },
+      {
+        target: "sku-kpis",
+        title: "Mở chi tiết SKU",
+        body: "Tour vừa mở SKU đầu bảng. Đầu khung là số tổng của SKU: Spend, Sales, ACoS, BE ACoS và Max Bid.",
+        before: [...openFirstSku],
+        side: "bottom",
+      },
+      {
+        target: ["sku-target-first", "sku-campaign-first"],
+        title: "Đọc bid gợi ý",
+        body: "Current là bid đang chạy, Suggested là bid hệ thống gợi ý. “Final Bid” là số sẽ được duyệt, mặc định bằng Suggested, gõ số khác nếu muốn.",
+        before: [{ type: "click", target: "sku-campaign-first", ifPresent: true }, { type: "wait", ms: 500 }],
+        side: "top",
+      },
+      {
+        target: ["sku-approve-first", "sku-action-first", "sku-select-all"],
+        title: "Bấm Duyệt",
+        body: "“Duyệt” đưa target vào Action Queue, tick nhiều target để duyệt cùng lúc. Bấm sẽ <b>chưa</b> đổi gì trên Amazon.",
+        side: "left",
+      },
+      {
+        target: ["aq-table", "aq-drawer"],
+        title: "Kiểm tra Action Queue",
+        body: "Mỗi dòng là một thay đổi đã duyệt, Old → New bid. Sửa New bid hoặc xoá dòng nhầm ở đây.",
+        before: [closeSkuModal, { type: "wait", ms: 300 }, ...openQueue],
+        side: "left",
+      },
+      {
+        target: ["aq-export-btn", "aq-auto-upload-btn"],
+        title: "Đẩy lên Amazon",
+        body: "“Xuất Bulk File” tải file để bạn tự upload ở Bulk operations của Amazon Ads. “Auto Upload AdsPower” để Mac mini upload thay bạn, bấm xác nhận sẽ đổi bid thật.",
+        side: "top",
+      },
+      {
+        target: ["aq-history", "aq-drawer"],
+        title: "Xem kết quả upload",
+        body: "Mỗi lượt Auto Upload hiện trạng thái Thành công, Thành công một phần hoặc Thất bại. Hiệu quả sau 3 / 7 / 14 / 30 ngày xem ở “Kết quả Auto Bid”.",
+        side: "left",
+      },
+    ],
+  },
+  {
     id: "tong-quan",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Tổng quan màn hình",
     summary: "Đi một vòng: chọn store, kỳ dữ liệu, bộ lọc, bảng SKU, Action Queue.",
     whenToUse: "Người mới, hỏi chung chung 'màn này dùng thế nào', 'bắt đầu từ đâu', 'quy trình chỉnh bid'.",
@@ -68,6 +136,7 @@ const TOURS: GuideTour[] = [
   {
     id: "loc-sku",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Lọc SKU cần xử lý",
     summary: "Dùng chip Tăng / Giảm / Pause / Lỗ ACoS… và bộ lọc Phôi, Niche, PIC.",
     whenToUse: "Hỏi cách lọc / tìm SKU cần giảm bid, SKU đang lỗ, SKU chưa ra đơn, ý nghĩa các chip lọc nhanh, SP03/SB05/SB01, Đặt lại bộ lọc.",
@@ -134,6 +203,7 @@ const TOURS: GuideTour[] = [
   {
     id: "doc-bang",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Đọc các cột trong bảng",
     summary: "ACoS vs BE ACoS, Tồn, số đề xuất, Trend 7D.",
     whenToUse: "Hỏi ý nghĩa cột (BE ACoS, Tồn, Giá trị tồn, Đề xuất, Tăng/Giảm/Pause, Trend 7D), màu đỏ / xanh của ACoS, sắp xếp bảng.",
@@ -179,6 +249,7 @@ const TOURS: GuideTour[] = [
   {
     id: "duyet-1-sku",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Xem & duyệt đề xuất của 1 SKU",
     summary: "Mở chi tiết SKU, xem từng target, sửa Final Bid rồi Duyệt vào Action Queue.",
     whenToUse: "Hỏi cách duyệt / chỉnh / giảm / tăng bid cho 1 SKU hoặc 1 target, Final Bid, Suggested, nút Duyệt, duyệt nhiều target, sửa bid hàng loạt trong 1 SKU.",
@@ -252,6 +323,7 @@ const TOURS: GuideTour[] = [
   {
     id: "ly-do-de-xuat",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Xem lý do một đề xuất",
     summary: "Bấm target để xem Lý do, Giải thích phép tính, AI phản biện.",
     whenToUse: "Hỏi 'vì sao target này bị giảm / tăng / pause', muốn xem luật và phép tính, AI phản biện, chat AI về 1 SKU.",
@@ -305,6 +377,7 @@ const TOURS: GuideTour[] = [
   {
     id: "max-bid",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Max Bid (trần bid) của SKU",
     summary: "Max Bid tính thế nào, sửa tay ở đâu.",
     whenToUse: "Hỏi Max Bid / trần bid là gì, vì sao đề xuất bị chặn ở trần, sửa Max Bid, 'Sửa tay · tự tính'.",
@@ -335,6 +408,7 @@ const TOURS: GuideTour[] = [
   {
     id: "duyet-hang-loat",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Duyệt nhiều SKU một lần",
     summary: "Tích chọn SKU ngoài bảng rồi Duyệt N SKU.",
     whenToUse: "Hỏi cách duyệt nhiều SKU / cả loạt / tất cả đề xuất cùng lúc, chọn tất cả SKU.",
@@ -370,6 +444,7 @@ const TOURS: GuideTour[] = [
   {
     id: "action-queue",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Action Queue: kiểm tra trước khi đẩy",
     summary: "Xem, sửa bid, xoá hành động đã duyệt; chọn cách đẩy lên Amazon.",
     whenToUse: "Hỏi Action Queue ở đâu / dùng thế nào, đã duyệt rồi làm gì tiếp, sửa / xoá / bỏ hành động đã duyệt, hoàn tác trước khi đẩy, lọc theo SKU trong hàng đợi.",
@@ -423,6 +498,7 @@ const TOURS: GuideTour[] = [
   {
     id: "xuat-bulk-file",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Xuất Bulk File rồi tự upload",
     summary: "Tạo file .xlsx từ Action Queue và upload lên Amazon Ads.",
     whenToUse: "Hỏi xuất file bulk / tải file excel / upload thủ công lên Amazon, file bulk gồm những gì, kiểm tra hợp lệ, lỗi thiếu ID.",
@@ -463,6 +539,7 @@ const TOURS: GuideTour[] = [
   {
     id: "auto-upload",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Auto Upload AdsPower",
     summary: "Để máy Mac mini tự upload file lên Amazon, theo dõi kết quả.",
     whenToUse: "Hỏi auto upload / AdsPower / Mac mini, upload tự động, chế độ an toàn SKU chưa cắn tiền, ô xác nhận rủi ro, theo dõi upload thành công / thất bại, huỷ, upload lại.",
@@ -511,6 +588,7 @@ const TOURS: GuideTour[] = [
   {
     id: "auto-giam-bid",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Cài Auto giảm Bid",
     summary: "Tự nhắc giảm bid qua Lark lúc 9h, bấm xác nhận mới đẩy lên Amazon.",
     whenToUse: "Hỏi Auto giảm Bid là gì / cài thế nào / sao không nhận thẻ Lark / lô thông báo / hoãn / xác nhận giảm.",
@@ -555,6 +633,7 @@ const TOURS: GuideTour[] = [
   {
     id: "ket-qua-auto-bid",
     page: PPC_AUTOBID_GUIDE_PAGE,
+    kind: "extra",
     title: "Xem kết quả sau khi chỉnh bid",
     summary: "Win / Loss sau 3–7–14–30 ngày, mục Cần hoàn bid.",
     whenToUse: "Hỏi chỉnh bid xong có hiệu quả không, Win / Loss / Bị ngắt / Chưa đủ dữ liệu, Cần hoàn bid, Amazon chưa áp dụng.",
@@ -602,6 +681,7 @@ const TOURS: GuideTour[] = [
 // Thứ tự hiển thị = thứ tự quy trình: hiểu màn hình → lọc → hiểu đề xuất → duyệt → Action Queue → ĐẦU RA (file Bulk /
 // Auto Upload) → theo dõi kết quả; Auto giảm Bid là luồng tự động riêng.
 const ORDER = [
+  "autobid-a-to-z",
   "tong-quan",
   "loc-sku",
   "doc-bang",

@@ -26,7 +26,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@/components/account-menu";
 import { PpcStoreAccessPanel } from "@/components/admin/ppc-store-access-panel";
 import { AdminHelium10SyncPanel } from "@/components/admin/admin-helium10-sync-panel";
+import { SystemSchedulesDialog } from "@/components/admin/system-schedules-dialog";
 import { Helium10SettingsModal } from "@/components/helium10-settings-modal";
+import type { SystemSchedules } from "@/lib/admin/system-schedules";
 import type { RequestActor, TeamRole } from "@/lib/auth";
 import type { AppUserStatus, AppUserSummary, ImageStorageStats, SystemGuideSummary } from "@/lib/db";
 
@@ -75,7 +77,7 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-export function AdminConsole({ actor }: { actor: RequestActor }) {
+export function AdminConsole({ actor, schedules }: { actor: RequestActor; schedules: SystemSchedules }) {
   const [users, setUsers] = useState<AppUserSummary[]>([]);
   const [storage, setStorage] = useState<{ driver: string; stats: ImageStorageStats } | null>(null);
   const [guides, setGuides] = useState<SystemGuideSummary[]>([]);
@@ -372,7 +374,10 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
               <p className="truncate text-[10px] font-semibold text-slate-500">Phân quyền Email Cloudflare & Lưu trữ</p>
             </div>
           </div>
-          <AccountMenu actor={actor} pendingUserCount={pendingCount} />
+          <div className="ml-2 flex min-w-0 items-center gap-2">
+            <SystemSchedulesDialog schedules={schedules} />
+            <AccountMenu actor={actor} pendingUserCount={pendingCount} />
+          </div>
         </div>
       </header>
 

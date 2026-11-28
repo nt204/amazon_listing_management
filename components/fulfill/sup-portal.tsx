@@ -351,21 +351,6 @@ function cellValue(line: FulfillLotLine, column: LotColumn) {
   return String(value);
 }
 
-const GROUP_LABEL: Record<LotColumn["group"], string> = { order: "Order", ship: "Packing & shipping", amazon: "" };
-const GROUP_BAND: Record<LotColumn["group"], string> = {
-  order: "bg-[#e8edf7]! text-(--ff-head-text)",
-  ship: "bg-[#ffd9a3]! text-[#7a3e00]",
-  amazon: "bg-[#fff0b3]! text-[#6b5200]",
-};
-
-// Dải nhóm cột phía trên tiêu đề (Order / Packing & shipping)
-const SUP_BANDS = SUP_LOT_COLUMNS.reduce<Array<{ group: LotColumn["group"]; span: number }>>((out, c) => {
-  const last = out[out.length - 1];
-  if (last && last.group === c.group) last.span += 1;
-  else out.push({ group: c.group, span: 1 });
-  return out;
-}, []);
-
 function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) {
   const [data, setData] = useState<{ lot: FulfillLot; lines: FulfillLotLine[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -394,22 +379,17 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
 
   // Đúng 42 cột sheet gửi xưởng, đúng thứ tự (kể cả cột trống)
   const columns = SUP_LOT_COLUMNS;
-  const bands = SUP_BANDS;
   const cellBorder = "border-r border-(--ff-line) last:border-r-0";
 
   // Khoá cột # → Quantity khi lướt ngang (index 0 = cột #, 1..frozenCount = các cột khoá)
   const frozenCount = columns.findIndex((c) => c.key === "quantity_request") + 1;
-  const { tableRef, frozen, freeze, freezeSpan } = useFrozenColumns(frozenCount + 1, data);
+  const { tableRef, freeze } = useFrozenColumns(frozenCount + 1, data);
   // Viền tiêu đề trắng mờ để lộ chữ cột cuộn bên dưới → ô khoá dùng màu đặc tương đương (gán bằng style để thắng border-white/15)
   const headLayer = "z-20";
   const headStyle = (index: number) => {
     const f = freeze(index, headLayer, "var(--ff-table-head)");
     return f.style ? { ...f.style, borderRightColor: "color-mix(in srgb, #fff 15%, var(--ff-table-head))" } : undefined;
   };
-  // Dải nhóm cột: tách phần nằm trong vùng khoá thành ô riêng (sticky), phần còn lại cuộn như cũ
-  const bandCells = frozen
-    ? [{ group: bands[0].group, span: frozenCount, sticky: true }, { ...bands[0], span: bands[0].span - frozenCount, sticky: false }, ...bands.slice(1).map((b) => ({ ...b, sticky: false }))].filter((b) => b.span > 0)
-    : bands.map((b) => ({ ...b, sticky: false }));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 print:block print:space-y-4">
@@ -465,23 +445,13 @@ function SupLotDetail({ lot, onBack }: { lot: FulfillLot; onBack: () => void }) 
           <table ref={tableRef} className="w-full border-separate border-spacing-0 text-left text-sm whitespace-nowrap print:text-[9px]">
             <thead className={`sticky top-0 z-30 print:static ${ui.tableHead}`}>
               <tr>
-                <th rowSpan={2} data-freeze className={`${ui.th} ${cellBorder} pl-4 text-right align-bottom ${freeze(0, headLayer).className}`} style={headStyle(0)}>#</th>
-                {bandCells.map((b, i) => {
-                  const f = b.sticky ? freezeSpan("z-20", 1) : { className: "", style: undefined };
-                  return (
-                    <th key={i} colSpan={b.span} className={`px-3 py-1 text-xs font-semibold ${GROUP_BAND[b.group]} ${f.className}`} style={f.style}>
-                      {/* Nhãn nhóm chỉ hiện 1 lần: ở ô khoá nếu có, phần còn lại của cùng nhóm để trống */}
-                      {b.sticky || i === 0 || bandCells[i - 1].group !== b.group ? GROUP_LABEL[b.group] : ""}
-                    </th>
-                  );
-                })}
-              </tr>
-              <tr>
+                <th scope="col" data-freeze className={`${ui.th} ${cellBorder} pl-4 text-right ${freeze(0, headLayer).className}`} style={headStyle(0)}>#</th>
                 {columns.map((c, i) => {
                   const f = freeze(i + 1, headLayer);
                   return (
                     <th
                       key={c.key}
+                      scope="col"
                       data-freeze={i < frozenCount ? "" : undefined}
                       className={`${ui.th} border-r border-white/15 last:border-r-0 ${c.kind === "money" || c.kind === "int" ? "text-right" : ""} ${sectionEdge(c, "head")} ${f.className}`}
                       style={headStyle(i + 1)}

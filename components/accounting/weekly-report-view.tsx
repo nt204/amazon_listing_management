@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   ArrowClockwiseIcon,
@@ -151,6 +152,14 @@ export function WeeklyReportView() {
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-slate-100/70 font-accounting-system">
+      <AccountingFreshness
+        view="weekly"
+        storeIds={selectedStoreKey === "all" ? undefined : [selectedStoreKey.split("|")[0]]}
+        channel={selectedStoreKey.endsWith("|FBM") ? "FBM" : selectedStoreKey.endsWith("|FBA") ? "FBA" : undefined}
+        showStock={Boolean(data?.stock.some((row) => (row.snapshotDate || row.units > 0) && (selectedStoreKey === "all" || selectedStoreKey === `${row.storeId}|FBA`)))}
+        stockThrough={data?.dataThrough}
+        refreshKey={reloadKey}
+      />
       <AccountingTopProgressBar loading={loading} variant="amber" />
 
       {/* Header 1 hàng: tiêu đề | tuần | store | trạng thái số liệu | làm mới */}

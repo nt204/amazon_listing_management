@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { profitColClass } from "./profit-column";
 import { ColumnHeaderMenu, filterOptionsFor, passesValueFilters, type ValueFilters } from "./column-header-menu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -899,6 +900,7 @@ export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = 
 
   return (
     <div className="flex h-full flex-col bg-slate-50 text-slate-800">
+      <AccountingFreshness view="daily" storeIds={[selectedStoreId]} channel={fbm ? "FBM" : "FBA"} enabled={Boolean(selectedStoreId) && !loadingStores} />
       {/* TOOLBAR: Store, Date Range, Search, Actions */}
       <div className="bg-slate-200/70 p-2 sm:p-2.5 rounded-xl border border-slate-300 flex items-center justify-between gap-2.5 flex-wrap shadow-2xs shrink-0">
         <div className="flex items-center gap-2.5 flex-wrap">

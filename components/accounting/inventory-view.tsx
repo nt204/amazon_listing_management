@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { memo, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   QueryClient,
@@ -1475,6 +1476,14 @@ const emptyCheckShipmentForm = {
   status: "Closed",
 };
 
+const INVENTORY_FRESHNESS_VIEWS = {
+  sku: "sku",
+  inbound: "inbound",
+  check_shipment: "shipments",
+  monthly_base_cost: "base-cost",
+  ton: "stock",
+} as const;
+
 export function InventoryView() {
   return (
     <QueryClientProvider client={inventoryQueryClient}>
@@ -1496,7 +1505,7 @@ function InventoryViewInner() {
   const [loadingStores, setLoadingStores] = useState(true);
 
   // Giữ nguyên tab Inventory đang mở khi reload trang trong cùng một phiên browser.
-  type InventoryTab = "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "ton";
+  type InventoryTab = keyof typeof INVENTORY_FRESHNESS_VIEWS;
   const [activeTab, setActiveTab] = useState<InventoryTab>(() => {
     if (typeof window === "undefined") return "sku";
     const savedTab = window.sessionStorage.getItem("accounting_inventory_active_tab");
@@ -1545,6 +1554,7 @@ function InventoryViewInner() {
 
   const monthlyBaseCostRef = useRef<MonthlyBaseCostViewRef>(null);
   const tonRef = useRef<InventoryTonViewRef>(null);
+  const [stockOn, setStockOn] = useState("");
   // Store có team FBM có thêm tab BASECOST THÁNG FBM (dữ liệu ĐẦU VÀO FBM PW từ link Kế Toán Tổng Hợp FBM),
   // dùng chung tab Basecost Tháng như cặp Bảng Mã / Bảng Mã FBM.
   const [baseCostChannelState, setBaseCostChannelState] = useState<SkuChannel>(() => {
@@ -5053,6 +5063,15 @@ function InventoryViewInner() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-2.5">
+      <AccountingFreshness
+        view={INVENTORY_FRESHNESS_VIEWS[shownTab]}
+        storeIds={selectedStoreId ? [selectedStoreId] : undefined}
+        channel={(shownTab === "sku" && skuChannel === "fbm") || (shownTab === "monthly_base_cost" && baseCostChannel === "fbm") ? "FBM" : "FBA"}
+        enabled={Boolean(selectedStoreId) && !loadingStores}
+        showStock={shownTab !== "sku" || skuColumns.some((c) => c.visible !== false && (c.id === "ton_kho" || c.id === "gia_tri_ton"))}
+        stockThrough={shownTab === "ton" ? stockOn : undefined}
+        stockMonths={shownTab === "monthly_base_cost" ? [`${monthlyBaseCostYear}-01`, `${monthlyBaseCostYear}-12`] : undefined}
+      />
       {/* Toast Alert */}
       {toast && (
         <div
@@ -6645,7 +6664,7 @@ function InventoryViewInner() {
         <div className={`min-h-[420px] flex-1 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xs flex-col sm:min-h-[520px] lg:min-h-[580px] ${shownTab === "ton" ? "flex" : "hidden"}`}>
           {/* Ẩn thì không dựng lại bảng TỒN (hàng nghìn dòng) mỗi lần trang Inventory render — như các tab khác */}
           <FreezeWhenHidden active={shownTab === "ton"} frozen={tabSwitchPending} render={() => (
-            <InventoryTonView ref={tonRef} storeId={selectedStoreId} tableZoom={tableZoom} />
+            <InventoryTonView ref={tonRef} storeId={selectedStoreId} tableZoom={tableZoom} stockOn={stockOn} onStockDateChange={setStockOn} />
           )} />
         </div>
       )}

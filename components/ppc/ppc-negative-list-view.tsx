@@ -183,6 +183,7 @@ function PendingBatchRows({
               </button>
               <button
                 type="button"
+                data-tour="neg-nl-confirm-uploaded-btn"
                 onClick={onConfirm}
                 disabled={busy}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700 cursor-pointer disabled:opacity-60 shadow-xs whitespace-nowrap"
@@ -676,6 +677,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
             <MagnifyingGlass size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
             <input
               type="text"
+              data-tour="neg-nl-asin-input"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -705,6 +707,8 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
                         <li key={item.asin}>
                           <button
                             type="button"
+                            data-tour={idx === 0 ? "neg-nl-suggestion-first" : undefined}
+                            aria-pressed={added}
                             onMouseEnter={() => setActiveIndex(idx)}
                             onClick={() => addPick(item)}
                             disabled={added}
@@ -735,11 +739,13 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
             )}
           </div>
 
-          <div className="flex items-center bg-slate-100 rounded-xl p-0.5 ml-auto">
+          <div data-tour="neg-nl-match-type" className="flex items-center bg-slate-100 rounded-xl p-0.5 ml-auto">
             {(["negativePhrase", "negativeExact"] as const).map((m) => (
               <button
                 key={m}
                 type="button"
+                data-tour={m === "negativePhrase" ? "neg-nl-match-phrase" : "neg-nl-match-exact"}
+                aria-pressed={matchType === m}
                 onClick={() => setMatchType(m)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
                   matchType === m ? "bg-white text-orange-700 shadow-xs" : "text-slate-700 hover:text-slate-700"
@@ -752,7 +758,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
         </div>
         {picks.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            {picks.map((p) => {
+            {picks.map((p, pickIdx) => {
               const n = campaigns.filter((c) => c.asin === p.asin).length;
               return (
                 <div
@@ -768,6 +774,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
                   </div>
                   <button
                     type="button"
+                    data-tour={pickIdx === picks.length - 1 ? "neg-nl-pick-remove-last" : undefined}
                     onClick={() => removePick(p.asin)}
                     className="ml-1 text-slate-700 hover:text-rose-600 cursor-pointer"
                     title="Bỏ ASIN này"
@@ -802,7 +809,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
 
       {/* 1b. Lô chờ xác nhận: Xuất File chờ tick "Đã upload" / Auto Upload, lô Auto Upload đang chạy */}
       {pendingBatches.length > 0 && (
-        <div className="bg-white border border-amber-300 rounded-2xl shadow-2xs overflow-hidden">
+        <div data-tour="neg-nl-pending-batches" className="bg-white border border-amber-300 rounded-2xl shadow-2xs overflow-hidden">
           <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-amber-200 bg-amber-50">
             <WarningCircle size={15} weight="bold" className="text-amber-700" />
             <span className="text-xs font-black text-slate-800">Lô chờ xác nhận{channel ? ` · ${channel}` : ""}</span>
@@ -852,7 +859,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
       )}
 
       {/* 2. Thẻ tổng quan */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div data-tour="neg-nl-stats" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-2xs">
           <p className="text-xs font-black uppercase tracking-wide text-slate-600">Keyword phủ định</p>
           <p className="mt-1 text-2xl font-black text-orange-600">
@@ -897,6 +904,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
             )}
           </div>
           <textarea
+            data-tour="neg-nl-keywords-input"
             value={keywordText}
             onChange={(e) => setKeywordText(e.target.value)}
             placeholder={"Dán cột keyword từ Google Sheet, mỗi dòng 1 từ:\nactivities\nanimal\napron\nbackdrop\n..."}
@@ -906,7 +914,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
         </div>
 
         {/* Campaign gom theo SKU / ASIN */}
-        <div className="bg-white border border-slate-300 rounded-2xl shadow-2xs flex flex-col overflow-hidden">
+        <div data-tour="neg-nl-campaign-list" className="bg-white border border-slate-300 rounded-2xl shadow-2xs flex flex-col overflow-hidden">
           {/* Thanh hành động ở trên cùng → không bị danh sách dài đẩy trôi xuống */}
           <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-slate-200 bg-slate-50">
             {groups.length > 0 && (
@@ -944,6 +952,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
             </div>
             <button
               type="button"
+              data-tour="neg-nl-export-btn"
               onClick={handleExport}
               disabled={totalRows === 0 || exporting}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-emerald-600 text-emerald-700 text-xs font-black hover:bg-emerald-50 transition cursor-pointer disabled:border-slate-300 disabled:text-slate-600 disabled:bg-slate-100 disabled:cursor-not-allowed shadow-xs"
@@ -953,6 +962,8 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
             </button>
             <button
               type="button"
+              data-tour="neg-nl-auto-upload-btn"
+              data-tour-safe="opens-modal"
               onClick={openConfirm}
               disabled={totalRows === 0}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-black hover:bg-rose-700 transition cursor-pointer disabled:bg-slate-300 disabled:text-slate-700 disabled:cursor-not-allowed shadow-xs"
@@ -1155,6 +1166,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
             <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50">
               <button
                 type="button"
+                data-tour="neg-nl-modal-cancel"
                 onClick={() => setIsModalOpen(false)}
                 disabled={submitting}
                 className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
@@ -1164,6 +1176,7 @@ export function PpcNegativeListView({ selectedStore, channel = null, notify, onQ
               {!result && (
                 <button
                   type="button"
+                  data-tour="neg-nl-modal-confirm"
                   onClick={handleSubmit}
                   disabled={submitting}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-black hover:bg-rose-700 cursor-pointer disabled:opacity-60"

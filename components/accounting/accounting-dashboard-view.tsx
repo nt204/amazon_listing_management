@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
@@ -2047,6 +2048,11 @@ export function AccountingDashboardView() {
     // Lưu ý: html font-size = 13px nên mốc container theo rem bị co lại; các mốc bố cục chính dùng px.
     // Panel AI mở trên màn rộng: chừa chỗ bên phải để panel không che số.
     <div className={`relative h-full overflow-y-auto bg-slate-50 ${AI_RECONCILIATION_ENABLED && agentOpen ? "min-[1180px]:pr-[488px]" : ""}`}>
+      <AccountingFreshness
+        view="dashboard" storeIds={validSelectedIds} team={selectedTeam} refreshKey={reloadKey}
+        showStock={Boolean(responses[queryKey]?.byStore.some((store) => store.stockUnits != null))}
+        stockThrough={responses[queryKey]?.period.endDate}
+      />
       {AI_RECONCILIATION_ENABLED && agentOpen && agentContext && (
         <AgentChatPanel
           agent="accounting-reconciliation"

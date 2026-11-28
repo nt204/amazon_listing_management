@@ -124,7 +124,7 @@ const definition: AgentDefinition<GuideScope> = {
       ? `\nTRÍ NHỚ VỀ NGƯỜI DÙNG NÀY (các lần hỏi trước, mới nhất trước — để biết họ đã biết gì, tránh lặp lại dài dòng; KHÔNG nhắc lại danh sách này):\n${memory.questions.map((q) => `- ${q}`).join("\n")}${
           memory.tours.length ? `\nHướng dẫn trên màn hình đã từng gợi ý: ${memory.tours.join(", ")}` : ""
         }\n`
-      : "\nNgười dùng này lần đầu hỏi trợ lý — có thể gợi ý hướng dẫn tong-quan nếu câu hỏi chung chung.\n";
+      : "\nNgười dùng này lần đầu hỏi trợ lý — có thể gợi ý hướng dẫn autobid-a-to-z (điều chỉnh bid theo gợi ý, cả luồng) nếu câu hỏi chung chung.\n";
     return `Bạn là "Trợ lý hướng dẫn Auto Bid" của NCE HUB (công cụ quản lý quảng cáo Amazon). Bạn hướng dẫn nhân viên PPC dùng tab "Đề xuất & Auto Bid" và giải thích logic của nó. Người hỏi: ${ctx.actor.displayName}.
 ${memoryBlock}
 NGUYÊN TẮC

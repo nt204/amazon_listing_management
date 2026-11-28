@@ -15,7 +15,7 @@ import {
   importLegacySharedMockupPresetsOnce,
   type DataScope,
 } from "@/lib/db";
-import { RETIRED_SYSTEM_PRESET_IDS, SYSTEM_PRESETS } from "@/lib/mockup-preset-store";
+import { normalizePresetIcon, RETIRED_SYSTEM_PRESET_IDS, SYSTEM_PRESETS } from "@/lib/mockup-preset-store";
 import type { ProductCategoryPreset } from "@/types/mockup-preset";
 
 export const runtime = "nodejs";
@@ -98,7 +98,7 @@ function normalizedPreset(
 ): ProductCategoryPreset {
   return {
     ...preset,
-    icon: preset.icon || "📦",
+    icon: normalizePresetIcon(preset.icon),
     isSystem: SYSTEM_PRESET_IDS.has(preset.id),
   };
 }
@@ -109,7 +109,7 @@ function mergeWithSystemPresets(
   const storedById = new Map(
     storedPresets
       .filter((preset) => !RETIRED_SYSTEM_PRESET_IDS.has(preset.id))
-      .map((preset) => [preset.id, preset]),
+      .map((preset) => [preset.id, { ...preset, icon: normalizePresetIcon(preset.icon) }]),
   );
   const systemPresets = SYSTEM_PRESETS.map((systemPreset) => {
     const override = storedById.get(systemPreset.id);

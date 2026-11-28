@@ -3,6 +3,7 @@
 // Payout Amount — tiền Amazon chuyển về (Disbursements), gom theo store, lọc theo khoảng ngày.
 // Dữ liệu: /api/accounting/payouts (bảng accounting_payout_disbursements, status Done).
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { useEffect, useMemo, useState } from "react";
 import { CaretDownIcon, CaretRightIcon, DownloadSimpleIcon, LockSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
@@ -137,6 +138,7 @@ export function PayoutView() {
 
   return (
     <div className="mx-auto max-w-[720px] space-y-4 px-3 pb-8 pt-4 sm:px-6 sm:pt-6">
+      <AccountingFreshness view="payout" />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-bold tracking-tight text-slate-900">Payout Amount</h1>
         <PpcAmazonDatePicker value={range} onChange={setRange} align="right" presets={DATE_PRESETS} anchorDate={localToday()} />

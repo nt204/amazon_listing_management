@@ -129,6 +129,30 @@ function assertSafe(el: HTMLElement, key: string) {
   if (UNSAFE_LABEL.test(label)) throw new Error(`Kịch bản định bấm nút "${label}" (${key}) — đã chặn vì nút này thay đổi dữ liệu.`);
 }
 
+/** Ô nhập chữ: chính phần tử hoặc ô input / textarea đầu tiên bên trong. */
+function textField(el: HTMLElement): HTMLInputElement | HTMLTextAreaElement | null {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el;
+  return el.querySelector<HTMLInputElement | HTMLTextAreaElement>("input:not([type=checkbox]):not([type=radio]), textarea");
+}
+
+/** Đặt giá trị để React nhận: gán qua native setter của prototype rồi phát sự kiện input (gán el.value thẳng React bỏ qua). */
+function setFieldValue(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Bật / tắt của một phần tử tick được (chính nó hoặc phần tử con đầu tiên); null = không xác định được. */
+function toggleState(el: HTMLElement): boolean | null {
+  const node = el.matches("input[type=checkbox], [aria-pressed], [aria-checked], [aria-selected]")
+    ? el
+    : el.querySelector<HTMLElement>("input[type=checkbox], [aria-pressed], [aria-checked], [aria-selected]");
+  if (!node) return null;
+  if (node instanceof HTMLInputElement) return node.checked;
+  const attr = node.getAttribute("aria-pressed") ?? node.getAttribute("aria-checked") ?? node.getAttribute("aria-selected");
+  return attr === null ? null : attr === "true";
+}
+
 export interface RunTourOptions {
   mode: GuideTourMode;
   onEnd?: (result: { completed: boolean; stepsShown: number }) => void;
@@ -145,6 +169,9 @@ export function runGuideTour(tour: GuideTour, options: RunTourOptions): () => vo
   let shown = 0;
   let ended = false;
   let autoTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Việc cần làm khi kết thúc để trả màn hình về như cũ: bấm lại một khóa (GuideAction.undo) hoặc trả chữ cũ cho ô đã gõ mẫu. */
+  type UndoEntry = { kind: "click"; key: string } | { kind: "value"; key: string; value: string };
+  const undoStack: UndoEntry[] = [];
 
   const drv: Driver = driver({
     animate: true,
@@ -168,12 +195,17 @@ export function runGuideTour(tour: GuideTour, options: RunTourOptions): () => vo
 
   async function perform(action: GuideAction, animate: boolean) {
     if (action.type === "wait") return sleep(action.ms, signal);
+    if (action.type === "type") return typeInto(action.target, action.value, action.ifPresent ?? false, action.append ?? false);
     const el = action.ifPresent ? findVisible(action.target) : await waitForElement(action.target, signal);
     if (!el) {
       if (action.ifPresent) return;
       throw new Error(`missing:${action.target}`);
     }
     assertSafe(el, action.target);
+    if (action.ensure) {
+      const on = toggleState(el);
+      if (on !== null && on === (action.ensure === "on")) return; // đã đúng trạng thái: không bấm, không hoàn tác
+    }
     if (animate) {
       el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
       await sleep(250, signal);
@@ -182,8 +214,39 @@ export function runGuideTour(tour: GuideTour, options: RunTourOptions): () => vo
       await cursor.press(signal);
     }
     if (signal.aborted) return;
+    // Ghi hoàn tác ngay trước lần bấm thật (cùng một nhịp đồng bộ): đã bấm thì chắc chắn được trả lại, chưa bấm thì không
+    if (action.undo) undoStack.push({ kind: "click", key: action.undo === true ? action.target : action.undo });
     dispatchClick(el);
     await sleep(animate ? 450 : 150, signal);
+  }
+
+  /** Gõ từng ký tự như người thật (React nhận qua native setter + sự kiện input); ghi chữ cũ để trả lại. */
+  async function typeInto(key: string, typed: string, ifPresent: boolean, append: boolean) {
+    const host = ifPresent ? findVisible(key) : await waitForElement(key, signal);
+    if (!host) {
+      if (ifPresent) return;
+      throw new Error(`missing:${key}`);
+    }
+    const field = textField(host);
+    if (!field) throw new Error(`Kịch bản gõ vào "${key}" nhưng đó không phải ô nhập chữ.`);
+    host.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    await sleep(250, signal);
+    const rect = field.getBoundingClientRect();
+    await cursor.moveTo(rect.left + Math.min(rect.width / 2, 40), rect.top + Math.min(rect.height / 2, 16), signal);
+    await cursor.press(signal);
+    if (signal.aborted) return;
+    const original = field.value;
+    undoStack.push({ kind: "value", key, value: original });
+    field.focus();
+    const prefix = append ? original : "";
+    const value = prefix + typed;
+    const step = typed.length > 60 ? 3 : 1; // chữ dài thì gõ nhanh hơn
+    for (let i = prefix.length + step; i < value.length + step; i += step) {
+      if (signal.aborted) return;
+      setFieldValue(field, value.slice(0, Math.min(i, value.length)));
+      await sleep(35, signal);
+    }
+    await sleep(300, signal);
   }
 
   const readingTime = (step: GuideTourStep) =>
@@ -293,18 +356,46 @@ export function runGuideTour(tour: GuideTour, options: RunTourOptions): () => vo
     controller.abort();
     cursor.destroy();
     if (drv.isActive()) drv.destroy();
-    // Dọn màn hình: đóng cửa sổ đã mở, bỏ bộ lọc demo (không animation)
-    for (const action of tour.cleanup ?? []) {
-      if (action.type !== "click") continue;
-      const el = findVisible(action.target);
-      if (!el) continue;
+    /** Trả lại chữ cũ cho ô đã gõ mẫu (phần tử bị ẩn thì false để thử lại ở lượt 2). */
+    const restoreValue = (key: string, value: string) => {
+      const host = findVisible(key);
+      const field = host && textField(host);
+      if (!field) return false;
+      setFieldValue(field, value);
+      field.blur();
+      return true;
+    };
+    /** Bấm im lặng; trả false khi phần tử không hiển thị. */
+    const clickQuietly = async (key: string) => {
+      const el = findVisible(key);
+      if (!el) return false;
       try {
-        assertSafe(el, action.target);
+        assertSafe(el, key);
         dispatchClick(el);
-        await sleep(150);
+        await sleep(200);
       } catch {
         // bỏ qua bước dọn dẹp lỗi
       }
+      return true;
+    };
+    // Hoàn tác đúng những lần tick / bật đã thực sự bấm, ngược thứ tự. Lượt 1 khi cửa sổ liên quan còn mở (vd ô tick
+    // trong chi tiết SKU); phần tử đang bị ẩn (ở tab con khác) để lại cho lượt 2, sau khi cleanup đưa về tab ban đầu.
+    const undoPass = async () => {
+      const pending: UndoEntry[] = [];
+      while (undoStack.length) {
+        const entry = undoStack.pop()!;
+        const done = entry.kind === "click" ? await clickQuietly(entry.key) : restoreValue(entry.key, entry.value);
+        if (!done) pending.unshift(entry);
+        else if (entry.kind === "value") await sleep(150);
+      }
+      undoStack.push(...pending);
+    };
+    await undoPass();
+    // Dọn màn hình: đóng cửa sổ đã mở, quay về tab con ban đầu (không animation)
+    for (const action of tour.cleanup ?? []) if (action.type === "click") await clickQuietly(action.target);
+    if (undoStack.length) {
+      await sleep(300);
+      await undoPass();
     }
     options.onEnd?.({ completed, stepsShown: shown });
   }

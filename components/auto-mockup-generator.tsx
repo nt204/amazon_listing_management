@@ -57,6 +57,8 @@ import {
   savePresetToServer,
 } from "@/lib/mockup-preset-store";
 import { ProductPresetModal } from "@/components/product-preset-modal";
+import { GuideAssistant } from "@/components/guide/guide-assistant";
+import { AUTO_MOCKUP_TOURS } from "@/lib/guide/auto-mockup-tours";
 import type {
   MockupContentItem,
   MockupPromptReferenceImage,
@@ -1951,7 +1953,7 @@ export function AutoMockupGenerator({
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 sm:p-5 backdrop-blur-md">
-            <div className="relative flex h-[94vh] w-[96vw] max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl border border-slate-200/80">
+            <div data-tour="mk-studio" className="relative flex h-[94vh] w-[96vw] max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl border border-slate-200/80">
 
               {/* Top Header Bar */}
               <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/90 px-5 py-3 gap-4 shrink-0">
@@ -2003,6 +2005,7 @@ export function AutoMockupGenerator({
                   <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
                     <button
                       type="button"
+                      data-tour="mk-approve-btn"
                       onClick={() => toggleApprovalStatus(card.id, currentAtt.id, "approved")}
                       className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${
                         currentStatus === "approved"
@@ -2015,6 +2018,7 @@ export function AutoMockupGenerator({
                     </button>
                     <button
                       type="button"
+                      data-tour="mk-reject-btn"
                       onClick={() => toggleApprovalStatus(card.id, currentAtt.id, "rejected")}
                       className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${
                         currentStatus === "rejected"
@@ -2030,6 +2034,7 @@ export function AutoMockupGenerator({
                   {/* Download */}
                   <button
                     type="button"
+                    data-tour="mk-download-btn"
                     onClick={async () => {
                       setDownloadingImage(true);
                       try {
@@ -2058,6 +2063,7 @@ export function AutoMockupGenerator({
                   {stepId && stepId > 1 && (
                     <button
                       type="button"
+                      data-tour="mk-delete-btn"
                       onClick={() => void deleteCurrentMockup()}
                       disabled={
                         deletingAttachmentId === currentAtt.id ||
@@ -2082,6 +2088,7 @@ export function AutoMockupGenerator({
                   {/* Close */}
                   <button
                     type="button"
+                    data-tour="mk-studio-close"
                     onClick={() => setStudioModal(null)}
                     className="rounded-xl bg-slate-200 p-2 text-slate-600 hover:bg-slate-300 transition"
                   >
@@ -2094,7 +2101,7 @@ export function AutoMockupGenerator({
               <div className="flex flex-1 flex-col md:flex-row overflow-hidden">
 
                 {/* COLUMN 1 (LEFT): Large Image Display with Next/Prev Arrow Navigation */}
-                <div className="relative flex flex-1 items-center justify-center bg-slate-950 p-4 select-none group min-h-[300px]">
+                <div data-tour="mk-studio-image" className="relative flex flex-1 items-center justify-center bg-slate-950 p-4 select-none group min-h-[300px]">
 
                   {/* Left Arrow Button */}
                   {attachments.length > 1 && (
@@ -2191,7 +2198,7 @@ export function AutoMockupGenerator({
                 </div>
 
                 {/* COLUMN 2 (RIGHT): Refinement & AI Generation Form Side-by-Side */}
-                <div className="w-full md:w-[350px] lg:w-[380px] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-white p-5 flex flex-col justify-between overflow-y-auto space-y-4">
+                <div data-tour="mk-regen-panel" className="w-full md:w-[350px] lg:w-[380px] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-white p-5 flex flex-col justify-between overflow-y-auto space-y-4">
 
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
@@ -2207,6 +2214,7 @@ export function AutoMockupGenerator({
                         AI Model:
                       </label>
                       <select
+                        data-tour="mk-regen-model"
                         value={regenModel}
                         onChange={(e) => setRegenModel(e.target.value as MockupModel)}
                         className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 shadow-2xs"
@@ -2224,6 +2232,8 @@ export function AutoMockupGenerator({
                       <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70">
                         <button
                           type="button"
+                          data-tour="mk-prompt-toggle"
+                          aria-pressed={isPromptExpanded}
                           onClick={toggleCurrentImagePrompt}
                           className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition hover:bg-slate-100 active:bg-slate-200/70"
                           aria-expanded={isPromptExpanded}
@@ -2275,6 +2285,7 @@ export function AutoMockupGenerator({
                             ) : promptEditor ? (
                               <>
                                 <textarea
+                                  data-tour="mk-prompt-draft"
                                   value={promptEditor.draft}
                                   onChange={(event) =>
                                     setImagePromptEditors((previous) => ({
@@ -2359,6 +2370,7 @@ export function AutoMockupGenerator({
                                 {promptHasChanges && (
                                   <button
                                     type="button"
+                                    data-tour="mk-prompt-save-btn"
                                     onClick={() =>
                                       void saveSharedPromptToPreset()
                                     }
@@ -2401,6 +2413,7 @@ export function AutoMockupGenerator({
                         Tinh chỉnh thêm <span className="font-medium text-slate-400">(không bắt buộc)</span>
                       </label>
                       <textarea
+                        data-tour="mk-regen-note"
                         value={regenPromptNote}
                         onChange={(e) => setRegenPromptNote(e.target.value)}
                         onPaste={(event) =>
@@ -2434,6 +2447,7 @@ export function AutoMockupGenerator({
                     )}
                     <button
                       type="button"
+                      data-tour="mk-regen-start-btn"
                       onClick={async () => {
                         if (!stepId) {
                           setErrorMsg("Không xác định được vị trí mockup để gen lại.");
@@ -2702,7 +2716,7 @@ export function AutoMockupGenerator({
 
       {/* Floating Multi-Select Batch Action Bar */}
       {selectedCardIds.size > 0 && (
-        <div className="sticky top-0 z-20 flex items-center justify-between rounded-2xl border border-indigo-300 bg-indigo-600 px-6 py-3 text-white shadow-xl">
+        <div data-tour="mk-batch-bar" className="sticky top-0 z-20 flex items-center justify-between rounded-2xl border border-indigo-300 bg-indigo-600 px-6 py-3 text-white shadow-xl">
           <div className="flex items-center gap-3">
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-xs font-bold text-indigo-700 shadow-xs">
               {selectedCardIds.size}
@@ -2737,6 +2751,7 @@ export function AutoMockupGenerator({
               </button>
             ) : (
               <button
+                data-tour="mk-batch-create-btn"
                 onClick={handleBatchGenerateMockups}
                 disabled={batchProcessing || selectedAiMockupCount === 0}
                 className="flex items-center gap-1.5 rounded-xl bg-amber-400 px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition disabled:opacity-50"
@@ -2771,6 +2786,7 @@ export function AutoMockupGenerator({
             {/* Backdrop to close dropdown on outside click */}
             {openHeaderDropdown && (
               <div
+                data-tour="mk-dropdown-close"
                 className="fixed inset-0 z-30 cursor-default"
                 onClick={() => setOpenHeaderDropdown(null)}
               />
@@ -2780,6 +2796,8 @@ export function AutoMockupGenerator({
             <div className="relative z-40">
               <button
                 type="button"
+                data-tour="mk-model-btn"
+                aria-pressed={openHeaderDropdown === "model"}
                 onClick={() => setOpenHeaderDropdown((prev) => (prev === "model" ? null : "model"))}
                 className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 shadow-2xs text-left transition-all duration-150 cursor-pointer ${
                   openHeaderDropdown === "model"
@@ -2802,7 +2820,7 @@ export function AutoMockupGenerator({
               </button>
 
               {openHeaderDropdown === "model" && (
-                <div className="absolute left-0 top-full mt-2 w-72 rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-md p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-150 z-50">
+                <div data-tour="mk-model-menu" className="absolute left-0 top-full mt-2 w-72 rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-md p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-150 z-50">
                   <div className="px-3 py-1.5 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100">
                     Engine Tạo Mockup AI
                   </div>
@@ -2847,6 +2865,8 @@ export function AutoMockupGenerator({
               <div className="relative z-40">
                 <button
                   type="button"
+                  data-tour="mk-quality-btn"
+                  aria-pressed={openHeaderDropdown === "quality"}
                   onClick={() => setOpenHeaderDropdown((prev) => (prev === "quality" ? null : "quality"))}
                   className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 shadow-2xs text-left transition-all duration-150 cursor-pointer ${
                     openHeaderDropdown === "quality"
@@ -2868,7 +2888,7 @@ export function AutoMockupGenerator({
                 </button>
 
                 {openHeaderDropdown === "quality" && (
-                  <div className="absolute left-0 top-full mt-2 w-60 rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-md p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-150 z-50">
+                  <div data-tour="mk-quality-menu" className="absolute left-0 top-full mt-2 w-60 rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-md p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-150 z-50">
                     <div className="px-3 py-1.5 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100">
                       Độ phân giải & chi tiết
                     </div>
@@ -2933,6 +2953,7 @@ export function AutoMockupGenerator({
 
               <button
                 type="button"
+                data-tour="mk-presets-btn"
                 onClick={() => setShowProductPresetModal(true)}
                 className="flex items-center gap-1.5 rounded-xl border border-amber-300/80 bg-amber-50/90 px-3 py-1 text-xs font-extrabold text-amber-900 shadow-2xs hover:bg-amber-100 hover:border-amber-400 transition cursor-pointer"
                 title="Thêm, nhân bản loại sản phẩm mới & chỉnh sửa Content / Prompt AI"
@@ -2942,7 +2963,7 @@ export function AutoMockupGenerator({
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div data-tour="mk-category-list" className="flex flex-wrap items-center gap-2">
               {!mounted ? (
                 <div className="flex items-center gap-2 py-1">
                   <div className="h-8 w-28 animate-pulse rounded-xl bg-slate-200" />
@@ -2992,6 +3013,7 @@ export function AutoMockupGenerator({
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
+                data-tour="mk-content-default-btn"
                 onClick={resetToDefaultContents}
                 disabled={!selectedCategory}
                 className="text-xs font-extrabold text-indigo-600 hover:text-indigo-800 underline disabled:cursor-not-allowed disabled:opacity-40 transition"
@@ -3000,6 +3022,7 @@ export function AutoMockupGenerator({
               </button>
               <button
                 type="button"
+                data-tour="mk-content-clear-ai-btn"
                 onClick={deselectAllAiContents}
                 disabled={!selectedCategory}
                 className="text-xs font-extrabold text-slate-500 hover:text-slate-700 underline disabled:cursor-not-allowed disabled:opacity-40 transition"
@@ -3016,16 +3039,17 @@ export function AutoMockupGenerator({
             </div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+          <div data-tour="mk-content-list" className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
             {mockupContents.length === 0 && (
               <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">
                 Tạo một mục sản phẩm mới để thiết lập Mockup Content.
               </div>
             )}
-            {mockupContents.map((content) => {
+            {mockupContents.map((content, contentIdx) => {
               const isMandatory = content.id === 1;
               return (
                 <label
+                  data-tour={contentIdx === mockupContents.length - 1 ? "mk-content-last" : undefined}
                   key={content.id}
                   className={`flex items-center gap-2 rounded-xl border p-2.5 text-xs font-bold transition-all duration-150 select-none ${
                     isMandatory
@@ -3153,6 +3177,7 @@ export function AutoMockupGenerator({
       <div className="flex flex-col md:flex-row gap-6">
         {/* COLUMN 1: CỘT DESIGN (50% Width) */}
         <div
+          data-tour="mk-design-column"
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
@@ -3174,6 +3199,8 @@ export function AutoMockupGenerator({
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
               <button
+                data-tour="mk-select-all"
+                aria-pressed={selectedCardIds.size > 0 && selectedCardIds.size === designCards.length}
                 onClick={toggleSelectAllDesign}
                 className="text-slate-400 hover:text-indigo-600 transition cursor-pointer p-0.5"
                 title="Chọn / Bỏ chọn tất cả"
@@ -3212,7 +3239,7 @@ export function AutoMockupGenerator({
                 </p>
               </div>
             ) : (
-              designCards.map((card) => {
+              designCards.map((card, cardIdx) => {
                 const dims: Dimensions3D = parseCardDimensions(card.desc || "");
                 const isSelected = selectedCardIds.has(card.id);
                 const backgroundJob = backgroundJobs.find(
@@ -3225,6 +3252,7 @@ export function AutoMockupGenerator({
 
                 return (
                   <div
+                    data-tour={cardIdx === 0 ? "mk-design-card-first" : undefined}
                     key={card.id}
                     draggable={!loadingCards && !batchProcessing && !isGenerating}
                     onDragStart={(e) => {
@@ -3285,6 +3313,7 @@ export function AutoMockupGenerator({
                         <div className="flex flex-wrap gap-2 overflow-x-auto py-1 thin-scrollbar">
                           {imageAttachments.map((att, idx) => (
                             <div
+                              data-tour={cardIdx === 0 && idx === 0 ? "mk-design-thumb-first" : undefined}
                               key={att.id}
                               className="group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs hover:border-indigo-500 transition shrink-0"
                               onClick={() => {
@@ -3356,6 +3385,7 @@ export function AutoMockupGenerator({
                       </div>
                     ) : (
                       <button
+                        data-tour={cardIdx === 0 ? "mk-create-mockup-first" : undefined}
                         onClick={() => handleGenerateMockupsSingle(card)}
                         disabled={
                           Boolean(activeGeneratingCardId) ||
@@ -3378,6 +3408,7 @@ export function AutoMockupGenerator({
 
         {/* COLUMN 2: CỘT MOCKUP (50% Width) */}
         <div
+          data-tour="mk-mockup-column"
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
@@ -3425,7 +3456,7 @@ export function AutoMockupGenerator({
                 </p>
               </div>
             ) : (
-              mockupCards.map((card) => {
+              mockupCards.map((card, mockIdx) => {
                 const dims: Dimensions3D = parseCardDimensions(card.desc || "");
                 const isGenerating =
                   activeGeneratingCardId === card.id ||
@@ -3434,6 +3465,7 @@ export function AutoMockupGenerator({
 
                 return (
                   <div
+                    data-tour={mockIdx === 0 ? "mk-mockup-card-first" : undefined}
                     key={card.id}
                     draggable={!loadingCards && !batchProcessing && !isGenerating}
                     onDragStart={(e) => {
@@ -3529,6 +3561,7 @@ export function AutoMockupGenerator({
                                 loading="lazy"
                                 decoding="async"
                                 onError={(event) => fallBackToMasterImage(event, att.url)}
+                                data-tour={mockIdx === 0 && idx === 0 ? "mk-mockup-thumb-first" : undefined}
                                 onClick={() => {
                                   const stepId = mockupIndexFromAttachmentName(att.name) || (idx === 0 ? 1 : undefined);
                                   setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId, attachmentId: att.id });
@@ -3588,7 +3621,7 @@ export function AutoMockupGenerator({
 
       {/* Realtime Progress Tracker Modal */}
       {activeGeneratingCardId && (
-        <div className="rounded-2xl border border-indigo-200 bg-white p-5 shadow-xl space-y-4">
+        <div data-tour="mk-progress" className="rounded-2xl border border-indigo-200 bg-white p-5 shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <SparkleIcon className="h-4 w-4 text-indigo-600" /> Tiến Trình:{" "}
@@ -3684,6 +3717,19 @@ export function AutoMockupGenerator({
             setMockupContents([]);
           }
         }}
+      />
+
+      <GuideAssistant
+        agent="auto-mockup-guide"
+        title="Trợ lý hướng dẫn Auto Mockup"
+        tours={AUTO_MOCKUP_TOURS}
+        context={{ page: "Mockup design · Auto Mockup Generator" }}
+        contextChips={[allPresets.find((preset) => preset.id === selectedCategory)?.label || "Chưa chọn mục"]}
+        suggestions={[
+          "Quy trình tạo mockup từ đầu tới cuối thế nào?",
+          "Ảnh chưa đẹp thì sửa prompt và gen lại thế nào?",
+          "Prompt tạm khác prompt chung thế nào?",
+        ]}
       />
     </div>
   );

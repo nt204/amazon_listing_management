@@ -31,10 +31,11 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { AccBlackGrid } from "@/components/accounting/acc-black-grid";
 import { financialsGroupOf, type FinancialsGroup } from "@/components/accounting/financials-groups";
 import { AccountMenu } from "@/components/account-menu";
+import { AccountingFreshnessTarget } from "@/components/accounting/accounting-freshness";
 import { GlobalListingBatchBar } from "@/components/global-listing-batch-bar";
 import type { RequestActor } from "@/lib/auth";
 import { canAccessFulfill } from "@/lib/fulfill/access";
@@ -165,10 +166,10 @@ type AccountingSection =
   | "pnl"
   | "settlements";
 
-const FINANCIALS_SIDEBAR_ITEMS: { group: FinancialsGroup; label: string; Icon: typeof CalendarBlankIcon }[] = [
-  { group: "day", label: "Day", Icon: CalendarBlankIcon },
-  { group: "week", label: "Week", Icon: CalendarDotsIcon },
-  { group: "month", label: "Month", Icon: CalendarIcon },
+const FINANCIALS_SIDEBAR_ITEMS: { group: FinancialsGroup; label: string; Icon: typeof CalendarBlankIcon; iconColor: string }[] = [
+  { group: "day", label: "Day", Icon: CalendarBlankIcon, iconColor: "text-sky-600" },
+  { group: "week", label: "Week", Icon: CalendarDotsIcon, iconColor: "text-blue-600" },
+  { group: "month", label: "Month", Icon: CalendarIcon, iconColor: "text-indigo-600" },
 ];
 
 interface SidebarSubItemProps {
@@ -177,6 +178,7 @@ interface SidebarSubItemProps {
   icon: React.ComponentType<any>;
   label: string;
   indent?: boolean;
+  iconColor?: string;
 }
 
 function SidebarSubItem({
@@ -185,10 +187,12 @@ function SidebarSubItem({
   icon: Icon,
   label,
   indent = false,
+  iconColor = "text-slate-400",
 }: SidebarSubItemProps) {
   return (
     <motion.button
       type="button"
+      whileHover={{ x: 2 }}
       whileTap={{ scale: 0.96 }}
       transition={{ type: "spring", stiffness: 500, damping: 25 }}
       onClick={onClick}
@@ -214,13 +218,14 @@ function SidebarSubItem({
       )}
       <motion.div
         className="relative z-10 shrink-0"
+        whileHover={{ scale: 1.15, rotate: -3 }}
         animate={active ? { scale: [1, 1.25, 0.95, 1], rotate: [0, -6, 3, 0] } : { scale: 1, rotate: 0 }}
-        transition={{ duration: 0.32, ease: "easeOut" }}
+        transition={{ duration: 0.28, ease: "easeOut" }}
       >
         <Icon
           size={indent ? 16 : 17}
           weight={active ? "fill" : "duotone"}
-          className={`shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`}
+          className={`shrink-0 transition-colors ${active ? "text-indigo-600" : iconColor}`}
         />
       </motion.div>
       <div className="relative z-10 flex min-w-0 flex-1 flex-col leading-tight">
@@ -319,6 +324,7 @@ function WorkspaceSidebar({
           {(actor?.allowedFeatures?.includes("listing") ?? true) && (
             <motion.button
               type="button"
+              whileHover={{ x: 2 }}
               whileTap={{ scale: 0.97 }}
               transition={{ type: "spring", stiffness: 500, damping: 25 }}
               onClick={() => {
@@ -326,22 +332,36 @@ function WorkspaceSidebar({
                 markBatchAsRead();
                 onClose?.();
               }}
-              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${sidebarTab === "trello" && viewMode === "trello"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+              className={`relative flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors duration-150 cursor-pointer acc-sidebar-item ${sidebarTab === "trello" && viewMode === "trello"
+                  ? "text-indigo-700 font-extrabold"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
             >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <KanbanIcon
-                  size={17}
-                  className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
-                  weight="duotone"
+              {sidebarTab === "trello" && viewMode === "trello" && (
+                <motion.div
+                  layoutId="sidebar-top-active-pill"
+                  className="absolute inset-0 rounded-xl bg-indigo-50/90 ring-1 ring-indigo-200/80 shadow-2xs z-0"
+                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
                 />
+              )}
+              <div className="relative z-10 flex items-center gap-2.5 min-w-0">
+                <motion.div
+                  whileHover={{ scale: 1.15, rotate: -3 }}
+                  animate={sidebarTab === "trello" && viewMode === "trello" ? { scale: [1, 1.25, 0.95, 1] } : { scale: 1 }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                  className="shrink-0"
+                >
+                  <KanbanIcon
+                    size={17}
+                    className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-blue-600"}
+                    weight={sidebarTab === "trello" && viewMode === "trello" ? "fill" : "duotone"}
+                  />
+                </motion.div>
                 <span>Listing</span>
               </div>
               {/* Chấm đỏ thông báo khi có Batch chạy xong */}
               {hasUnreadBatch && (
-                <span className="relative flex h-2.5 w-2.5 shrink-0" title="Có Batch Listing vừa hoàn tất!">
+                <span className="relative z-10 flex h-2.5 w-2.5 shrink-0" title="Có Batch Listing vừa hoàn tất!">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500 ring-2 ring-white"></span>
                 </span>
@@ -353,23 +373,40 @@ function WorkspaceSidebar({
           {(actor?.allowedFeatures?.includes("mockups") ?? true) && (
             <motion.button
               type="button"
+              whileHover={{ x: 2 }}
               whileTap={{ scale: 0.97 }}
               transition={{ type: "spring", stiffness: 500, damping: 25 }}
               onClick={() => {
                 selectView("mockups");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${sidebarTab === "mockups" && viewMode === "trello"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+              className={`relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors duration-150 cursor-pointer acc-sidebar-item ${sidebarTab === "mockups" && viewMode === "trello"
+                  ? "text-indigo-700 font-extrabold"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
             >
-              <ImageSquareIcon
-                size={17}
-                className={sidebarTab === "mockups" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
-                weight="duotone"
-              />
-              <span>Mockup design</span>
+              {sidebarTab === "mockups" && viewMode === "trello" && (
+                <motion.div
+                  layoutId="sidebar-top-active-pill"
+                  className="absolute inset-0 rounded-xl bg-indigo-50/90 ring-1 ring-indigo-200/80 shadow-2xs z-0"
+                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
+                />
+              )}
+              <div className="relative z-10 flex items-center gap-2.5 min-w-0">
+                <motion.div
+                  whileHover={{ scale: 1.15, rotate: -3 }}
+                  animate={sidebarTab === "mockups" && viewMode === "trello" ? { scale: [1, 1.25, 0.95, 1] } : { scale: 1 }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                  className="shrink-0"
+                >
+                  <ImageSquareIcon
+                    size={17}
+                    className={sidebarTab === "mockups" && viewMode === "trello" ? "text-indigo-600" : "text-purple-600"}
+                    weight={sidebarTab === "mockups" && viewMode === "trello" ? "fill" : "duotone"}
+                  />
+                </motion.div>
+                <span>Mockup design</span>
+              </div>
             </motion.button>
           )}
 
@@ -377,23 +414,40 @@ function WorkspaceSidebar({
           {(actor?.allowedFeatures?.includes("sellersprite") ?? true) && (
             <motion.button
               type="button"
+              whileHover={{ x: 2 }}
               whileTap={{ scale: 0.97 }}
               transition={{ type: "spring", stiffness: 500, damping: 25 }}
               onClick={() => {
                 selectView("sellersprite");
                 onClose?.();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${viewMode === "sellersprite"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+              className={`relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors duration-150 cursor-pointer acc-sidebar-item ${viewMode === "sellersprite"
+                  ? "text-indigo-700 font-extrabold"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
             >
-              <LightningIcon
-                size={17}
-                className={viewMode === "sellersprite" ? "text-indigo-600" : "text-slate-400"}
-                weight="duotone"
-              />
-              <span>Đào Keyword</span>
+              {viewMode === "sellersprite" && (
+                <motion.div
+                  layoutId="sidebar-top-active-pill"
+                  className="absolute inset-0 rounded-xl bg-indigo-50/90 ring-1 ring-indigo-200/80 shadow-2xs z-0"
+                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
+                />
+              )}
+              <div className="relative z-10 flex items-center gap-2.5 min-w-0">
+                <motion.div
+                  whileHover={{ scale: 1.15, rotate: -3 }}
+                  animate={viewMode === "sellersprite" ? { scale: [1, 1.25, 0.95, 1] } : { scale: 1 }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                  className="shrink-0"
+                >
+                  <LightningIcon
+                    size={17}
+                    className={viewMode === "sellersprite" ? "text-indigo-600" : "text-amber-600"}
+                    weight={viewMode === "sellersprite" ? "fill" : "duotone"}
+                  />
+                </motion.div>
+                <span>Đào Keyword</span>
+              </div>
             </motion.button>
           )}
 
@@ -402,26 +456,41 @@ function WorkspaceSidebar({
             <div className="space-y-1">
               <motion.button
                 type="button"
+                whileHover={{ x: 2 }}
                 whileTap={{ scale: 0.97 }}
                 transition={{ type: "spring", stiffness: 500, damping: 25 }}
                 onClick={() => {
                   selectPpcSection("dashboard");
                   onClose?.();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${viewMode === "ppc"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                className={`relative flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors duration-150 cursor-pointer acc-sidebar-item ${viewMode === "ppc"
+                    ? "text-indigo-700 font-extrabold"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <ChartLineUpIcon
-                    size={17}
-                    weight={viewMode === "ppc" ? "fill" : "duotone"}
-                    className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
+                {viewMode === "ppc" && (
+                  <motion.div
+                    layoutId="sidebar-top-active-pill"
+                    className="absolute inset-0 rounded-xl bg-indigo-50/90 ring-1 ring-indigo-200/80 shadow-2xs z-0"
+                    transition={{ type: "spring", stiffness: 450, damping: 35 }}
                   />
+                )}
+                <div className="relative z-10 flex items-center gap-2.5">
+                  <motion.div
+                    whileHover={{ scale: 1.15, rotate: -3 }}
+                    animate={viewMode === "ppc" ? { scale: [1, 1.25, 0.95, 1] } : { scale: 1 }}
+                    transition={{ duration: 0.25, ease: "easeOut" }}
+                    className="shrink-0"
+                  >
+                    <ChartLineUpIcon
+                      size={17}
+                      weight={viewMode === "ppc" ? "fill" : "duotone"}
+                      className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
+                    />
+                  </motion.div>
                   <span className="whitespace-nowrap">PPC Analytics</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="relative z-10 flex items-center gap-1.5">
                   <span
                     className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${viewMode === "ppc"
                         ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
@@ -430,18 +499,31 @@ function WorkspaceSidebar({
                   >
                     MỚI
                   </span>
-                  <CaretDownIcon
-                    size={12}
-                    weight="bold"
-                    className={`transition-transform duration-200 ${viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                      }`}
-                  />
+                  <motion.div
+                    animate={{ rotate: viewMode === "ppc" ? 0 : -90 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="shrink-0"
+                  >
+                    <CaretDownIcon
+                      size={12}
+                      weight="bold"
+                      className={viewMode === "ppc" ? "text-indigo-600" : "text-slate-400"}
+                    />
+                  </motion.div>
                 </div>
               </motion.button>
 
               {/* Sub-items under PPC Analytics */}
-              {viewMode === "ppc" && (
-                <div className="ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+              <AnimatePresence initial={false}>
+                {viewMode === "ppc" && (
+                  <motion.div
+                    key="ppc-submenu"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
+                    className="overflow-hidden ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5"
+                  >
                   {/* Mục 1: PPC Dashboard */}
                   <button
                     type="button"
@@ -486,7 +568,7 @@ function WorkspaceSidebar({
                         }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "portfolios" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "portfolios" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-violet-300"
                           }`}
                       />
                       <span className="truncate">Portfolio</span>
@@ -505,7 +587,7 @@ function WorkspaceSidebar({
                         }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-blue-300"
                           }`}
                       />
                       <span className="truncate">Campaign</span>
@@ -524,7 +606,7 @@ function WorkspaceSidebar({
                         }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-amber-300"
                           }`}
                       />
                       <span className="truncate">Target</span>
@@ -543,7 +625,7 @@ function WorkspaceSidebar({
                         }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-emerald-300"
                           }`}
                       />
                       <span className="truncate">Search Term</span>
@@ -562,7 +644,7 @@ function WorkspaceSidebar({
                         }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-pink-300"
                           }`}
                       />
                       <span className="truncate">SKU</span>
@@ -581,7 +663,7 @@ function WorkspaceSidebar({
                         }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-cyan-300"
                           }`}
                       />
                       <span className="truncate">Đối Soát ST</span>
@@ -601,7 +683,7 @@ function WorkspaceSidebar({
                       }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-rose-300"
                         }`}
                     />
                     <span>Negative Keyword</span>
@@ -620,7 +702,7 @@ function WorkspaceSidebar({
                       }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-emerald-300"
                         }`}
                     />
                     <span>Lên Camp Sale KW</span>
@@ -639,7 +721,7 @@ function WorkspaceSidebar({
                       }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "new_camp" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "new_camp" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-teal-300"
                         }`}
                     />
                     <span>Lên Camp SKU Mới</span>
@@ -658,7 +740,7 @@ function WorkspaceSidebar({
                       }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-indigo-300"
                         }`}
                     />
                     <span>Đề Xuất &amp; Auto Bid</span>
@@ -677,7 +759,7 @@ function WorkspaceSidebar({
                       }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "manual_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "manual_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-blue-300"
                         }`}
                     />
                     <span>Manual Bid</span>
@@ -699,7 +781,7 @@ function WorkspaceSidebar({
                       }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-amber-300"
                         }`}
                     />
                     <span>Quản lý Phôi</span>
@@ -718,51 +800,80 @@ function WorkspaceSidebar({
                       }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-purple-300"
                         }`}
                     />
                     <span>Quản lý Rule</span>
                   </button>
-                </div>
+                </motion.div>
               )}
-            </div>
-          )}
+            </AnimatePresence>
+          </div>
+        )}
 
-          {/* Accounting Group (cùng cấp với PPC Analytics) */}
-          {(actor?.allowedFeatures?.includes("accounting") ?? true) && (
-            <div className="space-y-1">
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.97 }}
-                transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                onClick={() => {
-                  selectAccountingSection("overview");
-                  onClose?.();
-                }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${viewMode === "accounting"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-              >
-                <div className="flex items-center gap-2.5">
+        {/* Accounting Group (cùng cấp với PPC Analytics) */}
+        {(actor?.allowedFeatures?.includes("accounting") ?? true) && (
+          <div className="space-y-1">
+            <motion.button
+              type="button"
+              whileHover={{ x: 2 }}
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: "spring", stiffness: 500, damping: 25 }}
+              onClick={() => {
+                selectAccountingSection("overview");
+                onClose?.();
+              }}
+              className={`relative flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors duration-150 cursor-pointer acc-sidebar-item ${viewMode === "accounting"
+                  ? "text-indigo-700 font-extrabold"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+            >
+              {viewMode === "accounting" && (
+                <motion.div
+                  layoutId="sidebar-top-active-pill"
+                  className="absolute inset-0 rounded-xl bg-indigo-50/90 ring-1 ring-indigo-200/80 shadow-2xs z-0"
+                  transition={{ type: "spring", stiffness: 450, damping: 35 }}
+                />
+              )}
+              <div className="relative z-10 flex items-center gap-2.5">
+                <motion.div
+                  whileHover={{ scale: 1.15, rotate: -3 }}
+                  animate={viewMode === "accounting" ? { scale: [1, 1.25, 0.95, 1] } : { scale: 1 }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                  className="shrink-0"
+                >
                   <ReceiptIcon
                     size={17}
                     weight={viewMode === "accounting" ? "fill" : "duotone"}
-                    className={viewMode === "accounting" ? "text-indigo-600" : "text-slate-500"}
+                    className={viewMode === "accounting" ? "text-indigo-600" : "text-indigo-600"}
                   />
-                  <span>Accounting</span>
-                </div>
+                </motion.div>
+                <span>Accounting</span>
+              </div>
+              <motion.div
+                animate={{ rotate: viewMode === "accounting" ? 0 : -90 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className="relative z-10 shrink-0"
+              >
                 <CaretDownIcon
                   size={12}
                   weight="bold"
-                  className={`transition-transform duration-200 ${viewMode === "accounting" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                    }`}
+                  className={viewMode === "accounting" ? "text-indigo-600" : "text-slate-400"}
                 />
-              </motion.button>
+              </motion.div>
+            </motion.button>
 
-              {/* Sub-items under Accounting: 6 main groups + System Admin */}
+            {/* Sub-items under Accounting: 6 main groups + System Admin */}
+            <AnimatePresence initial={false}>
               {viewMode === "accounting" && (
-                <div className="space-y-0.5 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                <motion.div
+                  key="accounting-submenu"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
+                  className="overflow-hidden space-y-0.5 pt-1"
+                >
                   {/* 1. Dashboard */}
                   <SidebarSubItem
                     active={accountingSection === "overview" || accountingSection === "dashboard"}
@@ -771,6 +882,7 @@ function WorkspaceSidebar({
                       onClose?.();
                     }}
                     icon={SquaresFourIcon}
+                    iconColor="text-sky-600"
                     label="Dashboard"
                   />
 
@@ -782,6 +894,7 @@ function WorkspaceSidebar({
                       onClose?.();
                     }}
                     icon={PackageIcon}
+                    iconColor="text-amber-600"
                     label="Inventory"
                   />
 
@@ -794,6 +907,7 @@ function WorkspaceSidebar({
                         onClose?.();
                       }}
                       icon={TruckIcon}
+                      iconColor="text-teal-600"
                       label="Fulfill"
                     />
                   )}
@@ -801,6 +915,7 @@ function WorkspaceSidebar({
                   {/* 5. Financials */}
                   <motion.button
                     type="button"
+                    whileHover={{ x: 2 }}
                     whileTap={{ scale: 0.96 }}
                     transition={{ type: "spring", stiffness: 500, damping: 25 }}
                     onClick={() => {
@@ -816,33 +931,39 @@ function WorkspaceSidebar({
                         : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                       }`}
                   >
-                    <WalletIcon
-                      size={17}
-                      weight={
-                        accountingSection === "financials" ||
-                          accountingSection === "revenue" ||
-                          accountingSection === "costs" ||
-                          accountingSection === "amazon_fees" ||
-                          accountingSection === "ads"
-                          ? "fill"
-                          : "duotone"
-                      }
-                      className={`shrink-0 ${accountingSection === "financials" ||
-                          accountingSection === "revenue" ||
-                          accountingSection === "costs" ||
-                          accountingSection === "amazon_fees" ||
-                          accountingSection === "ads"
-                          ? "text-indigo-600"
-                          : "text-slate-400"
-                        }`}
-                    />
+                    <motion.div
+                      whileHover={{ scale: 1.15, rotate: -3 }}
+                      transition={{ duration: 0.2, ease: "easeOut" }}
+                      className="shrink-0"
+                    >
+                      <WalletIcon
+                        size={17}
+                        weight={
+                          accountingSection === "financials" ||
+                            accountingSection === "revenue" ||
+                            accountingSection === "costs" ||
+                            accountingSection === "amazon_fees" ||
+                            accountingSection === "ads"
+                            ? "fill"
+                            : "duotone"
+                        }
+                        className={`shrink-0 transition-colors ${accountingSection === "financials" ||
+                            accountingSection === "revenue" ||
+                            accountingSection === "costs" ||
+                            accountingSection === "amazon_fees" ||
+                            accountingSection === "ads"
+                            ? "text-indigo-600"
+                            : "text-emerald-600"
+                          }`}
+                      />
+                    </motion.div>
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-[13px]">Financials</span>
                     </div>
                   </motion.button>
 
                   {/* 5.1–5.3 Financials theo kỳ: Day / Week / Month */}
-                  {FINANCIALS_SIDEBAR_ITEMS.map(({ group, label, Icon }) => {
+                  {FINANCIALS_SIDEBAR_ITEMS.map(({ group, label, Icon, iconColor }) => {
                     const active =
                       (accountingSection === "financials" ||
                         accountingSection === "revenue" ||
@@ -859,6 +980,7 @@ function WorkspaceSidebar({
                           onClose?.();
                         }}
                         icon={Icon}
+                        iconColor={iconColor}
                         label={label}
                         indent
                       />
@@ -873,6 +995,7 @@ function WorkspaceSidebar({
                       onClose?.();
                     }}
                     icon={ChartLineUpIcon}
+                    iconColor="text-violet-600"
                     label="SKU Testing"
                   />
 
@@ -884,6 +1007,7 @@ function WorkspaceSidebar({
                       onClose?.();
                     }}
                     icon={TargetIcon}
+                    iconColor="text-rose-600"
                     label="KPI kinh doanh"
                   />
 
@@ -901,6 +1025,7 @@ function WorkspaceSidebar({
                           onClose?.();
                         }}
                         icon={GearIcon}
+                        iconColor="text-slate-600"
                         label="System Admin"
                       />
 
@@ -912,6 +1037,7 @@ function WorkspaceSidebar({
                           onClose?.();
                         }}
                         icon={StorefrontIcon}
+                        iconColor="text-teal-600"
                         label="Stores"
                         indent
                       />
@@ -924,6 +1050,7 @@ function WorkspaceSidebar({
                           onClose?.();
                         }}
                         icon={UploadSimpleIcon}
+                        iconColor="text-blue-600"
                         label="Import"
                         indent
                       />
@@ -940,6 +1067,7 @@ function WorkspaceSidebar({
                           onClose?.();
                         }}
                         icon={WalletIcon}
+                        iconColor="text-amber-600"
                         label="Payout Amount"
                         indent
                       />
@@ -952,47 +1080,64 @@ function WorkspaceSidebar({
                           onClose?.();
                         }}
                         icon={ShieldCheckIcon}
+                        iconColor="text-indigo-600"
                         label="Phân quyền"
                         indent
                       />
                     </>
                   )}
-                </div>
+                </motion.div>
               )}
-            </div>
-          )}
+            </AnimatePresence>
+          </div>
+        )}
 
-          {/* Kanban Feedback Tab */}
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.97 }}
-            transition={{ type: "spring", stiffness: 500, damping: 25 }}
-            onClick={() => {
-              selectView("kanban");
-              onClose?.();
-            }}
-            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-all duration-150 cursor-pointer acc-sidebar-item ${activeView === "kanban"
-                ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
+        {/* Kanban Feedback Tab */}
+        <motion.button
+          type="button"
+          whileHover={{ x: 2 }}
+          whileTap={{ scale: 0.97 }}
+          transition={{ type: "spring", stiffness: 500, damping: 25 }}
+          onClick={() => {
+            selectView("kanban");
+            onClose?.();
+          }}
+          className={`relative flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors duration-150 cursor-pointer acc-sidebar-item ${activeView === "kanban"
+              ? "text-indigo-700 font-extrabold"
+              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            }`}
+        >
+          {activeView === "kanban" && (
+            <motion.div
+              layoutId="sidebar-top-active-pill"
+              className="absolute inset-0 rounded-xl bg-indigo-50/90 ring-1 ring-indigo-200/80 shadow-2xs z-0"
+              transition={{ type: "spring", stiffness: 450, damping: 35 }}
+            />
+          )}
+          <div className="relative z-10 flex items-center gap-2.5 min-w-0">
+            <motion.div
+              whileHover={{ scale: 1.15, rotate: -3 }}
+              animate={activeView === "kanban" ? { scale: [1, 1.25, 0.95, 1] } : { scale: 1 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className="shrink-0"
+            >
               <ChatCircleDotsIcon
                 size={17}
                 weight={activeView === "kanban" ? "fill" : "duotone"}
-                className={activeView === "kanban" ? "text-indigo-600" : "text-slate-400"}
+                className={activeView === "kanban" ? "text-indigo-600" : "text-rose-600"}
               />
-              <span className="truncate">Kanban góp ý</span>
-            </div>
-            {kanbanPendingCount > 0 && (
-              <span
-                className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white shadow-xs leading-none shrink-0 animate-in fade-in zoom-in-75 duration-150"
-                title={`${kanbanPendingCount} góp ý / báo lỗi chưa xử lý`}
-              >
-                {kanbanPendingCount > 99 ? "99+" : kanbanPendingCount}
-              </span>
-            )}
-          </motion.button>
+            </motion.div>
+            <span className="truncate">Kanban góp ý</span>
+          </div>
+          {kanbanPendingCount > 0 && (
+            <span
+              className="relative z-10 ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white shadow-xs leading-none shrink-0 animate-in fade-in zoom-in-75 duration-150"
+              title={`${kanbanPendingCount} góp ý / báo lỗi chưa xử lý`}
+            >
+              {kanbanPendingCount > 99 ? "99+" : kanbanPendingCount}
+            </span>
+          )}
+        </motion.button>
         </nav>
       </div>
 
@@ -1052,6 +1197,7 @@ export function ListingWorkspace({
   const [ppcNavNonce, setPpcNavNonce] = useState(0);
   const [accountingSection, setAccountingSection] = useState<AccountingSection>("overview");
   const [accountingSubTab, setAccountingSubTab] = useState<string | undefined>(undefined);
+  const [accountingFreshnessTarget, setAccountingFreshnessTarget] = useState<HTMLDivElement | null>(null);
   const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
   const viewMode =
     activeView === "sellersprite" || activeView === "ppc" || activeView === "accounting" || activeView === "kanban" || activeView === "fulfill"
@@ -1548,9 +1694,12 @@ export function ListingWorkspace({
 
             {/* Right Header Items: Trello Config & User Avatar */}
             <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+              {viewMode === "accounting" && <div ref={setAccountingFreshnessTarget} className="empty:hidden" />}
               {hasTrelloAccess && viewMode !== "ppc" && viewMode !== "accounting" ? (
                 <button
                   type="button"
+                  data-tour="lst-btn-trello-config"
+                  data-tour-safe
                   onClick={() => setShowTrelloConfigModal(true)}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-extrabold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
                   title="Cấu hình Board và các cột Trello"
@@ -1680,16 +1829,18 @@ export function ListingWorkspace({
             </AccBlackGrid>
           ) : viewMode === "accounting" ? (
             <div className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
-              <AccountingWorkspace
-                activeSection={
-                  // Mục System Admin chỉ dành cho Admin / Kế toán: link / localStorage cũ trỏ vào đó thì về Overview
-                  actor?.role !== "admin" && actor?.role !== "accountant" && ACCOUNTING_ADMIN_SECTIONS.has(accountingSection)
-                    ? "overview"
-                    : accountingSection
-                }
-                activeSubTab={accountingSubTab}
-                onSectionChange={(s, tab) => selectAccountingSection(s, tab)}
-              />
+              <AccountingFreshnessTarget.Provider value={accountingFreshnessTarget}>
+                <AccountingWorkspace
+                  activeSection={
+                    // Mục System Admin chỉ dành cho Admin / Kế toán: link / localStorage cũ trỏ vào đó thì về Overview
+                    actor?.role !== "admin" && actor?.role !== "accountant" && ACCOUNTING_ADMIN_SECTIONS.has(accountingSection)
+                      ? "overview"
+                      : accountingSection
+                  }
+                  activeSubTab={accountingSubTab}
+                  onSectionChange={(s, tab) => selectAccountingSection(s, tab)}
+                />
+              </AccountingFreshnessTarget.Provider>
             </div>
           ) : viewMode === "fulfill" ? (
             <div lang="en" className="fulfill-root h-full min-h-0 w-full overflow-y-auto px-4 py-6 lg:px-8">

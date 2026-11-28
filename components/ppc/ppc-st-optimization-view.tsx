@@ -851,6 +851,7 @@ export function PpcStOptimizationView({
         <div className="flex items-center gap-2">
           <button
             type="button"
+            data-tour="neg-subtab-candidates"
             onClick={() => setSubTab("candidates")}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
               subTab === "candidates"
@@ -871,6 +872,7 @@ export function PpcStOptimizationView({
 
           <button
             type="button"
+            data-tour="neg-subtab-negative-list"
             onClick={() => setSubTab("negative_list")}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
               subTab === "negative_list"
@@ -891,6 +893,7 @@ export function PpcStOptimizationView({
 
           <button
             type="button"
+            data-tour="neg-subtab-registry"
             onClick={() => setSubTab("registry")}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
               subTab === "registry"
@@ -913,7 +916,7 @@ export function PpcStOptimizationView({
         <div className="flex items-center gap-2">
         {subTab === "candidates" && (
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
+            <label data-tour="neg-hide-negated" className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
               <input
                 type="checkbox"
                 checked={hideNegated}
@@ -949,7 +952,7 @@ export function PpcStOptimizationView({
           </div>
 
           {/* User Requested: Ô nhỏ điều chỉnh ngưỡng Clicks (mặc định clicks > 20) */}
-          <div className="flex items-center rounded-lg border border-rose-300 bg-rose-50/80 px-2 py-1 shadow-2xs">
+          <div data-tour="neg-rule-clicks" className="flex items-center rounded-lg border border-rose-300 bg-rose-50/80 px-2 py-1 shadow-2xs">
             <label className="text-[11px] font-extrabold text-rose-900 mr-1.5 flex items-center gap-1">
               <SlidersHorizontal size={13} weight="bold" />
               <span>Clicks:</span>
@@ -985,7 +988,7 @@ export function PpcStOptimizationView({
           </div>
 
           {/* Quick Campaign Filter */}
-          <div className="relative">
+          <div data-tour="neg-filter-campaign" className="relative">
             <select
               value={campaignFilter}
               onChange={(e) => {
@@ -1005,7 +1008,7 @@ export function PpcStOptimizationView({
           </div>
 
           {/* Search Input */}
-          <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+          <div data-tour="neg-search" className="relative min-w-[200px] flex-1 sm:flex-initial">
             <MagnifyingGlass size={13} className="absolute left-2.5 top-2.5 text-slate-400" />
             <input
               type="text"
@@ -1037,6 +1040,7 @@ export function PpcStOptimizationView({
           {/* Export Bulksheet Button */}
           <button
             type="button"
+            data-tour="neg-export-bulksheet"
             onClick={handleExportBulksheet}
             disabled={isExporting || totalAvailableCount === 0}
             className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1058,6 +1062,8 @@ export function PpcStOptimizationView({
           {/* Auto Upload AdsPower Button */}
           <button
             type="button"
+            data-tour="neg-auto-upload-btn"
+            data-tour-safe="opens-modal"
             onClick={handleOpenAutoUploadModal}
             disabled={totalAvailableCount === 0 || selectedStore === "ALL"}
             className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1072,7 +1078,7 @@ export function PpcStOptimizationView({
       </div>
 
       {/* 3. Summary Metric Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div data-tour="neg-metrics" className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
           <span className="text-[11px] font-bold text-slate-400 block uppercase">Search Terms vi phạm</span>
           <div className="flex items-baseline gap-1.5 mt-1">
@@ -1126,13 +1132,14 @@ export function PpcStOptimizationView({
       </div>
 
       {/* 4. Table */}
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+      <div data-tour="neg-table" className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
         <table className="w-full text-left text-xs text-slate-700 border-collapse min-w-[1000px]">
           <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
             <tr>
               <th className="p-3 w-8 text-center">
                 <input
                   type="checkbox"
+                  data-tour="neg-select-all"
                   checked={
                     paginatedCandidates.length > 0 &&
                     paginatedCandidates.every((c) => selectedKeys.has(c.key))
@@ -1199,7 +1206,7 @@ export function PpcStOptimizationView({
                 </td>
               </tr>
             ) : (
-              paginatedCandidates.map((c) => {
+              paginatedCandidates.map((c, rowIdx) => {
                 const isSelected = selectedKeys.has(c.key);
                 const isCopied = copiedKey === c.key;
                 const campaignSku = extractSkuFromText(c.campaignName)
@@ -1219,6 +1226,7 @@ export function PpcStOptimizationView({
                     <td className="p-3 text-center">
                       <input
                         type="checkbox"
+                        data-tour={rowIdx === 0 ? "neg-row-first-checkbox" : undefined}
                         checked={isSelected}
                         disabled={c.isAlreadyNegated}
                         onChange={() => handleToggleRow(c.key)}
@@ -1538,7 +1546,7 @@ export function PpcStOptimizationView({
                   </div>
 
                   {/* Safety & Logic Notice */}
-                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
+                  <div data-tour="neg-modal-safety" className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
                     <div className="flex items-center gap-1.5 font-bold">
                       <ShieldWarning size={15} weight="fill" className="text-amber-600 shrink-0" />
                       <span>Cơ chế an toàn: Phủ định chỉ trong Source Campaign</span>
@@ -1624,6 +1632,7 @@ export function PpcStOptimizationView({
                 <>
                   <button
                     type="button"
+                    data-tour="neg-modal-cancel"
                     onClick={() => setIsAutoUploadModalOpen(false)}
                     disabled={isAutoUploading}
                     className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer disabled:opacity-40"
@@ -1632,6 +1641,7 @@ export function PpcStOptimizationView({
                   </button>
                   <button
                     type="button"
+                    data-tour="neg-modal-confirm"
                     onClick={handleExecuteAutoUpload}
                     disabled={isAutoUploading || modalCandidates.length === 0}
                     className="px-4 py-2 rounded-xl bg-linear-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"

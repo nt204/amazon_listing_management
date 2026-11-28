@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { profitColClass } from "./profit-column";
 import { ColumnHeaderMenu, filterOptionsFor, passesValueFilters, type ValueFilters } from "./column-header-menu";
 
@@ -840,6 +841,7 @@ export function SkuTestView() {
 
   return (
     <div className="w-full space-y-2 font-sans">
+      <AccountingFreshness view="sku-results" storeIds={[selectedStoreId]} channel="FBA" enabled={Boolean(selectedStoreId) && !loadingStores} showStock={items.length > 0 && visibleColumns.some((c) => c.id === "available_now")} />
       {/* Toast Alert */}
       {toast && (
         <div

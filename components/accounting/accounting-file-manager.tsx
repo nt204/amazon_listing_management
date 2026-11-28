@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { AccountingFreshness } from "./accounting-freshness";
 import {
   FolderSimple,
   DownloadSimple,
@@ -418,6 +419,14 @@ export function AccountingFileManager() {
 
   return (
     <div className="w-full max-w-7xl mx-auto space-y-5 animate-in fade-in duration-200">
+      <AccountingFreshness
+        view="files"
+        storeName={selectedStore === "ALL" ? undefined : selectedStore}
+        fileUpdatedAt={loading ? undefined : categoryFiles.reduce<string | null>((latest, file) => (
+          (selectedStore === "ALL" || file.storeName === selectedStore) && file.lastModified && (!latest || file.lastModified > latest)
+            ? file.lastModified : latest
+        ), null)}
+      />
       <InventorySheetLinksModal isOpen={showSheetLinks} onClose={() => setShowSheetLinks(false)} />
       <AccountingCrawlerModal isOpen={showCrawlers} onClose={() => setShowCrawlers(false)} />
       {/* Top Header & Stat Cards */}

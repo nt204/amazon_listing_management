@@ -1426,6 +1426,7 @@ export function PpcManualBidView({
           type="button"
           onClick={backToList}
           title="Quay lại danh sách SKU"
+          data-tour="mb-back-btn"
           className="h-7 w-7 flex items-center justify-center cursor-pointer rounded border border-slate-300 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50 transition"
         >
           ←
@@ -1440,7 +1441,7 @@ export function PpcManualBidView({
 
         {/* Nút tìm kiếm nhấc sang trái */}
         {sku && (
-          <div className="relative">
+          <div data-tour="mb-target-search" className="relative">
             <input
               value={keywordFilter}
               onChange={(e) => setKeywordFilter(e.target.value)}
@@ -1461,7 +1462,7 @@ export function PpcManualBidView({
 
         {/* Lọc target theo khoảng số: Spend, Sales, ACOS, Click… */}
         {sku && (
-          <div ref={rangeRef} className="relative">
+          <div ref={rangeRef} data-tour="mb-target-metric-filter" className="relative">
             <button
               type="button"
               onClick={() => setRangeOpen((v) => !v)}
@@ -1525,7 +1526,7 @@ export function PpcManualBidView({
 
         {/* Phân nhóm dạng chạy SP | SB | SD */}
         {sku && runTypeGroups.length > 0 && (
-          <div className="flex items-center rounded border border-slate-300 bg-slate-100 p-0.5 text-xs">
+          <div data-tour="mb-run-type-group" className="flex items-center rounded border border-slate-300 bg-slate-100 p-0.5 text-xs">
             {runTypeGroups.map((group, gIdx) => (
               <Fragment key={group.family}>
                 {gIdx > 0 && <div className="h-3.5 w-px bg-slate-300 mx-1" />}
@@ -1576,9 +1577,10 @@ export function PpcManualBidView({
       {sku && enriched.length > 0 && (
         <>
           {/* Hàng 2: nấc ACOS + gửi */}
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div data-tour="mb-tier-chips" className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
+              data-tour="mb-tier-all"
               onClick={() => { setTierSet([]); setEditedOnly(false); }}
               className={`h-7 cursor-pointer rounded border px-2.5 text-xs font-medium transition ${
                 tierSet.length === 0 && !editedOnly
@@ -1596,6 +1598,8 @@ export function PpcManualBidView({
                 <button
                   key={t.key}
                   type="button"
+                  data-tour={t.key === "NO_ORDER" ? "mb-tier-bleeding" : t.key === "A60P" ? "mb-tier-a60p" : undefined}
+                  aria-pressed={on}
                   disabled={n === 0 && !on}
                   title="Giữ ⌘ (Mac) / Ctrl (Windows) để chọn thêm nấc"
                   onClick={(e) => {
@@ -1619,6 +1623,7 @@ export function PpcManualBidView({
             <div className="mx-0.5 h-4 w-px bg-slate-300" />
             <button
               type="button"
+              data-tour="mb-chip-edited"
               disabled={editedCount === 0 && !editedOnly}
               onClick={(e) => {
                 // Bấm thường = xem toàn bộ target đã sửa (bỏ lọc nấc), xếp theo ACOS; ⌘ / Ctrl = kết hợp với nấc đang chọn.
@@ -1646,10 +1651,11 @@ export function PpcManualBidView({
 
             <div className="ml-auto flex items-center gap-2">
               {nSel > 0 && (
-                <div className="flex h-7 items-center gap-1.5 text-xs">
+                <div data-tour="mb-batch-tools" className="flex h-7 items-center gap-1.5 text-xs">
                   <span className="pr-0.5 font-semibold tabular-nums text-indigo-900">{nSel} chọn</span>
                   {/* Cụm 1: nhân % — 0.95 hoặc 95 / 95% đều là còn 95% */}
                   <form
+                    data-tour="mb-batch-mul"
                     className="flex h-7 items-center gap-1 rounded border border-indigo-200 bg-indigo-50 pl-2 pr-1"
                     onSubmit={(e) => { e.preventDefault(); runOp(); }}
                   >
@@ -1666,6 +1672,7 @@ export function PpcManualBidView({
                   </form>
                   {/* Cụm 2: cộng / trừ số cụ thể, tự gõ dấu */}
                   <form
+                    data-tour="mb-batch-add"
                     className="flex h-7 items-center gap-1 rounded border border-indigo-200 bg-indigo-50 pl-2 pr-1"
                     onSubmit={(e) => { e.preventDefault(); runAdd(); }}
                   >
@@ -1681,6 +1688,7 @@ export function PpcManualBidView({
                   </form>
                   {/* Cụm 3: set thẳng mức bid cụ thể */}
                   <form
+                    data-tour="mb-batch-set"
                     className="flex h-7 items-center gap-1 rounded border border-indigo-200 bg-indigo-50 pl-2 pr-1"
                     onSubmit={(e) => { e.preventDefault(); runSet(); }}
                   >
@@ -1694,7 +1702,7 @@ export function PpcManualBidView({
                       className="h-5 w-14 rounded border border-slate-300 bg-white px-1.5 text-right font-mono font-bold outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-indigo-500"
                     />
                   </form>
-                  <button type="button" onClick={pauseSelected} className="h-7 cursor-pointer rounded border border-slate-200 bg-white px-2 font-medium text-slate-700 hover:bg-slate-50">
+                  <button type="button" data-tour="mb-batch-pause" onClick={pauseSelected} className="h-7 cursor-pointer rounded border border-slate-200 bg-white px-2 font-medium text-slate-700 hover:bg-slate-50">
                     Dừng
                   </button>
                   <button type="button" onClick={() => setSelected(new Set())} title="Bỏ chọn" className="h-7 cursor-pointer rounded px-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
@@ -1705,6 +1713,7 @@ export function PpcManualBidView({
               {draftCount > 0 && (
                 <button
                   type="button"
+                  data-tour="mb-cancel-drafts"
                   onClick={() => setDrafts(new Map())}
                   className="h-7 cursor-pointer px-2 text-xs font-semibold text-rose-600 hover:underline"
                 >
@@ -1713,6 +1722,7 @@ export function PpcManualBidView({
               )}
               <button
                 type="button"
+                data-tour="mb-approve-btn"
                 onClick={() => void submit()}
                 disabled={draftCount === 0 || submitting}
                 className="h-7 cursor-pointer rounded bg-indigo-600 px-3 text-xs font-bold text-white hover:bg-indigo-700 disabled:cursor-default disabled:bg-slate-200 disabled:text-slate-400"
@@ -1724,7 +1734,7 @@ export function PpcManualBidView({
 
           {/* Bảng target dạng lưới Excel với kéo dãn cột & đánh màu ACOS */}
           {refreshing && <ProgressBar />}
-          <div className={`overflow-auto max-h-[calc(100vh-120px)] rounded-lg border border-slate-200 bg-white shadow-sm transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
+          <div data-tour="mb-target-table" className={`overflow-auto max-h-[calc(100vh-120px)] rounded-lg border border-slate-200 bg-white shadow-sm transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
             <table
               className="border-collapse text-xs table-fixed w-full"
               style={{ minWidth: Object.values(shownColWidths).reduce((a, b) => a + b, 0) }}
@@ -1752,6 +1762,7 @@ export function PpcManualBidView({
                 <tr>
                   <th style={{ left: stickyLeft.cb }} className={`sticky z-30 ${HEAD} shadow-[inset_-1px_0_0_rgb(96,165,250)] px-1 py-2 text-center select-none`}>
                     <input
+                      data-tour="mb-target-select-all"
                       type="checkbox"
                       checked={allVisibleChecked}
                       onChange={(e) => toggleKeys(visibleKeys, e.target.checked)}
@@ -1853,6 +1864,7 @@ export function PpcManualBidView({
                       </tr>
                     )}
                     <tr
+                      data-tour={idx === 0 ? "mb-target-first-row" : undefined}
                       className={`h-8 transition-colors ${
                         isSel
                           ? "bg-indigo-200"
@@ -1921,7 +1933,7 @@ export function PpcManualBidView({
                       <td className="border-r border-slate-200/70 px-2 py-0.5 text-right tabular-nums text-slate-600">
                         {money(r.cpc)}
                       </td>
-                      <td className="border-r border-blue-200 bg-blue-50 px-2 py-0.5 text-right tabular-nums text-indigo-950">
+                      <td data-tour={idx === 0 ? "mb-target-first-bid" : undefined} className="border-r border-blue-200 bg-blue-50 px-2 py-0.5 text-right tabular-nums text-indigo-950">
                         <div className="flex flex-col items-end">
                           <span className={draft ? "text-indigo-500 line-through decoration-indigo-500" : "font-bold"}>{money(r.bid)}</span>
                           {queued && (
@@ -1931,7 +1943,7 @@ export function PpcManualBidView({
                           )}
                         </div>
                       </td>
-                      <td className="p-0 border-r-0 cursor-auto" data-no-drag>
+                      <td data-tour={idx === 0 ? "mb-target-first-new-bid" : undefined} className="p-0 border-r-0 cursor-auto" data-no-drag>
                         <BidCell
                           index={idx}
                           row={r}
@@ -2402,6 +2414,7 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
           }}
         >
           <input
+            data-tour="mb-sku-search"
             value={search}
             onChange={(e) => setFilter({ search: e.target.value })}
             placeholder="Tìm SKU…"
@@ -2410,20 +2423,24 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
           />
         </form>
 
-        <PpcSkuStatusFilter value={filter.status} onChange={(status) => setFilter({ status })} />
+        <div data-tour="mb-sku-status">
+          <PpcSkuStatusFilter value={filter.status} onChange={(status) => setFilter({ status })} />
+        </div>
 
-        {facets.map(({ key, label, icon: Icon, options }) => (
-          <PpcFilterDropdown
-            key={key}
-            label={label}
-            icon={<Icon size={13} className="shrink-0 text-slate-400" aria-hidden />}
-            options={options}
-            value={filter[key]}
-            onChange={(value) => setFilter({ [key]: value })}
-          />
-        ))}
+        <div data-tour="mb-sku-facets" className="flex items-center gap-2">
+          {facets.map(({ key, label, icon: Icon, options }) => (
+            <PpcFilterDropdown
+              key={key}
+              label={label}
+              icon={<Icon size={13} className="shrink-0 text-slate-400" aria-hidden />}
+              options={options}
+              value={filter[key]}
+              onChange={(value) => setFilter({ [key]: value })}
+            />
+          ))}
+        </div>
 
-        <div ref={moreRef} className="relative">
+        <div ref={moreRef} data-tour="mb-sku-metric-filter" className="relative">
           <button
             type="button"
             aria-expanded={moreOpen}
@@ -2457,7 +2474,9 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
           )}
         </div>
 
-        <IncludePausedCheckbox checked={!activeOnly} onChange={() => onToggleActive()} className="h-8 text-[12px]" />
+        <div data-tour="mb-sku-paused">
+          <IncludePausedCheckbox checked={!activeOnly} onChange={() => onToggleActive()} className="h-8 text-[12px]" />
+        </div>
 
         {chips.map((c) => (
           <button
@@ -2486,7 +2505,7 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
       </div>
 
       {refreshing && <ProgressBar />}
-      <div className={`overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
+      <div data-tour="mb-sku-table" className={`overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white transition-opacity ${refreshing ? "pointer-events-none opacity-50" : ""}`}>
         <table className="w-full min-w-[820px] border-collapse text-[13px]">
           <thead className="sticky top-0 z-20 bg-white shadow-[0_1px_0_0_rgb(226,232,240)] text-[11px] font-semibold text-slate-400">
             <tr className="border-b border-slate-200">
@@ -2508,12 +2527,13 @@ function ManualBidSkuList({ rows, stockMeta, searchAll, onSearchingChange, refre
               <tr><td colSpan={11} className="p-0"><LoadingBlock bare /></td></tr>
             ) : filtered.length === 0 ? (
               <tr><td colSpan={11} className="py-14 text-center text-slate-400">Không có SKU phù hợp.</td></tr>
-            ) : filtered.slice(0, limit).map((g) => {
+            ) : filtered.slice(0, limit).map((g, idx) => {
               const tier = manualBidTier(g);
               const queued = queuedBySku.get(g.sku.toUpperCase()) || 0;
               return (
                 <tr
                   key={g.sku}
+                  data-tour={idx === 0 ? "mb-sku-first-row" : undefined}
                   onClick={() => onOpen(g.sku)}
                   onMouseEnter={() => {
                     if (hoverTimer.current) clearTimeout(hoverTimer.current);

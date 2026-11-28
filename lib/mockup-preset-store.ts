@@ -2,9 +2,23 @@ import type {
   MockupContentItem,
   ProductCategoryPreset,
   PresetExportPayload,
+  SharedMockupPresetVersion,
 } from "../types/mockup-preset";
 
 export const CUSTOM_PRESETS_STORAGE_KEY = "listing_desk_custom_presets_v1";
+
+const emojiSegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter() : null;
+
+function leadingPresetEmoji(value: string): string | undefined {
+  const first = emojiSegmenter?.segment(value).containing(0)?.segment ?? Array.from(value)[0];
+  return first && /^(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|[0-9#*]\uFE0F?\u20E3)/u.test(first)
+    ? first
+    : undefined;
+}
+
+export function normalizePresetIcon(icon: unknown): string {
+  return (typeof icon === "string" ? leadingPresetEmoji(icon.trim()) : undefined) ?? "📦";
+}
 
 export const RETIRED_SYSTEM_PRESET_IDS = new Set([
   "universal_standard",
@@ -113,7 +127,7 @@ export function getStoredCustomPresets(): ProductCategoryPreset[] {
         typeof item.label === "string" &&
         Array.isArray(item.contents) &&
         !RETIRED_SYSTEM_PRESET_IDS.has(item.id),
-    );
+    ).map((preset) => ({ ...preset, icon: normalizePresetIcon(preset.icon) }));
   } catch {
     return [];
   }
@@ -161,8 +175,12 @@ export async function fetchPresetsFromServer(): Promise<ProductCategoryPreset[]>
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data?.presets)) {
-        saveStoredCustomPresets(data.presets);
-        return data.presets;
+        const presets = data.presets.map((preset: ProductCategoryPreset) => ({
+          ...preset,
+          icon: normalizePresetIcon(preset.icon),
+        }));
+        saveStoredCustomPresets(presets);
+        return presets;
       }
     }
   } catch {
@@ -205,6 +223,38 @@ export async function deletePresetFromServer(
   return data.presets;
 }
 
+export async function fetchPresetVersions(
+  presetId: string,
+): Promise<SharedMockupPresetVersion[]> {
+  const response = await fetch(
+    `/api/presets/history?presetId=${encodeURIComponent(presetId)}`,
+    { cache: "no-store" },
+  );
+  const data = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    versions?: SharedMockupPresetVersion[];
+  };
+  if (!response.ok || !Array.isArray(data.versions)) {
+    throw new Error(data.error || `Không tải được lịch sử (HTTP ${response.status}).`);
+  }
+  return data.versions;
+}
+
+export async function restorePresetVersion(
+  presetId: string,
+  versionId: string,
+): Promise<void> {
+  const response = await fetch("/api/presets/history", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ presetId, versionId }),
+  });
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `Không khôi phục được (HTTP ${response.status}).`);
+  }
+}
+
 async function presetApiRequest(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -244,7 +294,7 @@ export function createNewPreset(
   return {
     id,
     label: label.trim() || "Sản phẩm mới",
-    icon: icon.trim() || "📦",
+    icon: normalizePresetIcon(icon),
     isSystem: false,
     contents: defaultContents,
   };
@@ -293,7 +343,7 @@ export function importPresetsPayload(jsonString: string): ProductCategoryPreset[
       importedList.push({
         id: validItem.id || `custom_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         label: validItem.label.trim(),
-        icon: validItem.icon?.trim() || "📦",
+        icon: normalizePresetIcon(validItem.icon),
         isSystem: isSys,
         contents: validItem.contents.map((c, idx) => ({
           id: c.id || idx + 1,
@@ -350,12 +400,8 @@ export function parseChatGPTBatchInput(
     const catMatch = line.match(/^(?:Loại Sản Phẩm|Category|Sản phẩm)\s*[:|-]\s*(.+)$/i);
     if (catMatch) {
       const rawCat = catMatch[1].trim();
-      const emojiMatch = rawCat.match(/^(\p{Extended_Pictographic}|\p{Emoji_Presentation})\s*(.+)$/u);
-      if (emojiMatch) {
-        categoryMeta = { icon: emojiMatch[1], label: emojiMatch[2].trim() };
-      } else {
-        categoryMeta = { label: rawCat };
-      }
+      const icon = leadingPresetEmoji(rawCat);
+      categoryMeta = icon ? { icon, label: rawCat.slice(icon.length).trim() || undefined } : { label: rawCat };
       continue;
     }
 

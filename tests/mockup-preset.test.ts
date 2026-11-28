@@ -25,6 +25,24 @@ test("createNewPreset creates a custom category with 7 default contents", () => 
   assert.ok(custom.id.startsWith("custom_"));
 });
 
+test("preset icons keep one complete emoji and drop pasted product names", () => {
+  const custom = createNewPreset("Glass Ornament", "📦Glass Ornament");
+  assert.equal(custom.icon, "📦");
+  custom.contents[0].customPrompt = "Hero product on a white background";
+
+  const imported = importPresetsPayload(JSON.stringify([
+    { ...custom, icon: "🧑🏽‍🎨 Glass Ornament" },
+    { ...custom, icon: "Wooden Card" },
+  ]));
+  assert.deepEqual(imported.map((preset) => preset.icon), ["🧑🏽‍🎨", "📦"]);
+  assert.equal(imported[0].label, custom.label);
+  assert.equal(imported[0].contents.length, custom.contents.length);
+  assert.equal(imported[0].contents[0].customPrompt, custom.contents[0].customPrompt);
+
+  const batch = parseChatGPTBatchInput("Loại Sản Phẩm: 🍽️ Ceramic Plate");
+  assert.deepEqual(batch.categoryMeta, { icon: "🍽️", label: "Ceramic Plate" });
+});
+
 test("clonePreset duplicates an existing category preset", () => {
   const source = createNewPreset("Hanging Ornament", "🎄");
   const cloned = clonePreset(source, "Hanging Ornament Copy");

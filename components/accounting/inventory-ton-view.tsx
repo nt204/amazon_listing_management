@@ -18,6 +18,8 @@ export interface InventoryTonViewRef {
 interface Props {
   storeId: string;
   tableZoom?: number;
+  stockOn: string;
+  onStockDateChange: (date: string) => void;
 }
 
 type Fmt = "text" | "int" | "dec" | "money";
@@ -97,7 +99,7 @@ function formatValue(value: unknown, fmt: Fmt): string {
   return `${n < 0 ? "-" : ""}$${decFmt.format(Math.abs(n))}`;
 }
 
-export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function InventoryTonView({ storeId, tableZoom = 100 }, ref) {
+export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function InventoryTonView({ storeId, tableZoom = 100, stockOn, onStockDateChange }, ref) {
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(50);
   const [pagination, setPagination] = useState<{ rows: InventoryTonRow[]; page: number } | null>(null);
@@ -105,8 +107,6 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [sort, setSort] = useState<{ key: Key; dir: 1 | -1 } | null>(null);
-  // Ngày xem tồn Amazon (cột Inventory FBA / AWD / Total); "" = mới nhất
-  const [stockOn, setStockOn] = useState("");
 
   const query = useQuery({
     queryKey: ["accounting-inventory-ton", storeId, stockOn],
@@ -242,13 +242,13 @@ export const InventoryTonView = forwardRef<InventoryTonViewRef, Props>(function 
             type="date"
             value={stockOn || query.data?.stockDate || ""}
             max={new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10)}
-            onChange={(e) => setStockOn(e.target.value)}
+            onChange={(e) => onStockDateChange(e.target.value)}
             className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs font-bold text-slate-800 shadow-2xs focus:border-indigo-500 focus:outline-hidden"
           />
           {stockOn && (
             <button
               type="button"
-              onClick={() => setStockOn("")}
+              onClick={() => onStockDateChange("")}
               className="cursor-pointer rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
               title="Về tồn mới nhất"
             >

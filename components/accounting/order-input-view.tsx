@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingFreshness } from "./accounting-freshness";
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import dynamic from "next/dynamic";
 import {
@@ -1032,6 +1033,11 @@ export function OrderInputView() {
 
   return (
     <div className="w-full space-y-3">
+      <AccountingFreshness
+        view={activeTab === "return" ? "returns" : activeTab === "service_fee" ? "fees" : activeTab}
+        storeIds={[selectedStoreId]}
+        enabled={Boolean(selectedStoreId) && !loadingStores}
+      />
       {/* Toast Alert */}
       {toast && (
         <div

@@ -4,8 +4,20 @@
 
 /** Thao tác demo trên màn hình. Chỉ dùng cho thao tác XEM / LỌC / MỞ – ĐÓNG cửa sổ, không bao giờ lưu dữ liệu. */
 export type GuideAction =
-  /** Con trỏ giả di tới phần tử rồi bấm. ifPresent: không thấy phần tử thì bỏ qua (dùng cho bước dọn dẹp). */
-  | { type: "click"; target: string; ifPresent?: boolean }
+  /**
+   * Con trỏ giả di tới phần tử rồi bấm. ifPresent: không thấy phần tử thì bỏ qua (dùng cho bước dọn dẹp).
+   * undo: bấm này làm đổi trạng thái màn hình (tick, bật thẻ, mở khung) → khi tour kết thúc / bị đóng giữa chừng, engine
+   *   bấm lại để trả về như cũ, CHỈ với những lần bấm đã thực sự xảy ra (theo thứ tự ngược). true = bấm lại chính phần tử đó;
+   *   chuỗi = bấm phần tử có khóa đó (vd tab con trước đó).
+   * ensure: "on" = chỉ bấm khi phần tử đang TẮT (ô tick, aria-pressed / aria-checked / aria-selected), đã bật thì bỏ qua
+   *   và không hoàn tác — tránh tắt nhầm cái người dùng đã bật sẵn. "off" ngược lại.
+   */
+  | { type: "click"; target: string; ifPresent?: boolean; undo?: true | string; ensure?: "on" | "off" }
+  /**
+   * Gõ mẫu vào ô input / textarea (khóa trỏ vào ô hoặc phần tử bọc ô). Engine LUÔN ghi lại chữ cũ và trả lại khi tour
+   * kết thúc / bị đóng. Chỉ dùng cho ô tìm kiếm / ô nhập nháp chưa lưu — không dùng cho ô mà gõ xong là lưu ngay.
+   */
+  | { type: "type"; target: string; value: string; ifPresent?: boolean; /** Gõ nối vào cuối chữ đang có thay vì thay hết. */ append?: boolean }
   | { type: "wait"; ms: number };
 
 export interface GuideTourStep {
@@ -28,6 +40,9 @@ export interface GuideTour {
   id: string;
   /** Màn hình kịch bản chạy được (khớp với nơi gắn trợ lý). */
   page: string;
+  /** "main" = chức năng chính của màn (luồng ra kết quả: lên camp, phủ định, duyệt, đẩy…), hiện nổi bật đầu khung chat;
+   *  "extra" = tùy chọn thêm (lọc, giải thích, đọc bảng, mẹo), hiện bên dưới. */
+  kind: "main" | "extra";
   title: string;
   /** 1 câu mô tả cho người dùng (hiện trên nút). */
   summary: string;
