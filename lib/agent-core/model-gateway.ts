@@ -56,17 +56,30 @@ function env(name: string) {
   return (process.env[name] || "").trim();
 }
 
-export function resolveModelConfig(prefix: string, defaults: { model: string; fallbackModel?: string }): ModelConfig {
+/** Biến môi trường dùng chung với tính năng khác (vd agent dùng lại key Gemini của chat Lark kế toán). */
+export interface ModelEnvFallback {
+  apiKey?: string[];
+  baseURL?: string[];
+  model?: string[];
+}
+
+export function resolveModelConfig(
+  prefix: string,
+  defaults: { model: string; fallbackModel?: string; envFallback?: ModelEnvFallback },
+): ModelConfig {
   const pick = (suffix: string) => env(`${prefix}_${suffix}`) || env(`AGENT_${suffix}`);
-  const apiKey = pick("API_KEY") || env("CHEAPKEYAI_TEXT_API_KEY") || env("CHEAPKEYAI_API_KEY");
+  const first = (names?: string[]) => names?.map(env).find(Boolean) || "";
+  const shared = defaults.envFallback;
+  // Có key dùng chung (shared.apiKey) thì base URL / model cũng lấy theo cùng bộ đó trước khi về mặc định.
+  const apiKey = pick("API_KEY") || first(shared?.apiKey) || env("CHEAPKEYAI_TEXT_API_KEY") || env("CHEAPKEYAI_API_KEY");
   if (!apiKey) {
     throw new Error(`Chưa cấu hình API key cho agent (${prefix}_API_KEY, AGENT_API_KEY hoặc CHEAPKEYAI_API_KEY) trong .env`);
   }
   const fallbackModel = pick("FALLBACK_MODEL") || defaults.fallbackModel;
   return {
     apiKey,
-    baseURL: (pick("BASE_URL") || env("CHEAPKEYAI_BASE_URL") || DEFAULT_BASE_URL).replace(/\/+$/, ""),
-    model: pick("MODEL") || defaults.model,
+    baseURL: (pick("BASE_URL") || first(shared?.baseURL) || env("CHEAPKEYAI_BASE_URL") || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    model: pick("MODEL") || first(shared?.model) || defaults.model,
     fallbackModel: fallbackModel || undefined,
     timeoutMs: Number(pick("TIMEOUT_MS")) || 90_000,
   };

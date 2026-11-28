@@ -103,6 +103,24 @@ Thứ tự ưu tiên: `<PREFIX>_*` → `AGENT_*` → key CheapKey sẵn có. Pre
 
 Cổng model luôn gọi dạng **stream**: phản hồi non-stream của cheapkeyai làm mất ký tự xuống dòng.
 
+## Trợ lý hướng dẫn Auto Bid (thử nghiệm) — `ppc-autobid-guide`
+
+Nút chat tròn góc dưới phải tab PPC **Đề xuất & Auto Bid**. Hỏi cách dùng → AI trả lời và gắn kịch bản
+`[[tour:<id>]]` → nút **Xem mình làm** chạy hướng dẫn ngay trên màn hình (làm sáng phần tử + con trỏ giả tự bấm).
+
+- Kịch bản: `lib/guide/ppc-autobid-tours.ts`. Mỗi bước trỏ tới phần tử có `data-tour="<key>"` (đừng xoá các thuộc tính này khi sửa giao diện).
+  AI chỉ CHỌN id kịch bản, không tự đoán nút. Thêm kịch bản = thêm vào danh mục, AI tự thấy.
+- Chạy kịch bản: `components/guide/guide-tour-runner.ts` (driver.js MIT; cách bấm học theo alibaba/page-agent).
+  Con trỏ giả chỉ mở / đóng / lọc; nút có chữ Duyệt, Lưu, Xoá, Xác nhận… bị chặn bấm. Kết thúc / đóng giữa chừng thì `cleanup` trả màn hình về như cũ.
+- Kiến thức: `lib/agents/ppc-autobid-guide/knowledge.ts` (viết theo code). Ngưỡng luật lấy LIVE từ `ppc_rule_versions` qua tool `get_bid_rules`.
+- Chống bịa (`verifyAnswer`): mọi câu trả lời phải kết thúc bằng `[[tour:<id>]]` hoặc `[[tour:none]]`; id phải có trong danh mục;
+  nêu ngưỡng ACoS / click thì phải đã gọi `get_bid_rules`.
+- Trí nhớ theo tài khoản: lịch sử chat lưu `agent_runs` như mọi agent; prompt kèm các câu người đó từng hỏi + hướng dẫn đã gợi ý.
+- Model: dùng lại key Gemini của chat Lark kế toán (`LARK_AGENT_KEY`, `LARK_AGENT_BASE_URL`, `LARK_AGENT_MODEL`, mặc định
+  `gemini-3.5-flash-lite`, dự phòng `gemini-3.1-flash-lite`). Muốn tách riêng: đặt `AGENT_PPC_GUIDE_API_KEY` / `_MODEL` / `_BASE_URL`.
+- Chấm thử: `node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/evals/ppc-autobid-guide-eval.ts [model] [lọc câu hỏi]`
+  (chạy bằng tài khoản giả `eval-guide-bot`, tự ẩn lượt chạy sau khi chấm).
+
 ## Kiểm tra
 
 - `tests/metrics-accounting.test.ts`: danh mục chỉ số nhất quán; các phép bóc tách cộng đúng về tổng.

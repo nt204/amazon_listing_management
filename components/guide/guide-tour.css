@@ -1,0 +1,130 @@
+/* Giao diện hướng dẫn trên màn hình: popover driver.js + con trỏ giả (components/guide/guide-tour-runner.ts) */
+
+.driver-popover.nce-guide-popover {
+  max-width: 340px;
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 18px 40px -12px rgb(15 23 42 / 0.35);
+  color: #334155;
+  font-family: inherit;
+}
+
+.nce-guide-popover .driver-popover-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.35;
+}
+
+.nce-guide-popover .driver-popover-description {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #475569;
+}
+
+.nce-guide-popover .driver-popover-description b {
+  color: #0f172a;
+}
+
+.nce-guide-popover .driver-popover-progress-text {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.nce-guide-popover .driver-popover-footer {
+  margin-top: 12px;
+  gap: 6px;
+}
+
+.nce-guide-popover .driver-popover-footer button {
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: none;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+}
+
+.nce-guide-popover .driver-popover-footer .driver-popover-next-btn {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  color: #fff;
+}
+
+.nce-guide-popover .driver-popover-footer .driver-popover-next-btn:hover {
+  background: #4338ca;
+}
+
+.nce-guide-popover .driver-popover-footer .nce-guide-autoplay {
+  margin-right: auto;
+  color: #4f46e5;
+  border-color: #c7d2fe;
+  background: #eef2ff;
+}
+
+.nce-guide-popover .nce-guide-missing {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+}
+
+.nce-guide-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000000001;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform 650ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms ease;
+  filter: drop-shadow(0 2px 3px rgb(15 23 42 / 0.35));
+}
+
+.nce-guide-cursor svg {
+  position: relative;
+  z-index: 1;
+}
+
+.nce-guide-cursor-ripple {
+  position: absolute;
+  left: -10px;
+  top: -10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  border: 2px solid #6366f1;
+  opacity: 0;
+}
+
+.nce-guide-cursor.is-pressing .nce-guide-cursor-ripple {
+  animation: nce-guide-ripple 450ms ease-out;
+}
+
+@keyframes nce-guide-ripple {
+  from {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nce-guide-cursor {
+    transition: opacity 200ms ease;
+  }
+  .nce-guide-cursor.is-pressing .nce-guide-cursor-ripple {
+    animation: none;
+  }
+}

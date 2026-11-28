@@ -1,0 +1,629 @@
+import type { GuideTour } from "@/lib/guide/types";
+
+// Kịch bản hướng dẫn tab PPC "Đề xuất & Auto Bid". Phần tử trỏ tới bằng data-tour trong:
+//   components/ppc/ppc-sku-recommendation-group.tsx (rec-*, sku-*), ppc-dashboard.tsx (ppc-*),
+//   ppc-auto-decrease-settings-modal.tsx (ad-*), ppc-auto-bid-results-modal.tsx (ob-*), ppc-floating-action-queue.tsx.
+// Nội dung phải khớp logic thật (lib/ppc/sku-architecture-service.ts, lib/ppc/auto-decrease.ts…) — sửa logic thì sửa lời ở đây.
+// Thao tác demo chỉ mở / đóng / lọc; nút Duyệt, Lưu… chỉ được làm sáng (guide-tour-runner chặn bấm).
+
+export const PPC_AUTOBID_GUIDE_PAGE = "ppc-recommendations";
+
+const closeSkuModal = { type: "click", target: "sku-modal-close", ifPresent: true } as const;
+const openFirstSku = [{ type: "click", target: "rec-row-first-detail" }, { type: "wait", ms: 900 }] as const;
+// Mở Action Queue bằng nút nổi màu xanh (chỉ có khi đang chọn 1 store)
+const openQueue = [{ type: "click", target: "ppc-action-queue-btn" }, { type: "wait", ms: 800 }] as const;
+const closeQueue = { type: "click", target: "aq-close", ifPresent: true } as const;
+
+const TOURS: GuideTour[] = [
+  {
+    id: "tong-quan",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Tổng quan màn hình",
+    summary: "Đi một vòng: chọn store, kỳ dữ liệu, bộ lọc, bảng SKU, Action Queue.",
+    whenToUse: "Người mới, hỏi chung chung 'màn này dùng thế nào', 'bắt đầu từ đâu', 'quy trình chỉnh bid'.",
+    steps: [
+      {
+        title: "Màn Đề xuất & Auto Bid làm gì?",
+        body: "Hệ thống chấm từng target (keyword / ASIN) của campaign <b>SP03, SB05, SB01</b> theo luật đã cài, rồi gom đề xuất <b>Tăng bid / Giảm bid / Pause</b> theo từng SKU. Bạn xem, chỉnh, rồi <b>Duyệt</b> vào Action Queue — chưa có gì gửi lên Amazon cho tới khi xuất / upload file Bulk.",
+      },
+      {
+        target: "ppc-store-select",
+        title: "1. Chọn đúng 1 store",
+        body: "Đề xuất tính riêng cho từng store. Chọn <b>Tất cả store</b> thì tab này không hiện đề xuất.",
+        side: "bottom",
+      },
+      {
+        target: "ppc-days",
+        title: "2. Kỳ dữ liệu 7D / 14D / 30D / 60D",
+        body: "Số Spend, Sales, ACoS và đề xuất đều tính trên kỳ này. <b>30D</b> là kỳ mặc định và được tính sẵn mỗi ngày nên mở nhanh nhất. Ngưỡng click của luật KHÔNG đổi theo kỳ: kỳ 7D ít click hơn nên ít đề xuất giảm / pause hơn.",
+        side: "bottom",
+      },
+      {
+        target: "rec-toolbar",
+        title: "3. Thanh lọc",
+        body: "Tìm SKU / ASIN / Niche, lọc trạng thái SKU, Phôi, Niche, PIC, khoảng số (nút Lọc), và hàng chip lọc nhanh Tăng / Giảm / Pause / Lỗ ACoS…",
+        side: "bottom",
+      },
+      {
+        target: "rec-table",
+        title: "4. Bảng SKU",
+        body: "Mỗi dòng là 1 SKU: Spend, Sales, ACoS (đỏ = cao hơn BE ACoS, xanh = thấp hơn), tồn kho, số đề xuất. Bấm vào dòng hoặc <b>Chi tiết</b> để xem từng target và duyệt.",
+        side: "top",
+      },
+      {
+        target: "rec-outcomes-btn",
+        title: "5. Theo dõi kết quả",
+        body: "<b>Kết quả Auto Bid</b> chấm các lần chỉnh bid đã xuất lên Amazon sau 3 / 7 / 14 / 30 ngày (Win / Loss).",
+        side: "bottom",
+      },
+      {
+        target: "ppc-action-queue-btn",
+        title: "6. Action Queue",
+        body: "Nút nổi màu xanh: nơi chứa các đề xuất bạn đã Duyệt. Đầu ra cuối cùng ra từ đây: <b>Xuất Bulk File</b> (tự upload) hoặc <b>Auto Upload AdsPower</b> (Mac mini upload). Chưa xuất thì vẫn sửa / bỏ được.",
+        side: "left",
+        optional: true,
+      },
+    ],
+  },
+  {
+    id: "loc-sku",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Lọc SKU cần xử lý",
+    summary: "Dùng chip Tăng / Giảm / Pause / Lỗ ACoS… và bộ lọc Phôi, Niche, PIC.",
+    whenToUse: "Hỏi cách lọc / tìm SKU cần giảm bid, SKU đang lỗ, SKU chưa ra đơn, ý nghĩa các chip lọc nhanh, SP03/SB05/SB01, Đặt lại bộ lọc.",
+    cleanup: [{ type: "click", target: "rec-chip-all", ifPresent: true }],
+    steps: [
+      {
+        target: "rec-chips",
+        title: "Chip lọc nhanh",
+        body: "Bấm 1 chip để chỉ xem SKU thuộc nhóm đó, bấm lại để bỏ. Số bên cạnh = số SKU.",
+        side: "bottom",
+      },
+      {
+        target: "rec-chip-decrease",
+        title: "Ví dụ: chỉ xem SKU có đề xuất Giảm Bid",
+        body: "Mình bấm thử chip <b>Giảm Bid</b>: bảng chỉ còn SKU có ít nhất 1 target cần giảm bid.",
+        before: [{ type: "click", target: "rec-chip-decrease" }],
+        side: "bottom",
+      },
+      {
+        target: "rec-chip-bleeding",
+        title: "Lỗ ACoS / ACoS Tốt",
+        body: "<b>Lỗ ACoS</b>: SKU có chi tiêu và ACoS tổng cao hơn BE ACoS (ACoS hòa vốn). <b>ACoS Tốt</b>: có doanh số và ACoS ≤ BE ACoS. Đây là số tổng cả SKU, khác với ACoS từng target dùng để ra đề xuất.",
+        side: "bottom",
+      },
+      {
+        target: "rec-chip-zero-spend",
+        title: "Chưa cắn tiền / Chưa ra đơn",
+        body: "<b>Chưa cắn tiền</b>: Spend = $0 trong kỳ. <b>Chưa ra đơn</b>: có Spend nhưng Sales = $0.",
+        side: "bottom",
+      },
+      {
+        target: "rec-chip-prefix-error",
+        title: "Lỗi Prefix",
+        body: "SKU chưa xác định được Phôi, hoặc thiếu giá bán / Basecost / phí Amazon → không tính được BE ACoS và Max Bid nên <b>không có đề xuất</b>. Sửa ở Bảng Mã / Cost Master của store.",
+        side: "bottom",
+      },
+      {
+        target: "rec-chip-sp03",
+        title: "SP03 / SB05 / SB01",
+        body: "Lọc theo dạng chạy (đọc từ tên campaign): SP03 = Sponsored Products, SB05 = Sponsored Brands Video, SB01 = Sponsored Brands. Campaign SP01 / SP02 / SP04 không được chấm đề xuất.",
+        side: "bottom",
+      },
+      {
+        target: "rec-phoi",
+        title: "Phôi, Niche, PIC",
+        body: "Lọc theo loại phôi, niche và người phụ trách marketing (lấy từ Bảng Mã của store).",
+        side: "bottom",
+      },
+      {
+        target: "rec-metric-filter",
+        title: "Lọc theo khoảng số",
+        body: "Nút <b>Lọc</b>: lọc SKU theo khoảng Spend, Sales, ACoS, Click, Order, CPC, CVR.",
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "rec-chip-all",
+        title: "Bỏ lọc",
+        body: "Bấm <b>Tất cả</b> để bỏ chip, hoặc nút <b>Đặt lại</b> (hiện khi đang lọc) để xoá mọi bộ lọc. Mình trả màn hình về như cũ khi kết thúc.",
+        side: "bottom",
+      },
+    ],
+  },
+  {
+    id: "doc-bang",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Đọc các cột trong bảng",
+    summary: "ACoS vs BE ACoS, Tồn, số đề xuất, Trend 7D.",
+    whenToUse: "Hỏi ý nghĩa cột (BE ACoS, Tồn, Giá trị tồn, Đề xuất, Tăng/Giảm/Pause, Trend 7D), màu đỏ / xanh của ACoS, sắp xếp bảng.",
+    steps: [
+      {
+        target: "rec-col-acos",
+        title: "ACoS",
+        body: "Spend / Sales của SKU trong kỳ. <b>Đỏ</b> = cao hơn BE ACoS (đang lỗ sau quảng cáo), <b>xanh</b> = thấp hơn hoặc bằng. Bấm tiêu đề cột để sắp xếp.",
+        side: "bottom",
+      },
+      {
+        target: "rec-col-be-acos",
+        title: "BE ACoS (ACoS hòa vốn)",
+        body: "= Lãi trước quảng cáo ÷ Giá bán. Lãi trước QC = Giá − phí Amazon − Basecost − thuế (mặc định 3%). ACoS vượt mức này là bán lỗ.",
+        side: "bottom",
+      },
+      {
+        target: "rec-col-stock",
+        title: "Tồn / Giá trị tồn",
+        body: "Tồn FBA + AWD (available + inbound + reserved), cập nhật mỗi ngày khoảng 16h10. Giá trị tồn = Tồn × giá vốn TB năm. Store chưa nối kế toán thì để trống.",
+        side: "bottom",
+      },
+      {
+        target: "rec-col-recs",
+        title: "Đề xuất",
+        body: "Tổng số target có đề xuất đổi bid / pause của SKU.",
+        side: "bottom",
+      },
+      {
+        target: "rec-col-increase",
+        title: "Tăng Bid / Giảm Bid / Pause",
+        body: "Số target theo từng loại. Bấm vào số trên một dòng để mở SKU và chỉ xem đúng loại đó.",
+        side: "bottom",
+      },
+      {
+        target: "rec-col-trend",
+        title: "Trend (7D)",
+        body: "Biểu đồ nhỏ 7 ngày gần nhất của SKU (từ báo cáo quảng cáo). Bấm để mở biểu đồ chi tiết.",
+        side: "left",
+      },
+    ],
+  },
+  {
+    id: "duyet-1-sku",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Xem & duyệt đề xuất của 1 SKU",
+    summary: "Mở chi tiết SKU, xem từng target, sửa Final Bid rồi Duyệt vào Action Queue.",
+    whenToUse: "Hỏi cách duyệt / chỉnh / giảm / tăng bid cho 1 SKU hoặc 1 target, Final Bid, Suggested, nút Duyệt, duyệt nhiều target, sửa bid hàng loạt trong 1 SKU.",
+    cleanup: [closeSkuModal],
+    steps: [
+      {
+        target: "rec-row-first-detail",
+        title: "Mở chi tiết SKU",
+        body: "Bấm vào dòng SKU hoặc nút <b>Chi tiết</b>. Mình mở thử SKU đầu bảng.",
+        side: "left",
+        missingText: "Bảng chưa có SKU nào (đang tải / store chưa có đề xuất).",
+      },
+      {
+        target: "sku-kpis",
+        title: "Số tổng của SKU",
+        body: "Sales, Spend, Orders, ACoS, BE ACoS và <b>Max Bid</b> (trần bid của SKU) trong kỳ đang chọn.",
+        before: [...openFirstSku],
+        side: "bottom",
+      },
+      {
+        target: "sku-filter-bar",
+        title: "Lọc trong SKU",
+        body: "Lọc theo campaign / dạng chạy, tìm keyword, hoặc chỉ xem Tăng / Giảm / Pause.",
+        side: "bottom",
+      },
+      {
+        target: "sku-campaign-first",
+        title: "Đề xuất gom theo campaign",
+        body: "Mỗi thẻ là 1 campaign: ↑ số tăng, ↓ số giảm, ⏸ số pause. Mình bấm mở campaign đầu tiên.",
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "sku-target-first",
+        title: "Từng target",
+        body: "<b>Current</b> = bid hiện tại, <b>Suggested</b> = bid hệ thống đề xuất (xanh tăng, đỏ giảm, hoặc Pause).",
+        before: [{ type: "click", target: "sku-campaign-first" }, { type: "wait", ms: 400 }],
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "sku-final-bid-first",
+        title: "Final Bid — số sẽ được duyệt",
+        body: "Mặc định = Suggested. Muốn khác thì gõ số mới vào ô này trước khi duyệt. Chọn nhiều target rồi bấm <b>Sửa Bid</b> để sửa hàng loạt.",
+        side: "left",
+        optional: true,
+      },
+      {
+        target: ["sku-approve-first", "sku-action-first"],
+        title: "Duyệt → ⚡ Action",
+        body: "Bấm <b>Duyệt</b> để đưa target vào Action Queue (mình chỉ chỉ chỗ, không bấm thay bạn). Target đã duyệt thì nút thành nút xanh <b>⚡ Action</b> — bấm vào là mở thẳng Action Queue.",
+        side: "left",
+        optional: true,
+      },
+      {
+        target: "sku-select-all",
+        title: "Duyệt nhiều target",
+        body: "Tích chọn nhiều target (hoặc <b>Chọn tất cả</b>, hoặc ô tích ở tiêu đề campaign) rồi bấm <b>Duyệt N mục đã chọn</b>. Duyệt xong nút này thành <b>⚡ Action (N)</b> để mở Action Queue.",
+        side: "bottom",
+      },
+      {
+        target: "ppc-action-queue-btn",
+        title: "Bước tiếp: Action Queue",
+        body: "Duyệt mới chỉ đưa vào hàng đợi, <b>chưa đổi gì trên Amazon</b>. Mở nút xanh này (hoặc nút ⚡ Action trong SKU) để ra file: <b>Xuất Bulk File</b> rồi tự upload, hoặc <b>Auto Upload AdsPower</b>. Xem tiếp hướng dẫn \"Action Queue\", \"Xuất Bulk File\", \"Auto Upload\".",
+        before: [closeSkuModal, { type: "wait", ms: 300 }],
+        side: "left",
+        missingText: "Không thấy nút Action Queue — nút này chỉ hiện khi đang chọn 1 store cụ thể.",
+      },
+    ],
+  },
+  {
+    id: "ly-do-de-xuat",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Xem lý do một đề xuất",
+    summary: "Bấm target để xem Lý do, Giải thích phép tính, AI phản biện.",
+    whenToUse: "Hỏi 'vì sao target này bị giảm / tăng / pause', muốn xem luật và phép tính, AI phản biện, chat AI về 1 SKU.",
+    cleanup: [closeSkuModal],
+    steps: [
+      {
+        target: "rec-row-first-detail",
+        title: "Mở chi tiết SKU",
+        body: "Mình mở thử SKU đầu bảng.",
+        side: "left",
+        missingText: "Bảng chưa có SKU nào (đang tải / store chưa có đề xuất).",
+      },
+      {
+        target: "sku-campaign-first",
+        title: "Mở campaign",
+        body: "Mình mở campaign đầu tiên để thấy từng target.",
+        before: [...openFirstSku],
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "sku-reason-first",
+        title: "Lý do đề xuất",
+        body: "Bấm vào 1 dòng target để hiện <b>Lý do</b>: dạng chạy, luật khớp, ACoS so với BE ACoS (hoặc số click khi chưa có đơn), cùng CPC, CVR, ROAS.",
+        before: [{ type: "click", target: "sku-campaign-first" }, { type: "wait", ms: 400 }, { type: "click", target: "sku-target-first" }, { type: "wait", ms: 300 }],
+        side: "top",
+        optional: true,
+      },
+      {
+        target: "sku-explain-first",
+        title: "Giải thích",
+        body: "Mở bảng điều kiện luật và phép tính ra mức bid: bid hiện tại / CPC trung bình × % của luật, kẹp tại trần (Max Bid).",
+        side: "top",
+        optional: true,
+      },
+      {
+        target: "sku-ai-review-first",
+        title: "AI phản biện",
+        body: "Nhờ AI xem lại đề xuất này có hợp lý không (tham khảo, không tự duyệt).",
+        side: "top",
+        optional: true,
+      },
+      {
+        target: "sku-ai-chat",
+        title: "Chat AI về SKU",
+        body: "Bấm tên SKU (biểu tượng ✦) để mở khung chat AI hỏi riêng về số liệu SKU này.",
+        side: "bottom",
+      },
+    ],
+  },
+  {
+    id: "max-bid",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Max Bid (trần bid) của SKU",
+    summary: "Max Bid tính thế nào, sửa tay ở đâu.",
+    whenToUse: "Hỏi Max Bid / trần bid là gì, vì sao đề xuất bị chặn ở trần, sửa Max Bid, 'Sửa tay · tự tính'.",
+    cleanup: [closeSkuModal],
+    steps: [
+      {
+        target: "rec-row-first-detail",
+        title: "Mở chi tiết SKU",
+        body: "Max Bid nằm trong chi tiết SKU. Mình mở thử SKU đầu bảng.",
+        side: "left",
+        missingText: "Bảng chưa có SKU nào (đang tải / store chưa có đề xuất).",
+      },
+      {
+        target: "sku-max-bid",
+        title: "Max Bid",
+        body: "Max Bid = CR (mặc định 10%) × Lãi trước quảng cáo, tối thiểu $0.05. Trần thực tế: SP03 = 100% Max Bid, SB01 / SB05 = 80%. Bid đề xuất không bao giờ vượt trần; target đang có bid cao hơn trần thì chỉ có thể bị Pause, không tăng / giảm.",
+        before: [...openFirstSku],
+        side: "bottom",
+      },
+      {
+        target: "sku-max-bid",
+        title: "Sửa tay",
+        body: "Bấm biểu tượng ✏ cạnh chữ Max Bid để nhập số mới (> $0 và ≤ $100), Enter để lưu. Đã sửa tay thì hiện 'Sửa tay · tự tính $X' và nút <b>Bỏ</b> để quay về số tự tính. SKU Lỗi Prefix không sửa được.",
+        side: "bottom",
+      },
+    ],
+  },
+  {
+    id: "duyet-hang-loat",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Duyệt nhiều SKU một lần",
+    summary: "Tích chọn SKU ngoài bảng rồi Duyệt N SKU.",
+    whenToUse: "Hỏi cách duyệt nhiều SKU / cả loạt / tất cả đề xuất cùng lúc, chọn tất cả SKU.",
+    cleanup: [{ type: "click", target: "rec-bulk-clear", ifPresent: true }],
+    steps: [
+      {
+        target: "rec-col-select",
+        title: "Chọn SKU",
+        body: "Tích ô đầu dòng để chọn SKU; ô ở tiêu đề chọn tất cả SKU đang lọc. Nên lọc trước (vd chip Giảm Bid) rồi mới chọn tất cả.",
+        side: "right",
+      },
+      {
+        target: "rec-bulk-bar",
+        title: "Thanh duyệt hàng loạt",
+        body: "Mình tích thử SKU đầu bảng: thanh này hiện số SKU đang chọn.",
+        before: [{ type: "click", target: "rec-row-first-checkbox" }, { type: "wait", ms: 300 }],
+        side: "bottom",
+      },
+      {
+        target: "rec-bulk-approve",
+        title: "Duyệt N SKU — đọc kỹ",
+        body: "Nút này duyệt <b>TẤT CẢ</b> đề xuất của các SKU đã chọn theo đúng <b>bid đề xuất</b>, không xem từng target. Muốn sửa Final Bid thì vào Chi tiết từng SKU. Mình không bấm thay bạn.",
+        side: "bottom",
+      },
+      {
+        target: "rec-bulk-clear",
+        title: "Bỏ chọn",
+        body: "Bấm <b>Bỏ chọn</b> để huỷ chọn. Mình sẽ bỏ chọn khi kết thúc.",
+        side: "bottom",
+      },
+    ],
+  },
+  {
+    id: "action-queue",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Action Queue: kiểm tra trước khi đẩy",
+    summary: "Xem, sửa bid, xoá hành động đã duyệt; chọn cách đẩy lên Amazon.",
+    whenToUse: "Hỏi Action Queue ở đâu / dùng thế nào, đã duyệt rồi làm gì tiếp, sửa / xoá / bỏ hành động đã duyệt, hoàn tác trước khi đẩy, lọc theo SKU trong hàng đợi.",
+    cleanup: [closeQueue],
+    steps: [
+      {
+        target: "ppc-action-queue-btn",
+        title: "Mở Action Queue",
+        body: "Nút xanh nổi góc dưới (kéo được, kéo sang phải để thu gọn). Số trên nút = hành động <b>bạn</b> đã duyệt đang chờ đẩy. Mình mở thử.",
+        side: "left",
+        missingText: "Nút Action Queue chỉ hiện khi đang chọn 1 store cụ thể.",
+      },
+      {
+        target: "aq-table",
+        title: "Hàng đợi, gom theo SKU",
+        body: "Mỗi dòng: campaign / target, hành động (Update Bid / Pause), <b>Old</b> → <b>New (Bid)</b>. Bấm vào số New Bid để sửa, Enter để lưu ($0.02–$100). Nút thùng rác ở cột <b>Xóa</b> = bỏ hành động khỏi hàng đợi (chưa đẩy thì không ảnh hưởng gì Amazon).",
+        before: [...openQueue],
+        side: "top",
+        missingText: "Không mở được Action Queue.",
+      },
+      {
+        target: "aq-sku-filter",
+        title: "Chọn / lọc",
+        body: "<b>Lọc theo SKU</b> để làm từng SKU. Tích chọn nhiều dòng → <b>Xóa đã chọn</b> hoặc <b>Đổi bid</b> hàng loạt; khi đang chọn, nút xuất chỉ xuất các dòng đã chọn.",
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "aq-export-btn",
+        title: "Đầu ra 1: Xuất Bulk File",
+        body: "Tạo file Amazon Bulksheet (.xlsx) → bạn <b>tự upload</b> lên Amazon Ads (Bulk operations). Hệ thống không biết bạn đã upload hay chưa.",
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "aq-auto-upload-btn",
+        title: "Đầu ra 2: Auto Upload AdsPower",
+        body: "Hệ thống tự tạo file và xếp hàng cho máy Mac mini (AdsPower) upload thay bạn; xong thì báo kết quả ngay bên dưới.",
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "aq-history",
+        title: "Kết quả thực thi",
+        body: "Lịch sử các lượt Auto Upload của store: Đang chờ upload → Đang thực thi → Áp dụng thành công / Thành công một phần / Thất bại. Bấm <b>Chi tiết</b> xem từng hành động và phản hồi của Amazon.",
+        side: "top",
+        optional: true,
+      },
+    ],
+  },
+  {
+    id: "xuat-bulk-file",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Xuất Bulk File rồi tự upload",
+    summary: "Tạo file .xlsx từ Action Queue và upload lên Amazon Ads.",
+    whenToUse: "Hỏi xuất file bulk / tải file excel / upload thủ công lên Amazon, file bulk gồm những gì, kiểm tra hợp lệ, lỗi thiếu ID.",
+    cleanup: [{ type: "click", target: "aq-export-cancel", ifPresent: true }, closeQueue],
+    steps: [
+      {
+        target: "aq-export-btn",
+        title: "Nút Xuất Bulk File",
+        body: "Trong Action Queue. Không chọn dòng nào = xuất cả hàng đợi; đang lọc 1 SKU = xuất SKU đó; đang tích chọn = xuất các dòng đã chọn. Mình mở hộp xuất (chưa tải file).",
+        before: [...openQueue],
+        side: "bottom",
+        missingText: "Không mở được Action Queue (cần chọn 1 store cụ thể).",
+      },
+      {
+        target: "aq-export-modal",
+        title: "Tổng hợp trước khi xuất",
+        body: "Số hành động Update Bid / Pause Target sẽ nằm trong file.",
+        before: [{ type: "click", target: "aq-export-btn" }, { type: "wait", ms: 500 }],
+        side: "left",
+        missingText: "Hàng đợi đang trống nên nút Xuất bị khoá — duyệt ít nhất 1 đề xuất rồi xem lại.",
+      },
+      {
+        target: "aq-export-validation",
+        title: "Kiểm tra hợp lệ",
+        body: "Đủ Campaign ID / Ad Group ID / Target ID, bid trong giới hạn, đã khử trùng lặp (cùng target có Pause thì bỏ Update Bid). Có lỗi thì nút tải bị khoá.",
+        side: "left",
+        optional: true,
+      },
+      {
+        target: "aq-export-download",
+        title: "Tải file",
+        body: "Bấm <b>Tải Amazon Bulk File (.xlsx)</b> (mình không bấm thay). Sau khi tải, các hành động chuyển sang <b>đã xuất</b> và bắt đầu được theo dõi ở Kết quả Auto Bid — nhớ <b>upload file lên Amazon Ads</b> ngay, không thì kết quả sẽ báo \"Amazon chưa áp dụng\".",
+        side: "top",
+        optional: true,
+      },
+    ],
+  },
+  {
+    id: "auto-upload",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Auto Upload AdsPower",
+    summary: "Để máy Mac mini tự upload file lên Amazon, theo dõi kết quả.",
+    whenToUse: "Hỏi auto upload / AdsPower / Mac mini, upload tự động, chế độ an toàn SKU chưa cắn tiền, ô xác nhận rủi ro, theo dõi upload thành công / thất bại, huỷ, upload lại.",
+    cleanup: [{ type: "click", target: "aq-au-cancel", ifPresent: true }, closeQueue],
+    steps: [
+      {
+        target: "aq-auto-upload-btn",
+        title: "Nút Auto Upload AdsPower",
+        body: "Trong Action Queue, số trên nút = hành động sẽ upload. Mình mở hộp Auto Upload (chưa chạy).",
+        before: [...openQueue],
+        side: "bottom",
+        missingText: "Không mở được Action Queue (cần chọn 1 store cụ thể).",
+      },
+      {
+        target: "aq-au-mode",
+        title: "Chế độ an toàn / Cảnh báo",
+        body: "Chỉ gồm SKU <b>chưa cắn tiền</b> → chế độ an toàn (xanh). Có SKU <b>đang cắn tiền</b> → khung đỏ, phải tích <b>“Tôi đã kiểm tra kỹ…”</b> thì nút chạy mới mở.",
+        before: [{ type: "click", target: "aq-auto-upload-btn" }, { type: "wait", ms: 500 }],
+        side: "left",
+        missingText: "Hàng đợi đang trống nên nút Auto Upload bị khoá — duyệt ít nhất 1 đề xuất rồi xem lại.",
+      },
+      {
+        target: "aq-au-sku",
+        title: "Chọn phạm vi",
+        body: "Tất cả SKU, chỉ SKU chưa cắn tiền, hoặc 1 SKU. Xem số actions sẽ upload và store / profile AdsPower dùng để upload.",
+        side: "left",
+        optional: true,
+      },
+      {
+        target: "aq-au-start",
+        title: "Bắt đầu",
+        body: "Bấm <b>⚡ Bắt Đầu Auto Upload</b> (mình không bấm thay): hệ thống tạo file Bulk, đẩy lên kho file rồi xếp hàng cho Mac mini. Mac mini báo thành công thì hành động chuyển <b>đã áp dụng</b>.",
+        side: "top",
+        optional: true,
+      },
+      {
+        target: "aq-history",
+        title: "Theo dõi kết quả",
+        body: "<b>Đang chờ upload</b> (còn huỷ được) → <b>Đang thực thi</b> → <b>Áp dụng thành công</b> / <b>Thành công một phần</b> / <b>Thất bại</b> / <b>Không xác nhận được</b>. Lượt thất bại mà file chưa tới Amazon có nút <b>Upload lại</b>; lượt nào còn file thì có nút tải file .xlsx tương ứng.",
+        before: [{ type: "click", target: "aq-au-cancel", ifPresent: true }, { type: "wait", ms: 300 }],
+        side: "top",
+        optional: true,
+      },
+    ],
+  },
+  {
+    id: "auto-giam-bid",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Cài Auto giảm Bid",
+    summary: "Tự nhắc giảm bid qua Lark lúc 9h, bấm xác nhận mới đẩy lên Amazon.",
+    whenToUse: "Hỏi Auto giảm Bid là gì / cài thế nào / sao không nhận thẻ Lark / lô thông báo / hoãn / xác nhận giảm.",
+    cleanup: [{ type: "click", target: "ad-close", ifPresent: true }],
+    steps: [
+      {
+        target: "rec-auto-decrease-btn",
+        title: "Nút Auto giảm Bid",
+        body: "Cài đặt riêng của BẠN cho store đang chọn. Mình mở thử (chỉ xem, không lưu).",
+        side: "bottom",
+      },
+      {
+        target: "ad-enable",
+        title: "Bật / tắt",
+        body: "Khi bật: target còn đề xuất <b>Giảm Bid</b> liên tục đủ số ngày mà chưa ai xử lý → <b>9h sáng</b> gửi thẻ Lark cá nhân cho bạn. Không có gì thay đổi trên Amazon cho tới khi bạn bấm <b>Xác nhận giảm</b>.",
+        before: [{ type: "click", target: "rec-auto-decrease-btn" }, { type: "wait", ms: 700 }],
+        side: "bottom",
+      },
+      {
+        target: "ad-scope",
+        title: "Phạm vi",
+        body: "Chỉ các SKU được chọn (tối đa 500) hoặc tất cả SKU của store. Nên bắt đầu với vài SKU.",
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "ad-params",
+        title: "Thông số",
+        body: "<b>Chờ chưa action</b> (mặc định 3 ngày dữ liệu liên tiếp còn đề xuất giảm). <b>Bid tối thiểu</b> (mặc định $0.10, không hạ dưới mức này). <b>Bỏ qua nếu vừa chỉnh</b> (mặc định 7 ngày). Chỉ lấy đề xuất Giảm Bid kỳ 30D, không gồm Pause / Tăng; tối đa 100 target / lô.",
+        side: "top",
+        optional: true,
+      },
+      {
+        target: "ad-batches",
+        title: "Lô thông báo gần đây",
+        body: "Các lô đã gửi. Lark không gửi được thì vẫn duyệt được ở đây (bỏ chọn từng target). Lô hết hạn sau 1 ngày; sáng hôm sau có lô mới nếu đề xuất vẫn còn. <b>Hoãn 3 ngày</b> = không nhắc lại các target đó trong 3 ngày.",
+        side: "top",
+        optional: true,
+      },
+    ],
+  },
+  {
+    id: "ket-qua-auto-bid",
+    page: PPC_AUTOBID_GUIDE_PAGE,
+    title: "Xem kết quả sau khi chỉnh bid",
+    summary: "Win / Loss sau 3–7–14–30 ngày, mục Cần hoàn bid.",
+    whenToUse: "Hỏi chỉnh bid xong có hiệu quả không, Win / Loss / Bị ngắt / Chưa đủ dữ liệu, Cần hoàn bid, Amazon chưa áp dụng.",
+    cleanup: [{ type: "click", target: "ob-close", ifPresent: true }],
+    steps: [
+      {
+        target: "rec-outcomes-btn",
+        title: "Kết quả Auto Bid",
+        body: "Theo dõi các lần chỉnh bid đã <b>xuất / upload lên Amazon</b>. Mình mở thử.",
+        side: "bottom",
+      },
+      {
+        target: "ob-summary",
+        title: "Tổng quan Win / Loss",
+        body: "Mỗi lần chỉnh được chấm ở 4 mốc 3 / 7 / 14 / 30 ngày, so với cùng số ngày trước khi chỉnh. Thước đo: <b>lãi đóng góp = Sales QC × biên lãi − Spend QC</b>, so với mức kỳ vọng. Vượt ngưỡng nhiễu → Win, tụt dưới → Loss, còn lại Bình thường.",
+        before: [{ type: "click", target: "rec-outcomes-btn" }, { type: "wait", ms: 900 }],
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "ob-filters",
+        title: "Lọc theo mốc / trạng thái",
+        body: "Lọc theo mốc ngày, Win / Loss, tìm target / campaign / SKU. SP cần thêm ~7 ngày, SB ~14 ngày để Amazon ghi nhận đủ đơn.",
+        side: "bottom",
+        optional: true,
+      },
+      {
+        target: "ob-list",
+        title: "Từng lần chỉnh",
+        body: "<b>Cần hoàn bid</b>: Loss từ mốc 7 ngày → gợi ý quay về bid tốt nhất trước đó (có nút Duyệt vào Action Queue). <b>Amazon chưa áp dụng</b>: báo cáo sau ngày chỉnh vẫn ra bid cũ. <b>Bị ngắt</b>: target bị chỉnh tiếp trong lúc đang đo.",
+        side: "top",
+        optional: true,
+      },
+      {
+        target: "ob-refresh",
+        title: "Cập nhật kết quả",
+        body: "Bấm để chấm lại với số liệu mới nhất (mình không bấm thay bạn).",
+        side: "left",
+        optional: true,
+      },
+    ],
+  },
+];
+
+// Thứ tự hiển thị = thứ tự quy trình: hiểu màn hình → lọc → hiểu đề xuất → duyệt → Action Queue → ĐẦU RA (file Bulk /
+// Auto Upload) → theo dõi kết quả; Auto giảm Bid là luồng tự động riêng.
+const ORDER = [
+  "tong-quan",
+  "loc-sku",
+  "doc-bang",
+  "ly-do-de-xuat",
+  "max-bid",
+  "duyet-1-sku",
+  "duyet-hang-loat",
+  "action-queue",
+  "xuat-bulk-file",
+  "auto-upload",
+  "ket-qua-auto-bid",
+  "auto-giam-bid",
+];
+
+if (ORDER.length !== TOURS.length) throw new Error("ORDER phải liệt kê đủ mọi kịch bản hướng dẫn.");
+
+export const PPC_AUTOBID_TOURS: GuideTour[] = ORDER.map((id) => {
+  const tour = TOURS.find((t) => t.id === id);
+  if (!tour) throw new Error(`Thiếu kịch bản ${id}`);
+  return tour;
+});
+
+export function getPpcAutobidTour(id: string) {
+  return PPC_AUTOBID_TOURS.find((t) => t.id === id) ?? null;
+}

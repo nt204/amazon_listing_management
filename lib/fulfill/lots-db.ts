@@ -273,7 +273,8 @@ export async function getFulfillLot(
   };
 }
 
-async function lockUnshippedLot(tx: postgres.TransactionSql, storeId: string, lotName: string) {
+/** Khoá các dòng của lô để sửa / xoá. `requireUnshipped`: chặn khi lô đã có hoạt động đi hàng (dùng khi xoá). */
+async function lockLot(tx: postgres.TransactionSql, storeId: string, lotName: string, requireUnshipped: boolean) {
   await tx`SELECT pg_advisory_xact_lock(hashtext(${inboundSheetLockKey(storeId)}))`;
   const candidates = await tx<Pick<RawRow, "id" | "ten_lo_hang" | "sup" | "ngay_request">[]>`
     SELECT id, ten_lo_hang, sup, ngay_request
@@ -295,8 +296,8 @@ async function lockUnshippedLot(tx: postgres.TransactionSql, storeId: string, lo
   if (rows.length !== ids.length || rows.some((row) => lotNameOf(row).name !== lotName)) {
     throw new ApiError("This lot changed. Reopen it and try again.", 409);
   }
-  if (rows.some(hasShipmentEvidence)) {
-    throw new ApiError("This lot cannot be changed because at least one line has shipment activity.", 409);
+  if (requireUnshipped && rows.some(hasShipmentEvidence)) {
+    throw new ApiError("This lot cannot be deleted because at least one line has shipment activity.", 409);
   }
   return rows;
 }
@@ -304,7 +305,7 @@ async function lockUnshippedLot(tx: postgres.TransactionSql, storeId: string, lo
 export async function deleteUnshippedFulfillLot(storeId: string, lotName: string, changedBy: string): Promise<number> {
   const sql = await getDatabaseClient();
   return sql.begin(async (tx) => {
-    const rows = await lockUnshippedLot(tx, storeId, lotName);
+    const rows = await lockLot(tx, storeId, lotName, true);
     // Đã thanh toán (có Ngày thanh toán) thì không xoá — giữ chứng từ công nợ
     if (rows.some((row) => clean(row.ngay_thanh_toan))) {
       throw new ApiError("This lot cannot be deleted because it has been paid.", 409);
@@ -348,7 +349,7 @@ function parseEditableValue(field: keyof typeof LOT_EDIT_FIELDS, input: string) 
   return text || null;
 }
 
-export async function updateUnshippedFulfillLot(
+export async function updateFulfillLot(
   storeId: string,
   lotName: string,
   edits: { id: string; version: string; fields: Record<string, string> }[],
@@ -356,7 +357,8 @@ export async function updateUnshippedFulfillLot(
 ) {
   const sql = await getDatabaseClient();
   await sql.begin(async (tx) => {
-    const rows = await lockUnshippedLot(tx, storeId, lotName);
+    // Team sửa được cả bảng kể cả khi lô đã đi hàng (phần đóng gói / vận chuyển điền sau khi gửi)
+    const rows = await lockLot(tx, storeId, lotName, false);
     const byId = new Map(rows.map((row) => [row.id, row]));
     const generated = rows.some((row) => lotNameOf(row).generated);
     for (const edit of edits) {

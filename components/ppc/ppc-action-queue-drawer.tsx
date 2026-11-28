@@ -1220,6 +1220,7 @@ export function PpcActionQueueDrawer({
       >
         {/* Rộng rãi & Thoải mái: tối ưu chiều rộng drawer để hiển thị trọn vẹn toàn bộ bảng */}
         <div
+          data-tour="aq-drawer"
           className="w-full max-w-[96vw] xl:max-w-[92vw] 2xl:max-w-[88vw] bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200 h-full overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
@@ -1254,6 +1255,8 @@ export function PpcActionQueueDrawer({
                   e.stopPropagation();
                   onClose();
                 }}
+                data-tour="aq-close"
+                aria-label="Đóng Action Queue"
                 className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition cursor-pointer shrink-0"
                 title="Đóng (Esc)"
               >
@@ -1262,7 +1265,7 @@ export function PpcActionQueueDrawer({
             </div>
 
             {/* Action Bar with SKU selector & filter */}
-            <div className="flex flex-wrap items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs gap-3">
+            <div data-tour="aq-toolbar" className="flex flex-wrap items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs gap-3">
               {/* Left: Select All & Filter by SKU */}
               <div className="flex flex-wrap items-center gap-2.5">
                 <button
@@ -1302,7 +1305,7 @@ export function PpcActionQueueDrawer({
                 )}
 
                 {/* SKU Selector Dropdown */}
-                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
+                <div data-tour="aq-sku-filter" className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
                   <Funnel size={13} className="text-slate-400" weight="bold" />
                   <span className="text-slate-400 font-semibold">Lọc theo SKU:</span>
                   <select
@@ -1348,6 +1351,7 @@ export function PpcActionQueueDrawer({
 
                 {/* Nút Auto Upload AdsPower áp dụng cho toàn bộ SKU */}
                 <button
+                  data-tour="aq-auto-upload-btn"
                   onClick={handleOpenAutoUploadModal}
                   disabled={targetActions.length === 0}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-linear-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-black transition shadow-xs disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
@@ -1366,6 +1370,8 @@ export function PpcActionQueueDrawer({
 
                 {/* Nút Xuất File Bulk thường */}
                 <button
+                  data-tour="aq-export-btn"
+                  data-tour-safe
                   onClick={() => setIsExportWizardOpen(true)}
                   disabled={actions.length === 0}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold transition shadow-xs disabled:opacity-40 cursor-pointer"
@@ -1403,7 +1409,7 @@ export function PpcActionQueueDrawer({
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white max-h-[52vh] shadow-2xs">
+              <div data-tour="aq-table" className="overflow-x-auto rounded-xl border border-slate-200 bg-white max-h-[52vh] shadow-2xs">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50/90 text-slate-600 sticky top-0 border-b border-slate-200 font-bold z-10 whitespace-nowrap">
                     <tr>
@@ -1834,7 +1840,7 @@ export function PpcActionQueueDrawer({
             </div>
 
             {/* Execution history */}
-            <section className="rounded-xl border border-slate-200 bg-white shadow-2xs">
+            <section data-tour="aq-history" className="rounded-xl border border-slate-200 bg-white shadow-2xs">
               <div className="flex items-center justify-between border-b border-slate-200 px-3.5 py-2.5 bg-slate-50/50">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
                   <Lightning size={14} weight="fill" className="text-amber-600" />
@@ -2093,7 +2099,7 @@ export function PpcActionQueueDrawer({
       {/* AUTO UPLOAD ADSPOWER MODAL */}
       {isAutoUploadModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl p-6 shadow-2xl space-y-5">
+          <div data-tour="aq-au-modal" className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl p-6 shadow-2xl space-y-5">
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-2.5">
                 <div className={`p-2 rounded-xl border ${
@@ -2123,7 +2129,7 @@ export function PpcActionQueueDrawer({
 
             {/* Warning & Confirmation Box */}
             {hasActiveSpendInModal ? (
-              <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-2.5 text-xs text-rose-950">
+              <div data-tour="aq-au-mode" className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-2.5 text-xs text-rose-950">
                 <div className="flex items-center gap-2 font-black text-rose-700 uppercase tracking-wide">
                   <WarningCircle size={18} weight="fill" className="text-rose-600 shrink-0" />
                   <span>Cảnh báo quan trọng: Áp dụng cho SKU đang chạy</span>
@@ -2144,7 +2150,7 @@ export function PpcActionQueueDrawer({
                 </label>
               </div>
             ) : (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-1 text-xs text-emerald-950">
+              <div data-tour="aq-au-mode" className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-1 text-xs text-emerald-950">
                 <div className="flex items-center gap-1.5 font-bold text-emerald-700">
                   <ShieldCheck size={16} weight="fill" className="text-emerald-600 shrink-0" />
                   <span>Chế độ an toàn: Chỉ SKU chưa cắn tiền (Zero Spend)</span>
@@ -2156,7 +2162,7 @@ export function PpcActionQueueDrawer({
             )}
 
             {/* SKU Target Selector inside Modal */}
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3 text-xs">
+            <div data-tour="aq-au-sku" className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3 text-xs">
               <div className="flex justify-between items-center text-slate-700">
                 <span className="font-bold">Chọn SKU thực thi:</span>
                 <select
@@ -2298,6 +2304,7 @@ export function PpcActionQueueDrawer({
             {/* Buttons */}
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
+                data-tour="aq-au-cancel"
                 onClick={() => setIsAutoUploadModalOpen(false)}
                 disabled={isAutoUploading}
                 className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold transition disabled:opacity-40 cursor-pointer"
@@ -2317,6 +2324,7 @@ export function PpcActionQueueDrawer({
                 </button>
               ) : (
                 <button
+                  data-tour="aq-au-start"
                   onClick={handleExecuteAutoUpload}
                   disabled={
                     isAutoUploading ||
@@ -2355,7 +2363,7 @@ export function PpcActionQueueDrawer({
       {/* BULK EXPORT WIZARD MODAL */}
       {isExportWizardOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 shadow-2xl space-y-5">
+          <div data-tour="aq-export-modal" className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 shadow-2xl space-y-5">
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
               <div>
                 <h3 className="text-base font-black text-slate-900">EXPORT AMAZON BULK</h3>
@@ -2391,7 +2399,7 @@ export function PpcActionQueueDrawer({
             </div>
 
             {/* Validation checklist */}
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-2.5 text-xs">
+            <div data-tour="aq-export-validation" className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-2.5 text-xs">
               <div className="text-[11px] font-black text-slate-700 uppercase tracking-wider mb-1">
                 Kiểm tra tính hợp lệ (Validation)
               </div>
@@ -2427,12 +2435,14 @@ export function PpcActionQueueDrawer({
             {/* Buttons */}
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
+                data-tour="aq-export-cancel"
                 onClick={() => setIsExportWizardOpen(false)}
                 className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold transition cursor-pointer"
               >
                 Hủy
               </button>
               <button
+                data-tour="aq-export-download"
                 onClick={handleExecuteDownload}
                 disabled={!validation.isValid || isDownloading}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold transition shadow-xs disabled:opacity-40 cursor-pointer"

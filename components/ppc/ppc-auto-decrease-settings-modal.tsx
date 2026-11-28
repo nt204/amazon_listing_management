@@ -381,7 +381,7 @@ export function PpcAutoDecreaseSettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-2 sm:p-4 backdrop-blur-xs">
-      <div className="flex max-h-[92vh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div data-tour="ad-modal" className="flex max-h-[92vh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white">
@@ -406,7 +406,7 @@ export function PpcAutoDecreaseSettingsModal({
             >
               ?
             </button>
-            <button type="button" onClick={() => { setNotice(""); setError(""); setShowHelp(false); onClose(); }} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 cursor-pointer" aria-label="Đóng">
+            <button type="button" data-tour="ad-close" onClick={() => { setNotice(""); setError(""); setShowHelp(false); onClose(); }} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 cursor-pointer" aria-label="Đóng">
               <X size={18} weight="bold" />
             </button>
           </div>
@@ -436,7 +436,7 @@ export function PpcAutoDecreaseSettingsModal({
           {draft && data && (
             <>
               {/* Bật / tắt */}
-              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3">
+              <label data-tour="ad-enable" className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3">
                 <div className="text-sm font-black text-slate-900">Bật Auto giảm Bid</div>
                 <input
                   type="checkbox"
@@ -448,7 +448,7 @@ export function PpcAutoDecreaseSettingsModal({
               </label>
 
               {/* Phạm vi */}
-              <div className="space-y-2">
+              <div data-tour="ad-scope" className="space-y-2">
                 <div className="text-xs font-black uppercase tracking-wide text-slate-500">Phạm vi áp dụng</div>
                 <div className="flex flex-wrap gap-2">
                   {([
@@ -555,7 +555,7 @@ export function PpcAutoDecreaseSettingsModal({
               </div>
 
               {/* Thông số */}
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div data-tour="ad-params" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <div className="space-y-1">
                   <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Chờ chưa action</div>
                   <select className={inputCls} disabled={!canEdit} value={draft.waitDays}
@@ -604,7 +604,7 @@ export function PpcAutoDecreaseSettingsModal({
               </div>
 
               {/* Lô gần đây */}
-              <div className="space-y-2 border-t border-slate-100 pt-4">
+              <div data-tour="ad-batches" className="space-y-2 border-t border-slate-100 pt-4">
                 <div className="text-xs font-black uppercase tracking-wide text-slate-500">Lô thông báo gần đây</div>
                 {data.batches.length === 0 && <div className="text-xs text-slate-400">Chưa có lô nào.</div>}
                 {data.batches.map((batch) => {

@@ -1292,10 +1292,11 @@ export function PpcSkuRecommendationGroupView({
   };
 
   // Render Sort Header Helper
-  const renderSortHeader = (label: string, field: SortField, align: "left" | "right" | "center" = "left", title?: string) => {
+  const renderSortHeader = (label: string, field: SortField, align: "left" | "right" | "center" = "left", title?: string, tour?: string) => {
     const isActive = sortField === field;
     return (
       <th
+        data-tour={tour}
         onClick={() => handleSort(field)}
         className={`py-3 px-3 text-${align} whitespace-nowrap select-none cursor-pointer hover:bg-slate-100/80 transition group`}
         title={title ?? `Click để sắp xếp theo ${label}`}
@@ -1344,13 +1345,13 @@ export function PpcSkuRecommendationGroupView({
         </div>
       )}
       {/* Top Filter Area: Search, Phôi & Summary */}
-      <div className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5">
+      <div data-tour="rec-toolbar" className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5">
         {/* Row 1: Controls, Metrics & Auto Bid Button */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Left: Search, Phôi, Window Toggle */}
           <div className="contents">
             {/* Search Box */}
-            <div className="relative w-full sm:w-44">
+            <div data-tour="rec-search" className="relative w-full sm:w-44">
               <MagnifyingGlass
                 size={14}
                 className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
@@ -1373,11 +1374,13 @@ export function PpcSkuRecommendationGroupView({
               )}
             </div>
 
-            <PpcSkuStatusFilter value={skuStatusFilter} onChange={setSkuStatusFilter} />
+            <div data-tour="rec-status-filter">
+              <PpcSkuStatusFilter value={skuStatusFilter} onChange={setSkuStatusFilter} />
+            </div>
 
             {/* Trang FBA / FBM / Khác (giống tab Manual Bid) */}
             {hasChannels && (
-              <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-2xs">
+              <div data-tour="rec-channel" className="flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-2xs">
                 {([["FBA", "FBA"], ["FBM", "FBM"], ["OTHER", "Khác"]] as const)
                   .filter(([k]) => k !== "OTHER" || channelCounts?.OTHER === undefined || channelCounts.OTHER > 0 || channelPage === "OTHER")
                   .map(([k, label]) => {
@@ -1400,7 +1403,7 @@ export function PpcSkuRecommendationGroupView({
             )}
 
             {/* Dynamic Phôi Dropdown */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
+            <div data-tour="rec-phoi" className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
               <Tag size={13} className="text-slate-400 shrink-0" />
               <select
                 value={selectedPhôi}
@@ -1418,7 +1421,7 @@ export function PpcSkuRecommendationGroupView({
             </div>
 
             {/* Dynamic Niche Dropdown */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
+            <div data-tour="rec-niche" className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
               <Sparkle size={13} className="text-slate-400 shrink-0" />
               <select
                 value={selectedNiche}
@@ -1436,7 +1439,7 @@ export function PpcSkuRecommendationGroupView({
             </div>
 
             {/* PIC MKT Dropdown */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
+            <div data-tour="rec-pic" className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
               <UserCircle size={13} className="text-slate-400 shrink-0" />
               <select
                 value={selectedPic}
@@ -1454,11 +1457,14 @@ export function PpcSkuRecommendationGroupView({
             </div>
 
             {/* Lọc SKU theo khoảng số: Spend, Sales, ACOS, Click… (giống tab Manual Bid) */}
-            <PpcMetricRangeFilter value={metricRanges} onChange={setMetricRanges} />
+            <div data-tour="rec-metric-filter">
+              <PpcMetricRangeFilter value={metricRanges} onChange={setMetricRanges} />
+            </div>
 
             {/* Checkbox "Gồm paused" (đồng bộ các tab PPC): mặc định tắt = chỉ campaign đang chạy */}
             {onIncludePausedCampaignsChange && (
               <label
+                data-tour="rec-include-paused"
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer select-none transition shadow-2xs ${
                   includePausedCampaigns ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700"
                 }`}
@@ -1479,6 +1485,7 @@ export function PpcSkuRecommendationGroupView({
             {isFilterActive && (
               <button
                 type="button"
+                data-tour="rec-reset-filter"
                 onClick={() => {
                   setSearchTerm("");
                   setSkuStatusFilter("ALL");
@@ -1507,11 +1514,12 @@ export function PpcSkuRecommendationGroupView({
 
           {/* Right: Aggregates & Action Button */}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {recColumnPicker}
+            <div data-tour="rec-columns">{recColumnPicker}</div>
 
             {/* Cài đặt Auto giảm Bid (báo Lark 9h, xác nhận mới upload) */}
             <button
               type="button"
+              data-tour="rec-auto-decrease-btn"
               onClick={() => setShowAutoDecreaseModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 transition cursor-pointer shadow-2xs shrink-0"
               title="Auto giảm bid: đề xuất giảm chưa xử lý N ngày → báo Lark 9h → xác nhận mới đẩy Bulk lên Amazon"
@@ -1523,6 +1531,7 @@ export function PpcSkuRecommendationGroupView({
             {/* Nút Kết Quả Auto Bid */}
             <button
               type="button"
+              data-tour="rec-outcomes-btn"
               onClick={() => setShowOutcomesModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 transition cursor-pointer shadow-2xs shrink-0"
               title="Theo dõi kết quả sau chỉnh bid (3D, 7D, 14D, 30D)"
@@ -1534,11 +1543,12 @@ export function PpcSkuRecommendationGroupView({
         </div>
 
         {/* Row 2: Quick Filter Chips (Gọn gàng trên 1 hàng, không bị rớt dòng lẻ loi) */}
-        <div className="flex items-center gap-1 pt-2 border-t border-slate-100 overflow-x-auto no-scrollbar">
+        <div data-tour="rec-chips" className="flex items-center gap-1 pt-2 border-t border-slate-100 overflow-x-auto no-scrollbar">
 
           {/* Tất cả */}
           <button
             type="button"
+            data-tour="rec-chip-all"
             onClick={() => setQuickFilter("ALL")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "ALL"
@@ -1557,6 +1567,7 @@ export function PpcSkuRecommendationGroupView({
           {/* Tăng Bid */}
           <button
             type="button"
+            data-tour="rec-chip-increase"
             onClick={() => setQuickFilter(quickFilter === "INCREASE" ? "ALL" : "INCREASE")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "INCREASE"
@@ -1576,6 +1587,7 @@ export function PpcSkuRecommendationGroupView({
           {/* Giảm Bid */}
           <button
             type="button"
+            data-tour="rec-chip-decrease"
             onClick={() => setQuickFilter(quickFilter === "DECREASE" ? "ALL" : "DECREASE")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "DECREASE"
@@ -1595,6 +1607,7 @@ export function PpcSkuRecommendationGroupView({
           {/* Pause */}
           <button
             type="button"
+            data-tour="rec-chip-pause"
             onClick={() => setQuickFilter(quickFilter === "PAUSE" ? "ALL" : "PAUSE")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "PAUSE"
@@ -1614,6 +1627,7 @@ export function PpcSkuRecommendationGroupView({
           {/* Lỗ ACoS */}
           <button
             type="button"
+            data-tour="rec-chip-bleeding"
             onClick={() => setQuickFilter(quickFilter === "BLEEDING" ? "ALL" : "BLEEDING")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "BLEEDING"
@@ -1633,6 +1647,7 @@ export function PpcSkuRecommendationGroupView({
           {/* ACoS Tốt */}
           <button
             type="button"
+            data-tour="rec-chip-profitable"
             onClick={() => setQuickFilter(quickFilter === "PROFITABLE" ? "ALL" : "PROFITABLE")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "PROFITABLE"
@@ -1652,6 +1667,7 @@ export function PpcSkuRecommendationGroupView({
           {/* Chưa cắn tiền */}
           <button
             type="button"
+            data-tour="rec-chip-zero-spend"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SPEND" ? "ALL" : "ZERO_SPEND")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "ZERO_SPEND"
@@ -1671,6 +1687,7 @@ export function PpcSkuRecommendationGroupView({
           {/* Chưa ra đơn */}
           <button
             type="button"
+            data-tour="rec-chip-zero-sales"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SALES" ? "ALL" : "ZERO_SALES")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "ZERO_SALES"
@@ -1690,6 +1707,7 @@ export function PpcSkuRecommendationGroupView({
           {/* Lỗi Prefix */}
           <button
             type="button"
+            data-tour="rec-chip-prefix-error"
             onClick={() => setQuickFilter(quickFilter === "PREFIX_ERROR" ? "ALL" : "PREFIX_ERROR")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "PREFIX_ERROR"
@@ -1712,6 +1730,7 @@ export function PpcSkuRecommendationGroupView({
           {/* SP03 */}
           <button
             type="button"
+            data-tour="rec-chip-sp03"
             onClick={() => setSelectedCampType(selectedCampType === "SP03" ? "ALL" : "SP03")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               selectedCampType === "SP03"
@@ -1730,6 +1749,7 @@ export function PpcSkuRecommendationGroupView({
           {/* SB05 */}
           <button
             type="button"
+            data-tour="rec-chip-sb05"
             onClick={() => setSelectedCampType(selectedCampType === "SB05" ? "ALL" : "SB05")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               selectedCampType === "SB05"
@@ -1748,6 +1768,7 @@ export function PpcSkuRecommendationGroupView({
           {/* SB01 */}
           <button
             type="button"
+            data-tour="rec-chip-sb01"
             onClick={() => setSelectedCampType(selectedCampType === "SB01" ? "ALL" : "SB01")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               selectedCampType === "SB01"
@@ -1766,7 +1787,7 @@ export function PpcSkuRecommendationGroupView({
       </div>
 
       {selectedSkus.size > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 shadow-2xs">
+        <div data-tour="rec-bulk-bar" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 shadow-2xs">
           <div className="flex items-center gap-2 text-xs font-bold text-indigo-900">
             <button
               type="button"
@@ -1786,6 +1807,7 @@ export function PpcSkuRecommendationGroupView({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              data-tour="rec-bulk-clear"
               onClick={() => setSelectedSkus(new Set())}
               disabled={isBulkApproving}
               className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
@@ -1794,6 +1816,7 @@ export function PpcSkuRecommendationGroupView({
             </button>
             <button
               type="button"
+              data-tour="rec-bulk-approve"
               onClick={() => void handleApproveSelectedSkus()}
               disabled={isBulkApproving || isStoreSwitching}
               className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-black text-white shadow-2xs transition hover:bg-indigo-700 active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
@@ -1811,11 +1834,11 @@ export function PpcSkuRecommendationGroupView({
 
       {/* Level 1 Table: Grouped by SKU */}
       {/* Khung tự cuộn + thead sticky: lướt xuống vẫn thấy tên cột (giống bảng Campaign ở PPC Dashboard) */}
-      <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
+      <div data-tour="rec-table" className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
         <table ref={setRecTable} className="w-full text-left text-xs">
           <thead className="sticky top-0 z-20 bg-slate-50 shadow-[0_1px_0_0_rgb(226,232,240)] text-slate-600 border-b border-slate-200 font-bold">
             <tr>
-              <th className="w-10 py-3 pl-3 pr-1 text-center">
+              <th data-tour="rec-col-select" className="w-10 py-3 pl-3 pr-1 text-center">
                 <input
                   ref={selectAllSkusRef}
                   type="checkbox"
@@ -1832,16 +1855,16 @@ export function PpcSkuRecommendationGroupView({
               <th className="py-3 px-3">Phôi</th>
               {renderSortHeader("Spend", "spend", "right")}
               {renderSortHeader("Sales", "sales", "right")}
-              {renderSortHeader("ACoS", "acos", "right")}
-              {renderSortHeader("BE ACoS", "breakEvenAcos", "right")}
-              {renderSortHeader("Tồn", "stock", "right", stockMetaTitle(liveStock?.meta))}
+              {renderSortHeader("ACoS", "acos", "right", undefined, "rec-col-acos")}
+              {renderSortHeader("BE ACoS", "breakEvenAcos", "right", undefined, "rec-col-be-acos")}
+              {renderSortHeader("Tồn", "stock", "right", stockMetaTitle(liveStock?.meta), "rec-col-stock")}
               {renderSortHeader("Giá trị tồn", "stockValue", "right", stockMetaTitle(liveStock?.meta))}
-              {renderSortHeader("Đề xuất", "totalRecommendations", "center")}
-              {renderSortHeader("Tăng Bid", "increaseCount", "center")}
-              {renderSortHeader("Giảm Bid", "decreaseCount", "center")}
-              {renderSortHeader("Pause", "pauseCount", "center")}
-              <th className="py-3 px-3 text-center whitespace-nowrap">Chi tiết</th>
-              <th className="py-3 px-3 text-center w-24 whitespace-nowrap">Trend (7D)</th>
+              {renderSortHeader("Đề xuất", "totalRecommendations", "center", undefined, "rec-col-recs")}
+              {renderSortHeader("Tăng Bid", "increaseCount", "center", undefined, "rec-col-increase")}
+              {renderSortHeader("Giảm Bid", "decreaseCount", "center", undefined, "rec-col-decrease")}
+              {renderSortHeader("Pause", "pauseCount", "center", undefined, "rec-col-pause")}
+              <th data-tour="rec-col-detail" className="py-3 px-3 text-center whitespace-nowrap">Chi tiết</th>
+              <th data-tour="rec-col-trend" className="py-3 px-3 text-center w-24 whitespace-nowrap">Trend (7D)</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -1866,7 +1889,9 @@ export function PpcSkuRecommendationGroupView({
                 </td>
               </tr>
             ) : (
-              paginatedGroups.map((group) => {
+              paginatedGroups.map((group, rowIndex) => {
+                // Dòng đầu tiên gắn data-tour cho kịch bản hướng dẫn (components/guide)
+                const tourRow = rowIndex === 0;
                 const isBleeding = group.spend > 0 && group.acos > group.breakEvenAcos;
                 const isGoodAcos = group.sales > 0 && group.acos <= group.breakEvenAcos;
                 const isSkuSelected = selectedSkus.has(group.sku);
@@ -1874,6 +1899,7 @@ export function PpcSkuRecommendationGroupView({
                 return (
                   <tr
                     key={group.sku}
+                    data-tour={tourRow ? "rec-row-first" : undefined}
                     onClick={() => {
                       void handleOpenSkuGroup(group);
                       setRecentlyApprovedIds(new Set());
@@ -1884,6 +1910,7 @@ export function PpcSkuRecommendationGroupView({
                     <td className="py-3 pl-3 pr-1 text-center">
                       <input
                         type="checkbox"
+                        data-tour={tourRow ? "rec-row-first-checkbox" : undefined}
                         checked={isSkuSelected}
                         onClick={(event) => event.stopPropagation()}
                         onChange={() => handleToggleSku(group.sku)}
@@ -1997,7 +2024,9 @@ export function PpcSkuRecommendationGroupView({
                       ) : "—"}
                     </td>
                     <td className="py-3 px-3 text-center">
-                      <button className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100/90 border border-indigo-200/70 shadow-2xs transition cursor-pointer">
+                      <button
+                        data-tour={tourRow ? "rec-row-first-detail" : undefined}
+                        className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100/90 border border-indigo-200/70 shadow-2xs transition cursor-pointer">
                         <span>Chi tiết</span>
                         <CaretRight size={12} weight="bold" />
                       </button>
@@ -2043,6 +2072,7 @@ export function PpcSkuRecommendationGroupView({
         >
           <div className={`flex flex-col lg:flex-row gap-3 w-full items-stretch justify-center ${isAiChatOpen ? "max-w-[1720px]" : "max-w-[1280px]"}`}>
           <div
+            data-tour="sku-modal"
             className="w-full min-w-0 max-w-[1280px] h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
@@ -2061,6 +2091,7 @@ export function PpcSkuRecommendationGroupView({
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <button
                       type="button"
+                      data-tour="sku-ai-chat"
                       onClick={() => setAiChatSku(isAiChatOpen ? null : selectedSkuGroup.sku)}
                       title="Chat với AI về SKU này"
                       className={`inline-flex items-center gap-1.5 text-lg font-black rounded-md px-1 -mx-1 cursor-pointer transition-colors ${
@@ -2086,6 +2117,8 @@ export function PpcSkuRecommendationGroupView({
                 </div>
               </div>
               <button
+                data-tour="sku-modal-close"
+                aria-label="Đóng chi tiết SKU"
                 onClick={closeSkuModal}
                 className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer shrink-0"
               >
@@ -2097,7 +2130,7 @@ export function PpcSkuRecommendationGroupView({
               {/* LEFT: KPI + campaigns */}
               <div className="flex-1 min-w-0 overflow-y-auto p-5 space-y-4">
                 {/* KPI row */}
-                <div className="grid grid-cols-3 md:grid-cols-6 gap-2.5">
+                <div data-tour="sku-kpis" className="grid grid-cols-3 md:grid-cols-6 gap-2.5">
                   {[
                     { label: "Sales", value: `$${selectedSkuGroup.sales.toFixed(2)}`, tone: "text-slate-900" },
                     { label: "Spend", value: `$${selectedSkuGroup.spend.toFixed(2)}`, tone: "text-slate-900" },
@@ -2130,7 +2163,7 @@ export function PpcSkuRecommendationGroupView({
                     // Lỗi Prefix / thiếu dữ liệu (Max Bid tự tính = 0) thì không cho đặt tay
                     const canEdit = calculated > 0 && /^[0-9a-f-]{36}$/i.test(econ.storeId);
                     return (
-                      <div className={`rounded-xl border px-3.5 py-2.5 ${isOverridden ? "border-violet-300" : "border-slate-200"}`}>
+                      <div data-tour="sku-max-bid" className={`rounded-xl border px-3.5 py-2.5 ${isOverridden ? "border-violet-300" : "border-slate-200"}`}>
                         <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500">
                           Max Bid
                           {maxBidDraft === null && canEdit && (
@@ -2209,7 +2242,7 @@ export function PpcSkuRecommendationGroupView({
                 </div>
 
                 {/* Filter bar */}
-                <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-slate-200 p-2.5">
+                <div data-tour="sku-filter-bar" className="flex flex-wrap items-center gap-2.5 rounded-xl border border-slate-200 p-2.5">
                   <select
                     value={
                       modalCampaignFilter !== "ALL"
@@ -2256,7 +2289,7 @@ export function PpcSkuRecommendationGroupView({
                     />
                   </div>
 
-                  <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
+                  <div data-tour="sku-action-pills" className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
                     {([
                       { key: "ALL", label: "Tất cả", active: "bg-white text-indigo-700 shadow-2xs" },
                       { key: "BID_INCREASE", label: "Tăng", active: "bg-white text-emerald-700 shadow-2xs" },
@@ -2285,6 +2318,7 @@ export function PpcSkuRecommendationGroupView({
                   <div className="flex items-center gap-3 text-slate-500">
                     <button
                       type="button"
+                      data-tour="sku-select-all"
                       onClick={handleToggleSelectAll}
                       disabled={loadingSkuDetails || unapprovedSkuRecs.length === 0}
                       className="inline-flex items-center gap-1.5 font-semibold hover:text-slate-800 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -2337,6 +2371,7 @@ export function PpcSkuRecommendationGroupView({
                       </button>
                     ) : (
                       <button
+                        data-tour="sku-approve-selected"
                         onClick={handleApproveSelected}
                         disabled={selectedRecIds.size === 0 || isApproving || isStoreSwitching}
                         className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold disabled:opacity-40 cursor-pointer"
@@ -2397,7 +2432,7 @@ export function PpcSkuRecommendationGroupView({
                   )
                 ) : (
                   <div className="space-y-3">
-                    {groupedByCampaign.map((cg) => {
+                    {groupedByCampaign.map((cg, campIndex) => {
                       const unapprovedInCamp = cg.recs.filter((r) => !isTargetApproved(r));
                       const isCampaignAllApproved = cg.recs.length > 0 && unapprovedInCamp.length === 0;
                       const isCampaignAllSelected = unapprovedInCamp.length > 0 && unapprovedInCamp.every((r) => selectedRecIds.has(r.id));
@@ -2439,6 +2474,7 @@ export function PpcSkuRecommendationGroupView({
                           {/* Campaign header — click để mở / thu gọn; đang mở thì dính trên cùng khi cuộn tới hết campaign */}
                           <div
                             ref={syncCampaignHeaderHeight}
+                            data-tour={campIndex === 0 ? "sku-campaign-first" : undefined}
                             onClick={() => toggleCampaignExpanded(cg.campaignName)}
                             className={`flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 cursor-pointer select-none ${
                               isExpanded ? "sticky top-0 z-20 bg-white hover:bg-slate-50" : "hover:bg-slate-50/70"
@@ -2544,7 +2580,8 @@ export function PpcSkuRecommendationGroupView({
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-slate-700">
-                                  {cg.recs.map((rec) => {
+                                  {cg.recs.map((rec, recIndex) => {
+                                    const tourRec = campIndex === 0 && recIndex === 0;
                                     const isSelected = selectedRecIds.has(rec.id);
                                     const isFocused = focusedRecId === rec.id;
                                     const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
@@ -2558,6 +2595,7 @@ export function PpcSkuRecommendationGroupView({
                                     return (
                                       <Fragment key={rec.id}>
                                       <tr
+                                        data-tour={tourRec ? "sku-target-first" : undefined}
                                         onClick={() => setFocusedRecId((prev) => (prev === rec.id ? null : rec.id))}
                                         title="Bấm để xem lý do đề xuất"
                                         className={`cursor-pointer transition ${isFocused ? "bg-indigo-50/70" : isSelected ? "bg-indigo-50/30" : "hover:bg-slate-50"}`}
@@ -2615,14 +2653,14 @@ export function PpcSkuRecommendationGroupView({
                                         <td className="py-2.5 px-2 text-right font-mono text-slate-600">
                                           ${(rec.currentBid || 0).toFixed(2)}
                                         </td>
-                                        <td className="py-2.5 px-2 text-right font-mono font-bold">
+                                        <td data-tour={tourRec ? "sku-suggested-first" : undefined} className="py-2.5 px-2 text-right font-mono font-bold">
                                           {rec.recType === "PAUSE_TARGET" ? (
                                             <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px]">Pause</span>
                                           ) : (
                                             <span className={suggestedTone}>${(rec.recommendedBid || 0).toFixed(2)}</span>
                                           )}
                                         </td>
-                                        <td className="py-2.5 px-3 text-right">
+                                        <td data-tour={tourRec ? "sku-final-bid-first" : undefined} className="py-2.5 px-3 text-right">
                                           {rec.recType === "PAUSE_TARGET" ? (
                                             <span className="text-slate-400 font-mono">—</span>
                                           ) : (
@@ -2636,6 +2674,7 @@ export function PpcSkuRecommendationGroupView({
                                         <td className="py-2.5 pl-2 pr-4 text-right">
                                           {isApproved ? (
                                             <button
+                                              data-tour={tourRec ? "sku-action-first" : undefined}
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 handleOpenActionQueueModal();
@@ -2648,6 +2687,7 @@ export function PpcSkuRecommendationGroupView({
                                             </button>
                                           ) : (
                                             <button
+                                              data-tour={tourRec ? "sku-approve-first" : undefined}
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 void handleApproveSingle(rec);
@@ -2667,7 +2707,7 @@ export function PpcSkuRecommendationGroupView({
                                       {isFocused && (
                                         <tr className="bg-indigo-50/40">
                                           <td></td>
-                                          <td colSpan={14} className="px-2 pb-3 pt-1">
+                                          <td colSpan={14} className="px-2 pb-3 pt-1" data-tour={tourRec ? "sku-reason-first" : undefined}>
                                             <div className="flex flex-wrap items-start gap-3">
                                               <div className="flex-1 min-w-[280px] text-[11px] leading-relaxed">
                                                 <span className="font-semibold text-slate-500">Lý do: </span>
@@ -2683,6 +2723,7 @@ export function PpcSkuRecommendationGroupView({
                                               <div className="flex gap-2 shrink-0">
                                                 <button
                                                   type="button"
+                                                  data-tour={tourRec ? "sku-explain-first" : undefined}
                                                   onClick={(e) => { e.stopPropagation(); handleExplainRule(rec); }}
                                                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                                                   title="Xem điều kiện rule và phép tính tạo ra mức bid này"
@@ -2692,6 +2733,7 @@ export function PpcSkuRecommendationGroupView({
                                                 </button>
                                                 <button
                                                   type="button"
+                                                  data-tour={tourRec ? "sku-ai-review-first" : undefined}
                                                   onClick={(e) => { e.stopPropagation(); handleOpenAiReview(rec); }}
                                                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-purple-200 bg-white text-[11px] font-semibold text-purple-700 hover:bg-purple-50 cursor-pointer"
                                                   title="AI phản biện đề xuất này"
@@ -2792,7 +2834,7 @@ export function PpcSkuRecommendationGroupView({
                   </div>
                 )}
 
-                <p className="text-[11px] text-slate-400">
+                <p data-tour="sku-queue-note" className="text-[11px] text-slate-400">
                   Duyệt sẽ đẩy đề xuất vào <strong className="text-slate-500">Action Queue</strong> để kiểm tra trùng lặp trước khi xuất Amazon Bulk File.
                 </p>
               </div>

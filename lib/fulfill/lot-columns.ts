@@ -139,6 +139,25 @@ export const LOT_EDIT_FIELDS = {
   tag_design: "custom",
   box_design: "custom",
   box_quantity: "custom",
+  // Phần đóng gói / vận chuyển: team sửa được cả khi lô đã đi hàng (điền sau khi gửi).
+  // Cột riêng của web lưu ở custom_fields (đồng bộ sheet không đụng tới); Shipment ID / Ngày đi / Ngày đến là cột
+  // CHI TIẾT ĐI HÀNG — sheet có giá trị thì lần đồng bộ sau ghi đè.
+  transparency_code: "custom",
+  fnsku: "custom",
+  label_fnsku: "custom",
+  shipment_id: "column",
+  check_ship: "custom",
+  box_count: "custom",
+  shipping_label: "custom",
+  shipping_address: "custom",
+  ngay_di: "column",
+  ngay_den: "column",
+  replacement_fee: "custom",
+  request: "custom",
+  sample_link: "custom",
+  label_link: "custom",
+  package_link: "custom",
+  check_final: "custom",
 } as const satisfies Partial<Record<keyof FulfillLotLine, "column" | "custom">>;
 
 export function isLotEditField(key: string): key is keyof typeof LOT_EDIT_FIELDS {

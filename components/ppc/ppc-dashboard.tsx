@@ -53,6 +53,8 @@ import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
 import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcFloatingActionQueue } from "./ppc-floating-action-queue";
+import { GuideAssistant } from "@/components/guide/guide-assistant";
+import { PPC_AUTOBID_TOURS } from "@/lib/guide/ppc-autobid-tours";
 import { PpcManualBidView } from "./ppc-manual-bid-view";
 import { PpcMetricRangeFilter } from "./ppc-metric-range-filter";
 import { encodeMetricRanges, parseMetricRanges, passesMetricRanges, type MetricRanges } from "@/lib/ppc/manual-bid";
@@ -3016,7 +3018,7 @@ export function PpcDashboard({
             <div className="hidden sm:block h-4 w-px bg-slate-200 shrink-0" />
 
             {/* Store dropdown */}
-            <div ref={storeDropdownContainerRef} className="relative shrink-0">
+            <div ref={storeDropdownContainerRef} data-tour="ppc-store-select" className="relative shrink-0">
               <button
                 ref={storeSelectRef}
                 type="button"
@@ -3117,7 +3119,7 @@ export function PpcDashboard({
             {/* Thời điểm Helium 10 mới nhất: hiện ở mọi tab PPC */}
             <PpcH10UpdatedNote />
             {/* Chọn Kỳ Thời Gian: Segmented Pill */}
-            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
+            <div data-tour="ppc-days" className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
               {[7, 14, 30, 60].map((d) => (
                 <button
                   key={d}
@@ -6468,6 +6470,22 @@ export function PpcDashboard({
           setSettingsSubTab("phoi");
         }}
       />
+
+      {/* Trợ lý hướng dẫn sử dụng (thử nghiệm) — chỉ ở tab Đề xuất & Auto Bid */}
+      {activeTab === "recommendations" && (
+        <GuideAssistant
+          agent="ppc-autobid-guide"
+          title="Trợ lý hướng dẫn Auto Bid"
+          tours={PPC_AUTOBID_TOURS}
+          context={{ page: "PPC · Đề xuất & Auto Bid", store: selectedStore, windowDays: selectedDays }}
+          contextChips={[selectedStore === "ALL" ? "Tất cả store" : selectedStore, `${selectedDays}D`]}
+          suggestions={[
+            "Làm sao giảm bid cho 1 SKU?",
+            "Vì sao SKU của mình không có đề xuất?",
+            "Auto giảm Bid hoạt động thế nào?",
+          ]}
+        />
+      )}
 
       {/* FLOATING ACTION QUEUE BUTTON (DRAGGABLE, GÓC DƯỚI) */}
       {selectedStore !== "ALL" && (

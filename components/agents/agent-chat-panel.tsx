@@ -106,6 +106,17 @@ export interface AgentChatPanelProps {
   banner?: ReactNode;
   footnote?: string;
   onClose: () => void;
+  /** "docked" = ghim cạnh phải cao hết màn hình (mặc định); "floating" = cửa sổ nhỏ góc dưới phải. */
+  variant?: "docked" | "floating";
+  /** Ẩn tạm (vẫn giữ trạng thái), vd khi đang chạy hướng dẫn trên màn hình. */
+  hidden?: boolean;
+  placeholder?: string;
+  /** Lời chào khi cuộc chat còn trống (hiện trên các câu gợi ý). */
+  welcome?: ReactNode;
+  /** Đổi chữ câu trả lời trước khi hiển thị (vd bỏ mã [[tour:…]]). */
+  formatAnswer?: (text: string) => string;
+  /** Khối riêng dưới câu trả lời (vd nút "Xem mình làm"). */
+  renderAnswerExtras?: (text: string) => ReactNode;
 }
 
 const newSessionId = () =>
@@ -126,6 +137,12 @@ export function AgentChatPanel({
   banner,
   footnote,
   onClose,
+  variant = "docked",
+  hidden = false,
+  placeholder = "Hỏi về con số… (Enter để gửi)",
+  welcome,
+  formatAnswer = (text: string) => text,
+  renderAnswerExtras,
 }: AgentChatPanelProps) {
   const apiUrl = `/api/agents/${encodeURIComponent(agent)}`;
   // Lịch sử chat lưu trên server (bảng agent_runs) theo TỪNG TÀI KHOẢN: đóng / mở panel, F5, đổi máy vẫn còn.
@@ -182,12 +199,13 @@ export function AgentChatPanel({
   }, [apiUrl, hasPending, sessionId, isLoading]);
 
   useEffect(() => {
+    if (hidden) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, hidden]);
 
   const busy = isLoading || hasPending || historyLoading || !sessionId;
 
@@ -338,7 +356,12 @@ export function AgentChatPanel({
     <aside
       role="complementary"
       aria-label={title}
-      className="fixed bottom-2 right-2 top-2 z-[60] flex w-[min(480px,calc(100vw-1rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in fade-in slide-in-from-right-4 duration-150"
+      hidden={hidden}
+      className={
+        variant === "floating"
+          ? "fixed bottom-20 right-4 z-[60] flex h-[min(640px,calc(100vh-7rem))] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-150"
+          : "fixed bottom-2 right-2 top-2 z-[60] flex w-[min(480px,calc(100vw-1rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in fade-in slide-in-from-right-4 duration-150"
+      }
     >
       <div className="flex items-start justify-between gap-2 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-violet-50 px-4 py-3">
         <div className="flex min-w-0 items-start gap-2">
@@ -449,8 +472,9 @@ export function AgentChatPanel({
               </div>
             )}
 
-            {!historyLoading && messages.length === 0 && !isLoading && !queue.length && suggestions.length > 0 && (
+            {!historyLoading && messages.length === 0 && !isLoading && !queue.length && (welcome || suggestions.length > 0) && (
               <div className="space-y-2">
+                {welcome}
                 {suggestions.map((s) => (
                   <button
                     key={s}
@@ -483,9 +507,10 @@ export function AgentChatPanel({
                           : "max-w-[95%] rounded-2xl rounded-bl-md border border-slate-200 bg-slate-50 px-3 py-2"
                     }
                   >
-                    {m.role === "assistant" && !m.isError ? <MarkdownLite text={m.content} /> : m.content}
+                    {m.role === "assistant" && !m.isError ? <MarkdownLite text={formatAnswer(m.content)} /> : m.content}
                   </div>
                 )}
+                {m.role === "assistant" && !m.isError && !m.pending && renderAnswerExtras?.(m.content)}
                 {m.role === "assistant" && m.runId && !m.pending && (
                   <div className="mt-1 flex items-center gap-1 pl-1 text-slate-400">
                     <span className="text-[10.5px]">Câu trả lời đúng không?</span>
@@ -524,7 +549,7 @@ export function AgentChatPanel({
             {isLoading && draft && (
               <div className="flex justify-start">
                 <div className="max-w-[95%] rounded-2xl rounded-bl-md border border-slate-200 bg-slate-50 px-3 py-2">
-                  <MarkdownLite text={draft} />
+                  <MarkdownLite text={formatAnswer(draft)} />
                 </div>
               </div>
             )}
@@ -569,7 +594,7 @@ export function AgentChatPanel({
                 }}
                 rows={2}
                 maxLength={4000}
-                placeholder="Hỏi về con số… (Enter để gửi)"
+                placeholder={placeholder}
                 className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
               {isLoading ? (

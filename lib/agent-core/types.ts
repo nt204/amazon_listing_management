@@ -49,6 +49,8 @@ export interface AgentDefinition<Scope> {
   envPrefix: string;
   defaultModel: string;
   defaultFallbackModel?: string;
+  /** Dùng lại cấu hình model của tính năng khác khi chưa đặt <envPrefix>_* (vd LARK_AGENT_KEY). */
+  modelEnvFallback?: import("@/lib/agent-core/model-gateway").ModelEnvFallback;
   instructions(ctx: AgentContext<Scope>): Promise<string> | string;
   tools: AgentTool<Scope>[];
   allowedPermissions: ToolPermission[];

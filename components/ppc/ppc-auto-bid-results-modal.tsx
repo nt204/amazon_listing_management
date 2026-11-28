@@ -1394,7 +1394,7 @@ export function PpcAutoBidResultsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-2 sm:p-4 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="flex h-[92vh] w-full max-w-[1400px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div data-tour="ob-modal" className="flex h-[92vh] w-full max-w-[1400px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         {/* HEADER */}
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-6 bg-white">
           <div className="flex items-center gap-3">
@@ -1433,6 +1433,7 @@ export function PpcAutoBidResultsModal({
             )}
             <button
               type="button"
+              data-tour="ob-refresh"
               onClick={handleRunEvaluation}
               disabled={evaluating || loading}
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-indigo-600 transition disabled:opacity-50 cursor-pointer"
@@ -1443,6 +1444,8 @@ export function PpcAutoBidResultsModal({
             </button>
             <button
               type="button"
+              data-tour="ob-close"
+              aria-label="Đóng Kết quả Auto Bid"
               onClick={onClose}
               className="rounded-xl p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition cursor-pointer"
             >
@@ -1452,7 +1455,7 @@ export function PpcAutoBidResultsModal({
         </div>
 
         {/* EXECUTIVE SUMMARY */}
-        <div className="grid grid-cols-2 gap-3 border-b border-slate-200 bg-white p-4 sm:grid-cols-5">
+        <div data-tour="ob-summary" className="grid grid-cols-2 gap-3 border-b border-slate-200 bg-white p-4 sm:grid-cols-5">
           {[
             { label: "Cần xử lý", value: summary?.negative || 0, tone: "text-rose-700" },
             { label: "Đang thắng", value: summary?.positive || 0, tone: "text-emerald-700" },
@@ -1473,7 +1476,7 @@ export function PpcAutoBidResultsModal({
         </div>
 
         {/* TOOLBAR */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 bg-white px-4 py-2.5 sm:px-6">
+        <div data-tour="ob-filters" className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 bg-white px-4 py-2.5 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
               <MagnifyingGlass size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1541,7 +1544,7 @@ export function PpcAutoBidResultsModal({
 
         {/* MASTER / DETAIL TRÊN CÙNG MỘT MÀN HÌNH */}
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <div className={`min-h-0 flex-1 overflow-y-auto thin-scrollbar ${selectedAction ? "lg:w-[58%]" : "w-full"}`}>
+        <div data-tour="ob-list" className={`min-h-0 flex-1 overflow-y-auto thin-scrollbar ${selectedAction ? "lg:w-[58%]" : "w-full"}`}>
           {loading ? (
             <div className="flex h-64 flex-col items-center justify-center gap-2 text-slate-400">
               <CircleNotch size={28} className="animate-spin text-indigo-600" />

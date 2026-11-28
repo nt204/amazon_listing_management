@@ -58,7 +58,13 @@ export async function executeAgentTurn(options: {
     const history = buildHistoryTurns(historyRows);
     const client =
       options.client ??
-      createModelClient(resolveModelConfig(agent.envPrefix, { model: agent.defaultModel, fallbackModel: agent.defaultFallbackModel }));
+      createModelClient(
+        resolveModelConfig(agent.envPrefix, {
+          model: agent.defaultModel,
+          fallbackModel: agent.defaultFallbackModel,
+          envFallback: agent.modelEnvFallback,
+        }),
+      );
     const result = await runAgent({
       agent,
       client,

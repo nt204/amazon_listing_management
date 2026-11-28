@@ -239,6 +239,7 @@ export function PpcFloatingActionQueue({
 
   return (
     <div
+      data-tour="ppc-action-queue"
       style={{
         position: "fixed",
         right: position.docked ? 0 : `${position.right}px`,
@@ -258,6 +259,7 @@ export function PpcFloatingActionQueue({
       <button
         ref={buttonRef}
         type="button"
+        data-tour="ppc-action-queue-btn"
         onPointerDown={handlePointerDown}
         onClick={(event) => {
           // Keyboard-triggered clicks do not emit a pointer sequence.
